@@ -1,7 +1,7 @@
 //! Validation rules (09 §6): in-manifest rules ([`manifest`]) and full package
 //! rules ([`package`]). `hooks.wasm` world-shape checks: [`hooks_component`].
-pub mod agent_guide_rules;
 pub mod agent_operations_rules;
+pub mod agent_rules;
 mod hooks_component;
 mod library_rules;
 mod package_rules;
@@ -257,7 +257,7 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
     let mut out = Vec::new();
     let mut ids = BTreeSet::new();
     for (i, a) in m.apps.iter().enumerate() {
-        if a.about.id == agent_guide_rules::RESERVED_APP_ID {
+        if a.about.id == agent_rules::RESERVED_APP_ID {
             out.push(Violation::new(
                 "app_id_reserved",
                 format!("/apps/{i}/about/id"),
@@ -393,6 +393,20 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
 /// as a bare method and host on the access screens. `aurora plugin validate` prints them;
 /// `check-builtin.sh` turns them into failures for the builtin packages.
 pub fn warnings(m: &Manifest) -> Vec<Violation> {
+    let mut out = manifest_warnings(m);
+    out.extend(agent_rules::ignored_warnings(m, None));
+    out
+}
+
+/// [`warnings`] for a whole package: also `agent_guide_ignored` for guide files that are still in
+/// the archive under `agent/<app_id>/` (C-1130).
+pub fn package_warnings(m: &Manifest, pkg: &crate::Package) -> Vec<Violation> {
+    let mut out = manifest_warnings(m);
+    out.extend(agent_rules::ignored_warnings(m, Some(pkg)));
+    out
+}
+
+fn manifest_warnings(m: &Manifest) -> Vec<Violation> {
     let mut out = Vec::new();
     for (i, a) in m.apps.iter().enumerate() {
         // (P5-SKLIB-1, D-448) The `library` block is still parsed (contract 1 is additive) but a skill
@@ -838,7 +852,7 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
     if let Some(ag) = &app.agent {
         // (P5-GUIDE-1) the guide keys; the base path is the app's, without the `/agent` part.
         let base = cx.base.clone();
-        agent_guide_rules::manifest_rules(ag, &base, &mut cx.out);
+        agent_rules::manifest_rules(ag, &base, &mut cx.out);
         if ag.instructions.chars().count() > AGENT_SNIPPET_MAX {
             cx.v(
                 "agent_instructions_too_long",

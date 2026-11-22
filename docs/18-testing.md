@@ -805,7 +805,37 @@ done when its tests exist, pass in CI, and the security invariants it touches
   remove confirms, update review (full diff, disabled approve for non-authority with explanation), repository text
   rendered as data (an HTML/markdown/URL payload is inert), no horizontal scroll at 390 px, both themes.
 
-### App guides on demand (phase 5, P5-GUIDE-1..7, D-170..D-172, D-295..D-297, SEC-91, SEC-117..SEC-120)
+### App skills, app folders and tools on demand (phase 5, P5-GUIDE-1..7, P5-APPSKILL-1/2; D-170..D-172, D-295..D-297, D-452, D-453; SEC-91, SEC-117..SEC-120, SEC-150)
+
+**Amendment of 2026-11-22 (D-452, D-453; P5-APPSKILL-1/2) — supersedes every guide-file, recipe,
+`fixture-guide` and `aurora plugin guide` mention below.** Apps ship skills; the agent guide is gone.
+The tests that replace the guide ones:
+
+- **Shared validator** (`aurora-registry::skill_format`, SEC-150): unit tests there; the library
+  ITs (`services/aurora-api/tests/it/skill_library*.rs`) and the skills-service tests pass
+  **unchanged** and are the proof the API's behaviour did not move.
+- **Registry** (`tests/it/app_skills_lint.rs`): one case per `app_skill_*` / `app_skills_*` code
+  (unknown app, name and prefix, the longest matching app id, frontmatter, body, total, path
+  grammar with `Skill.md` as a file name and depth 5, not text with NUL / BOM, file size 64 KiB + 1,
+  51 files, 17 skills, per-app size), a legacy `agent.guide` package that is valid with exactly one
+  `agent_guide_ignored` warning, the operations-file codes, archive paths. `tests/it/app_skills_package.rs`:
+  the digest of a package without `skills/` equals the value recorded on master, an executable
+  skill file adds `\0x` to its line, flipping the bit breaks the signature (both ways), the reader
+  records the bit under `skills/` only, a link under `skills/` is refused, every built-in passes
+  without a warning. `tests/it/agent_files.rs`: the snapshot carries `skills` sorted with digests
+  and bits, no `guide` key, a stored version with `agent.guide` still compiles.
+- **API** (`tests/it/plugins_agent_content.rs`): `agent_file` blobs read by digest, nothing stored for
+  old guide files or for an `invalid` package, the snapshot's `skills`, a package breaking a rule is
+  `invalid` with the code, the admin detail `agent` and the file routes (`text/plain`, `nosniff`,
+  404, 400, 403), `changed` and `agent_changed` (a bit flip alone counts); migration
+  `20261201000272` (`schema_matches_spec`, `scripts/extract-schema.py --check`).
+- **CLI** (`tests/plugin.rs`): `preview` against `tests/golden/preview/` (skills with the provenance
+  line, modes 0555/0444), `build` keeps `100755` in the digest, `validate` warns for an old guide,
+  `docs` lists skills, `import-openapi` goldens without reference files (`tests/golden/openapi/`).
+- **Agent side (P5-APPSKILL-2)**: `api it/skills_app.rs` (an agent with a grant gets the app skills in `.claude/skills`, `.codex/skills/aurora` and `.agents/skills`, the provenance line, a script `exec`; none without a grant, pruned on revoke; agent, workspace and organization skills of the same name each win and the app skill is `shadowed` with `shadowed_by`; a disabled organization skill does not veto; `ov` and `ov-x` resolve to `ov-x`; the budget drops later apps, `app.md` says so and the metric counts once; the effective route shows tier `app`, `app`, `id: null`; `skill_list`/`skill_get` show them and `skill_update`/`skill_delete` fail), `api it/home_app_skills.rs` (the generated files only; `guide_path` is `app.md`), `reg it/app_folder_render.rs` (the Skills section with `$SKILLS_DIR` paths, shadow notes, the budget sentence, `api.json` `skills`, hostile skill text, `project_skill_md`), supervisor `agent_cli` (list shows skill counts, `search` ranks skill names above descriptions, `describe <app> <skill>` prints the path, a recorded previous-release struct parses the new `api.json`), supervisor `home.rs` (only the files Aurora writes are accepted under `.aurora/apps/`), instruction snapshots (`app.md`, "skills"), `tests/e2e-hosted` s14 (scripts `0555`, files `0444`, `app.md` `0444`, nothing writable).
+- **Fixtures**: `fixture-app-skills`, `fixture-legacy-guide`, `fixture-invalid-app-skill-*` and
+  `fixture-invalid-agent-operations-missing` with their lines in `expected-invalid.txt`
+  (`scripts/fixtures/build.sh`; the oversize cases are written by `mkfixture.py`).
 
 **Amendment of 2026-11-15 (D-295..D-297).** Where the list below says *inline* or *index*, read:
 the supervisor snapshots are **index always** (one, two and 23 apps), the older-API fallback
@@ -859,7 +889,7 @@ the supervisor snapshots are **index always** (one, two and 23 apps), the older-
   `fixture-invalid-agent-guide-*` package per linter rule of `24 §3` (unlisted file, missing file,
   reserved name, bad name, not text, file too large, summary required), each with its line in
   `expected-invalid.txt`.
-- **Registry** (`crates/aurora-registry/tests/it/agent_guide.rs`): the linter matrix; a package
+- **Registry** (`crates/aurora-registry/tests/it/agent_files.rs`): the linter matrix; a package
   without the new keys keeps its digest and its snapshot fragment byte for byte; snapshot carries
   `summary` and `guide[]` with `sha256`/`size` and omits both when absent; the **renderer**
   (`agent_guide::render`) under `insta` snapshots for: one account full, one account custom
@@ -869,7 +899,7 @@ the supervisor snapshots are **index always** (one, two and 23 apps), the older-
   `git`, `params`), reference files left out by the budget; a hostile-text corpus (names, labels,
   titles, descriptions, essentials with backtick runs, headings, control characters) never leaves
   its line or fence; the property of SEC-91.
-- **API** (`services/aurora-api/tests/it/home_agent_guides.rs`, and `home_render_inputs.rs`):
+- **API** (`services/aurora-api/tests/it/home_app_skills.rs`, and `home_render_inputs.rs`):
   the `apps` part carries exactly the folders of the apps in the render inputs, every path is in
   the manifest, entries fit a part; `render_inputs.apps[]` keeps its old fields and gains `app_id`,
   `summary`, `guide_path`; a custom grant edit, a revoked grant, a disconnected account, an app
@@ -878,7 +908,7 @@ the supervisor snapshots are **index always** (one, two and 23 apps), the older-
   configuration) drops reference files in `app_id` order, keeps the generated files and counts the
   metric; a guide file whose bytes equal a blob of another kind is still served (read by digest);
   an `invalid` package stores no guide blob; `agent_guide_changed` is in the audit metadata; the
-  guard `scripts/guards/agent-guide-advisory.sh` (SEC-91); the admin routes
+  guard `scripts/guards/agent-content-advisory.sh` (SEC-91); the admin routes
   (C-648): shape, `changed` against the active version, instance-admin only, `text/plain` +
   `nosniff`, 404s.
 - **Supervisor** (`services/aurora-supervisor`): `.aurora/apps/` managed-root rules (exact depth,

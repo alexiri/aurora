@@ -45,7 +45,7 @@ pub struct AgentArgs {
 pub enum Verb {
     /// List connected apps (and, from P5-GUIDE-7, the platform), or the operations of one.
     List { target: Option<String> },
-    /// Search operations and recipes by words (no network, no model).
+    /// Search operations and skills by words (no network, no model).
     Search {
         #[arg(required = true)]
         words: Vec<String>,
@@ -55,7 +55,7 @@ pub enum Verb {
         #[arg(long, default_value_t = 15)]
         limit: usize,
     },
-    /// Describe one operation or recipe: parameters, body, access, an example call.
+    /// Describe one operation or skill: parameters, body, access, an example call.
     Describe { target: String, name: String },
     /// Call an operation: `call <app> <operation> [name=value | name:=<json> …]`, or
     /// `call <app> --path /x [--method M]` for anything not listed. With --path, `name=value`

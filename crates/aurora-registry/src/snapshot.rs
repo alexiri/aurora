@@ -101,27 +101,31 @@ pub struct OauthClientEntry {
     pub setup_note: Option<String>,
 }
 
-/// (P5-GUIDE-1, C-641) `kind` of a guide file in the snapshot; always present there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GuideKind {
-    Reference,
-    Recipe,
-}
-
-/// (P5-GUIDE-1, C-641) A guide file with the digest the core computed from the stored archive.
+/// (P5-APPSKILL-1, C-1132) One file of an app skill with the digest the core computed from the
+/// stored archive. The content itself is never in the snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GuideFile {
-    pub file: String,
-    pub title: String,
-    pub kind: GuideKind,
+pub struct SkillFileEntry {
+    pub path: String,
     pub sha256: String,
     pub size: u64,
+    /// The owner-execute bit of the signed archive entry (C-1131).
+    pub executable: bool,
 }
 
-/// The `agent` block of an app in the snapshot: the manifest's block with the agent guide keys in
-/// their compiled form (`guide[]` carries digests). The submitted manifest type
+/// (P5-APPSKILL-1, C-1132) An app skill: `sha256`/`size` are those of `SKILL.md` as shipped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillEntry {
+    pub name: String,
+    pub description: String,
+    pub sha256: String,
+    pub size: u64,
+    pub files: Vec<SkillFileEntry>,
+}
+
+/// The `agent` block of an app in the snapshot: the manifest's block with the agent files in
+/// their compiled form (`skills[]` and `operations` carry digests). The submitted manifest type
 /// ([`Agent`]) and this one differ on purpose: both stay strict (`deny_unknown_fields`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,10 +134,11 @@ pub struct AgentEntry {
     pub summary: Option<String>,
     #[serde(default)]
     pub instructions: String,
+    /// (C-1132) Sorted by name; omitted when the app has none, so the fragment of an app without
+    /// skills is byte-identical to the one of earlier versions that had no guide.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub guide: Vec<GuideFile>,
-    /// (P5-GUIDE-6, C-641) Absent without an operations file: the fragment is then byte-identical
-    /// to the one of earlier versions.
+    pub skills: Vec<SkillEntry>,
+    /// (P5-GUIDE-6, C-641) Absent without an operations file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operations: Option<OperationsRef>,
     #[serde(default)]
@@ -142,15 +147,12 @@ pub struct AgentEntry {
     pub stubs: Vec<crate::manifest::Stub>,
     #[serde(default)]
     pub default_blocklist: Vec<String>,
+    /// A snapshot stored before P5-APPSKILL carries `guide[]`: read and dropped (C-1132), never
+    /// emitted.
+    #[serde(default, rename = "guide", skip_serializing)]
+    #[allow(dead_code)]
+    legacy_guide: Option<Value>,
 }
-
-/// Digests of the guide files of one package: `(app_id, file)` → `(sha256 hex, size)`. The
-/// operations file (P5-GUIDE-6) is one more entry, plus `(app_id, OPERATIONS_COUNT_KEY)` →
-/// `("", operations count)`; that key is not a legal file name, so it cannot clash.
-pub type GuideDigests = BTreeMap<(String, String), (String, u64)>;
-
-/// Key of the operations count in [`GuideDigests`].
-pub const OPERATIONS_COUNT_KEY: &str = "operations.count";
 
 /// (P5-GUIDE-6, C-641) The operations file of an app in the snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,31 +164,72 @@ pub struct OperationsRef {
     pub count: u64,
 }
 
-/// Compute [`GuideDigests`] from a package archive, as `hooks_digest` is computed (C-641).
+/// What a package archive contributes to the snapshot's `agent` blocks (C-1132): per app id, the
+/// operations file reference and the skills with their file digests. Computed from the stored
+/// archive like `hooks_digest` (C-641); `agent.guide` entries and the files they name are not
+/// part of it (D-453).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AgentFiles {
+    pub operations: BTreeMap<String, OperationsRef>,
+    pub skills: BTreeMap<String, Vec<SkillEntry>>,
+}
+
+/// Compute [`AgentFiles`] from a package archive.
 #[must_use]
-pub fn guide_digests(manifest: &Manifest, pkg: &crate::Package) -> GuideDigests {
-    let mut out = GuideDigests::new();
+pub fn agent_files(manifest: &Manifest, pkg: &crate::Package) -> AgentFiles {
+    let mut out = AgentFiles::default();
     for a in &manifest.apps {
-        let Some(ag) = &a.agent else { continue };
-        if let Some(f) = &ag.operations
-            && let Some(b) = pkg.file(&format!("agent/{}/{}", a.about.id, f))
+        let id = a.about.id.as_str();
+        if let Some(f) = a.agent.as_ref().and_then(|ag| ag.operations.as_ref())
+            && let Some(b) = pkg.file(&format!("agent/{id}/{f}"))
         {
-            out.insert(
-                (a.about.id.clone(), f.clone()),
-                (hex(&Sha256::digest(b)), b.len() as u64),
-            );
-            out.insert(
-                (a.about.id.clone(), OPERATIONS_COUNT_KEY.to_owned()),
-                (String::new(), crate::operations::count(b) as u64),
+            out.operations.insert(
+                id.to_owned(),
+                OperationsRef {
+                    file: f.clone(),
+                    sha256: hex(&Sha256::digest(b)),
+                    size: b.len() as u64,
+                    count: crate::operations::count(b) as u64,
+                },
             );
         }
-        for g in &ag.guide {
-            if let Some(b) = pkg.file(&format!("agent/{}/{}", a.about.id, g.file)) {
-                out.insert(
-                    (a.about.id.clone(), g.file.clone()),
-                    (hex(&Sha256::digest(b)), b.len() as u64),
-                );
+        let prefix = format!("{}{id}/", crate::package::SKILLS_DIR);
+        let mut by_name: BTreeMap<&str, Vec<(&str, &[u8])>> = BTreeMap::new();
+        for (path, bytes) in &pkg.files {
+            if let Some((name, rel)) = path.strip_prefix(&prefix).and_then(|r| r.split_once('/')) {
+                by_name.entry(name).or_default().push((rel, bytes));
             }
+        }
+        let mut skills = Vec::new();
+        for (name, files) in by_name {
+            // The linter guarantees SKILL.md and its frontmatter for an accepted package.
+            let Some((_, md)) = files.iter().find(|(rel, _)| *rel == "SKILL.md") else {
+                continue;
+            };
+            let Ok((description, _)) = crate::skill_format::parse_skill_md(md, name) else {
+                continue;
+            };
+            skills.push(SkillEntry {
+                name: name.to_owned(),
+                description,
+                sha256: hex(&Sha256::digest(md)),
+                size: md.len() as u64,
+                files: files
+                    .iter()
+                    .filter(|(rel, _)| *rel != "SKILL.md")
+                    .map(|(rel, b)| SkillFileEntry {
+                        path: (*rel).to_owned(),
+                        sha256: hex(&Sha256::digest(b)),
+                        size: b.len() as u64,
+                        executable: pkg
+                            .executable
+                            .contains(&format!("{}{id}/{name}/{rel}", crate::package::SKILLS_DIR)),
+                    })
+                    .collect(),
+            });
+        }
+        if !skills.is_empty() {
+            out.skills.insert(id.to_owned(), skills);
         }
     }
     out
@@ -195,55 +238,33 @@ pub fn guide_digests(manifest: &Manifest, pkg: &crate::Package) -> GuideDigests 
 fn agent_entry(
     app_id: &str,
     ag: &Agent,
-    digests: Option<&GuideDigests>,
+    files: Option<&AgentFiles>,
 ) -> Result<AgentEntry, CompileError> {
-    let mut guide = Vec::with_capacity(ag.guide.len());
-    for g in &ag.guide {
-        let (sha256, size) = digests
-            .and_then(|d| d.get(&(app_id.to_owned(), g.file.clone())))
-            .cloned()
-            .ok_or_else(|| CompileError::GuideFileMissing {
-                app_id: app_id.to_owned(),
-                file: g.file.clone(),
-            })?;
-        guide.push(GuideFile {
-            file: g.file.clone(),
-            title: g.title.clone(),
-            kind: if g.is_recipe() {
-                GuideKind::Recipe
-            } else {
-                GuideKind::Reference
-            },
-            sha256,
-            size,
-        });
-    }
     let operations = match &ag.operations {
         None => None,
-        Some(f) => {
-            let get = |k: &str| digests.and_then(|d| d.get(&(app_id.to_owned(), k.to_owned())));
-            let (sha256, size) = get(f)
+        Some(f) => Some(
+            files
+                .and_then(|d| d.operations.get(app_id))
+                .filter(|o| &o.file == f)
                 .cloned()
-                .ok_or_else(|| CompileError::GuideFileMissing {
+                .ok_or_else(|| CompileError::AgentFileMissing {
                     app_id: app_id.to_owned(),
                     file: f.clone(),
-                })?;
-            Some(OperationsRef {
-                file: f.clone(),
-                sha256,
-                size,
-                count: get(OPERATIONS_COUNT_KEY).map_or(0, |(_, n)| *n),
-            })
-        }
+                })?,
+        ),
     };
     Ok(AgentEntry {
         summary: ag.summary.clone(),
         instructions: ag.instructions.clone(),
-        guide,
+        skills: files
+            .and_then(|d| d.skills.get(app_id))
+            .cloned()
+            .unwrap_or_default(),
         operations,
         env: ag.env.clone(),
         stubs: ag.stubs.clone(),
         default_blocklist: ag.default_blocklist.clone(),
+        legacy_guide: None,
     })
 }
 
@@ -392,10 +413,10 @@ pub enum CompileError {
     UnresolvedConflicts(Vec<ConflictGroup>),
     #[error("serialization failed: {0}")]
     Serialize(String),
-    /// (P5-GUIDE-1) A guide entry whose file digest was not supplied: a package that passed
+    /// (P5-GUIDE-1) The operations file whose digest was not supplied: a package that passed
     /// validation always has its files.
-    #[error("app `{app_id}` lists guide file `{file}` that the package archive does not carry")]
-    GuideFileMissing { app_id: String, file: String },
+    #[error("app `{app_id}` names agent file `{file}` that the package archive does not carry")]
+    AgentFileMissing { app_id: String, file: String },
 }
 
 fn sorted(v: &[String]) -> Vec<String> {
@@ -406,7 +427,7 @@ fn sorted(v: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// [`compile_with_guides`] for packages without agent guide files (what tests and the gateway
+/// [`compile_with_agent_files`] for packages without agent files (what tests and the gateway
 /// fixtures use).
 pub fn compile(
     packages: &[ActivePackage],
@@ -414,7 +435,7 @@ pub fn compile(
     reserved_hosts: &[String],
     contract: u32,
 ) -> Result<CompiledSnapshot, CompileError> {
-    compile_with_guides(
+    compile_with_agent_files(
         packages,
         decisions,
         reserved_hosts,
@@ -423,14 +444,14 @@ pub fn compile(
     )
 }
 
-/// Compile the snapshot; `guides` maps a package id to the digests of its guide files
-/// ([`guide_digests`]), computed from the stored archive like `hooks_digest` (C-641).
-pub fn compile_with_guides(
+/// Compile the snapshot; `agent_files` maps a package id to the operations file and skills of its
+/// apps ([`agent_files`]), computed from the stored archive like `hooks_digest` (C-641, C-1132).
+pub fn compile_with_agent_files(
     packages: &[ActivePackage],
     decisions: &[Decision],
     reserved_hosts: &[String],
     contract: u32,
-    guides: &BTreeMap<String, GuideDigests>,
+    files: &BTreeMap<String, AgentFiles>,
 ) -> Result<CompiledSnapshot, CompileError> {
     let mut seen = BTreeSet::new();
     let mut app_ids = BTreeSet::new();
@@ -553,7 +574,7 @@ pub fn compile_with_guides(
                 agent: a
                     .agent
                     .as_ref()
-                    .map(|ag| agent_entry(&app_id, ag, guides.get(pid)))
+                    .map(|ag| agent_entry(&app_id, ag, files.get(pid)))
                     .transpose()?,
                 database: a.database.clone(),
                 ldap: a.ldap.clone(),

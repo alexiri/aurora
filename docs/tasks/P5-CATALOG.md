@@ -40,7 +40,7 @@ Read, and nothing else unless a brief says so:
 - `plugins/builtin/README.md` (whole file): layout, checks, guide rules, placeholders, fixtures.
 - `docs/09-app-plugins.md` §3.4 (`connect[]`, instance-bound hosts, `token`, `tools`, `approvals`,
   `agent`), §5 (mechanisms), §12 (fixtures). Hooks (§8) only for Zoom.
-- `docs/24-app-guides.md` (renamed `24-apps-for-agents.md` by P5-APPSKILL-2) §3 (app skills) and §10a
+- `docs/24-apps-for-agents.md` (renamed `24-apps-for-agents.md` by P5-APPSKILL-2) §3 (app skills) and §10a
   (operations file, `aurora-agent`).
 - The reference package: `plugins/builtin/sentry/` (instances, token form, `access_levels` with
   `permission_hints`, `store: label` name field, its app skill); `plugins/builtin/indico/` for an

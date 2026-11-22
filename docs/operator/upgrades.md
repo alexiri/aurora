@@ -49,6 +49,23 @@ notes where the shipped artifacts do not follow them yet.
    adds `app_connections.connect_method` and fills it where the package version had a single method; the
    others read as unknown (the app's token, no tool hidden) until the connection is reconnected.
 
+10. **App skills: the gateway and the hook host must roll after the API** (P5-APPSKILL-1/2, D-453,
+    migration `20261201000272_plugin_blobs_agent_file.sql`). Every built-in package that had a guide is
+    a new version that ships skills, and the compiled registry snapshot carries them
+    (`apps[].agent.skills`). The snapshot reader of a gateway or hook host **one release older is
+    strict** and refuses a snapshot with a key it does not know: it logs `registry snapshot refused;
+    keeping previous` (gateway metric `gateway_snapshot_rejected_total`) and keeps serving the previous
+    snapshot. That is safe, because the new built-in versions widen nothing, but until the gateway and
+    hook host are upgraded they enforce the *previous* registry state: do **not** approve, reject,
+    disable or enable a package, or change a host-claim decision, while the roll is in progress
+    (a change made in that window takes effect when the gateway rolls). The rolling order
+    (migrate → api → hookhost → gateway) already has this shape and the chart rolls every component of
+    one `image.tag` in a single `helm upgrade`, so the window is the length of the roll. The migration
+    renames the `plugin_blobs.kind` value `agent_guide` to `agent_file` and replaces its check: a package
+    uploaded to an API replica of the previous release *during* the roll, if it carries agent files,
+    fails to store its blobs and is refused; retry it after the roll. A newer gateway reads an older
+    snapshot without trouble (the new key is optional).
+
 ## Rules that make a rolling upgrade safe
 
 - **Migrations are forward-only.** The repository has no down migrations

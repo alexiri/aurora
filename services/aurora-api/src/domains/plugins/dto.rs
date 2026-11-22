@@ -158,57 +158,74 @@ pub struct PluginPackage {
     pub approved_by: Option<PluginUserRef>,
     pub approved_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
-    /// (P5-GUIDE-2, C-648) What agents that use each app can read: one entry per app, in manifest
-    /// order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive for the digests);
-    /// empty in lists and in the responses of the lifecycle routes.
+    /// (P5-APPSKILL-2, C-1136) What agents that use each app get from the package: one entry per
+    /// app, in manifest order. Filled on `GET /v1/admin/plugins/{id}` (it reads the stored archive
+    /// for the digests); empty in lists and in the responses of the lifecycle routes.
     #[serde(default)]
-    pub agent_guides: Vec<PluginAgentGuide>,
+    pub agent: Vec<PluginAgent>,
 }
 
-/// (P5-GUIDE-2, C-648) The agent guide of one app of a package (`docs/24 §9`).
+/// (C-1136) What agents of one app get from a package (`docs/24 §9`).
 #[derive(Serialize, ToSchema)]
-pub struct PluginAgentGuide {
+pub struct PluginAgent {
     pub app_id: String,
     pub summary: Option<String>,
     /// The essentials (`agent.instructions`); third-party text, shown as plain text only.
     pub instructions: String,
-    pub files: Vec<PluginGuideFile>,
-    /// The operations file (P5-GUIDE-6); `null` until then.
-    pub operations: Option<PluginGuideOperations>,
+    /// The operations file; `null` without one.
+    pub operations: Option<PluginAgentOperations>,
+    /// The app's skills, by name. Scripts are marked by `executable` on their files.
+    pub skills: Vec<PluginAgentSkill>,
     /// Against the active version of the same package; `null` when there is none or this is it.
-    pub changed: Option<PluginGuideChanged>,
+    pub changed: Option<PluginAgentChanged>,
 }
 
 #[derive(Serialize, ToSchema)]
-pub struct PluginGuideFile {
-    pub file: String,
-    pub title: String,
-    /// `reference` | `recipe`.
-    pub kind: String,
-    pub size: u64,
-    pub sha256: String,
-}
-
-#[derive(Serialize, ToSchema)]
-pub struct PluginGuideOperations {
+pub struct PluginAgentOperations {
     pub file: String,
     pub size: u64,
     pub sha256: String,
     pub count: u32,
 }
 
+/// An app skill: `size` is `SKILL.md` and every file together in bytes; `files` lists `SKILL.md`
+/// first, then the other files by path.
 #[derive(Serialize, ToSchema)]
-pub struct PluginGuideChanged {
-    pub summary: bool,
-    pub instructions: bool,
-    pub operations: bool,
-    pub files: Vec<PluginGuideFileChange>,
+pub struct PluginAgentSkill {
+    pub name: String,
+    pub description: String,
+    pub size: u64,
+    pub files: Vec<PluginAgentSkillFile>,
 }
 
 #[derive(Serialize, ToSchema)]
-pub struct PluginGuideFileChange {
-    pub file: String,
+pub struct PluginAgentSkillFile {
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
+    pub executable: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PluginAgentChanged {
+    pub summary: bool,
+    pub instructions: bool,
+    pub operations: bool,
+    pub skills: Vec<PluginAgentSkillChange>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PluginAgentSkillChange {
+    pub name: String,
     /// `added` | `changed` | `removed`.
+    pub change: String,
+    pub files: Vec<PluginAgentFileChange>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct PluginAgentFileChange {
+    pub path: String,
+    /// `added` | `changed` | `removed` | `mode` (the executable bit differs; listed next to `changed` when the content changed too).
     pub change: String,
 }
 
@@ -327,7 +344,7 @@ impl PluginPackage {
             status_reason: r.status_reason,
             approved_at: r.approved_at,
             created_at: r.created_at,
-            agent_guides: Vec::new(),
+            agent: Vec::new(),
         }
     }
 }

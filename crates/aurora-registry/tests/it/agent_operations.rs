@@ -2,19 +2,16 @@
 //! corpus (one case per violation code), the reserved app id, the snapshot fragment and its
 //! compatibility.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use aurora_registry::validate::agent_guide_rules::archive_rules;
+use aurora_registry::validate::agent_rules::archive_rules;
 use aurora_registry::{Manifest, Package};
 
-use super::agent_guide::{TOOLS, snapshot_of, yaml};
+use super::agent_files::{TOOLS, snapshot_of, yaml};
 
 const AGENT_OPS: &str =
     "    agent:\n      summary: \"Things.\"\n      operations: operations.json\n";
 
 fn package(files: &[(&str, &[u8])]) -> Package {
-    let mut pkg = Package {
-        files: Default::default(),
-        signature: None,
-    };
+    let mut pkg = Package::default();
     for (f, c) in files {
         pkg.files.insert(format!("agent/demo-app/{f}"), c.to_vec());
     }
@@ -255,27 +252,22 @@ fn too_many_and_too_large_files() {
 }
 
 #[test]
-fn the_operations_file_is_not_also_a_guide_file_and_is_named_and_present() {
-    let y = yaml(
-        TOOLS,
-        "    agent:\n      summary: \"S\"\n      operations: operations.json\n      guide:\n        - { file: operations.json, title: T }\n",
-        "",
-    );
-    assert!(lint(&y, &one(&op(""))).contains(&"agent_operations_listed"));
+fn the_operations_file_is_named_and_present() {
+    // (P5-APPSKILL-1) `agent_operations_listed` went with `agent.guide`, which is ignored now.
     // not a .json name
     let y = yaml(
         TOOLS,
         "    agent:\n      summary: \"S\"\n      operations: ops.md\n",
         "",
     );
-    assert!(lint(&y, &one(&op(""))).contains(&"agent_guide_file_name"));
+    assert!(lint(&y, &one(&op(""))).contains(&"agent_operations_file_name"));
     // the summary is required, the file must be in the archive
     let y = yaml(TOOLS, "    agent:\n      operations: operations.json\n", "");
     assert!(lint(&y, &one(&op(""))).contains(&"agent_summary_required"));
     let m = Manifest::parse(&yaml(TOOLS, AGENT_OPS, ""), "99.0.0").unwrap();
     let mut v = Vec::new();
     archive_rules(&m, &package(&[]), &mut v);
-    assert!(v.iter().any(|x| x.code == "agent_guide_missing_file"));
+    assert!(v.iter().any(|x| x.code == "agent_operations_missing_file"));
 }
 
 #[test]

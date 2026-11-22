@@ -14,6 +14,8 @@ use aurora_protocol::runner::{HomeSync, HomeSyncKind, HomeSyncPart};
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 
+use crate::domains::skills::app_skills::{self, AppSkill, By};
+
 /// Parts are packed below the wire maximum to leave room for the envelope and escaping drift.
 const PACK_MAX: usize = limits::HOME_SYNC_PART_MAX - 2048;
 
@@ -190,22 +192,22 @@ async fn models_input(
     v
 }
 
-/// (P5-GUIDE-2, `24 §7`) Guide file bytes by digest, from an in-process cache: content-addressed,
+/// (P5-GUIDE-2, P5-APPSKILL-2, `24 §7`) Agent file bytes (skill files, `SKILL.md`, the operations file) by digest, from an in-process cache: content-addressed,
 /// so it is never invalidated; bounded, least recently used evicted.
-const GUIDE_CACHE_MAX: usize = 64 * 1024 * 1024;
+const AGENT_FILE_CACHE_MAX: usize = 64 * 1024 * 1024;
 
 #[derive(Default)]
-struct GuideCache {
+struct AgentFileCache {
     map: std::collections::HashMap<String, (std::sync::Arc<Vec<u8>>, u64)>,
     bytes: usize,
     tick: u64,
 }
 
-static GUIDE_CACHE: std::sync::LazyLock<std::sync::Mutex<GuideCache>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(GuideCache::default()));
+static AGENT_FILE_CACHE: std::sync::LazyLock<std::sync::Mutex<AgentFileCache>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(AgentFileCache::default()));
 
 fn cache_get(digest: &str) -> Option<std::sync::Arc<Vec<u8>>> {
-    let mut c = GUIDE_CACHE.lock().ok()?;
+    let mut c = AGENT_FILE_CACHE.lock().ok()?;
     c.tick += 1;
     let tick = c.tick;
     let e = c.map.get_mut(digest)?;
@@ -214,13 +216,13 @@ fn cache_get(digest: &str) -> Option<std::sync::Arc<Vec<u8>>> {
 }
 
 fn cache_put(digest: &str, bytes: std::sync::Arc<Vec<u8>>) {
-    let Ok(mut c) = GUIDE_CACHE.lock() else {
+    let Ok(mut c) = AGENT_FILE_CACHE.lock() else {
         return;
     };
-    if bytes.len() > GUIDE_CACHE_MAX || c.map.contains_key(digest) {
+    if bytes.len() > AGENT_FILE_CACHE_MAX || c.map.contains_key(digest) {
         return;
     }
-    while c.bytes + bytes.len() > GUIDE_CACHE_MAX {
+    while c.bytes + bytes.len() > AGENT_FILE_CACHE_MAX {
         let Some(oldest) = c
             .map
             .iter()
@@ -239,15 +241,15 @@ fn cache_put(digest: &str, bytes: std::sync::Arc<Vec<u8>>) {
     c.map.insert(digest.to_owned(), (bytes, tick));
 }
 
-/// Bytes of a guide file by digest (never by kind, `get_guide_blob`).
-async fn guide_bytes(
+/// Bytes of an agent file by digest (never by kind, `get_agent_blob`).
+async fn agent_bytes(
     conn: &mut PgConnection,
     digest: &str,
 ) -> Result<Option<std::sync::Arc<Vec<u8>>>, DbError> {
     if let Some(b) = cache_get(digest) {
         return Ok(Some(b));
     }
-    let Some(bytes) = aurora_db::repo::plugins::get_guide_blob(&mut *conn, digest).await? else {
+    let Some(bytes) = aurora_db::repo::plugins::get_agent_blob(&mut *conn, digest).await? else {
         return Ok(None);
     };
     let bytes = std::sync::Arc::new(bytes);
@@ -255,32 +257,29 @@ async fn guide_bytes(
     Ok(Some(bytes))
 }
 
-/// The folder of one app in the agent's home (`24 §2`): the files Aurora writes and the package's
-/// guide files, as `(file name, content)`.
+/// The folder of one app in the agent's home (`24 §2`): the files Aurora writes, as
+/// `(file name, content)`, and the app skills that are projected into the harness skills folder.
 struct AppFolder {
     app_id: String,
     generated: Vec<(String, String)>,
-    reference: Vec<(String, String)>,
-    /// `guide.md` with the "reference files left out" form, for when the budget is exhausted.
-    guide_without_reference: String,
-    /// `api.json` without the recipe list, for an app left without its reference files.
-    api_without_reference: Option<String>,
+    /// The app's winning skills, empty when the sync budget left them out (C-1134).
+    skills: Vec<AppSkill>,
 }
 
 /// (P5-WEBHOOK-3, C-911) The render input of an outgoing-webhook account: name, note, method and
 /// slots, read from the connection's stored configuration. Never the template, headers, URL or
-/// secrets (`GuideWebhook` has no field for them). `None` for any other app, or a configuration
+/// secrets (`AppWebhook` has no field for them). `None` for any other app, or a configuration
 /// that does not parse (the account is then listed without an operation).
 fn webhook_input(
     app: &aurora_registry::snapshot::AppEntry,
     c: &hosted::HomeAppConn,
-) -> Option<aurora_registry::agent_guide::GuideWebhook> {
+) -> Option<aurora_registry::app_folder::AppWebhook> {
     use aurora_registry::manifest::SecretLinkMode;
     if app.secret_link.as_ref().map(|s| s.mode()) != Some(SecretLinkMode::Send) {
         return None;
     }
     let cfg: aurora_webhook::WebhookConfig = serde_json::from_value(c.config.clone()?).ok()?;
-    Some(aurora_registry::agent_guide::GuideWebhook {
+    Some(aurora_registry::app_folder::AppWebhook {
         name: c.label.clone(),
         description: cfg.description,
         method: cfg.method.as_str().to_owned(),
@@ -289,15 +288,17 @@ fn webhook_input(
 }
 
 /// Renders the folder of one app for one agent from the grant rows of its connections.
-async fn app_folder(
+async fn folder_of(
     conn: &mut PgConnection,
     snap: &aurora_registry::snapshot::Snapshot,
     app: &aurora_registry::snapshot::AppEntry,
     conns: &[&hosted::HomeAppConn],
     databases: &[Value],
+    skills: &aurora_registry::app_folder::AppSkills,
+    projected: Vec<AppSkill>,
 ) -> Result<AppFolder, ApiError> {
-    use aurora_registry::agent_guide::{self, GrantAccess, GuideAccount};
-    let accounts: Vec<GuideAccount> = conns
+    use aurora_registry::app_folder::{self, AppAccount, GrantAccess};
+    let accounts: Vec<AppAccount> = conns
         .iter()
         .map(|c| {
             let host = c
@@ -305,7 +306,7 @@ async fn app_folder(
                 .clone()
                 .or_else(|| c.tenant_host.clone())
                 .or_else(|| app.instances.as_ref().and_then(|i| i.default_host.clone()));
-            GuideAccount {
+            AppAccount {
                 id: c.connection_id.to_string(),
                 label: c.label.clone(),
                 host,
@@ -343,7 +344,7 @@ async fn app_folder(
     // or unparsable blob leaves `api.json` to the catalogue entries.
     let mut operations = None;
     if let Some(r) = app.agent.as_ref().and_then(|a| a.operations.as_ref()) {
-        match guide_bytes(conn, &r.sha256).await? {
+        match agent_bytes(conn, &r.sha256).await? {
             Some(bytes) => match aurora_registry::operations::parse(&bytes) {
                 Ok(f) => operations = Some(f),
                 Err(e) => {
@@ -355,60 +356,73 @@ async fn app_folder(
             }
         }
     }
-    let with = agent_guide::render_with_operations(
+    let rendered = app_folder::render_with_operations(
         app,
         &lost,
         &accounts,
         version,
-        true,
-        operations.as_ref(),
-    );
-    let without = agent_guide::render_with_operations(
-        app,
-        &lost,
-        &accounts,
-        version,
-        false,
+        skills,
         operations.as_ref(),
     );
     let mut generated = vec![
-        ("guide.md".to_owned(), with.guide_md),
-        ("tools.md".to_owned(), with.tools_md),
+        ("app.md".to_owned(), rendered.app_md),
+        ("tools.md".to_owned(), rendered.tools_md),
     ];
-    if let Some(api) = with.api_json {
+    if let Some(api) = rendered.api_json {
         generated.push(("api.json".to_owned(), api));
-    }
-    let mut reference = Vec::new();
-    for g in app.agent.iter().flat_map(|a| a.guide.iter()) {
-        let Some(bytes) = guide_bytes(conn, &g.sha256).await? else {
-            tracing::warn!(app = %app.app_id, file = %g.file, "guide file blob missing; not projected");
-            continue;
-        };
-        let Ok(text) = std::str::from_utf8(&bytes) else {
-            tracing::warn!(app = %app.app_id, file = %g.file, "guide file is not UTF-8; not projected");
-            continue;
-        };
-        reference.push((
-            g.file.clone(),
-            agent_guide::project_file(&app.about.name, version, g, text),
-        ));
     }
     Ok(AppFolder {
         app_id: app.app_id.clone(),
         generated,
-        reference,
-        guide_without_reference: without.guide_md,
-        api_without_reference: without.api_json,
+        skills: projected,
     })
 }
 
+/// The connections an agent's home lists apps for: active, with a grant, and the app available to
+/// the organization and workspace (C-644). The skills' tier merge uses the same set (C-1133).
+pub(crate) async fn granted_connections(
+    state: &AppState,
+    conn: &mut PgConnection,
+    agent: uuid::Uuid,
+    org: uuid::Uuid,
+    workspace: uuid::Uuid,
+) -> Result<Vec<hosted::HomeAppConn>, ApiError> {
+    let av = crate::domains::apps::service::availability_of(state, org, workspace).await?;
+    Ok(hosted::home_app_connections(conn, agent)
+        .await?
+        .into_iter()
+        .filter(|c| av.is_available(&c.app_id))
+        .collect())
+}
+
+/// The names the agent's own, workspace and organization tiers hold with an enabled skill, with
+/// the tier: what an app skill never overrides (C-1133).
+fn taken_of(
+    skills: &[hosted::SkillRow],
+) -> std::collections::BTreeMap<String, (&'static str, Option<uuid::Uuid>)> {
+    skills
+        .iter()
+        .map(|s| {
+            let tier = match s.tier.as_str() {
+                "agent" => "agent",
+                "workspace" => "workspace",
+                _ => "org",
+            };
+            (s.name.clone(), (tier, Some(s.id)))
+        })
+        .collect()
+}
+
 /// `render_inputs` entry: shapes of `aurora-supervisor`'s `instructions::RenderInputs`, and the
-/// app folders of the same apps.
+/// app folders of the same apps. `taken` is what the database tiers hold (C-1133); `skills_dir` the
+/// harness skills folder relative to the home.
 async fn render_inputs(
     state: &AppState,
     conn: &mut PgConnection,
     agent: uuid::Uuid,
     inputs: &hosted::HomeInputs,
+    taken: &std::collections::BTreeMap<String, (&'static str, Option<uuid::Uuid>)>,
+    skills_dir: &str,
 ) -> Result<(Value, Vec<AppFolder>), ApiError> {
     // Apps with an effective grant: one entry per app, accounts = the granted connections.
     let snap = crate::domains::plugins::registry::active_typed(state).await?;
@@ -420,17 +434,8 @@ async fn render_inputs(
     let mut links: Vec<Value> = Vec::new();
     let mut servers: Vec<Value> = Vec::new();
     if let Some(snap) = snap {
-        let av = crate::domains::apps::service::availability_of(
-            state,
-            inputs.org_id,
-            inputs.workspace_id,
-        )
-        .await?;
-        let conns: Vec<_> = hosted::home_app_connections(conn, agent)
-            .await?
-            .into_iter()
-            .filter(|c| av.is_available(&c.app_id))
-            .collect();
+        let conns =
+            granted_connections(state, conn, agent, inputs.org_id, inputs.workspace_id).await?;
         // (P2-DBL-2, C-231) libpq service names of the granted database connections of the whole
         // agent (a name shared by two connections gets the id prefix on both).
         let is_db = |app_id: &str| {
@@ -485,6 +490,35 @@ async fn render_inputs(
                 }))
             })
             .collect();
+        // (C-1133, C-1134) The app skills of every listed app, merged once under the database tiers;
+        // apps in `app_id` order take the sync budget, the first that does not fit and every later
+        // one project no skills.
+        let mut app_ids: Vec<String> = conns.iter().map(|c| c.app_id.clone()).collect();
+        app_ids.sort();
+        app_ids.dedup();
+        let merged = app_skills::merge(app_skills::candidates(&snap, &app_ids), taken);
+        let mut left_out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut used = 0usize;
+        for id in &app_ids {
+            let need: usize = merged
+                .winners
+                .iter()
+                .filter(|w| &w.app_id == id)
+                .map(|w| {
+                    (w.skill.size + w.skill.files.iter().map(|f| f.size).sum::<u64>()) as usize
+                })
+                .sum();
+            if !left_out.is_empty() || used + need > state.app_skills_sync_max {
+                if left_out.is_empty() {
+                    tracing::warn!(agent = %agent, app = %id,
+                        "app skills over the sync budget; no app skills from this app on");
+                    metrics::counter!("aurora_home_app_skills_budget_exceeded_total").increment(1);
+                }
+                left_out.insert(id.clone());
+            } else {
+                used += need;
+            }
+        }
         let mut seen: Vec<&str> = Vec::new();
         for c in &conns {
             if seen.contains(&c.app_id.as_str()) {
@@ -545,11 +579,56 @@ async fn render_inputs(
                 "snippet": snippet,
                 "app_id": app.app_id,
                 "summary": agent_summary(app),
-                "guide_path": format!("{}/{}/guide.md", APPS_ROOT, app.app_id),
+                "guide_path": format!("{}/{}/app.md", APPS_ROOT, app.app_id),
             }));
             let of_app: Vec<&hosted::HomeAppConn> =
                 conns.iter().filter(|x| x.app_id == c.app_id).collect();
-            folders.push(app_folder(conn, &snap, app, &of_app, &databases).await?);
+            let is_left_out = left_out.contains(&app.app_id);
+            let mut lines: Vec<aurora_registry::app_folder::SkillLine> = Vec::new();
+            for w in merged.winners.iter().filter(|w| w.app_id == app.app_id) {
+                lines.push(aurora_registry::app_folder::SkillLine {
+                    name: w.skill.name.clone(),
+                    description: w.skill.description.clone(),
+                    shadowed_by: None,
+                });
+            }
+            for (sh, by) in merged
+                .shadowed
+                .iter()
+                .filter(|(s, _)| s.app_id == app.app_id)
+            {
+                // Only a skill another tier of the agent shadows is listed; one another app's skill
+                // shadows is that app's to list.
+                if let By::Tier { tier, .. } = by {
+                    lines.push(aurora_registry::app_folder::SkillLine {
+                        name: sh.skill.name.clone(),
+                        description: sh.skill.description.clone(),
+                        shadowed_by: Some(match *tier {
+                            "agent" => aurora_registry::app_folder::ShadowTier::Agent,
+                            "workspace" => aurora_registry::app_folder::ShadowTier::Workspace,
+                            _ => aurora_registry::app_folder::ShadowTier::Organization,
+                        }),
+                    });
+                }
+            }
+            lines.sort_by(|a, b| a.name.cmp(&b.name));
+            let skills = aurora_registry::app_folder::AppSkills {
+                lines,
+                left_out: is_left_out,
+                skills_dir: skills_dir.to_owned(),
+            };
+            let projected: Vec<AppSkill> = if is_left_out {
+                Vec::new()
+            } else {
+                merged
+                    .winners
+                    .iter()
+                    .filter(|w| w.app_id == app.app_id)
+                    .cloned()
+                    .collect()
+            };
+            folders
+                .push(folder_of(conn, &snap, app, &of_app, &databases, &skills, projected).await?);
         }
     }
     folders.sort_by(|a, b| a.app_id.cmp(&b.app_id));
@@ -604,6 +683,28 @@ async fn render_inputs(
     ))
 }
 
+/// The files of an app skill that may be projected, `None` when its name is refused. The shared
+/// rules (`skill_format::check_name`, `path_ok`) run again here because the projected path is
+/// built from the snapshot's name and file paths; a bad file is skipped with a warning.
+fn projectable(sk: &AppSkill) -> Option<Vec<&aurora_registry::snapshot::SkillFileEntry>> {
+    if aurora_registry::skill_format::check_name(&sk.skill.name).is_err() {
+        return None;
+    }
+    Some(
+        sk.skill
+            .files
+            .iter()
+            .filter(|f| {
+                let ok = aurora_registry::skill_format::path_ok(&f.path);
+                if !ok {
+                    tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, "app skill file path refused; not projected");
+                }
+                ok
+            })
+            .collect(),
+    )
+}
+
 /// Home-relative root of the app folders (C-643).
 const APPS_ROOT: &str = ".aurora/apps";
 
@@ -633,7 +734,9 @@ pub async fn render(
     let mut manifest: Vec<Value> = Vec::new();
 
     let mut skill_entries = Vec::new();
-    for s in hosted::skills(conn, inputs.org_id, inputs.workspace_id, claim.agent_id).await? {
+    let db_skills =
+        hosted::skills(conn, inputs.org_id, inputs.workspace_id, claim.agent_id).await?;
+    for s in &db_skills {
         let path = format!("{skills_root}/{}/SKILL.md", s.name);
         let content = format!(
             "---\nname: {}\ndescription: {}\n---\n\n{}",
@@ -653,6 +756,7 @@ pub async fn render(
             skill_entries.push(json!({"path": path, "content": text, "exec": f.executable}));
         }
     }
+    let taken = taken_of(&db_skills);
 
     let mems = hosted::memories(conn, claim.agent_id).await?;
     let mut memory_entries = Vec::new();
@@ -664,44 +768,55 @@ pub async fn render(
     manifest.push(json!({"path": "memory/index.md"}));
     memory_entries.push(json!({"path": "memory/index.md", "content": memory_index(&mems)}));
 
-    let (mut render_inputs, folders) = render_inputs(state, conn, claim.agent_id, &inputs).await?;
+    let (mut render_inputs, folders) =
+        render_inputs(state, conn, claim.agent_id, &inputs, &taken, skills_root).await?;
 
-    // (P5-GUIDE-2, C-643) The `apps` part: per app `guide.md`, `tools.md` and the package's guide
-    // files. The reference files of one sync total at most the budget; apps are taken in `app_id`
-    // order and the first one that does not fit, and every later one, get the generated files only.
+    // (C-643, C-1134) The `apps` part: per app `app.md`, `tools.md` and `api.json`, nothing else. The
+    // app skills are ordinary entries of the `skills` part (the lowest tier), with the provenance line
+    // after the frontmatter; a script keeps its executable bit.
     let mut app_entries: Vec<Value> = Vec::new();
-    let mut reference_used = 0usize;
-    let mut over_budget = false;
     for f in folders {
-        let need: usize = f.reference.iter().map(|(_, c)| c.len()).sum();
-        if !over_budget && reference_used + need > state.guide_sync_max {
-            over_budget = true;
-            tracing::warn!(agent = %claim.agent_id, app = %f.app_id,
-                "agent guide reference files over the sync budget; generated files only from this app on");
-            metrics::counter!("aurora_home_guide_budget_exceeded_total").increment(1);
-        }
-        if !over_budget {
-            reference_used += need;
-        }
-        let mut files = f.generated;
-        if over_budget && let Some(g) = files.iter_mut().find(|(n, _)| n == "guide.md") {
-            g.1 = f.guide_without_reference.clone();
-        }
-        if over_budget
-            && let (Some(a), Some(api)) = (
-                files.iter_mut().find(|(n, _)| n == "api.json"),
-                f.api_without_reference.clone(),
-            )
-        {
-            a.1 = api;
-        }
-        if !over_budget {
-            files.extend(f.reference);
-        }
-        for (name, content) in files {
+        for (name, content) in f.generated {
             let path = format!("{APPS_ROOT}/{}/{name}", f.app_id);
             manifest.push(json!({"path": path}));
             app_entries.push(json!({"path": path, "content": content}));
+        }
+        for sk in &f.skills {
+            // (SEC-150) Defence in depth: the snapshot's names and paths were validated at ingest, but
+            // the projected path is built from them, so the shared rules run again here.
+            let Some(files) = projectable(sk) else {
+                tracing::warn!(app = %sk.app_id, "app skill name refused; not projected");
+                continue;
+            };
+            let Some(md) = agent_bytes(conn, &sk.skill.sha256).await? else {
+                tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, "app skill blob missing; not projected");
+                continue;
+            };
+            let Some(text) = aurora_registry::app_folder::project_skill_md(
+                &sk.app_name,
+                &sk.version,
+                &sk.skill.name,
+                &md,
+            ) else {
+                tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, "app skill is not a valid SKILL.md; not projected");
+                continue;
+            };
+            let path = format!("{skills_root}/{}/SKILL.md", sk.skill.name);
+            manifest.push(json!({"path": path}));
+            skill_entries.push(json!({"path": path, "content": text}));
+            for file in files {
+                let Some(bytes) = agent_bytes(conn, &file.sha256).await? else {
+                    tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, file = %file.path, "app skill file blob missing; not projected");
+                    continue;
+                };
+                let Ok(text) = std::str::from_utf8(&bytes) else {
+                    tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, file = %file.path, "app skill file is not UTF-8; not projected");
+                    continue;
+                };
+                let path = format!("{skills_root}/{}/{}", sk.skill.name, file.path);
+                manifest.push(json!({"path": path}));
+                skill_entries.push(json!({"path": path, "content": text, "exec": file.executable}));
+            }
         }
     }
     // (P5-GUIDE-7, C-654) The catalogue of the agent's available tools, and from it the family
@@ -911,6 +1026,55 @@ pub(crate) fn fit_render_inputs(v: &mut Value, max: usize) -> bool {
 #[cfg(test)]
 mod name_tests {
     use super::*;
+
+    fn skill(name: &str, paths: &[&str]) -> AppSkill {
+        AppSkill {
+            app_id: "a".into(),
+            app_name: "A".into(),
+            version: "1".into(),
+            skill: aurora_registry::snapshot::SkillEntry {
+                name: name.into(),
+                description: "d".into(),
+                sha256: "0".into(),
+                size: 1,
+                files: paths
+                    .iter()
+                    .map(|p| aurora_registry::snapshot::SkillFileEntry {
+                        path: (*p).into(),
+                        sha256: "0".into(),
+                        size: 1,
+                        executable: false,
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    /// (SEC-150) A hand-built snapshot entry with a traversal name or path is not projected: the
+    /// shared name and path rules run again where the projected path is built.
+    #[test]
+    fn a_snapshot_entry_with_a_bad_name_or_path_is_not_projected() {
+        for bad in ["..", "a/b", "../x", "Aurora-x", "aurora", "A B", ""] {
+            assert!(projectable(&skill(bad, &[])).is_none(), "{bad:?}");
+        }
+        let ok = skill(
+            "a-x",
+            &[
+                "scripts/run.sh",
+                "../escape.sh",
+                "/abs",
+                "a/../b",
+                "skill.md",
+                "a//b",
+            ],
+        );
+        let files: Vec<&str> = projectable(&ok)
+            .unwrap()
+            .iter()
+            .map(|f| f.path.as_str())
+            .collect();
+        assert_eq!(files, ["scripts/run.sh"]);
+    }
 
     /// (P5-GUIDE-7, C-654) `render_inputs.platform_tools` over the real registry: core tools stay
     /// out of the families, every on-demand tool is in exactly one family with a purpose, and the

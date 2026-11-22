@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mockApi } from "./support/mock-api";
 import { CANVAS, overflow, titled, type Scheme } from "./support/open";
 
-// P5-GUIDE-3 (C-648; 14 §Plugins, 24 §9): the Agent guide section of a package and of its pending-version review —
+// P5-GUIDE-3 (C-1136; 14 §Plugins, 24 §9): the agent section of a package and of its pending-version review —
 // the files, the change marks, a file opened as plain text, hostile text as inert data, themed in both themes, no
 // horizontal page scroll at 390 px (a 64 KiB file of 400-character lines scrolls inside its viewer), no serious axe
 // violation. The API is mocked.
@@ -15,7 +15,7 @@ const HOSTILE = '# API\n<img src=x onerror="window.__pwned=1">\n[click](javascri
 
 const plugin = {
   id: PKG,
-  package_id: "fixture-guide",
+  package_id: "fixture-app-skills",
   version: "1.1.0",
   contract: 1,
   publisher: "fixtures",
@@ -31,7 +31,7 @@ const plugin = {
   status: "pending_approval",
   status_reason: null,
   violations: [],
-  apps: [{ app_id: "guide-demo", name: "Guide demo" }],
+  apps: [{ app_id: "skills-demo", name: "Skills demo" }],
   permissions: { hooks: [], egress: {}, context: [] },
   host_claims: [],
   widenings: [],
@@ -39,24 +39,34 @@ const plugin = {
   approved_by: null,
   approved_at: null,
   created_at: "2026-11-18T00:00:00Z",
-  agent_guides: [
+  agent: [
     {
-      app_id: "guide-demo",
+      app_id: "skills-demo",
       summary: "Things, lists and creating them.",
       instructions: "Use numeric ids.\nNever retry a create.",
-      files: [
-        { file: "api.md", title: "REST conventions", kind: "reference", size: HOSTILE.length, sha256: "a".repeat(64) },
-        { file: "steps.md", title: "Create a thing", kind: "recipe", size: LONG.length, sha256: "b".repeat(64) },
+      skills: [
+        {
+          name: "skills-demo-api",
+          description: "REST conventions",
+          size: HOSTILE.length,
+          files: [{ path: "SKILL.md", size: HOSTILE.length, sha256: "a".repeat(64), executable: false }],
+        },
+        {
+          name: "skills-demo-steps",
+          description: "Create a thing",
+          size: LONG.length,
+          files: [{ path: "SKILL.md", size: LONG.length, sha256: "b".repeat(64), executable: false }],
+        },
       ],
       operations: null,
       changed: {
         summary: false,
         instructions: true,
         operations: false,
-        files: [
-          { file: "steps.md", change: "added" },
-          { file: "api.md", change: "changed" },
-          { file: "old.md", change: "removed" },
+        skills: [
+          { name: "skills-demo-steps", change: "added", files: [{ path: "SKILL.md", change: "added" }] },
+          { name: "skills-demo-api", change: "changed", files: [{ path: "SKILL.md", change: "changed" }] },
+          { name: "skills-demo-old", change: "removed", files: [{ path: "SKILL.md", change: "removed" }] },
         ],
       },
     },
@@ -70,12 +80,12 @@ async function open(page: Page, scheme: Scheme) {
   await page.route(`**/v1/admin/plugins/${PKG}`, (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(plugin) }),
   );
-  await page.route(`**/v1/admin/plugins/${PKG}/agent-guides/guide-demo/*`, (route) => {
-    const file = route.request().url().split("/").pop();
+  await page.route(`**/v1/admin/plugins/${PKG}/apps/skills-demo/skills/*/file`, (route) => {
+    const steps = route.request().url().includes("/skills-demo-steps/");
     return route.fulfill({
       status: 200,
       contentType: "text/plain; charset=utf-8",
-      body: file === "steps.md" ? LONG : HOSTILE,
+      body: steps ? LONG : HOSTILE,
     });
   });
   await page.emulateMedia({ colorScheme: scheme });
@@ -96,23 +106,22 @@ for (const width of [1280, 390]) {
         expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
         // (P5-POLISH-10) The review's sections are open from the start.
         await expect(page.getByRole("button", { name: /What agents can read/ })).toHaveAttribute("aria-expanded", "true");
-        const app = page.getByTestId("agent-guide-guide-demo");
-        await expect(app.getByRole("heading", { name: "Recipes" })).toBeVisible();
-        await expect(app.getByRole("heading", { name: "Reference files" })).toBeVisible();
-        await expect(app.getByText("old.md")).toBeVisible();
-        await expect(page.getByText("Agents that use this app can read this text. It is written by the publisher.")).toBeVisible();
+        const app = page.getByTestId("agent-guide-skills-demo");
+        await expect(app.getByRole("heading", { name: "Skills" })).toBeVisible();
+        await expect(app.getByText("skills-demo-old/SKILL.md")).toBeVisible();
+        await expect(page.getByText(/Agents that use this app get these skills/)).toBeVisible();
 
         // A hostile file is text: no element, no link, nothing executed; its first line is visible.
-        await app.getByRole("button", { name: "api.md" }).click();
-        const viewer = page.getByRole("region", { name: "File api.md" });
+        await app.getByRole("button", { name: "skills-demo-api/SKILL.md" }).click();
+        const viewer = page.getByRole("region", { name: "File skills-demo-api/SKILL.md" });
         await expect(viewer).toContainText("# API");
         expect(await viewer.locator("*").count()).toBe(0);
         expect(await page.locator("a[href^='javascript:']").count()).toBe(0);
         expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
 
         // 64 KiB of 400-character lines: the viewer scrolls, the page does not.
-        await app.getByRole("button", { name: "steps.md" }).click();
-        const big = page.getByRole("region", { name: "File steps.md" });
+        await app.getByRole("button", { name: "skills-demo-steps/SKILL.md" }).click();
+        const big = page.getByRole("region", { name: "File skills-demo-steps/SKILL.md" });
         await expect(big).toBeVisible();
         expect(await big.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
         expect(await overflow(page), "page overflows horizontally").toBeLessThanOrEqual(0);

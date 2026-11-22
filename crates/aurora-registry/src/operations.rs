@@ -1,7 +1,7 @@
 //! (P5-GUIDE-6, `docs/24 §3.5`, C-651) The operations file: the model of
 //! `agent/<app_id>/<file>.json` (`aurora.operations/1`). Closed schema: unknown keys anywhere are
 //! errors (`deny_unknown_fields`). The linter is `validate::agent_operations_rules`; the renderer
-//! re-emits the validated entries into `api.json` (`agent_guide::render`).
+//! re-emits the validated entries into `api.json` (`app_folder::render`).
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

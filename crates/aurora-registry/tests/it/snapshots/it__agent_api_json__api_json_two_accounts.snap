@@ -1,5 +1,6 @@
 ---
 source: crates/aurora-registry/tests/it/agent_api_json.rs
+assertion_line: 61
 expression: "api(Some(OPS), &a)"
 ---
 {
@@ -137,12 +138,8 @@ expression: "api(Some(OPS), &a)"
       "tool": "make_thing"
     }
   ],
-  "recipes": [
-    {
-      "file": "make-and-check.md",
-      "title": "Make a thing and check it"
-    }
-  ],
+  "recipes": [],
+  "skills": [],
   "untooled": {
     "A": "allowed",
     "B": "blocked"

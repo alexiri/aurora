@@ -159,10 +159,7 @@ const SLACK_SLOTS: &str =
 
 fn lint(files: &[(&str, String)]) -> Vec<Violation> {
     let m = Manifest::parse(&manifest(CREDS, SECTION, TOOLS), "0.1.0").unwrap();
-    let mut pkg = Package {
-        files: Default::default(),
-        signature: None,
-    };
+    let mut pkg = Package::default();
     for (f, c) in files {
         pkg.files
             .insert(format!("presets/{f}"), c.clone().into_bytes());
@@ -177,10 +174,7 @@ fn a_valid_preset_passes_and_is_loaded() {
     let good = preset("slack", r#"{"text":{{text}}}"#, SLACK_SLOTS, "[]");
     assert!(lint(&[("slack.json", good.clone())]).is_empty());
     let m = Manifest::parse(&manifest(CREDS, SECTION, TOOLS), "0.1.0").unwrap();
-    let mut pkg = Package {
-        files: Default::default(),
-        signature: None,
-    };
+    let mut pkg = Package::default();
     pkg.files
         .insert("presets/slack.json".into(), good.into_bytes());
     let loaded = presets(&m, &pkg);
@@ -232,10 +226,7 @@ fn listed_and_present_must_agree_and_ids_are_unique() {
         TOOLS,
     );
     let m = Manifest::parse(&y, "0.1.0").unwrap();
-    let mut pkg = Package {
-        files: Default::default(),
-        signature: None,
-    };
+    let mut pkg = Package::default();
     let p = preset("same", r#"{"text":{{text}}}"#, SLACK_SLOTS, "[]").into_bytes();
     pkg.files.insert("presets/a.json".into(), p.clone());
     pkg.files.insert("presets/b.json".into(), p);

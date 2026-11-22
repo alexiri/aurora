@@ -41,8 +41,8 @@ pub struct AppInfo {
     pub docs_links: Vec<String>,
     /// Plugin-authored (third-party) notes.
     pub snippet: Option<String>,
-    /// (P5-GUIDE-2, C-644) The app's id, its one-line summary and the path of its `guide.md`. Absent
-    /// from an API that predates the agent guides: the instruction file then keeps the inline form.
+    /// (P5-GUIDE-2, C-644) The app's id, its one-line summary and the path of its `app.md`. Absent
+    /// from an API that predates the app folders: the instruction file then keeps the inline form.
     pub app_id: Option<String>,
     pub summary: Option<String>,
     pub guide_path: Option<String>,
@@ -277,12 +277,12 @@ the conversation. Fetch pages in a loop inside one command instead of one reques
 fn apps_index(o: &mut String, apps: &[AppInfo], agent_cli: bool) {
     o.push_str(
         "Each app has a folder `.aurora/apps/<app id>/`. Before your first request to an app in a \
-conversation, read its `guide.md`: your accounts, recipes for common tasks, how the API works and \
-the files worth reading.",
+conversation, read its `app.md`: your accounts, the app's skills, how the API works and the files \
+worth reading.",
     );
     if agent_cli {
         o.push_str(
-            " `aurora-agent search <words>` finds operations and recipes across your apps; \
+            " `aurora-agent search <words>` finds operations and skills across your apps; \
 `aurora-agent call <app> <operation>` makes a request and saves the response to a file.",
         );
     }
@@ -656,7 +656,7 @@ mod tests {
             snippet: Some("PLUGIN NOTES that must not appear".into()),
             app_id: Some(id.into()),
             summary: summary.map(Into::into),
-            guide_path: Some(format!(".aurora/apps/{id}/guide.md")),
+            guide_path: Some(format!(".aurora/apps/{id}/app.md")),
         }
     }
 

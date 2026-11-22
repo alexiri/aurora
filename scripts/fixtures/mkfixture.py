@@ -45,18 +45,60 @@ def stage(src, dst, wasm=None):
         open(guide, "wb").write(b"# Setup\n\n\xff\xfe not UTF-8\n")
     elif not os.path.exists(guide):
         open(guide, "w").write("# Setup\n\nTest fixture package.\n")
-    # P5-GUIDE-1: guide files that cannot be checked in as text (a CR, a size over the limit).
-    if mode in ("agent-not-text", "agent-too-large"):
-        d = os.path.join(dst, "agent", "invalid-app")
-        os.makedirs(d, exist_ok=True)
-        body = b"# API\r\nCRLF is not allowed\r\n" if mode == "agent-not-text" else b"x" * (64 * 1024 + 1)
-        open(os.path.join(d, "api.md"), "wb").write(body)
+    # P5-APPSKILL-1 (C-1130): app skills that are too big or too many to check in as text.
+    if mode.startswith("app-skill"):
+        app_skills(dst, mode)
     if wasm:
         shutil.copy(wasm, os.path.join(dst, "hooks.wasm"))
     # FIX-101: synthetic hooks.wasm for the hooks_wasm_* rules (the package declares `hooks:` so the build
     # includes hooks.wasm; these bytes replace the real component before signing).
     if mode.startswith("wasm-"):
         open(os.path.join(dst, "hooks.wasm"), "wb").write(synthetic_wasm(mode))
+
+
+def _skill_md(name, body="Steps.\n"):
+    return f"---\nname: {name}\ndescription: Do the thing.\n---\n\n{body}".encode()
+
+
+def app_skills(dst, mode):
+    """Writes the skills of the `fixture-invalid-app-skill-*` cases whose size makes a checked-in
+    copy unreasonable (the limits are in docs/02 section Limits)."""
+    root = os.path.join(dst, "skills", "invalid-app")
+
+    def put(skill, rel, data):
+        p = os.path.join(root, skill, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "wb").write(data)
+
+    one = "invalid-app-x"
+    if mode == "app-skill-body-too-large":
+        put(one, "SKILL.md", _skill_md(one, "x" * 24_001))
+    elif mode == "app-skill-too-large":  # body 20000 + a 13000-character file: over 32000 in total
+        put(one, "SKILL.md", _skill_md(one, "x" * 20_000))
+        put(one, "reference/notes.txt", b"y" * 13_000)
+    elif mode == "app-skill-file-too-large":
+        put(one, "SKILL.md", _skill_md(one))
+        put(one, "reference/big.txt", b"z" * (64 * 1024 + 1))
+    elif mode == "app-skill-too-many-files":
+        put(one, "SKILL.md", _skill_md(one))
+        for i in range(51):
+            put(one, f"reference/f{i}.txt", b"x\n")
+    elif mode == "app-skill-not-text":
+        put(one, "SKILL.md", _skill_md(one))
+        put(one, "scripts/blob.bin", b"binary\x00data")
+    elif mode == "app-skill-bom":
+        put(one, "SKILL.md", _skill_md(one))
+        put(one, "reference/bom.txt", "\ufeffhello\n".encode())
+    elif mode == "app-skills-too-many":  # 17 skills
+        for i in range(17):
+            n = f"invalid-app-s{i}"
+            put(n, "SKILL.md", _skill_md(n))
+    elif mode == "app-skills-app-too-large":  # 16 skills of ~17 KB: over 256 KiB in total
+        for i in range(16):
+            n = f"invalid-app-s{i}"
+            put(n, "SKILL.md", _skill_md(n, "w" * 17_000))
+    else:
+        sys.exit(f"unknown mutation {mode}")
 
 
 def _leb(n):

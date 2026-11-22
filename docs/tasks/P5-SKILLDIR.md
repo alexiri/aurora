@@ -81,7 +81,7 @@ change.
 - `10 §Skills`: a bullet "A skill refers to its own files as `$SKILLS_DIR/<name>/…`; a path with a
   harness folder in it (`.claude/skills/…`) works on one harness only". `10 §Agent instructions`: the
   Skills line.
-- `docs/24-app-guides.md:881`: the "codex may have no skills directory" reason is wrong (codex has had
+- `docs/24-apps-for-agents.md:881`: the "codex may have no skills directory" reason is wrong (codex has had
   `.codex/skills/aurora` since P4-HAR); say so in one line and point to D-454.
 - `docs/operator/skill-libraries.md`: one paragraph for library authors (scripts by `$SKILLS_DIR`).
 

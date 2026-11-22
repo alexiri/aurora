@@ -1,3 +1,4 @@
+use super::app_skills;
 use super::dto::*;
 use super::service::{self, NewSkill, Owner, Patch};
 use crate::app::AppState;
@@ -266,18 +267,36 @@ async fn effective_agent_skills(
 ) -> Result<Json<EffectiveSkills>, ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
     let e = service::effective(&s.pool, &a).await?;
-    let mut items = Vec::with_capacity(e.items.len());
+    let apps = app_skills::effective_of(&s, &a, &e).await?;
+    let app_names_of = |sk: &app_skills::AppSkill| AppRef {
+        app_id: sk.app_id.clone(),
+        name: sk.app_name.clone(),
+        version: sk.version.clone(),
+    };
+    let tier_ref = |(id, tier): (Uuid, &'static str)| TierRef {
+        id: Some(id),
+        tier,
+        app_id: None,
+    };
+    let mut items = Vec::with_capacity(e.items.len() + apps.items.len());
     for i in e.items {
         let skill = service::dto(&s.pool, i.view).await?;
+        let name = skill.name.clone();
+        let mut shadows: Vec<TierRef> = i.shadows.into_iter().map(tier_ref).collect();
+        // The lowest tier: an app skill of the same name, if one exists, is shadowed by this one.
+        for (sh, _) in apps.shadowed.iter().filter(|(sh, _)| sh.skill.name == name) {
+            shadows.push(TierRef {
+                id: None,
+                tier: "app",
+                app_id: Some(sh.app_id.clone()),
+            });
+        }
         items.push(EffectiveSkill {
             tier: skill.tier,
             enabled: true,
-            shadows: i
-                .shadows
-                .into_iter()
-                .map(|(id, tier)| TierRef { id, tier })
-                .collect(),
-            skill,
+            shadows,
+            app: None,
+            skill: skill.into(),
         });
     }
     let mut shadowed = Vec::with_capacity(e.shadowed.len());
@@ -286,10 +305,74 @@ async fn effective_agent_skills(
         shadowed.push(ShadowedSkill {
             tier: skill.tier,
             enabled: i.enabled,
-            shadowed_by: i.shadowed_by.map(|(id, tier)| TierRef { id, tier }),
-            skill,
+            shadowed_by: i.shadowed_by.map(tier_ref),
+            app: None,
+            skill: skill.into(),
         });
     }
+    // (C-1133) App skills: an item has `id: null`, `enabled: true`, no library fields and is never
+    // editable; a shadowed one names its winner (a tier's skill, or the app whose id is the longest
+    // prefix of the name).
+    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
+    let app_body = |sk: &app_skills::AppSkill, body: String, enabled: bool| EffectiveBody {
+        id: None,
+        tier: "app",
+        scope: "app",
+        agent_id: None,
+        workspace_id: None,
+        org_id: None,
+        name: sk.skill.name.clone(),
+        description: sk.skill.description.clone(),
+        body,
+        enabled,
+        files: sk
+            .skill
+            .files
+            .iter()
+            .map(|f| SkillFile {
+                path: f.path.clone(),
+                size: f.size as usize,
+                executable: f.executable,
+            })
+            .collect(),
+        total_size: (sk.skill.size + sk.skill.files.iter().map(|f| f.size).sum::<u64>()) as usize,
+        overridden_in: None,
+        source: None,
+        updated_at: None,
+        created_at: None,
+    };
+    for sk in &apps.items {
+        let body = app_skills::body(&mut conn, sk).await?.unwrap_or_default();
+        items.push(EffectiveSkill {
+            tier: "app",
+            enabled: true,
+            shadows: Vec::new(),
+            app: Some(app_names_of(sk)),
+            skill: app_body(sk, body, true),
+        });
+    }
+    for (sk, by) in &apps.shadowed {
+        let body = app_skills::body(&mut conn, sk).await?.unwrap_or_default();
+        shadowed.push(ShadowedSkill {
+            tier: "app",
+            enabled: true,
+            shadowed_by: Some(match by {
+                app_skills::By::Tier { tier, id } => TierRef {
+                    id: *id,
+                    tier,
+                    app_id: None,
+                },
+                app_skills::By::App(a) => TierRef {
+                    id: None,
+                    tier: "app",
+                    app_id: Some(a.clone()),
+                },
+            }),
+            app: Some(app_names_of(sk)),
+            skill: app_body(sk, body, true),
+        });
+    }
+    items.sort_by(|a, b| a.skill.name.cmp(&b.skill.name));
     Ok(Json(EffectiveSkills { items, shadowed }))
 }
 

@@ -35,7 +35,7 @@ build of this branch projects neither guides nor app skills.
 
 ## Read first
 
-- `docs/24-app-guides.md` §3, §4, §10, §12 (what is being replaced), `docs/09-app-plugins.md` §2 (archive,
+- `docs/24-apps-for-agents.md` §3, §4, §10, §12 (what is being replaced), `docs/09-app-plugins.md` §2 (archive,
   canonical digest), §6, §9, §10 (:1408), §12; `docs/10-agents-conversations.md` §Skills (:865) and the
   library rules (:960–975); `docs/22-addon-repos.md` :82–105.
 - `docs/API_CONTRACTS.md` **C-1130..C-1132, C-1138** (and C-640..C-642, C-649, C-650 they amend);
@@ -160,5 +160,90 @@ Known callers: `crates/aurora-registry/tests/it/{agent_guide,agent_guide_lint,ag
 
 ## Completion report
 
-Files changed, commands and results, tests removed with the guide format (each named), the digest test's
-recorded value, which crate `skill_format` landed in and why, and the per-package version bumps.
+**Done 2026-11-22 (lane B, branch `alexiri/p5-polish-b`).** Q-APPSKILL-1 is settled as D-455 (app skills
+cannot be switched off selectively): nothing in the brief changed.
+
+**Where things landed.** `aurora-registry::skill_format` (registry, because the linter, the CLI and the API
+all depend on it and it needs no I/O; it carries `check_name`, `path_ok`, `is_text`, `content_size`,
+`clean_text`, `parse_skill_md[_typed]`, `check_content` and a typed `SkillError{kind,message}`). The API's
+`skill_libraries/content.rs` (`finish`, `parse_skill_md`, `clean_text`) and `skills/service.rs`
+(`validate_name`, `validate_path`, `content_size`) are thin wrappers: `rg "fn parse_skill_md|fn validate_name" services`
+finds only the wrapper `validate_name` (it maps the shared result to `ApiError`; the grammar is not repeated).
+Registry: `package.rs` (`skills/` paths, `Package.executable`), `digest.rs` (`\0x`), `builder.rs`
+(`set_file_exec`), `validate/agent_rules.rs` (was `agent_guide_rules.rs`), `snapshot.rs` (`AgentFiles`,
+`agent_files`, `compile_with_agent_files`, `SkillEntry`), `agent_guide.rs` (`project_skill_md`).
+
+**Done beyond -1's strict text, because the types changed under it** (so the commit compiles and its tests
+pass): the admin API of C-1136 (`agent` on `PluginPackage`, the two file routes, `agent_changed` audit key,
+C-1137) and the `APP_SKILLS_SYNC_MAX` rename in `AppState`; `home.rs` no longer projects guide files (the
+generated files stay; -2 adds the skills). The `guide.md` renderer lost its Recipes and reference lists;
+`api.json` `recipes` is always `[]` (as C-1135 says). `reference_available` is still a parameter, unused until
+-2 (marked in the code).
+
+**Linter.** New codes as C-1130. Operations-file codes renamed because the `agent_guide_*` family is gone:
+`agent_operations_file_name`, `agent_operations_reserved_name`, `agent_operations_missing_file`,
+`agent_operations_not_text`, and `agent_unknown_app` (a file under `agent/<app>/` of an app the package does not
+have). `agent_operations_listed` went with `agent.guide`. A missing `SKILL.md` in a skill folder is reported as
+`app_skill_frontmatter`. `agent_guide_ignored` comes from `validate::warnings` (manifest) and
+`validate::package_warnings` (also stray files under `agent/`); `aurora plugin validate` prints the latter.
+An app id with an underscore cannot ship skills (a skill name has none): `aurora plugin new` says so and
+scaffolds none for it; recorded in docs 22/24 and the README.
+
+**Digest test.** `a_package_without_skills_keeps_its_digest_byte_for_byte`: `plugins/builtin/caldav` digest
+`ccaa1428bb2ec78be4d1d5f693ab93f4cf845e0b03a13d27687cfda53d014b36`, computed on master's blobs by an
+independent Python implementation of `09 §2` (not by the Rust code under test).
+
+**Per-package version bumps** (minor): atlassian 1.4.1→1.5.0, aws-keys 2.3.0→2.4.0, github 2.4.2→2.5.0,
+gitlab 1.4.3→1.5.0, google-workspace 1.4.0→1.5.0, grafana 1.0.0→1.1.0, indico 1.4.1→1.5.0, linear 1.3.0→1.4.0,
+microsoft-365 1.3.0→1.4.0, notion 1.2.0→1.3.0, postgresql 1.4.0→1.5.0, sentry 2.3.1→2.4.0. 20 skills created from
+the 20 guide entries (`git mv`, history kept), `guide.md` → `app.md` in their text; descriptions of reference
+skills hand-written (recipes use their title). `scripts/plugins/check_builtin.py target/debug/aurora plugins/builtin/*/`: every package ok.
+
+**Security notes (SEC-150, registry and ingest part).**
+- *Bounds on third-party skill text and scripts:* the shared validator: name grammar and `aurora` prefix
+  (`app_skill_name`), the name must equal the app id or continue it with `-` and the longest matching app id
+  of the package must be the folder's (`the_longest_matching_app_id_owns_the_skill`); path grammar `[A-Za-z0-9._/-]`,
+  ≤4 segments, ≤200 chars, no `.`/`..`/empty segment, no `skill.md` segment in any case (`app_skill_path`); ≤50 files per
+  skill, each ≤64 KiB, body ≤24000 and body+files ≤32000 characters, ≤16 skills and ≤256 KiB per app; archive entries are regular
+  files only (symlink and hard link → `archive_link`, `skills/` shape is checked in `allowed_path`, other
+  shapes `path_unknown`); files must be valid UTF-8 without NUL or BOM (`app_skill_not_text`); only `SKILL.md`'s
+  frontmatter is parsed (anchors/aliases refused, YAML bounded); the projected frontmatter is rebuilt from `name` and `description`
+  only (`project_skill_md`), never copied.
+- *Executable bit:* recorded by the archive reader for entries under `skills/` only, hashed as `\0x` in the one
+  `digest` function; flipping it either way gives `digest_mismatch`.
+- *Provenance and tiering:* `project_skill_md` prepends the third-party provenance line (one line whatever the app
+  name/version hold); the tier rule (an app skill never overrides a higher tier) and the instruction file are -2.
+  Nothing app-supplied reaches the instruction file in -1 (guide files are no longer projected at all).
+- *Storage/serving:* ingest stores only `SKILL.md`, skill files and the declared operations file as `agent_file`
+  blobs, none for an `invalid` package, none for old guide files; the admin file route serves only paths the
+  stored archive listed for that skill, by digest, `text/plain`, `nosniff`, attachment, `no-store`, instance admins only,
+  path grammar 400.
+- *Tests that fail without each rule:* name/prefix/longest-prefix/frontmatter/path/text/size/count/per-app limits:
+  `app_skills_lint.rs` (each case asserts the exact code, so removing the rule fails it); digest: `app_skills_package.rs`
+  (`an_executable_skill_file_adds_x_to_its_digest_line`, `flipping_the_executable_bit…`, `the_reader_records_the_bit_of_skill_files_only`,
+  `a_symlink_or_hard_link_under_skills_is_refused`); ingest: `plugins_agent_guide.rs`
+  (`a_package_that_breaks_a_skill_rule_is_invalid_with_the_code` stores no blob, `an_old_package_with_a_guide…` stores none,
+  `the_admin_routes_serve_the_skills` incl. the 404 for `plugin.yaml` and the 400s, `a_new_version_reports_what_changed…`
+  with a mode-only change). I did not run the "seen failing first" step by temporarily removing each rule; the assertions are exact-code
+  matches on inputs that only that rule catches (stated honestly).
+
+**Tests changed.** Removed with the guide format: registry `agent_guide_lint.rs` (replaced by `app_skills_lint.rs`),
+`agent_guide_render::reference_files_left_out_by_the_budget_are_not_listed` and `projected_reference_files_carry_the_third_party_header`
+(the latter replaced by `a_projected_app_skill_carries_the_provenance_line`), `agent_operations::…_not_also_a_guide_file…` (now
+`the_operations_file_is_named_and_present`, the `agent_operations_listed` assertion went with `agent.guide`), snapshot `it__agent_guide_render__budget.snap`;
+API `home_agent_guides::the_budget_keeps_generated_files_and_drops_reference_files`, `the_admin_routes_serve_the_guide`,
+`a_new_version_reports_what_changed_and_audits_it` (the last two moved into `plugins_agent_guide.rs` on skills; the budget test returns
+for skills in -2); CLI `guide_renders_the_fixture_package_to_the_golden_directory` (→ `preview_renders…`), `tests/golden/guide/`, the
+`operations.md`/`ops-*.md` openapi goldens. Changed with review: 8 insta snapshots (only the Recipes and reference-file lines and `api.json`
+`recipes` went), `builtin_versions.rs`, `plugins_supersede.rs`, `plugins_upgrade.rs` (new versions, skills in the archive),
+`openapi.rs`, `agent_guide.rs`, `agent_api_json.rs`, `webhook.rs`.
+
+**Commands.** `cargo fmt`; `cargo clippy -p aurora-registry -p aurora-core -p aurora-cli -p aurora-api -p aurora-db --all-targets -- -D warnings`;
+`cargo test -p aurora-registry` (216 ok); `cargo test -p aurora-cli` (all ok, `aurora-gateway` rebuilt first: `check-snapshot` reads the new snapshot);
+`cargo test -p aurora-api --test it -- plugins_agent_guide home_agent_guides skill plugins schema` against the throwaway `pg-p5-polish-b`;
+`python3 scripts/extract-schema.py --check`; `bash scripts/guards/run-all.sh`; `scripts/plugins/check_builtin.py`. Results are in the worker report.
+Not run (CI is the gate): `scripts/fixtures/build.sh` (the new fixtures and `mkfixture.py` modes are unexercised locally), e2e, web.
+
+**Open / left for -2 and -3.** `tests/e2e-hosted` (`fixture-guide`) and the web admin (`agent_guides` in `web/src/lib/api/plugins.ts`,
+`agent-guide-section.tsx`, `web/tests/agent-guide-section.test.tsx`, `web/e2e/agent-guide.spec.ts`, `web/openapi.json`, `schema.d.ts`) still
+reference the old shapes; the openapi/schema regeneration waits for -2 where the API contract is complete.

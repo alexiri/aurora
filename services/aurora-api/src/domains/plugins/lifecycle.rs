@@ -80,7 +80,7 @@ pub async fn act(
     let mut flip_meta: Option<serde_json::Value> = None;
     let mut converted_events: Vec<AuditEvent> = Vec::new();
     let mut supersede_event: Option<AuditEvent> = None;
-    let mut guide_changed: Vec<String> = Vec::new();
+    let mut agent_changed: Vec<String> = Vec::new();
     match action {
         Action::Reject => {
             if row.status != "pending_approval" {
@@ -158,12 +158,12 @@ pub async fn act(
             // version this one supersedes, and its flips commit (or roll back) with the
             // activation and its audit row.
             let impact = upgrade::compute(&mut tx, &row).await?;
-            // (P5-GUIDE-2, C-648) Apps whose agent guide differs from the active version this one
-            // replaces; read before that version is superseded.
+            // (C-1137) Apps whose summary, essentials, operations file or skills differ from the
+            // active version this one replaces; read before that version is superseded.
             if action == Action::Approve {
-                let new = service::guide_view(&mut tx, &row).await?;
-                let old = service::active_guide_view(&mut tx, &row).await?;
-                guide_changed = service::agent_guide_changed(old.as_ref(), &new);
+                let new = service::agent_view(&mut tx, &row).await?;
+                let old = service::active_agent_view(&mut tx, &row).await?;
+                agent_changed = service::agent_changed(old.as_ref(), &new);
             }
             plugins::supersede_active(&mut tx, &row.package_id).await?;
             plugins::transition(&mut tx, id, "active", None, Some(approver), true).await?;
@@ -249,8 +249,8 @@ pub async fn act(
             m.extend(e.clone());
         }
     }
-    if !guide_changed.is_empty() {
-        meta["agent_guide_changed"] = json!(guide_changed);
+    if !agent_changed.is_empty() {
+        meta["agent_changed"] = json!(agent_changed);
     }
     let ev = AuditEvent::new(
         actor.clone(),
@@ -266,8 +266,8 @@ pub async fn act(
     if activated {
         let mut meta = json!({"package_id": row.package_id, "version": row.version,
             "connections_reauth": flipped});
-        if !guide_changed.is_empty() {
-            meta["agent_guide_changed"] = json!(guide_changed);
+        if !agent_changed.is_empty() {
+            meta["agent_changed"] = json!(agent_changed);
         }
         audit::record(
             state,

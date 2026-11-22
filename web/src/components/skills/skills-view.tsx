@@ -408,8 +408,11 @@ function FileTree({ nodes, readOnly = false, onDelete, onReplace }: { nodes: Fil
 export function EffectiveSkillsView({ agentId }: { agentId: string }) {
   const eff = useEffectiveSkills(agentId);
   const [open, setOpen] = useState<Skill | null>(null);
-  const items = eff.data?.items ?? [];
-  const shadowed = eff.data?.shadowed ?? [];
+  // (P5-APPSKILL-2, C-1133) Skills of apps (tier "app", `id: null`) are listed by P5-APPSKILL-3 under "From apps";
+  // until then this view shows the database tiers only.
+  const items = (eff.data?.items ?? []).filter((i) => i.skill.id != null);
+  const shadowed = (eff.data?.shadowed ?? []).filter((i) => i.skill.id != null);
+  const tierWord = (tier: string) => ((TIER_LABEL as Record<string, string>)[tier] ?? tier).toLowerCase();
   const row = (s: Skill, extra: React.ReactNode) => (
     <li key={s.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2 text-sm text-ink">
       <button type="button" className="font-mono text-link underline" aria-label={`Open ${s.name} (${TIER_LABEL[s.tier]})`} onClick={() => setOpen(s)}>
@@ -437,9 +440,9 @@ export function EffectiveSkillsView({ agentId }: { agentId: string }) {
       <ul aria-label="Received skills" className="divide-y divide-line">
         {items.map((i) =>
           row(
-            i.skill,
+            i.skill as Skill,
             i.shadows.length > 0 ? (
-              <span className="text-xs text-muted">Overrides {i.shadows.map((s) => TIER_LABEL[s.tier].toLowerCase()).join(" and ")} skill</span>
+              <span className="text-xs text-muted">Overrides {i.shadows.map((s) => tierWord(s.tier)).join(" and ")} skill</span>
             ) : null,
           ),
         )}
@@ -450,9 +453,9 @@ export function EffectiveSkillsView({ agentId }: { agentId: string }) {
           <ul aria-label="Skills not applied" className="divide-y divide-line">
             {shadowed.map((i) =>
               row(
-                i.skill,
+                i.skill as Skill,
                 <span className="text-xs text-muted">
-                  {!i.enabled ? "Disabled" : i.shadowed_by ? `Shadowed by the ${TIER_LABEL[i.shadowed_by.tier].toLowerCase()} skill` : ""}
+                  {!i.enabled ? "Disabled" : i.shadowed_by ? `Shadowed by the ${tierWord(i.shadowed_by.tier)} skill` : ""}
                 </span>,
               ),
             )}

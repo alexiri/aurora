@@ -1,7 +1,7 @@
 # P5-GUIDE-4: Agent guides — the built-in packages adopt summaries, essentials and guide files (owner, 2026-11-13)
 
 Fourth task of "app guides on demand": the "adapt our addons" part. Normative spec:
-`docs/24-app-guides.md` §3 and §10, `plugins/builtin/README.md` (authoring rules, written by
+`docs/24-apps-for-agents.md` §3 and §10, `plugins/builtin/README.md` (authoring rules, written by
 P5-GUIDE-1). Depends on **P5-GUIDE-1** (format, linter, `aurora plugin guide`); the end-to-end
 check at the end needs P5-GUIDE-2. A package task: no Rust, no dashboard.
 

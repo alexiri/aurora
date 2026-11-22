@@ -2,7 +2,7 @@
 
 Seventh task of "app guides and tools on demand": the same Code Mode treatment for Aurora's own
 MCP bridge. Owner, 2026-11-15: "spec out fixing the mcp bridge's issues the same way."
-Normative spec: `docs/24-app-guides.md` §10a (*Target `aurora`*), §10b and §11 (SEC-119,
+Normative spec: `docs/24-apps-for-agents.md` §10a (*Target `aurora`*), §10b and §11 (SEC-119,
 SEC-120); `12 §Platform tools` (as amended); `10 §Agent instructions` (*Platform tools on
 demand*); `16` (MCP surface). Contracts **C-654, C-655, C-657**. Decision **D-297**. Depends on
 **P5-GUIDE-6** (the `aurora-agent` command and its target model, the wrapper, `agent_cli`, the

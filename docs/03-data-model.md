@@ -522,7 +522,7 @@ the configuration's locked keys, D-238(a)).
 | Column | Type | Notes |
 |---|---|---|
 | digest | text pk | sha256 of the bytes |
-| kind | text CHECK in (`hooks_wasm`,`icon`,`icon_dark`,`setup_guide`,`archive`) | (phase 5, P5-GUIDE-1, C-642) gains `agent_guide`: one row per agent guide file (`24 §4`), keyed like every blob by the sha256 of its bytes. Because the key is the digest alone, a guide file whose bytes equal an existing blob keeps that row's kind: guide files are read **by digest only** |
+| kind | text CHECK in (`hooks_wasm`,`icon`,`icon_dark`,`setup_guide`,`archive`,`agent_file`) | (phase 5, P5-GUIDE-1, C-642; P5-APPSKILL-1, C-1132) `agent_file` (migration `20261201000272`, replaces `agent_guide`; rows moved with it): one row per agent file of a package that an agent can read through the home, the operations file, each `SKILL.md` and each skill file under `skills/<app_id>/<name>/` (`24 §4`), keyed like every blob by the sha256 of its bytes. Because the key is the digest alone, a file whose bytes equal an existing blob keeps that row's kind: agent files are read **by digest only** |
 | content | bytea not null | |
 
 ### `host_claim_decisions`

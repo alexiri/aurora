@@ -59,25 +59,36 @@ export function usePluginVersions(packageId: string) {
   });
 }
 
-export type PluginAgentGuide = components["schemas"]["PluginAgentGuide"];
+export type PluginAgent = components["schemas"]["PluginAgent"];
+
+/** A file an administrator can open: a file of an app skill (`SKILL.md` when `path` is null) or the operations file. */
+export type AgentFileRef = { kind: "skill"; name: string; path: string | null } | { kind: "operations" };
 
 /**
- * (P5-GUIDE-3, C-648) One agent guide file as text. Fetched only while `enabled` (a file is selected): the
- * content is written by the publisher, so it is never parsed or rendered as anything but text.
+ * (P5-APPSKILL-2, C-1136) One agent file of a package as text. Fetched only while `ref` is set (a file is
+ * selected): the content is written by the publisher, so it is never parsed or rendered as anything but text.
  */
-export function useAgentGuideFile(id: string, appId: string, file: string | null) {
+export function useAgentFile(id: string, appId: string, ref: AgentFileRef | null) {
+  const key = ref === null ? null : ref.kind === "operations" ? "operations" : `${ref.name}/${ref.path ?? "SKILL.md"}`;
   return useQuery({
-    queryKey: [...pluginKeys.one(id), "agent-guide", appId, file] as const,
+    queryKey: [...pluginKeys.one(id), "agent-file", appId, key] as const,
     queryFn: async (): Promise<string> => {
-      const { data, response } = await api.GET("/v1/admin/plugins/{id}/agent-guides/{app_id}/{file}", {
-        params: { path: { id, app_id: appId, file: file! } },
-        parseAs: "text",
-      });
+      const r = ref!;
+      const { data, response } =
+        r.kind === "operations"
+          ? await api.GET("/v1/admin/plugins/{id}/apps/{app_id}/operations", {
+              params: { path: { id, app_id: appId } },
+              parseAs: "text",
+            })
+          : await api.GET("/v1/admin/plugins/{id}/apps/{app_id}/skills/{name}/file", {
+              params: { path: { id, app_id: appId, name: r.name }, query: r.path === null ? {} : { path: r.path } },
+              parseAs: "text",
+            });
       if (response.status === 404) throw new ApiError("not_found", "This file is no longer available.", null, 404);
       if (!response.ok) throw new ApiError("unknown", "Could not load the file.", null, response.status);
       return typeof data === "string" ? data : "";
     },
-    enabled: file !== null,
+    enabled: ref !== null,
     retry: false,
     staleTime: Infinity,
   });

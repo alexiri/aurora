@@ -1,6 +1,6 @@
 package:
   id: postgresql
-  version: 1.4.0
+  version: 1.5.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -112,5 +112,3 @@ apps:
         none for you; the Aurora gateway holds the login and checks every statement. Reads are
         allowed; writes, schema changes and administration are held for a person's approval
         (refusals answer SQLSTATE 42501 with the reason). Send one statement at a time, under 1 MiB.
-      guide:
-        - { file: using-psql.md, title: "Using psql: the four classes, never-permitted statements, habits" }

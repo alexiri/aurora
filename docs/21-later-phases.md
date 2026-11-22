@@ -231,10 +231,10 @@ tokens), group → workspace access bindings, group identities in policy
   directory sync`, `01` (trust boundary 11), `02 §Limits`, `18 §SCIM`. Not in phase 4:
   SCIM `roles`, Bulk, enterprise extension, ETags, filters beyond `eq`, nested groups.
 
-## Phase 5 — App guides and tools on demand
+## Phase 5 — Apps for agents: skills, the app folder and tools on demand
 
 **Specified (P5-GUIDE-1..7, owner 2026-11-13 and 2026-11-15, D-170..D-172, D-295..D-298, SEC-91,
-SEC-117..SEC-120, C-640..C-657); `24-app-guides.md` is normative.** The owner asked whether to
+SEC-117..SEC-120, C-640..C-657); `24-apps-for-agents.md` is normative.** The owner asked whether to
 adopt Code Mode (and the Rust gateway Skarn). It does not apply as such: apps are not MCP tools,
 and agents already run code against app APIs in their sandbox (D-170). What is built is the part
 that transfers, extended on 2026-11-15 toward Code Mode's *search* and *execute* verbs:

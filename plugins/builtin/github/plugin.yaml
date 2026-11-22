@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 2.4.2
+  version: 2.5.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -308,8 +308,6 @@ apps:
         to it. A GitHub App installation has no user: list repositories with
         GET /installation/repositories. Pull requests are issues too: comment on them through the
         issue comment endpoint.
-      guide:
-        - { file: api-conventions.md, title: "REST conventions: reach, requests, pagination, errors" }
   - about:
       id: github-ghes
       name: GitHub Enterprise Server
@@ -554,5 +552,3 @@ apps:
         change does. A GitHub App installation has no user: list repositories with
         GET /api/v3/installation/repositories. Pull requests are issues too: comment on them
         through the issue comment endpoint.
-      guide:
-        - { file: api-conventions.md, title: "REST conventions: reach, requests, pagination, errors" }

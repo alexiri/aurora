@@ -325,8 +325,8 @@ overridden by the named configuration key (`15`).
 | `PACKAGE_MAX` | 20 MiB archive, decompressed ≤ 4 × `PACKAGE_MAX`, `plugin.yaml` ≤ 256 KiB (`PACKAGE_MANIFEST_MAX`, FIX-107), icon PNG ≤ 256 KiB, setup guide ≤ 64 KiB | — | 09 |
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
 | `AGENT_SUMMARY_MAX` | (phase 5, P5-GUIDE-1) 160 chars, one line (`agent.summary`) | — | 24 |
-| `AGENT_GUIDE_FILES_MAX` / `AGENT_GUIDE_FILE_MAX` / `AGENT_GUIDE_APP_MAX` | (phase 5, P5-GUIDE-1) 24 guide files per app / 64 KiB per file / 256 KiB per app (UTF-8 bytes) | — | 24 |
-| `AGENT_GUIDE_SYNC_MAX` | (phase 5, P5-GUIDE-2) 2 MiB of package reference files and recipes projected into one agent's home per sync; the generated `guide.md`, `tools.md` and `api.json` are never dropped | — | 24, 12 |
+| `APP_SKILLS_MAX` / `APP_SKILLS_APP_MAX` | (phase 5, P5-APPSKILL-1, C-1130; replace the three guide-file limits of P5-GUIDE-1) 16 skills per app / 256 KiB of `SKILL.md` and files per app (UTF-8 bytes); each skill is also held to `SKILL_*` and each file to 64 KiB | — | 24 |
+| `APP_SKILLS_SYNC_MAX` | (phase 5, P5-APPSKILL-1/2; replaces the guide-file sync limit of P5-GUIDE-2) 2 MiB of app skills projected into one agent's home per sync; the generated `app.md`, `tools.md` and `api.json` are never dropped | — | 24, 12 |
 | `AGENT_OPERATIONS_MAX` / `AGENT_OPERATIONS_FILE_MAX` | (phase 5, P5-GUIDE-6, D-296) 2 000 operations / 512 KiB per operations file | — | 24 |
 | `AGENT_API_JSON_MAX` | (phase 5, P5-GUIDE-6) 512 KiB per rendered `api.json` | — | 24 |
 | `AGENT_CLI_PREVIEW_MAX` | (phase 5, P5-GUIDE-6/7) 2 000 chars printed by one `aurora-agent` call unless `--raw` | — | 24 |
