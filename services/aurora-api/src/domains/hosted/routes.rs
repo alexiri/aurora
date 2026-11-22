@@ -70,6 +70,8 @@ async fn list_harnesses(
                     .iter()
                     .map(|r| (*r).to_owned())
                     .collect(),
+                steer: aurora_protocol::runner::harness_turn_controls(id).steer,
+                background_tool: aurora_protocol::runner::harness_turn_controls(id).background_tool,
                 available: live.iter().any(|l| l == id),
             })
         })

@@ -36,12 +36,21 @@ pub struct TurnRow {
     pub reply_to_seq: Option<i64>,
     /// (FIX-146, D-232) the W3C traceparent of the span that inserted the turn.
     pub trace_context: Option<String>,
+    /// (FIX-225, C-1153) Follow-ups: the engine handed it to the live turn (stamped once).
+    pub steer_delivered_at: Option<DateTime<Utc>>,
+    /// (FIX-225) Follow-ups: a person asked to steer it.
+    pub steer_requested_at: Option<DateTime<Utc>>,
+    /// (FIX-225) Follow-ups: the harness did not take the steer (`missed` | `refused`).
+    pub steer_error: Option<String>,
+    /// (FIX-225) Follow-ups: last edit by its author.
+    pub edited_at: Option<DateTime<Utc>>,
 }
 
 const COLS: &str = "turns.id, turns.conversation_id, turns.agent_id, turns.role, turns.status, \
     turns.parent_turn_id, turns.door, turns.speaker_kind, turns.speaker_user_id, \
     turns.speaker_label, turns.text, turns.source_event_id, turns.reply_to_seq, \
     turns.trace_context, \
+    turns.steer_delivered_at, turns.steer_requested_at, turns.steer_error, turns.edited_at, \
     turns.abort_requested_at, \
     turns.send_now_requested_at, turns.error_code, turns.error_message, turns.usage, \
     turns.started_at, turns.finished_at, turns.created_at, \
@@ -330,16 +339,137 @@ pub async fn mark_joined(conn: &mut PgConnection, id: Uuid) -> Result<Option<Tur
     get(conn, id).await
 }
 
-/// Stamp `steer_delivered_at` once (engine `turn.message` delivery); true when newly set.
-pub async fn mark_steer_delivered(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> {
+/// Due-work arm 7's claim (C-1153): stamp `steer_delivered_at` once and return the row **as it is
+/// now**, so the text delivered to the harness is the text stored (an edit that committed after the
+/// candidate was read is not lost). It re-checks everything the candidate read assumed: still
+/// `joining`, not yet delivered, and someone asked to steer it or it is a platform-made `system`
+/// follow-up. `None` when the row changed (edited out of reach, cancelled, promoted, delivered).
+/// The caller holds the conversation lock, which every edit, cancel and steer also takes.
+pub async fn claim_steer(conn: &mut PgConnection, id: Uuid) -> Result<Option<TurnRow>, DbError> {
     let done = sqlx::query(
         "UPDATE turns SET steer_delivered_at = now(), updated_at = now()
+         WHERE id = $1 AND role = 'followup' AND status = 'joining' AND steer_delivered_at IS NULL
+           AND (steer_requested_at IS NOT NULL OR door->>'kind' = 'system')",
+    )
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get(conn, id).await
+}
+
+/// *Waiting* (C-1155): `joining`, and the harness has not been handed it (or was, and failed).
+const WAITING: &str =
+    "status = 'joining' AND (steer_delivered_at IS NULL OR steer_error IS NOT NULL)";
+
+/// Lock one follow-up row (`FOR UPDATE`); the caller took the conversation lock first (lock order:
+/// conversation, then turn rows). `None` when `id` is not a follow-up.
+pub async fn lock_followup(conn: &mut PgConnection, id: Uuid) -> Result<Option<TurnRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM turns WHERE id = $1 AND role = 'followup' FOR UPDATE"
+    )))
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+/// A person asked to steer a follow-up (idempotent); `None` unless it is `joining` and not yet
+/// handed to the harness. Call under [`lock_followup`].
+pub async fn request_steer(conn: &mut PgConnection, id: Uuid) -> Result<Option<TurnRow>, DbError> {
+    let done = sqlx::query(
+        "UPDATE turns SET steer_requested_at = COALESCE(steer_requested_at, now()), updated_at = now()
          WHERE id = $1 AND role = 'followup' AND status = 'joining' AND steer_delivered_at IS NULL",
     )
     .bind(id)
     .execute(&mut *conn)
     .await?;
-    Ok(done.rows_affected() == 1)
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get(conn, id).await
+}
+
+/// Withdraw a waiting follow-up: `joining` -> `cancelled` (never promoted). `None` unless waiting.
+pub async fn cancel_followup(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<TurnRow>, DbError> {
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE turns SET status = 'cancelled', updated_at = now()
+         WHERE id = $1 AND role = 'followup' AND {WAITING}"
+    )))
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get(conn, id).await
+}
+
+/// Replace the text of a waiting follow-up. `None` unless waiting (so never after delivery).
+pub async fn edit_followup(
+    conn: &mut PgConnection,
+    id: Uuid,
+    text: &str,
+) -> Result<Option<TurnRow>, DbError> {
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE turns SET text = $2, edited_at = now(), updated_at = now()
+         WHERE id = $1 AND role = 'followup' AND {WAITING}"
+    )))
+    .bind(id)
+    .bind(text)
+    .execute(&mut *conn)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get(conn, id).await
+}
+
+/// The harness did not take a steer (`missed` | `refused`): the follow-up stays `joining`, is not
+/// re-sent (`steer_delivered_at` stays stamped) and is promoted when the turn ends. Fenced on the
+/// row still being `joining`; `None` when it joined, was promoted or cancelled meanwhile.
+pub async fn set_steer_error(
+    conn: &mut PgConnection,
+    id: Uuid,
+    reason: &str,
+) -> Result<Option<TurnRow>, DbError> {
+    let done = sqlx::query(
+        "UPDATE turns SET steer_error = $2, updated_at = now()
+         WHERE id = $1 AND role = 'followup' AND status = 'joining'
+           AND steer_delivered_at IS NOT NULL AND steer_error IS NULL",
+    )
+    .bind(id)
+    .bind(reason)
+    .execute(&mut *conn)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get(conn, id).await
+}
+
+/// (C-1154) The conversation's `joining` follow-ups whose parent turn is still active, oldest
+/// first, at most `limit`.
+pub async fn waiting_of_conversation<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation_id: Uuid,
+    limit: i64,
+) -> Result<Vec<TurnRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM turns WHERE turns.conversation_id = $1 AND turns.role = 'followup'
+           AND turns.status = 'joining'
+           AND EXISTS (SELECT 1 FROM turns p WHERE p.id = turns.parent_turn_id AND p.role = 'turn'
+                       AND p.status IN {ACTIVE})
+         ORDER BY turns.created_at, turns.id LIMIT $2"
+    )))
+    .bind(conversation_id)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
 }
 
 /// Promote a `joining` follow-up into a new `queued` turn (one promotion per follow-up, fenced by

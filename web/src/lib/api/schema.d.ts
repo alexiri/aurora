@@ -3509,6 +3509,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{id}/followups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The follow-ups waiting in a conversation (sent while a turn runs), oldest first, each with the
+         *     controls the caller may use now.
+         */
+        get: operations["listFollowups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/conversations/{id}/messages": {
         parameters: {
             query?: never;
@@ -3638,6 +3658,57 @@ export interface paths {
         head?: never;
         /** Edit an eval schedule. */
         patch: operations["patchEvalSchedule"];
+        trace?: never;
+    };
+    "/v1/followups/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Replace the text of a waiting follow-up. Only the person who wrote it. */
+        patch: operations["editFollowup"];
+        trace?: never;
+    };
+    "/v1/followups/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Withdraw a waiting follow-up; it is never sent. */
+        post: operations["cancelFollowup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/followups/{id}/steer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask for a waiting follow-up to be steered into the running turn at its next step. */
+        post: operations["steerFollowup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/gateway/ca.pem": {
@@ -9401,6 +9472,10 @@ export interface components {
             uncredentialed_allowlist?: components["schemas"]["AllowlistEntry"][] | null;
             uncredentialed_default?: components["schemas"]["UncredentialedDefault"] | null;
         };
+        /** @description (FIX-225, C-1155) `PATCH /v1/followups/{id}`. */
+        EditFollowup: {
+            text: string;
+        };
         Effective: {
             credentials: components["schemas"]["EffectiveCredential"][];
             /**
@@ -9993,8 +10068,15 @@ export interface components {
             secret_id: string;
         };
         Followup: {
+            /** @description (FIX-225, C-1154) What the caller may do with it now. */
+            controls: components["schemas"]["FollowupControls"];
             /** Format: date-time */
             created_at: string;
+            /**
+             * Format: date-time
+             * @description (FIX-225) When its author last edited it.
+             */
+            edited_at?: string | null;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -10004,9 +10086,29 @@ export interface components {
              * @description The turn this follow-up became; non-null only when `status` is `promoted` (D-107).
              */
             promoted_turn_id?: string | null;
-            /** @description `joining` | `joined` | `promoted` */
+            /** @description (FIX-225, C-1154) Who wrote it, as the transcript labels them. */
+            speaker_label?: string | null;
+            /** @description `joining` | `joined` | `promoted` | `cancelled` (FIX-225) */
             status: string;
+            /** @description (FIX-225) `missed` | `refused`: the harness did not take the steer; it runs as the next turn. */
+            steer_error?: string | null;
+            /** @description (FIX-225) Someone asked to steer it into the running turn. */
+            steer_requested: boolean;
             text: string;
+        };
+        /**
+         * @description (FIX-225, C-1154) The buttons the dashboard may show for a follow-up, computed for the caller.
+         *     A flag is true only when the action can apply (D-470: no silent controls).
+         */
+        FollowupControls: {
+            cancel: boolean;
+            edit: boolean;
+            send_now: boolean;
+            steer: boolean;
+        };
+        /** @description (FIX-225, C-1154) `GET /v1/conversations/{id}/followups`. */
+        FollowupList: {
+            items: components["schemas"]["Followup"][];
         };
         FormField: {
             help_url?: string | null;
@@ -10186,6 +10288,8 @@ export interface components {
         HarnessView: {
             /** @description At least one live runner replica lists the harness (its image contains the runtime). */
             available: boolean;
+            /** @description (FIX-225, C-1152) A running tool can be moved to the background ("Send now"). */
+            background_tool: boolean;
             /** @description Declared dialects, in preference order. */
             dialects: string[];
             display_name: string;
@@ -10193,6 +10297,8 @@ export interface components {
             id: string;
             /** @description (P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none. */
             model_roles: string[];
+            /** @description (FIX-225, C-1152) A message sent while a turn runs can be steered into it at the next step. */
+            steer: boolean;
         };
         /** @description A header sent to the receiver: a constant value, or one with `{{secret:name}}`. */
         HeaderTemplate: {
@@ -31468,6 +31574,54 @@ export interface operations {
             };
         };
     };
+    listFollowups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowupList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     postConversationMessage: {
         parameters: {
             query?: never;
@@ -32118,6 +32272,224 @@ export interface operations {
             };
             /** @description invalid */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    editFollowup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Follow-up id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditFollowup"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Followup"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description followup_forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description followup_not_waiting */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancelFollowup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Follow-up id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Followup"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description followup_forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description followup_not_waiting */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    steerFollowup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Follow-up id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Followup"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description followup_not_waiting, steer_unsupported */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description frozen */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -42727,7 +43099,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description turn_finished */
+            /** @description turn_finished, send_now_unsupported (the harness lacks background_tool or steers) */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -271,18 +271,32 @@ pub fn agent_link(
     ])
 }
 
-/// Stop / Send now buttons for a running turn's status card (used by the mirror).
-pub fn turn_controls(m: &Minter<'_>, turn: Uuid, subject: Uuid) -> Result<Block, ApiError> {
-    blk(Block::buttons(vec![
-        ButtonItem::new(
-            "Stop",
-            ButtonStyle::Danger,
-            m.mint(subject, ActionKind::TurnStop { turn_id: turn })?,
-        ),
-        ButtonItem::new(
+/// Buttons for a running turn's status card (D-469(c), D-470, C-1156): **Stop** always; **Steer**
+/// only when the agent's harness steers; **Send now** only when it declares `background_tool` and
+/// does not steer. A button whose action cannot apply is never offered.
+pub fn turn_controls(
+    m: &Minter<'_>,
+    turn: Uuid,
+    subject: Uuid,
+    tc: aurora_protocol::runner::TurnControls,
+) -> Result<Block, ApiError> {
+    let mut buttons = vec![ButtonItem::new(
+        "Stop",
+        ButtonStyle::Danger,
+        m.mint(subject, ActionKind::TurnStop { turn_id: turn })?,
+    )];
+    if tc.steer {
+        buttons.push(ButtonItem::new(
+            "Steer",
+            ButtonStyle::Default,
+            m.mint(subject, ActionKind::FollowupSteer { turn_id: turn })?,
+        ));
+    } else if tc.background_tool {
+        buttons.push(ButtonItem::new(
             "Send now",
             ButtonStyle::Default,
             m.mint(subject, ActionKind::FollowupSendNow { turn_id: turn })?,
-        ),
-    ]))
+        ));
+    }
+    blk(Block::buttons(buttons))
 }

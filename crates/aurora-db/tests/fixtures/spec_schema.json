@@ -1435,6 +1435,7 @@
       "dispatch_lease_until",
       "dispatched_at",
       "door",
+      "edited_at",
       "error_code",
       "error_message",
       "finished_at",
@@ -1455,6 +1456,8 @@
       "started_at",
       "status",
       "steer_delivered_at",
+      "steer_error",
+      "steer_requested_at",
       "text",
       "trace_context",
       "usage"
@@ -3055,6 +3058,7 @@
       "dispatch_lease_until": "timestamptz null",
       "dispatched_at": "timestamptz null",
       "door": "jsonb not null",
+      "edited_at": "timestamptz null",
       "error_code": "text null",
       "error_message": "text null",
       "finished_at": "timestamptz null",
@@ -3075,6 +3079,8 @@
       "started_at": "timestamptz null",
       "status": "text",
       "steer_delivered_at": "timestamptz null",
+      "steer_error": "text null",
+      "steer_requested_at": "timestamptz null",
       "text": "text not null",
       "trace_context": "text null",
       "usage": "jsonb null"

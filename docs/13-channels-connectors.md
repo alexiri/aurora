@@ -464,7 +464,8 @@ JSON `{ jti, kind, integration_id, subject_id, data, exp }`. Kinds:
 decision}`, `action_approval.decide {decision}`, `reach.decide {decision}`,
 `binding.choose {space_ref, allowed_agent_ids}` (the chosen agent arrives as
 `value`), `dm_default.choose {allowed_agent_ids}`, `turn.stop {turn_id}`,
-`followup.send_now {turn_id}`, `agent_link.decide {side, decision}`.
+`followup.send_now {turn_id}`, `followup.steer {turn_id}` (FIX-225, C-1156),
+`agent_link.decide {side, decision}`.
 TTL `ACTION_TOKEN_TTL`; **single use** (`action_token_uses`); integration
 must match the event's. The connector never interprets tokens.
 

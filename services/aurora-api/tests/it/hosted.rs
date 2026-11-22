@@ -401,9 +401,17 @@ async fn end_to_end_turn_with_steer_credential_and_replay() {
     assert_eq!(r.report(&lv, batch.clone()).await, "applied");
     assert_eq!(r.report(&lv, batch.clone()).await, "duplicate");
 
-    // Follow-up while running is steered.
+    // (FIX-225, C-1153) A follow-up while running waits; it is steered once a person clicks Steer.
     let f = r.say(lv.conv, "also this").await;
     let fid = f["followup"]["id"].as_str().unwrap().to_owned();
+    assert!(
+        r.work().await.iter().all(|i| i["kind"] != "turn.message"),
+        "a waiting follow-up is not steered by itself"
+    );
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/followups/{fid}/steer"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
     let items = r.work().await;
     let msg = items.iter().find(|i| i["kind"] == "turn.message").unwrap();
     assert_eq!(msg["followup_id"], fid);
@@ -446,6 +454,7 @@ async fn end_to_end_turn_with_steer_credential_and_replay() {
             "tool.started",
             "tool.finished",
             "turn.queued",
+            "followup.steer_requested",
             "message.joined",
             "text",
             "turn.finished"

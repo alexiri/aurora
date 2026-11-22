@@ -39,6 +39,11 @@ use uuid::Uuid;
 
 const LINK_TTL_SECS: f64 = 30.0 * 60.0;
 
+/// (FIX-225, D-470) What a click on a card control answers when the agent's harness cannot take a
+/// message while its turn runs.
+const NO_MID_TURN: &str =
+    "This agent can't take messages mid-turn; they run when the current turn ends.";
+
 pub struct ActionHandler;
 
 enum Stop {
@@ -487,13 +492,73 @@ impl Click<'_> {
                 )
                 .await?;
                 self.authorize(c, conv.workspace_id, false).await?;
+                if !stop {
+                    // (FIX-225, D-470) An old card's Send now on an agent that cannot do it is
+                    // answered, never silent, and does not burn the token.
+                    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+                    let a = crate::domains::conversations::followups::agent_facts(
+                        s, &mut conn, t.agent_id,
+                    )
+                    .await?;
+                    drop(conn);
+                    if a.tc.steer {
+                        return refuse(
+                            "unsupported",
+                            "Send now isn't available for this agent. Steer hands a waiting message to the running turn.",
+                        );
+                    }
+                    if !a.tc.background_tool {
+                        return refuse("unsupported", NO_MID_TURN);
+                    }
+                }
                 self.consume(claims, exp).await?;
                 if stop {
                     crate::domains::conversations::service::abort(s, c, t.id).await?;
+                    self.tell(Content::platform("Stopping this turn.")).await?;
                     Ok(Done::new("turn.stop"))
                 } else {
                     crate::domains::conversations::service::send_now(s, c, t.id).await?;
+                    self.tell(Content::platform(
+                        "Asked the agent to move the running step to the background.",
+                    ))
+                    .await?;
                     Ok(Done::new("followup.send_now"))
+                }
+            }
+            ActionKind::FollowupSteer { turn_id } => {
+                use crate::domains::conversations::followups::{CardSteer, steer_turn_followups};
+                let t = turns::get(&s.pool, *turn_id).await?.ok_or_else(gone)?;
+                // Same authority as Stop: the conversation's workspace and (for directs) privacy.
+                let conv = crate::domains::conversations::service::load_conversation(
+                    s,
+                    c,
+                    t.conversation_id,
+                )
+                .await?;
+                self.authorize(c, conv.workspace_id, false).await?;
+                self.consume(claims, exp).await?;
+                match steer_turn_followups(s, c, t.id).await? {
+                    CardSteer::Steered(n) => {
+                        self.tell(Content::platform(&format!(
+                            "Steering {} in at the next step.",
+                            if n == 1 {
+                                "1 message".to_owned()
+                            } else {
+                                format!("{n} messages")
+                            }
+                        )))
+                        .await?;
+                        Ok(Done::new("followup.steer"))
+                    }
+                    // Nothing happened: the card stays usable, and the clicker is told why.
+                    CardSteer::NothingWaiting => {
+                        let _ = card_repo::release_token(&s.pool, claims.jti).await;
+                        refuse("nothing_waiting", "No message is waiting to be steered.")
+                    }
+                    CardSteer::Unsupported => {
+                        let _ = card_repo::release_token(&s.pool, claims.jti).await;
+                        refuse("unsupported", NO_MID_TURN)
+                    }
                 }
             }
             ActionKind::AgentLinkDecide { side, decision } => {

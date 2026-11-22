@@ -941,7 +941,7 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | conversation_id | uuid FK→conversations (cascade) | |
 | agent_id | uuid FK→agents (cascade) | |
 | role | text CHECK in (`turn`,`followup`) | |
-| status | text CHECK in (`queued`,`dispatched`,`running`,`done`,`failed`,`aborted`,`joining`,`joined`,`promoted`) | `turn` rows use the first six; `followup` rows use `joining`/`joined`/`promoted` |
+| status | text CHECK in (`queued`,`dispatched`,`running`,`done`,`failed`,`aborted`,`joining`,`joined`,`promoted`,`cancelled`) | `turn` rows use the first six; `followup` rows use `joining`/`joined`/`promoted` and (phase 5, FIX-225, D-469) `cancelled` (a person withdrew it; never promoted) |
 | parent_turn_id | uuid null FK→turns (cascade) | follow-up's live turn |
 | door | jsonb not null | `{ "kind": "web"|"api"|"thread"|"schedule"|"webhook"|"watch"|"peer"|"system", "thread_link_id"?: uuid, "ref"?: string }` |
 | speaker_kind | text CHECK in (`person`,`bot`,`agent`,`system`) | |
@@ -962,6 +962,9 @@ Invariant: at most one non-revoked `agent` credential per agent.
 | revived_at | timestamptz null | fence: a cold-dead dispatch is revived at most once |
 | ceiling_warned_at | timestamptz null | single-purpose clock |
 | steer_delivered_at | timestamptz null | follow-ups: single-purpose clock |
+| steer_requested_at | timestamptz null | (phase 5, FIX-225, D-469, C-1153) follow-ups: a person asked to steer it (**Steer**); due-work arm 7 steers only such rows, or door `system`. Migration `20261201000275_followup_controls.sql` |
+| steer_error | text null CHECK in (`missed`,`refused`) | (FIX-225) follow-ups: the harness did not take the steer; the row then runs as the next turn |
+| edited_at | timestamptz null | (FIX-225) follow-ups: last edit by its author |
 | promoted_at | timestamptz null | follow-ups |
 | boot_id | uuid null | boot that ran it |
 | last_event_n | int not null default 0 | highest applied supervisor event number (`16 §W5` idempotency) |
@@ -1730,14 +1733,6 @@ phase-0 schema: the tables above are machine-checked against the migrations
 headings and a different header so that the extractor ignores it. A migration
 for a planned change lands with its phase; the corresponding rows move into the
 tables above in the same change (and this section shrinks).
-
-#### `turns` follow-up controls (phase 5, FIX-225, D-469, C-1153..C-1155; migration `20261201000275`)
-| Planned column | Type | Notes | Phase |
-|---|---|---|---|
-| steer_requested_at | timestamptz null | follow-ups: a person asked to steer it (**Steer**); due-work arm 7 steers only such rows, or door `system` | 5 (FIX-225) |
-| steer_error | text null CHECK in (`missed`,`refused`) | follow-ups: the harness did not take the steer; the row then runs as the next turn | 5 (FIX-225) |
-| edited_at | timestamptz null | follow-ups: last edit by its author | 5 (FIX-225) |
-| status | (existing column) | CHECK gains **`cancelled`** (`followup` rows only; never promoted) | 5 (FIX-225) |
 
 #### `attachments` (S3 blob backend; phase 6, D-318)
 | Planned column | Type | Notes | Phase |

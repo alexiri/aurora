@@ -20345,6 +20345,75 @@
         ]
       }
     },
+    "/v1/conversations/{id}/followups": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "The follow-ups waiting in a conversation (sent while a turn runs), oldest first, each with the\ncontrols the caller may use now.",
+        "operationId": "listFollowups",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowupList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/conversations/{id}/messages": {
       "post": {
         "tags": [
@@ -21259,6 +21328,301 @@
           },
           "422": {
             "description": "invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/followups/{id}": {
+      "patch": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Replace the text of a waiting follow-up. Only the person who wrote it.",
+        "operationId": "editFollowup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Follow-up id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditFollowup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Followup"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "followup_forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "followup_not_waiting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/followups/{id}/cancel": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Withdraw a waiting follow-up; it is never sent.",
+        "operationId": "cancelFollowup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Follow-up id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Followup"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "followup_forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "followup_not_waiting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/followups/{id}/steer": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Ask for a waiting follow-up to be steered into the running turn at its next step.",
+        "operationId": "steerFollowup",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Follow-up id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Followup"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "followup_not_waiting, steer_unsupported",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "frozen",
             "content": {
               "application/json": {
                 "schema": {
@@ -36106,7 +36470,7 @@
             }
           },
           "409": {
-            "description": "turn_finished",
+            "description": "turn_finished, send_now_unsupported (the harness lacks background_tool or steers)",
             "content": {
               "application/json": {
                 "schema": {
@@ -50097,6 +50461,19 @@
         },
         "additionalProperties": false
       },
+      "EditFollowup": {
+        "type": "object",
+        "description": "(FIX-225, C-1155) `PATCH /v1/followups/{id}`.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "Effective": {
         "type": "object",
         "required": [
@@ -51932,12 +52309,26 @@
           "parent_turn_id",
           "status",
           "text",
-          "created_at"
+          "created_at",
+          "steer_requested",
+          "controls"
         ],
         "properties": {
+          "controls": {
+            "$ref": "#/components/schemas/FollowupControls",
+            "description": "(FIX-225, C-1154) What the caller may do with it now."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "edited_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(FIX-225) When its author last edited it."
           },
           "id": {
             "type": "string",
@@ -51955,12 +52346,69 @@
             "format": "uuid",
             "description": "The turn this follow-up became; non-null only when `status` is `promoted` (D-107)."
           },
+          "speaker_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-225, C-1154) Who wrote it, as the transcript labels them."
+          },
           "status": {
             "type": "string",
-            "description": "`joining` | `joined` | `promoted`"
+            "description": "`joining` | `joined` | `promoted` | `cancelled` (FIX-225)"
+          },
+          "steer_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-225) `missed` | `refused`: the harness did not take the steer; it runs as the next turn."
+          },
+          "steer_requested": {
+            "type": "boolean",
+            "description": "(FIX-225) Someone asked to steer it into the running turn."
           },
           "text": {
             "type": "string"
+          }
+        }
+      },
+      "FollowupControls": {
+        "type": "object",
+        "description": "(FIX-225, C-1154) The buttons the dashboard may show for a follow-up, computed for the caller.\nA flag is true only when the action can apply (D-470: no silent controls).",
+        "required": [
+          "steer",
+          "send_now",
+          "edit",
+          "cancel"
+        ],
+        "properties": {
+          "cancel": {
+            "type": "boolean"
+          },
+          "edit": {
+            "type": "boolean"
+          },
+          "send_now": {
+            "type": "boolean"
+          },
+          "steer": {
+            "type": "boolean"
+          }
+        }
+      },
+      "FollowupList": {
+        "type": "object",
+        "description": "(FIX-225, C-1154) `GET /v1/conversations/{id}/followups`.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Followup"
+            }
           }
         }
       },
@@ -52482,12 +52930,18 @@
           "display_name",
           "dialects",
           "model_roles",
+          "steer",
+          "background_tool",
           "available"
         ],
         "properties": {
           "available": {
             "type": "boolean",
             "description": "At least one live runner replica lists the harness (its image contains the runtime)."
+          },
+          "background_tool": {
+            "type": "boolean",
+            "description": "(FIX-225, C-1152) A running tool can be moved to the background (\"Send now\")."
           },
           "dialects": {
             "type": "array",
@@ -52509,6 +52963,10 @@
               "type": "string"
             },
             "description": "(P5-MODELS-1, C-882) The model roles the adapter maps (`large`, `medium`, `small`); empty = none."
+          },
+          "steer": {
+            "type": "boolean",
+            "description": "(FIX-225, C-1152) A message sent while a turn runs can be steered into it at the next step."
           }
         }
       },

@@ -110,6 +110,11 @@ async fn reply_targets_payload_steer_delivery_and_redaction_cascade() {
     assert_eq!(delivered_text(&d), "hello");
     r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
         .await;
+    // (FIX-225, C-1153) The follow-up waits until a person clicks Steer.
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/followups/{fid}/steer"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
     let items = r.work().await;
     let msg = items.iter().find(|i| i["kind"] == "turn.message").unwrap();
     let steered = msg["text"].as_str().unwrap();

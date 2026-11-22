@@ -8,6 +8,7 @@ mod counters_build;
 mod db;
 mod deletion;
 mod display_name_edited_migration;
+mod followup_controls_migration;
 mod gateway_grants;
 mod membership_queries;
 mod migration_order;

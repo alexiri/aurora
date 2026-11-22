@@ -54,6 +54,9 @@ pub enum ActionKind {
     TurnStop { turn_id: Uuid },
     #[serde(rename = "followup.send_now")]
     FollowupSendNow { turn_id: Uuid },
+    /// (FIX-225, C-1156) Steer every waiting follow-up of the turn the clicker may steer.
+    #[serde(rename = "followup.steer")]
+    FollowupSteer { turn_id: Uuid },
     #[serde(rename = "agent_link.decide")]
     AgentLinkDecide {
         side: BoundedString<32>,

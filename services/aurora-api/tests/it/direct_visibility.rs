@@ -355,7 +355,13 @@ async fn owners_can_abort_and_send_now_but_members_get_404() {
             None,
         )
         .await;
-    assert_eq!(s, 202, "{v}");
+    // (FIX-225, C-1156) The owner passes the visibility check; this agent's harness cannot move a
+    // running step to the background, so the answer is the honest 409, not a silent 202.
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (409, Some("send_now_unsupported")),
+        "{v}"
+    );
     let (s, v) = f
         .req(
             Method::POST,
