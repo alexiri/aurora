@@ -393,6 +393,14 @@ by the owner 2026-11-15, D-318), see *S3-compatible blob store* under §Other la
   locked, but cannot change or delete it, through its tools or by editing the file; people still can. Locked memories
   count toward the cap, travel in the export and can arrive locked from a template. They are built just before the
   agent templates.
+- **Tool problems reported by agents — proposed (`docs/tasks/P6-FRICTION.md`; owner, 2026-11-22, "a tool for
+  lodging complaints").** After a task, an agent that struggled with a platform tool, an app operation, a skill,
+  `aurora-agent` or its computer reports what it tried, what happened and how it got around it (on-demand tool
+  `friction_report`; evidence linked from the turn's failed requests). Reports are grouped into one issue per
+  problem by a deterministic fingerprint and ranked by distinct agents. Admins merge, split, mark an issue fixed in
+  a version, and copy it as Markdown for the maintainer. Failed calls are counted without reports. Admin-written
+  known issues go back to agents in `tools.md`, the skill and `aurora-agent`. Report text stays in the organization
+  unless it shares with instance admins, and never reaches another agent. Open questions Q-P6-FRIC-1..12.
 - *(The P6-MODELS proposal moved to phase 5 by the owner, D-302(f); see §The harness chooses models
   above.)*
 
