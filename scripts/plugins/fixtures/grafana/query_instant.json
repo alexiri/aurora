@@ -1,0 +1,17 @@
+{
+  "results": {
+    "A": {
+      "status": 200,
+      "frames": [
+        {
+          "schema": {"refId": "A", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"job": "api"}}]},
+          "data": {"values": [[1763650800000], [42]]}
+        },
+        {
+          "schema": {"refId": "A", "fields": [{"name": "Time", "type": "time"}, {"name": "Value", "type": "number", "labels": {"job": "web"}}]},
+          "data": {"values": [[1763650800000], [7]]}
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "results": {
+    "A": {
+      "status": 200,
+      "frames": [
+        {
+          "schema": {"refId": "A", "name": "host-1 Count",
+                     "fields": [{"name": "Time", "type": "time"},
+                                {"name": "Value", "type": "number", "labels": {"host.keyword": "host-1"}, "config": {"displayNameFromDS": "host-1"}}]},
+          "data": {"values": [[1763643600000, 1763686800000], [120, 80]]}
+        },
+        {
+          "schema": {"refId": "A", "name": "host-2 Count",
+                     "fields": [{"name": "Time", "type": "time"},
+                                {"name": "Value", "type": "number", "labels": {"host.keyword": "host-2"}}]},
+          "data": {"values": [[1763643600000, 1763686800000], [5, 0]]}
+        }
+      ]
+    }
+  }
+}

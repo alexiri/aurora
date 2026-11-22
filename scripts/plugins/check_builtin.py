@@ -38,6 +38,14 @@ REFUSED = {
 }
 
 
+# (app id, tool id) -> decision: read tools that are a POST and have no `params` classifier because
+# the body cannot prove the read. Each is an owner decision, not a pattern: add one only with its D-nnn.
+# grafana query_datasources: POST /api/ds/query is how Grafana's own UI reads every data source and
+# Grafana grants it to the Viewer role; a write-capable SQL/InfluxDB user is the accepted risk
+# (P5-GRAFANA-2, D-462).
+POST_READS = {("grafana", "query_datasources"): "D-462"}
+
+
 def run(aurora, *args, timeout=300):
     p = subprocess.run([aurora, "plugin", *args], capture_output=True, text=True, timeout=timeout)
     return p.returncode, p.stdout, p.stderr
@@ -296,7 +304,8 @@ def check_app(app, paired, err):
                 # when the parameter proves the read) may carry a body method, e.g. AWS Describe*.
                 ok = (t.get("git") == "fetch" or t.get("graphql") == "query"
                       or bool(t.get("params"))
-                      or set(t["methods"]) <= {"GET", "HEAD"})
+                      or set(t["methods"]) <= {"GET", "HEAD"}
+                      or ((aid, tid) in POST_READS and t["methods"] == ["POST"]))
                 if not ok:
                     err(f"app {aid}: read tool {tid} allows {t['methods']}; reads are GET/HEAD, git fetch, graphql query or a `params` classifier")
             elif tid not in approvals:

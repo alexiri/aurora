@@ -1,6 +1,6 @@
 ---
 name: grafana-api-notes
-description: "How to search Grafana dashboards, find data source UIDs, use proxy paths, alerting and annotations, and its errors; read before the first request"
+description: "How to search Grafana dashboards, find data source UIDs, query data sources, alerting and annotations, and its errors; read before the first request"
 ---
 
 # Grafana API notes
@@ -21,8 +21,10 @@ and folder and data source permissions.
 | One dashboard (panels, queries) | `GET $G/api/dashboards/uid/<uid>` |
 | A dashboard's versions | `GET $G/api/dashboards/uid/<uid>/versions` (needs edit permission) |
 | Dashboard tags | `GET $G/api/dashboards/tags` |
-| Prometheus/Mimir query | `GET $G/api/datasources/proxy/uid/<ds>/api/v1/query_range?query=…&start=…&end=…&step=60s` |
-| Loki logs | `GET $G/api/datasources/proxy/uid/<ds>/loki/api/v1/query_range?query=…&limit=100` |
+| Query any data source (Prometheus, Mimir, Loki, OpenSearch, SQL) | `POST $G/api/ds/query` = `aurora-agent call grafana query_datasources --body @body.json`; the `grafana-query` skill's script builds it |
+| Data source UIDs | `GET $G/api/datasources` (`list_datasources`, usually empty for Viewer and Editor), else a dashboard's panels (`grafana-query panels <uid>`) |
+| Prometheus/Mimir through the proxy (fallback) | `GET $G/api/datasources/proxy/uid/<ds>/api/v1/query_range?query=…&start=…&end=…&step=60s` |
+| Loki through the proxy (fallback) | `GET $G/api/datasources/proxy/uid/<ds>/loki/api/v1/query_range?query=…&limit=100` |
 | Firing alerts | `GET $G/api/alertmanager/grafana/api/v2/alerts` |
 | Rule states | `GET $G/api/prometheus/grafana/api/v1/rules` |
 | Annotations | `GET $G/api/annotations?from=<ms>&to=<ms>` |
@@ -47,14 +49,20 @@ Queries name a data source by UID. Take it from the panel you are reading (`data
 `${…}` value is a dashboard variable, see `templating.list[].current.value`), or list them:
 `GET /api/datasources` shows only the data sources the token may **read** settings of. Grafana gives
 that permission to Admin by default, so with a Viewer or Editor token the list is usually empty or
-holds only the built-in `grafana` source, even though queries work. If you have no UID, ask the
-person for a dashboard that uses the data source. `GET /api/datasources/uid/<uid>` returns its
+holds only the built-in `grafana` source, even though queries work. Grafana's browser settings
+(`/api/frontend/settings`) do list every data source a user can query, but they also carry the
+passwords of direct-access data sources, so Aurora does not offer them. If you have no UID, run
+`grafana-query panels <dashboard uid>` on a dashboard that uses the data source, or ask the person
+for one. `GET /api/datasources/uid/<uid>` returns its
 settings: `secureJsonFields` only says which secrets are set, never their values.
 
 ## The data source proxy
 
 `$G/api/datasources/proxy/uid/<ds uid>/<backend path>` forwards to the data source (Grafana adds the
-backend's credentials and tenant headers). Only these backend paths, with `GET`:
+backend's credentials and tenant headers). **Use `query_datasources` for queries** (below): the proxy
+forwards to the data source's own address, and when that backend redirects, Grafana passes the
+`3xx` through and `aurora-agent` (which never follows redirects) cannot use it. A `3xx` from a proxy
+tool means: switch to `query_datasources`. Only these backend paths, with `GET`:
 
 - Prometheus and Mimir: `api/v1/query`, `api/v1/query_range`, `api/v1/series`, `api/v1/labels`,
   `api/v1/label/<name>/values`, `api/v1/metadata`, `api/v1/rules`, `api/v1/alerts`,
@@ -68,15 +76,22 @@ Repeated parameters such as `match[]` are written once per value (URL-encode the
 `match%5B%5D` with curl). Results are `{"status":"success","data":…}`; an error has
 `"status":"error"` and `error`.
 
-For other data source types (Elasticsearch, OpenSearch, SQL, CloudWatch) use Grafana's unified
-query, `POST $G/api/ds/query`. It only reads, but it is held for approval like a change:
+For every data source type (Prometheus, Mimir, Loki, Elasticsearch, OpenSearch, SQL, CloudWatch) use
+Grafana's unified query, `POST $G/api/ds/query` (`query_datasources`). It is a read tool: it runs
+under a Viewer token and is not held for approval, unless the person set it to Ask in the account's
+actions table.
 
 ```json
 {"from": "now-1h", "to": "now",
  "queries": [{"refId": "A", "datasource": {"uid": "<ds uid>"}, "rawSql": "SELECT …", "format": "table"}]}
 ```
 
-Use the GET proxy paths first whenever the data source is Prometheus, Mimir or Loki.
+```sh
+aurora-agent call grafana query_datasources --body @body.json --out /tmp/aurora-agent/q.json
+```
+
+Send read statements only, and keep ranges small; the `grafana-query` skill has the body shapes and
+how to read the frames.
 
 ## Alerting
 
@@ -100,6 +115,20 @@ Use the GET proxy paths first whenever the data source is Prometheus, Mimir or L
 (organization-wide annotations), `type=annotation|alert`, `limit=`. Adding one (held for approval):
 `POST /api/annotations` with `{"text": "…", "tags": ["deploy"], "time": <ms>, "timeEnd": <ms>}` and
 `dashboardUID` plus `panelId` to pin it to a dashboard or panel; without them it is organization-wide.
+
+## The write tools with `aurora-agent`
+
+Each is an operation, so a body file works without `--path` (write the JSON to a file, then):
+
+```sh
+aurora-agent call grafana create_annotation --body @annotation.json
+aurora-agent call grafana update_dashboard --body @dashboard.json
+aurora-agent call grafana create_silence --body @silence.json
+aurora-agent call grafana delete_silence id=<silence id>
+```
+
+Single fields also work: `text="Deployed v2" tags:='["deploy"]' time:=1763647200000`.
+`aurora-agent describe grafana <operation>` lists the fields. All four are held for approval.
 
 ## Errors
 

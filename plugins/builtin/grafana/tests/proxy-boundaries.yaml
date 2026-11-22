@@ -137,7 +137,10 @@
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/plugin-proxy/example-app/anything" }
   expect: { app: grafana, no_tool: true }
-- name: "proxy boundary: the frontend settings (all data source settings an account may query) select no tool"
+# Not a tool (P5-GRAFANA-2 checked Grafana v13.3.1 pkg/api/bootdata.go getFSDataSources lines 272-309):
+# for a data source with direct (browser) access the answer carries the decrypted basic-auth header and
+# an InfluxDB password, and `jsonData` is sent whole. list_datasources and a dashboard's panels give UIDs.
+- name: "proxy boundary: the frontend settings (data source settings, passwords of direct-access sources) select no tool"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/frontend/settings" }
   expect: { app: grafana, no_tool: true }
