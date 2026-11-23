@@ -1491,6 +1491,23 @@ async fn the_kill_switch_hides_the_org_routes_but_not_the_admin_ones() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["items"][0]["template_id"], "t", "{v}");
+
+    // The workspace routes (C-1110) answer 404 templates_disabled too — before any
+    // authority check or catalogue work.
+    let owner = h.user("owner@x.io", false).await;
+    h.member(org, owner, "owner", "active").await;
+    let ws = h.workspace(org).await;
+    h.bind_ws(ws, owner, "owner").await;
+    let owner_cookie = cookie(&h.good_session(owner).await.1);
+    for path in [
+        format!("/v1/workspaces/{ws}/agent-templates"),
+        format!("/v1/workspaces/{ws}/agent-templates/t"),
+        format!("/v1/workspaces/{ws}/agent-templates/t/avatar"),
+    ] {
+        let (s, v) = h.call(&owner_cookie, Method::GET, &path, None).await;
+        assert_eq!(s, 404, "{path}: {v}");
+        assert_eq!(code(&v), "templates_disabled", "{path}: {v}");
+    }
 }
 
 // ---- the workspace catalogue (C-1110) -----------------------------------------------------------
