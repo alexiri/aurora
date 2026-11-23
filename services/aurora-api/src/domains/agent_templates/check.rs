@@ -550,7 +550,7 @@ pub async fn check_source(
     for (row, template_id, out) in &done {
         match out {
             StepOut::Left(status, reason, content, content_sha, archive_sha, size) => {
-                repo::finish_version(
+                let matched = repo::finish_version(
                     &mut tx,
                     row.id,
                     status,
@@ -562,6 +562,15 @@ pub async fn check_source(
                     true,
                 )
                 .await?;
+                if matched == 0 {
+                    // The row no longer waits for a package: another check (the lease was
+                    // lost) or an admin has moved it since this check read it. Nothing this
+                    // transaction writes is true any more — roll it all back (SEC-146).
+                    return Err(ApiError::conflict(
+                        "template_check_in_progress",
+                        "The source changed while this check was running.",
+                    ));
+                }
                 // (C-1022, C-1108) A version that now waits for review is a decision item:
                 // one notice per administrator, exactly once (this transaction).
                 if *status == "pending_approval" {
@@ -598,7 +607,7 @@ pub async fn check_source(
                 );
             }
             StepOut::Stayed(reason) => {
-                repo::finish_version(
+                let matched = repo::finish_version(
                     &mut tx,
                     row.id,
                     "awaiting_package",
@@ -610,6 +619,13 @@ pub async fn check_source(
                     true,
                 )
                 .await?;
+                if matched == 0 {
+                    // Lost lease (see the `Left` arm): abort.
+                    return Err(ApiError::conflict(
+                        "template_check_in_progress",
+                        "The source changed while this check was running.",
+                    ));
+                }
             }
         }
     }

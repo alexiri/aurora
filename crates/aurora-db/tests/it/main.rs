@@ -1,5 +1,6 @@
 //! Single integration-test binary for this crate (OPS-016): one link instead of one per file.
 mod agent_link_direction_migration;
+mod agent_template_versions;
 mod app_setup_request_reason_migration;
 mod authz_groups;
 mod avatar_blob_refs_migration;

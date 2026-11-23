@@ -622,6 +622,11 @@ pub async fn insert_version<'e, E: PgExecutor<'e>>(
 /// What a version became after the check processed it (C-1108 steps 5–6). `content` is set
 /// exactly when the row leaves `awaiting_package` as `pending_approval` (the CHECK holds).
 #[allow(clippy::too_many_arguments)]
+/// A check's write of one `awaiting_package` row's outcome (C-1108 step 7). Guarded by the
+/// status: a check that lost its lease while it worked (another check re-claimed the source)
+/// must not overwrite what the new owner or an admin has since written — e.g. a version the
+/// new check ingested and an admin already approved. Zero rows matched means exactly that:
+/// the caller must abort its transaction (`check.rs` does).
 pub async fn finish_version(
     conn: &mut PgConnection,
     id: Uuid,
@@ -632,12 +637,12 @@ pub async fn finish_version(
     archive_sha256: Option<&str>,
     size_bytes: Option<i32>,
     attempted: bool,
-) -> Result<(), DbError> {
-    sqlx::query(sqlx::AssertSqlSafe(
+) -> Result<u64, DbError> {
+    let res = sqlx::query(sqlx::AssertSqlSafe(
         "UPDATE agent_template_versions SET status = $2, status_reason = $3,
             content = $4, content_sha256 = $5, archive_sha256 = $6, size_bytes = $7,
             last_attempt_at = CASE WHEN $8 THEN now() ELSE last_attempt_at END
-         WHERE id = $1"
+         WHERE id = $1 AND status = 'awaiting_package'"
             .to_owned(),
     ))
     .bind(id)
@@ -650,7 +655,7 @@ pub async fn finish_version(
     .bind(attempted)
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 /// The versions of a template, newest first (the admin list, C-1108).
