@@ -3,18 +3,24 @@
 import { useState, type FormEvent } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmAction } from "@/components/ui/confirm-dialog";
+import { CheckboxField, FormActions } from "@/components/ui/form";
 import { Field, inputClass } from "@/components/ui/field";
-import { FormActions } from "@/components/ui/form";
+import { LockIcon } from "@/components/ui/icons";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { ItemList } from "@/components/ui/section";
-import { When } from "@/components/ui/when";
-import { cn } from "@/lib/utils";
-import { Altitude } from "@/components/ui/altitude";
+import { SwitchField } from "@/components/ui/switch";
 import { TechnicalDetails } from "@/components/ui/technical-details";
+import { When } from "@/components/ui/when";
+import { useUndoToast } from "@/components/ui/undo-toast";
+import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/api/client";
+import { formatExact } from "@/lib/format-date";
+import { personName } from "@/lib/workspace-name";
 import { memoryName, memoryPreview, newMemoryKey } from "@/lib/memory-key";
 import {
   MEMORY_CONTENT_MAX,
@@ -27,6 +33,7 @@ import {
   usePutMemory,
   useRedactRevision,
   useRestoreMemory,
+  useSetMemoryLocked,
   type Memory,
 } from "@/lib/api/memory";
 
@@ -114,7 +121,15 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
                       className={cn(memItem, "aria-[current=true]:bg-subtle")}
                       onClick={() => { setSelected(m.key); setCreating(false); }}
                     >
-                      <span className="block truncate font-medium text-ink">{memoryName(m)}</span>
+                      <span className="block truncate font-medium text-ink">
+                        {memoryName(m)}
+                        {/* (P6-MEMLOCK, C-1150) The lock icon and badge only on locked rows. */}
+                        {m.locked ? (
+                          <Badge className="ml-2 align-middle">
+                            <LockIcon className="size-3" aria-hidden="true" /> Locked
+                          </Badge>
+                        ) : null}
+                      </span>
                       <span className="block truncate text-xs text-ink-2">{memoryPreview(m)}</span>
                       <span className="block text-xs text-muted">Updated <When value={m.updated_at} /></span>
                     </button>
@@ -167,13 +182,33 @@ function MemoryEditor({
   const create = useCreateMemory(agentId);
   const put = usePutMemory(agentId, memory?.key ?? "");
   const del = useDeleteMemory(agentId);
+  const lock = useSetMemoryLocked(agentId, memory?.key ?? "");
+  const toast = useUndoToast();
   const [title, setTitle] = useState(memory?.title ?? "");
   const [content, setContent] = useState(memory?.content ?? "");
+  const [lockIt, setLockIt] = useState(false);
+  const [locked, setLocked] = useState(memory?.locked ?? false);
   const [history, setHistory] = useState(false);
   const [err, setErr] = useState("");
   const over = content.length > MEMORY_CONTENT_MAX;
-  const failed = err ? null : (create.error ?? put.error ?? del.error);
+  const failed = err ? null : (create.error ?? put.error ?? del.error ?? lock.error);
   const who = agentName ?? "your agent";
+  // (P6-MEMLOCK, C-1150) The lock help names the agent; the same sentence stands at the checkbox.
+  const lockHelp = `${agentName ?? "Your agent"} can read this memory but can't change or delete it. You can still edit it.`;
+  // (P5-REFINE-20) A person's name is never shown raw: the locker goes through personName.
+  const locker = personName(memory?.locked_by?.display_name);
+
+  /** The switch saves on its own (not with Save); the toast names what happened. */
+  async function setLockedTo(on: boolean) {
+    const before = locked;
+    setLocked(on);
+    try {
+      await lock.mutateAsync(on);
+      toast(on ? "Locked" : "Unlocked", undefined, { success: true });
+    } catch {
+      setLocked(before);
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -191,7 +226,8 @@ function MemoryEditor({
       for (let attempt = 0; ; attempt++) {
         const key = newMemoryKey(title, content, taken, attempt);
         try {
-          await create.mutateAsync({ key, ...body });
+          // (P6-MEMLOCK, C-1150) `locked` goes with the create only when the box is ticked.
+          await create.mutateAsync({ key, ...body, ...(lockIt ? { locked: true } : {}) });
           onDone(key);
           return;
         } catch (error) {
@@ -219,6 +255,29 @@ function MemoryEditor({
           <Field id="mem-title" label="Title (optional)">
             <input id="mem-title" className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
           </Field>
+          {memory ? (
+            <div>
+              {/* (P6-MEMLOCK, C-1150) The Locked switch saves on its own, above Save; a lock is not
+                  a revision, so the history below is unchanged. */}
+              <SwitchField
+                id="mem-locked"
+                label="Locked"
+                hint={lockHelp}
+                checked={locked}
+                onChange={(on) => void setLockedTo(on)}
+                disabled={lock.isPending}
+              />
+              {locked && memory.locked_at ? (
+                <p className="text-xs text-muted">
+                  {memory.locked_by
+                    ? `Locked by ${locker} on ${formatExact(memory.locked_at)}`
+                    : `Locked on ${formatExact(memory.locked_at)}`}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <CheckboxField id="mem-lock-it" label="Lock it" hint={lockHelp} checked={lockIt} onChange={setLockIt} />
+          )}
           <ErrorNotice error={failed} />
           <FormActions className="gap-2">
             <Button type="submit" disabled={over || create.isPending || put.isPending}>Save</Button>

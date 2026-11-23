@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { MemoryTab } from "@/components/memory/memory-tab";
+import { UndoToastHost, dismissUndoToast } from "@/components/ui/undo-toast";
 import { baseKey, memoryName, memoryPreview, newMemoryKey, withSuffix } from "@/lib/memory-key";
 import { err, json, mockFetch } from "./support/api";
 import { wrap } from "./support/render";
@@ -55,6 +56,9 @@ const mem = (over: Record<string, unknown> = {}) => ({
   key: "bobs-tea", title: "Bob's tea", description: null, content: "Bob prefers green tea in the morning.",
   index_line: "bobs-tea: Bob's tea", revision: 1, created_at: "2026-11-20T10:00:00Z", updated_at: "2026-11-20T10:00:00Z", ...over,
 });
+
+const lockedMem = () =>
+  mem({ locked: true, locked_at: "2026-11-21T09:00:00Z", locked_by: { id: "u1", display_name: "Ada" } });
 
 describe("the memory page", () => {
   it("lists memories by title with a preview, never the key", async () => {
@@ -126,5 +130,101 @@ describe("the memory page", () => {
     expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     expect(screen.getByText("Memory key: bobs-tea")).toBeInTheDocument();
+  });
+
+  // ---- locked memories (P6-MEMLOCK, C-1150) ----
+
+  it("shows the lock icon and a Locked badge only on locked rows", async () => {
+    mockFetch({
+      "GET /v1/agents/a1/memories": () =>
+        json(200, { items: [lockedMem(), mem({ key: "free", title: "Free note", content: "Free." })], next_cursor: null }),
+    });
+    wrap(<MemoryTab agentId="a1" agentName="Dani" />);
+    const list = await screen.findByRole("list", { name: "Memories" });
+    expect(within(list).getAllByText("Locked")).toHaveLength(1);
+  });
+
+  it("locks and unlocks from the editor with its own request and a toast, and says who locked it", async () => {
+    const puts: Record<string, unknown>[] = [];
+    mockFetch({
+      "GET /v1/agents/a1/memories": () => json(200, { items: [lockedMem()], next_cursor: null }),
+      "PUT /v1/agents/a1/memories/bobs-tea/locked": async (r) => {
+        const body = (await r.json()) as Record<string, unknown>;
+        puts.push(body);
+        return json(200, mem({ locked: body.locked }));
+      },
+    });
+    wrap(
+      <>
+        <MemoryTab agentId="a1" agentName="Dani" />
+        <UndoToastHost />
+      </>,
+    );
+    fireEvent.click(await screen.findByText("Bob's tea"));
+    // The date is the person's own locale/zone: match the words, not the timestamp.
+    expect(screen.getByText(/Locked by Ada on /)).toBeInTheDocument();
+    expect(screen.getByText("Dani can read this memory but can't change or delete it. You can still edit it.")).toBeInTheDocument();
+    const sw = screen.getByRole("switch", { name: "Locked" });
+    expect(sw).toBeChecked();
+    // The switch saves on its own: one PUT, no POST, and a toast.
+    fireEvent.click(sw);
+    await waitFor(() => expect(puts).toEqual([{ locked: false }]));
+    expect(await screen.findByTestId("undo-toast")).toHaveTextContent("Unlocked");
+    // Unlocking clears the locked-by line.
+    await waitFor(() => expect(screen.queryByText(/Locked by Ada on /)).toBeNull());
+    fireEvent.click(sw);
+    await waitFor(() => expect(puts).toEqual([{ locked: false }, { locked: true }]));
+    expect(await screen.findByTestId("undo-toast")).toHaveTextContent("Locked");
+    dismissUndoToast();
+  });
+
+  it("says Locked on <date> when the locker's name is gone", async () => {
+    mockFetch({
+      "GET /v1/agents/a1/memories": () =>
+        json(200, { items: [mem({ locked: true, locked_at: "2026-11-21T09:00:00Z", locked_by: null })], next_cursor: null }),
+    });
+    wrap(<MemoryTab agentId="a1" agentName="Dani" />);
+    fireEvent.click(await screen.findByText("Bob's tea"));
+    expect(screen.getByText(/Locked on /)).toBeInTheDocument();
+  });
+
+  it("sends locked: true with the create only when Lock it is ticked", async () => {
+    const posts: Record<string, unknown>[] = [];
+    mockFetch({
+      "GET /v1/agents/a1/memories": () => json(200, { items: [], next_cursor: null }),
+      "POST /v1/agents/a1/memories": async (r) => {
+        const body = (await r.json()) as Record<string, unknown>;
+        posts.push(body);
+        return json(201, mem({ key: body.key }));
+      },
+    });
+    wrap(<MemoryTab agentId="a1" agentName="Dani" />);
+    fireEvent.click(await screen.findByRole("button", { name: "New memory" }));
+    const box = screen.getByLabelText("Lock it");
+    expect(box).not.toBeChecked();
+    expect(screen.getByText("Dani can read this memory but can't change or delete it. You can still edit it.")).toBeInTheDocument();
+    fireEvent.click(box);
+    fireEvent.change(screen.getByLabelText("What should Dani remember?"), { target: { value: "Pinned." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ locked: true });
+  });
+
+  it("sends no locked key when Lock it is unticked", async () => {
+    const posts: Record<string, unknown>[] = [];
+    mockFetch({
+      "GET /v1/agents/a1/memories": () => json(200, { items: [], next_cursor: null }),
+      "POST /v1/agents/a1/memories": async (r) => {
+        const body = (await r.json()) as Record<string, unknown>;
+        posts.push(body);
+        return json(201, mem({ key: body.key }));
+      },
+    });
+    wrap(<MemoryTab agentId="a1" agentName="Dani" />);
+    fireEvent.click(await screen.findByRole("button", { name: "New memory" }));
+    fireEvent.change(screen.getByLabelText("What should Dani remember?"), { target: { value: "Plain." } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).not.toHaveProperty("locked");
   });
 });

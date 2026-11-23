@@ -84,6 +84,24 @@ export function useDeleteMemory(agent: string) {
   });
 }
 
+/**
+ * (P6-MEMLOCK, C-1150) Locks or unlocks a memory on its own (not with Save): `PUT …/locked` is
+ * idempotent, never writes a revision, and the refetched list carries the new state.
+ */
+export function useSetMemoryLocked(agent: string, key: string) {
+  const inv = useInvalidate(agent);
+  return useMutation({
+    mutationFn: (locked: boolean) =>
+      unwrap(
+        api.PUT("/v1/agents/{agent}/memories/{key}/locked", {
+          params: { path: { agent, key } },
+          body: { locked },
+        }),
+      ),
+    onSuccess: inv,
+  });
+}
+
 export function useRestoreMemory(agent: string, key: string) {
   const inv = useInvalidate(agent);
   return useMutation({

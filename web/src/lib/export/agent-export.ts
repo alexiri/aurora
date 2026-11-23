@@ -11,7 +11,7 @@ import { nameProblem, ZipError, writeZip, type ZipEntry } from "./zip";
  * <handle>/
  *   agent.yaml            format, name, purpose?, model, may_message_first
  *   instructions.md       the instructions text
- *   memory/<key>.md       front matter `key`, `updated`; then the text
+ *   memory/<key>.md       front matter `key`, `updated`, `locked?` (true only when locked); then the text
  *   skills/<name>/SKILL.md  front matter `name`, `use-it-when`; then the body (+ the skill's other files)
  *   automations/<name>.yaml  a schedule or a webhook, without address or secret
  *   README.md             where it came from
@@ -26,6 +26,8 @@ export interface ExportMemory {
   key: string;
   updated: string;
   content: string;
+  /** (P6-MEMLOCK, C-1150) Written only when true, so existing exports are unchanged. */
+  locked?: boolean;
 }
 
 export interface ExportSkillFile {
@@ -96,7 +98,7 @@ function automationYaml(a: ExportAutomation): YamlValue {
 
 const enc = new TextEncoder();
 
-function frontMatter(fields: Record<string, string>, text: string): string {
+function frontMatter(fields: Record<string, string | boolean>, text: string): string {
   return `---\n${stringifyYaml(fields)}---\n${text}`;
 }
 
@@ -107,7 +109,8 @@ export function exportFiles(e: AgentExport, handle: string, now: Date = new Date
   const add = (path: string, text: string | Uint8Array) => files.push({ name: `${root}/${path}`, data: typeof text === "string" ? enc.encode(text) : text });
   add("agent.yaml", stringifyYaml(agentYaml(e)));
   add("instructions.md", e.instructions);
-  for (const m of e.memories) add(`memory/${m.key}.md`, frontMatter({ key: m.key, updated: m.updated }, m.content));
+  // (P6-MEMLOCK, C-1150) `locked: true` only on a locked memory: no line for an unlocked one.
+  for (const m of e.memories) add(`memory/${m.key}.md`, frontMatter({ key: m.key, updated: m.updated, ...(m.locked ? { locked: true } : {}) }, m.content));
   for (const s of e.skills) {
     add(`skills/${s.name}/SKILL.md`, frontMatter({ name: s.name, "use-it-when": s.useItWhen }, s.body));
     for (const f of s.files) add(`skills/${s.name}/${f.path}`, f.content);
@@ -236,7 +239,14 @@ export function parseExport(entries: ZipEntry[]): AgentExport {
       const { front, rest } = split(text(entry), entry.name);
       const key = str(front.key, "a key", entry.name);
       if (!KEY_RE.test(key) || key.length > 64) throw new ExportError(`“${entry.name}”: the key “${key.slice(0, 40)}” is not a kebab-case key of at most 64 characters.`);
-      memories.push({ key, updated: typeof front.updated === "string" ? front.updated : "", content: rest });
+      // (P6-MEMLOCK, C-1150) `locked` is a boolean; anything else refuses the file, naming it.
+      if (front.locked !== undefined && typeof front.locked !== "boolean") throw new ExportError(`“${entry.name}”: locked is true or false.`);
+      memories.push({
+        key,
+        updated: typeof front.updated === "string" ? front.updated : "",
+        content: rest,
+        ...(front.locked === true ? { locked: true } : {}),
+      });
     } else if (/^skills\/[^/]+\/SKILL\.md$/.test(path)) {
       const { front, rest } = split(text(entry), entry.name);
       const skillName = str(front.name, "a name", entry.name);

@@ -129,8 +129,30 @@ describe("runImport", () => {
     expect(calls).toContain("skill:release-notes");
   });
 
+  it("imports a locked memory locked (P6-MEMLOCK, C-1150)", async () => {
+    const { calls, io } = fakeApi();
+    const lockedExp: AgentExport = {
+      ...exp,
+      memories: [{ key: "pinned", updated: "2026-11-01T09:00:00Z", content: "Rules.", locked: true }, ...exp.memories.slice(1)],
+    };
+    const seen: (boolean | undefined)[] = [];
+    const spy = io.createMemory;
+    io.createMemory = async (m) => {
+      seen.push(m.locked);
+      return spy(m);
+    };
+    await runImport(lockedExp, DEFAULT_CHOICES, none, io);
+    expect(calls).toEqual(["memory:pinned", "memory:timezone", "skill:release-notes", "file:sk1/run.sh", "schedule:Morning", "pause-schedule:sc1", "webhook:Deploy notice", "pause-webhook:wh1"]);
+    expect(seen).toEqual([true, undefined]);
+  });
+
   it("writes the checklist line", () => {
     expect(summaryLine(exp)).toBe("Instructions · 2 memories · 1 skill · 1 schedule · 1 webhook");
+    // (P6-MEMLOCK, C-1150) The locked count shows only when any memory is locked.
+    expect(summaryLine({ ...exp, memories: [{ ...exp.memories[0]!, locked: true }] })).toBe(
+      "Instructions · 1 memory (1 locked) · 1 skill · 1 schedule · 1 webhook",
+    );
+    expect(summaryLine({ ...exp, memories: [] })).toBe("Instructions · 1 skill · 1 schedule · 1 webhook");
   });
 });
 
@@ -320,5 +342,37 @@ describe("Export and import on the Settings page", () => {
     expect(writes).toContain("PATCH /v1/schedules/sc1");
     expect(writes).toContain("PATCH /v1/webhooks/wh1");
     expect(await screen.findByTestId("secret-key")).toHaveTextContent("whsec_fresh");
+  });
+
+  it("exports a locked memory and imports it locked (P6-MEMLOCK, C-1150)", async () => {
+    serve({ memories: [{ key: "pinned", content: "Rules.", updated_at: "2026-11-01T09:00:00Z", locked: true }] });
+    const blobs: Blob[] = [];
+    URL.createObjectURL = vi.fn((b: Blob | MediaSource) => (blobs.push(b as Blob), "blob:x"));
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Export Rex…" }));
+    const ex = await screen.findByRole("dialog", { name: "Export Rex" });
+    await within(ex).findByTestId("export-summary");
+    fireEvent.click(within(ex).getByRole("button", { name: "Download zip" }));
+    const bytes = await new Promise<Uint8Array>((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(new Uint8Array(r.result as ArrayBuffer));
+      r.readAsArrayBuffer(blobs[0]!);
+    });
+    // The zip carries the lock; the exported yaml says `locked: true`.
+    expect(new TextDecoder().decode(bytes)).toContain("locked: true");
+    cleanup();
+    const calls = serve();
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Import into Rex…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Import into Rex" });
+    fireEvent.change(within(dialog).getByLabelText("Aurora export (.zip)"), { target: { files: [file(bytes, "rex.zip")] } });
+    expect(await within(dialog).findByTestId("import-summary")).toHaveTextContent("1 memory (1 locked)");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Import" }));
+    await within(dialog).findByTestId("import-report");
+    expect(calls.find((c) => c.method === "POST" && c.path === "/v1/agents/a1/memories")!.body).toMatchObject({
+      key: "pinned",
+      locked: true,
+    });
   });
 });

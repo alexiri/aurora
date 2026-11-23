@@ -67,6 +67,24 @@ describe("the tree", () => {
     expect(back).toEqual(sample);
   });
 
+  // (P6-MEMLOCK, C-1150) `locked: true` only on a locked memory: no line for an unlocked one, so
+  // existing exports are unchanged; the import reads it back and refuses a non-boolean.
+  it("writes locked: true only for locked memories and reads it back", async () => {
+    const e: AgentExport = {
+      ...sample,
+      memories: [
+        { key: "pinned", updated: "2026-11-01T09:00:00Z", content: "Rules.", locked: true },
+        { key: "free", updated: "2026-11-02T09:00:00Z", content: "Free." },
+      ],
+    };
+    const files = Object.fromEntries(exportFiles(e, "daneel", NOW).map((f) => [f.name, text(f.data)]));
+    expect(files["daneel/memory/pinned.md"]).toBe('---\nkey: pinned\nupdated: "2026-11-01T09:00:00Z"\nlocked: true\n---\nRules.');
+    expect(files["daneel/memory/free.md"]).toBe('---\nkey: free\nupdated: "2026-11-02T09:00:00Z"\n---\nFree.');
+    const back = parseExport(await readZip(exportZip(e, "daneel", NOW).bytes));
+    const byKey = (ms: typeof e.memories) => [...ms].sort((a, b) => a.key.localeCompare(b.key));
+    expect(byKey(back.memories)).toEqual(byKey(e.memories));
+  });
+
   it("writes a one-time schedule as cadence { preset: once, run_at } with its time zone, and a skill's other files beside SKILL.md, and reads them back", async () => {
     const e: AgentExport = {
       ...sample,
@@ -113,6 +131,14 @@ describe("reading refuses what it should", () => {
     expect(() => parseExport([{ name: "a/agent.yaml", data: enc("format: 2\nname: A\n") }])).toThrow(/newer Aurora/);
     const files = await zip({ "a/agent.yaml": "format: 1\nname: A\n", "a/memory/x.md": '---\nkey: "Not Kebab"\n---\nhi' });
     expect(() => parseExport(files)).toThrow(/kebab-case key/);
+  });
+
+  // (P6-MEMLOCK, C-1150) `locked` in a memory's front matter is a boolean; anything else refuses
+  // the file, naming it.
+  it("a memory whose locked is not a boolean", async () => {
+    const entries = await zip({ "a/agent.yaml": "format: 1\nname: A\n", "a/memory/x.md": "---\nkey: x\nlocked: yes\n---\nhi" });
+    expect(() => parseExport(entries)).toThrow(ExportError);
+    expect(() => parseExport(entries)).toThrow("“a/memory/x.md”: locked is true or false.");
   });
 
   it("YAML with an anchor, a tag or an alias", async () => {

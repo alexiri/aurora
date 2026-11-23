@@ -27,6 +27,7 @@ const rev = (n: number, over: Partial<MemoryRevision> = {}): MemoryRevision => (
 });
 const memory: Memory = {
   key: "k", revision: 3, content: "c", index_line: "k: c", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+  locked: false,
 };
 
 describe("limits", () => {

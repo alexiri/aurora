@@ -1250,6 +1250,7 @@ unified by D-407 (P5-REFINE-1).
 | **Web address** | Workspace address, URL name, slug | a workspace's address, shown as the full URL | Set up |
 | **Remove this message's content…** ("Removing…") | Redact…, Redacting… | replace a message's content for everyone | Use |
 | **Language <Agent> remembers in** ("Language agents remember in" for a workspace) | Memory language | the language of memory search | Expert |
+| **Locked** (a memory: the badge, the switch, "Lock it", "Locked by <name> on <date>") | Read-only, pinned, protected | a memory a person locked so <Agent> can read it but not change or delete it (P6-MEMLOCK, C-1150) | Use |
 | **Came with this workspace** | Default agent, Default (badge) | the agent a new workspace starts with | Use |
 | **Ask an admin** ("Ask an Aurora administrator", "Ask an organization admin", "Ask a workspace owner"); "Needs an admin first"; "Managed by your organization's admins" | Ask alice, Needs alice first, managed by alice | who can do what you cannot: a role, never a login, because instance and organization admins can be several people. A person's name stays where that person is the subject ("Bob asked", "Invited by Alice Admin") | Use |
 | **Administration** | Admin, All organizations | the instance level, for instance admins | Use |
@@ -2530,7 +2531,7 @@ documents and duplicate keys); no dependency was added. **A purpose template *is
 <handle>/
   agent.yaml                 format, name, purpose?, model (default or a name), may_message_first
   instructions.md            the instructions text
-  memory/<key>.md            front matter `key`, `updated`; then the text
+  memory/<key>.md            front matter `key`, `updated`, `locked?` (`true` only when locked); then the text
   skills/<name>/SKILL.md     front matter `name`, `use-it-when`; then the body
   automations/<name>.yaml    a schedule or a webhook
   README.md                  "Exported from Aurora on <date>. Secrets, accounts and conversations are not included."
@@ -2565,9 +2566,11 @@ are written beside its `SKILL.md` as stored (read one by one with `GET /v1/skill
 one-time schedule through the same route and pauses it like the others ("Check the schedule, then turn it on"); the dialog
 says to check the time first.
 **Import** opens a dialog: pick or drop a `.zip` (at most 5 MB and 200 files; absolute, hidden and `..` names refused with one
-sentence), a checklist (*Instructions · 3 memories · 2 skills · 1 schedule · 1 webhook*, a checkbox per group) and **Keep mine**
-(default) or **Replace instructions**. **Import** creates through the existing routes; a name that already exists is skipped and
-listed (*Skipped: skill “release-notes” already exists*); schedules and webhooks are created **paused** (a webhook with a new
+sentence), a checklist (*Instructions · 3 memories (1 locked) · 2 skills · 1 schedule · 1 webhook*, a checkbox per group; the
+locked count is shown when any memory is locked, P6-MEMLOCK C-1150) and **Keep mine** (default) or **Replace instructions**.
+**Import** creates through the existing routes; a name that already exists is skipped and listed (*Skipped: skill
+“release-notes” already exists*); a memory's `locked: true` front matter arrives as a locked create (`locked_by` the
+importer; any other value refuses the file, naming it); schedules and webhooks are created **paused** (a webhook with a new
 signing secret shown once in `SecretOnce`; its address is on the card, *Rotate URL*); a failure is listed and the rest go on.
 Import never changes access, accounts or the AI key.
 
@@ -2608,6 +2611,11 @@ One save bar; "Saved" for two seconds.
 (`lib/memory-key.ts`): from the title, else the first six words; kebab-case ASCII, at most 64 characters, `note`
 when nothing is left, unique by a numeric suffix, one retry on a 409. Lists show the title (else the first line,
 60 characters) and a preview, never the key; the key is in Technical details at Expert (`memory.key`).
+(P6-MEMLOCK, C-1150) A locked memory shows the lock icon and a **Locked** badge after its title. The editor has a
+switch **Locked** above Save with the help "<Agent> can read this memory but can't change or delete it. You can still
+edit it."; it saves on its own (`setMemoryLocked`), independently of Save, with the toast "Locked" or "Unlocked", and
+under it "Locked by <name> on <date>" ("Locked on <date>" without the locker). The new-memory form has a checkbox
+**Lock it**, unticked by default, with the same help. A lock is not a revision: the history is unchanged.
 
 **Skills.** Name, "Use it when…" (the API's one-line `description`), Instructions (the `body`), "On for <Agent>",
 Save and Delete. The folder name is made by Aurora (`lib/skill-name.ts`: kebab-case, at most 64 characters, `aurora-`

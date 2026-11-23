@@ -121,6 +121,15 @@ describe("yaml", () => {
     expect(stringifyYaml({ name: "Release notes", handle: "daneel-1" })).toBe("name: Release notes\nhandle: daneel-1\n");
   });
 
+  // (P6-MEMLOCK, C-1150) A locked memory's front matter writes `locked: true` plainly, so the
+  // reader gets a boolean back (and an unlocked memory has no key at all).
+  it("writes a locked memory's front matter so locked reads back as a boolean", () => {
+    const front = { key: "pinned", updated: "2026-11-01T09:00:00Z", locked: true };
+    expect(stringifyYaml(front)).toBe('key: pinned\nupdated: "2026-11-01T09:00:00Z"\nlocked: true\n');
+    expect(roundTrip(front)).toEqual(front);
+    expect(roundTrip({ key: "free", updated: "2026-11-02T09:00:00Z" })).toEqual({ key: "free", updated: "2026-11-02T09:00:00Z" });
+  });
+
   it("reads comments and blank lines", () => {
     expect(parseYaml("# the agent\nformat: 1\n\nname: Daneel\n")).toEqual({ format: 1, name: "Daneel" });
     // A comment after a value is refused (the writer never writes one): quote the text to keep a #.

@@ -60,7 +60,7 @@ export async function loadAgentExport(agent: Pick<Agent, "id" | "name" | "brief"
       model: agent.model_id ?? "default",
       may_message_first: agent.proactive_messaging === "allow",
       instructions: agent.brief,
-      memories: memories.items.map((m) => ({ key: m.key, updated: m.updated_at, content: m.content })),
+      memories: memories.items.map((m) => ({ key: m.key, updated: m.updated_at, content: m.content, ...(m.locked ? { locked: true } : {}) })),
       skills: skillList,
       automations,
     },
@@ -130,11 +130,13 @@ export interface ImportReport {
   webhooksPaused: number;
 }
 
-/** How many of each group an export holds, for the checklist ("Instructions · 3 memories · 2 skills · 1 schedule · 1 webhook"). */
-export function summarize(e: AgentExport): { instructions: boolean; memories: number; skills: number; schedules: number; webhooks: number } {
+/** How many of each group an export holds, for the checklist ("Instructions · 3 memories (1 locked) · 2 skills · 1 schedule · 1 webhook"). */
+export function summarize(e: AgentExport): { instructions: boolean; memories: number; locked: number; skills: number; schedules: number; webhooks: number } {
   return {
     instructions: e.instructions.trim() !== "",
     memories: e.memories.length,
+    // (P6-MEMLOCK, C-1150) The checklist says how many memories are locked.
+    locked: e.memories.filter((m) => m.locked).length,
     skills: e.skills.length,
     schedules: e.automations.filter((a) => a.kind === "schedule").length,
     webhooks: e.automations.filter((a) => a.kind === "webhook").length,
@@ -146,7 +148,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** The checklist line. */
 export function summaryLine(e: AgentExport): string {
   const s = summarize(e);
-  return [s.instructions ? "Instructions" : null, s.memories ? plural(s.memories, "memory", "memories") : null, s.skills ? plural(s.skills, "skill") : null, s.schedules ? plural(s.schedules, "schedule") : null, s.webhooks ? plural(s.webhooks, "webhook") : null]
+  const memories = s.memories ? `${plural(s.memories, "memory", "memories")}${s.locked ? ` (${plural(s.locked, "locked")})` : ""}` : null;
+  return [s.instructions ? "Instructions" : null, memories, s.skills ? plural(s.skills, "skill") : null, s.schedules ? plural(s.schedules, "schedule") : null, s.webhooks ? plural(s.webhooks, "webhook") : null]
     .filter((x): x is string => x !== null)
     .join(" · ");
 }
@@ -241,7 +244,8 @@ export function liveImportApi(agentId: string): ImportApi {
       await unwrap(api.PATCH("/v1/agents/{agent}", { ...path, body: { brief: text } }));
     },
     async createMemory(m) {
-      await unwrap(api.POST("/v1/agents/{agent}/memories", { ...path, body: { key: m.key, content: m.content } }));
+      // (P6-MEMLOCK, C-1150) A locked memory arrives locked, `locked_by` the importer.
+      await unwrap(api.POST("/v1/agents/{agent}/memories", { ...path, body: { key: m.key, content: m.content, ...(m.locked ? { locked: true } : {}) } }));
     },
     async createSkill(s) {
       const made = await unwrap(api.POST("/v1/agents/{agent}/skills", { ...path, body: { name: s.name, description: s.useItWhen, body: s.body } }));
