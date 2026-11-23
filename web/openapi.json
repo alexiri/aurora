@@ -12665,6 +12665,103 @@
         ]
       }
     },
+    "/v1/agents/{agent}/memories/{key}/locked": {
+      "put": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "(P6-MEMLOCK, C-1148) Sets or clears a memory's lock. Idempotent: the same value changes\nnothing (no audit row, no generation bump); a change writes `memory.lock` / `memory.unlock`\nand bumps the agent's home-sync generation, with no revision. No agent-reachable tool or\nroute can call this (SEC-151).",
+        "operationId": "setMemoryLocked",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Memory key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetMemoryLockedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Memory"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/memories/{key}/restore": {
       "post": {
         "tags": [
@@ -49384,6 +49481,13 @@
             "type": "string",
             "description": "Immutable kebab-case key, at most 64 characters."
           },
+          "locked": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "(P6-MEMLOCK, C-1148) Create the memory locked; default false. `locked_at`/`locked_by` are\nset from the caller (null for an API key without a user)."
+          },
           "title": {
             "type": [
               "string",
@@ -55853,7 +55957,8 @@
           "index_line",
           "revision",
           "updated_at",
-          "created_at"
+          "created_at",
+          "locked"
         ],
         "properties": {
           "content": {
@@ -55876,6 +55981,29 @@
           "key": {
             "type": "string"
           },
+          "locked": {
+            "type": "boolean",
+            "description": "(P6-MEMLOCK, C-1148) The agent can read but not change or delete a locked memory."
+          },
+          "locked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Set when `locked` became true, cleared when it became false."
+          },
+          "locked_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MemoryLockedBy",
+                "description": "The person who locked it; null for an API key without a user and for a person who was\nlater deleted."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "revision": {
             "type": "integer",
             "format": "int32"
@@ -55889,6 +56017,22 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "MemoryLockedBy": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -55939,11 +56083,16 @@
         "required": [
           "key",
           "score",
-          "snippet"
+          "snippet",
+          "locked"
         ],
         "properties": {
           "key": {
             "type": "string"
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "(P6-MEMLOCK, C-1149) The hit's memory is locked."
           },
           "score": {
             "type": "number",
@@ -59947,7 +60096,8 @@
                 "index_line",
                 "revision",
                 "updated_at",
-                "created_at"
+                "created_at",
+                "locked"
               ],
               "properties": {
                 "content": {
@@ -59969,6 +60119,29 @@
                 },
                 "key": {
                   "type": "string"
+                },
+                "locked": {
+                  "type": "boolean",
+                  "description": "(P6-MEMLOCK, C-1148) The agent can read but not change or delete a locked memory."
+                },
+                "locked_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "Set when `locked` became true, cleared when it became false."
+                },
+                "locked_by": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MemoryLockedBy",
+                      "description": "The person who locked it; null for an API key without a user and for a person who was\nlater deleted."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "revision": {
                   "type": "integer",
@@ -68341,6 +68514,18 @@
           "integration_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "SetMemoryLockedRequest": {
+        "type": "object",
+        "description": "(P6-MEMLOCK, C-1148) `PUT …/memories/{key}/locked` (`setMemoryLocked`): idempotent.",
+        "required": [
+          "locked"
+        ],
+        "properties": {
+          "locked": {
+            "type": "boolean"
           }
         }
       },

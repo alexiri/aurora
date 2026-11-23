@@ -383,18 +383,20 @@ pub async fn set_session(
     Ok(true)
 }
 
-/// `memory/index.md` lines: `(key, title, description, first content line)`.
+/// `memory/index.md` lines: `(key, title, description, first content line)`, plus the lock
+/// (P6-MEMLOCK, C-1149) that marks the line and the projected file.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct MemoryRow {
     pub key: String,
     pub title: Option<String>,
     pub description: Option<String>,
     pub content: String,
+    pub locked: bool,
 }
 
 pub async fn memories(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<MemoryRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT key, title, description, content FROM memories WHERE agent_id = $1 ORDER BY key",
+        "SELECT key, title, description, content, locked FROM memories WHERE agent_id = $1 ORDER BY key",
     )
     .bind(agent)
     .fetch_all(conn)

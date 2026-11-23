@@ -21,6 +21,20 @@ pub struct Author {
     pub label: String,
 }
 
+/// (P6-MEMLOCK, C-1149) The one refusal every agent-authored write and delete goes through.
+pub fn memory_locked_error() -> ApiError {
+    ApiError::conflict(
+        "memory_locked",
+        "This memory is locked: a person set it, and you can read it but not change or delete \
+         it. If it looks wrong or out of date, tell the person.",
+    )
+}
+
+/// Whether this author is the agent (whose writes a lock refuses; SEC-151).
+fn is_agent(author: &Author) -> bool {
+    author.kind == "agent"
+}
+
 /// Where a write came from; stored in the revision provenance.
 pub enum Source {
     Dashboard,
@@ -58,6 +72,9 @@ pub struct Write<'a> {
     pub create_only: bool,
     /// Skip the revision when nothing changed (harvest re-uploads).
     pub skip_unchanged: bool,
+    /// (P6-MEMLOCK, C-1148) Only `create` may arrive locked; a save or restore never changes the
+    /// lock. Tool writes and the harvest always pass `false`.
+    pub locked: bool,
 }
 
 fn bad(path: &str, msg: &str) -> ApiError {
@@ -93,18 +110,25 @@ fn clamp(s: &str, max: usize) -> String {
 }
 
 /// `key: line`, the line being the description, else title, else first content line (<=120 chars).
+/// (P6-MEMLOCK, C-1149) A locked memory's line ends with ` (locked)` after the clamped line —
+/// the same rule as the home sync's index, so `memory_list` and `memory/index.md` agree.
 pub fn index_line(
     key: &str,
     title: Option<&str>,
     description: Option<&str>,
     content: &str,
+    locked: bool,
 ) -> String {
     let line = blank_none(description)
         .or_else(|| blank_none(title))
         .or_else(|| content.lines().find(|l| !l.trim().is_empty()))
         .unwrap_or("");
     let one = line.split_whitespace().collect::<Vec<_>>().join(" ");
-    format!("{key}: {}", clamp(&one, 120))
+    let mut out = format!("{key}: {}", clamp(&one, 120));
+    if locked {
+        out.push_str(" (locked)");
+    }
+    out
 }
 
 /// Creates or replaces a memory inside one transaction; returns `(row, created)`.
@@ -147,6 +171,16 @@ pub async fn save(
     let mut tx = pool.begin().await.map_err(DbError::from)?;
     repo::lock_agent(&mut tx, agent).await?;
     let existing = repo::get(&mut tx, agent, w.key).await?;
+    // (P6-MEMLOCK, C-1149, SEC-151) The one lock check, inside the write's transaction while the
+    // agent row is locked: an agent-authored write to a locked memory is refused, so a lock that
+    // commits while a tool write waits on the row lock is still honoured. People are never
+    // refused here (they keep editing, restoring and redacting a locked memory).
+    if let Some(cur) = &existing
+        && cur.locked
+        && is_agent(author)
+    {
+        return Err(memory_locked_error());
+    }
     let (row, created, op) = match existing {
         Some(_) if w.create_only => {
             return Err(ApiError::conflict(
@@ -179,7 +213,20 @@ pub async fn save(
                 ));
             }
             (
-                repo::insert(&mut tx, agent, w.key, title, description, w.content).await?,
+                // (P6-MEMLOCK, C-1148) Only the create route may arrive locked (`true` sets
+                // `locked_at`/`locked_by` from the caller); tool writes and the harvest pass
+                // `false`, which leaves the lock columns at their defaults.
+                repo::insert(
+                    &mut tx,
+                    agent,
+                    w.key,
+                    title,
+                    description,
+                    w.content,
+                    w.locked,
+                    author.user_id,
+                )
+                .await?,
                 true,
                 "save",
             )
@@ -228,16 +275,51 @@ pub async fn list(pool: &PgPool, agent: Uuid) -> Result<Vec<repo::MemoryRow>, Ap
 }
 
 /// Deletes a memory (and its revisions). 404 when absent.
-pub async fn delete(pool: &PgPool, agent: Uuid, key: &str) -> Result<(), ApiError> {
+/// (P6-MEMLOCK, C-1149, SEC-151) An agent-authored delete of a locked memory is refused with the
+/// same one check as a write; a person's delete always works.
+pub async fn delete(
+    pool: &PgPool,
+    agent: Uuid,
+    key: &str,
+    author: &Author,
+) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(DbError::from)?;
     repo::lock_agent(&mut tx, agent).await?;
     let m = repo::get(&mut tx, agent, key)
         .await?
         .ok_or_else(|| ApiError::not_found("Memory not found."))?;
+    if m.locked && is_agent(author) {
+        return Err(memory_locked_error());
+    }
     repo::delete(&mut tx, m.id).await?;
     repo::bump_agent_sync(&mut tx, agent).await?;
     tx.commit().await.map_err(DbError::from)?;
     Ok(())
+}
+
+/// (P6-MEMLOCK, C-1148) Sets or clears the lock of one memory. Idempotent: the same value
+/// changes nothing (`changed = false`, no audit row, no generation bump). A change bumps the
+/// agent's home-sync generation and writes **no revision** (a lock is not a content change).
+/// Only a person may call this: no agent-reachable tool or route exposes it (SEC-151).
+pub async fn set_locked(
+    pool: &PgPool,
+    agent: Uuid,
+    key: &str,
+    locked: bool,
+    by: &Author,
+) -> Result<(repo::MemoryRow, bool), ApiError> {
+    let mut tx = pool.begin().await.map_err(DbError::from)?;
+    repo::lock_agent(&mut tx, agent).await?;
+    let m = repo::get(&mut tx, agent, key)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Memory not found."))?;
+    if m.locked == locked {
+        return Ok((m, false));
+    }
+    let row = repo::set_locked(&mut tx, m.id, locked, by.user_id).await?;
+    repo::bump_agent_sync(&mut tx, agent).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok((row, true))
 }
 
 pub async fn revisions(
@@ -257,6 +339,8 @@ pub async fn revisions(
 }
 
 /// Restores an older revision as a new revision (`op = restore`).
+/// (P6-MEMLOCK) A person-only path: restore works on a locked memory (the lock never changes)
+/// and no agent-reachable tool or route calls this.
 pub async fn restore(
     pool: &PgPool,
     agent: Uuid,
@@ -299,6 +383,8 @@ pub async fn restore(
 }
 
 /// Scrubs one non-latest revision in place (idempotent).
+/// (P6-MEMLOCK) A person-only path: redaction works on a locked memory's revisions and no
+/// agent-reachable tool or route calls this.
 pub async fn redact(
     pool: &PgPool,
     agent: Uuid,
@@ -410,6 +496,9 @@ pub async fn memory_write(
         max_content: limits::MEMORY_CONTENT_MAX,
         create_only: false,
         skip_unchanged: true,
+        // (P6-MEMLOCK) The harvest write is agent-authored: it never creates a locked memory,
+        // and a write to one is refused by the one check in `save` (409, no revision).
+        locked: false,
     };
     let author = Author {
         kind: "agent",

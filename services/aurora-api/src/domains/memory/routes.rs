@@ -19,6 +19,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_memories, create_memory))
         .routes(routes!(search_memories))
         .routes(routes!(get_memory, put_memory, delete_memory))
+        .routes(routes!(set_memory_locked))
         .routes(routes!(list_revisions))
         .routes(routes!(restore_memory))
         .routes(routes!(redact_revision))
@@ -104,6 +105,8 @@ async fn create_memory(
         max_content: limits::MEMORY_CONTENT_MAX,
         create_only: true,
         skip_unchanged: false,
+        // (P6-MEMLOCK, C-1148) Only the create route may arrive locked.
+        locked: req.locked.unwrap_or(false),
     };
     let (row, _) = service::save(&s.pool, agent, &w, &author(&c), &source(&c)).await?;
     record(&c, &s, &a, "memory.save", &row.key);
@@ -169,6 +172,8 @@ async fn put_memory(
         max_content: limits::MEMORY_CONTENT_MAX,
         create_only: false,
         skip_unchanged: false,
+        // (P6-MEMLOCK) A save never changes the lock; a person's PUT on a locked memory works.
+        locked: false,
     };
     let (row, _) = service::save(&s.pool, agent, &w, &author(&c), &source(&c)).await?;
     record(&c, &s, &a, "memory.save", &row.key);
@@ -187,9 +192,41 @@ async fn delete_memory(
     Path((agent, key)): Path<(Uuid, String)>,
 ) -> Result<StatusCode, ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
-    service::delete(&s.pool, agent, &key).await?;
+    // (P6-MEMLOCK) The author decides the lock rule: an agent-authored delete of a locked memory
+    // is refused; a person's delete always works.
+    service::delete(&s.pool, agent, &key, &author(&c)).await?;
     record(&c, &s, &a, "memory.delete", &key);
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// (P6-MEMLOCK, C-1148) Sets or clears a memory's lock. Idempotent: the same value changes
+/// nothing (no audit row, no generation bump); a change writes `memory.lock` / `memory.unlock`
+/// and bumps the agent's home-sync generation, with no revision. No agent-reachable tool or
+/// route can call this (SEC-151).
+#[utoipa::path(put, path = "/agents/{agent}/memories/{key}/locked",
+    operation_id = "setMemoryLocked", tag = "memory",
+    params(("agent" = Uuid, Path, description = "Agent id"), ("key" = String, Path, description = "Memory key")),
+    request_body = SetMemoryLockedRequest,
+    responses((status = 200, body = Memory), (status = 400, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn set_memory_locked(
+    c: Caller,
+    State(s): State<AppState>,
+    Path((agent, key)): Path<(Uuid, String)>,
+    Json(req): Json<SetMemoryLockedRequest>,
+) -> Result<Json<Memory>, ApiError> {
+    let a = visible_agent(&c, &s, agent).await?;
+    let (row, changed) = service::set_locked(&s.pool, agent, &key, req.locked, &author(&c)).await?;
+    if changed {
+        let action = if req.locked {
+            "memory.lock"
+        } else {
+            "memory.unlock"
+        };
+        record(&c, &s, &a, action, &key);
+    }
+    Ok(Json(row.into()))
 }
 
 /// Revisions, newest first (at most `MEMORY_REVISIONS_KEPT`).

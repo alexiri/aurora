@@ -726,6 +726,9 @@
       "description",
       "id",
       "key",
+      "locked",
+      "locked_at",
+      "locked_by",
       "revision",
       "title"
     ],
@@ -2349,6 +2352,9 @@
       "description": "text null",
       "id": "uuid not null",
       "key": "text not null",
+      "locked": "boolean not null",
+      "locked_at": "timestamptz null",
+      "locked_by": "uuid null",
       "revision": "int not null",
       "title": "text null"
     },

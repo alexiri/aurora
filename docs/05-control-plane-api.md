@@ -883,7 +883,7 @@ Phase 5 rows, each answered with the standard error body; the set of routes and 
 ### Memory, skills, schedules, webhooks, links
 | Method & path | Auth | Purpose |
 |---|---|---|
-| GET/POST `/v1/agents/{agent}/memories`; GET/PUT/DELETE `/v1/agents/{agent}/memories/{key}` | S/K | |
+| GET/POST `/v1/agents/{agent}/memories`; GET/PUT/DELETE `/v1/agents/{agent}/memories/{key}`; (P6-MEMLOCK, C-1148) PUT `…/memories/{key}/locked` (`setMemoryLocked`, idempotent: the same value changes nothing, a change is audited `memory.lock`/`memory.unlock` and bumps the home-sync generation, no revision; 409 `memory_locked` for any agent-authored write or delete of a locked memory) | S/K | |
 | GET `…/memories/{key}/revisions`; POST `…/memories/{key}/restore`; POST `…/memories/{key}/revisions/{rev}/redact` | S/K | |
 | GET `/v1/agents/{agent}/memories/search?q=` | S/K | |
 | GET/POST `/v1/agents/{agent}/skills`, `/v1/orgs/{org}/skills`; GET/PATCH/DELETE `/v1/skills/{id}`; GET/PUT/DELETE `/v1/skills/{id}/files/{path}` (GET: the stored bytes, C-1099; always `application/octet-stream` with `Content-Disposition: attachment` and `nosniff`) | S/K | the item routes work for every tier and authorize by the skill's tier (agent: `can_use`; org: org `owner`/`admin`; workspace, phase 3 RFE-020: `can_own`); items carry `tier: "agent"\|"workspace"\|"org"` (phase 3, D-107: next to the existing `scope`, which gains `"workspace"`) |

@@ -68,7 +68,9 @@ impl PlatformTool for Save {
     }
     fn description(&self, _: &ToolContext) -> String {
         format!(
-            "Create or replace one of your memories (content at most {} characters). {KEY_NOTE}",
+            "Create or replace one of your memories (content at most {} characters). \
+             A memory marked locked was set by a person: you can read it, but you cannot change \
+             or delete it. {KEY_NOTE}",
             limits::MEMORY_TOOL_CONTENT_MAX
         )
     }
@@ -100,6 +102,8 @@ impl PlatformTool for Save {
             max_content: limits::MEMORY_TOOL_CONTENT_MAX,
             create_only: false,
             skip_unchanged: false,
+            // (P6-MEMLOCK) A tool write never creates a locked memory.
+            locked: false,
         };
         let author = Author {
             kind: "agent",
@@ -148,7 +152,7 @@ impl PlatformTool for Get {
             .map_err(fail)?;
         out(
             json!({"key": m.key, "title": m.title, "description": m.description,
-                   "content": m.content, "revision": m.revision}),
+                   "content": m.content, "revision": m.revision, "locked": m.locked}),
         )
     }
 }
@@ -197,8 +201,10 @@ impl PlatformTool for List {
                     m.title.as_deref(),
                     m.description.as_deref(),
                     &m.content,
+                    m.locked,
                 );
-                json!({"key": m.key, "title": m.title, "index_line": line, "revision": m.revision})
+                json!({"key": m.key, "title": m.title, "index_line": line,
+                       "revision": m.revision, "locked": m.locked})
             })
             .collect();
         out(json!({ "memories": items }))
@@ -246,9 +252,10 @@ impl PlatformTool for Search {
             .map_err(fail)?;
         let items: Vec<Value> = hits
             .into_iter()
-            .map(
-                |h| json!({"key": h.key, "title": h.title, "score": h.score, "snippet": h.snippet}),
-            )
+            .map(|h| {
+                json!({"key": h.key, "title": h.title, "score": h.score, "snippet": h.snippet,
+                       "locked": h.locked})
+            })
             .collect();
         out(json!({ "hits": items }))
     }
@@ -265,7 +272,10 @@ impl PlatformTool for Delete {
         "memory"
     }
     fn description(&self, _: &ToolContext) -> String {
-        "Delete one of your memories and its history. Deleting its file does not delete it.".into()
+        "Delete one of your memories and its history. Deleting its file does not delete it. \
+         A memory marked locked was set by a person: you can read it, but you cannot change \
+         or delete it."
+            .into()
     }
     fn input_schema(&self) -> Value {
         json!({"type": "object", "additionalProperties": false, "required": ["key"],
@@ -280,9 +290,22 @@ impl PlatformTool for Delete {
         args: Value,
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: KeyArgs = parse(args)?;
-        memory::delete(&ctx.agent.pool, ctx.agent.agent_id, &a.key)
-            .await
-            .map_err(fail)?;
+        // (P6-MEMLOCK, SEC-151) The agent is the author: a delete of a locked memory is refused.
+        let agent = agents::get(&ctx.agent.pool, ctx.agent.agent_id)
+            .await?
+            .ok_or_else(|| ToolError::Failed("Unknown agent.".into()))?;
+        memory::delete(
+            &ctx.agent.pool,
+            ctx.agent.agent_id,
+            &a.key,
+            &Author {
+                kind: "agent",
+                user_id: None,
+                label: agent.name,
+            },
+        )
+        .await
+        .map_err(fail)?;
         out(json!({"deleted": a.key}))
     }
 }

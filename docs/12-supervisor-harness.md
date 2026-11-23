@@ -849,7 +849,8 @@ The home (`/workspace`) holds:
 
 1. **Agent-owned** free-form files (never touched by the platform).
 2. **Projection** (managed roots only): `<skills_dir>/` (0444/0555),
-   `memory/` (`*.md` 0644 + `index.md` 0444), instruction files (0444) at the
+   `memory/` (`*.md` 0644, (P6-MEMLOCK, C-1149) a locked memory `0444`, +
+   `index.md` 0444), instruction files (0444) at the
    paths the harness declares, `.aurora/` (tool catalogue cache, inbox
    attachments), (phase 5, P5-GUIDE-2) `.aurora/apps/<app_id>/` (the files Aurora writes for each
    connected app: `app.md`, `tools.md`, `api.json`, 0444 in 0555 directories; `24 §5`, `§7`);
@@ -866,9 +867,12 @@ The home (`/workspace`) holds:
 - The API sends `home.sync` in ordered **parts** of one **generation**, each ≤
   `HOME_SYNC_PART_MAX` UTF-8 bytes (part count sized for worst-case encodings:
   CJK ×3, JSON-escaped controls ×6).
-- Part kinds: `skills` (full files), `memory` (rendered files), `render_inputs`
+- Part kinds: `skills` (full files), `memory` (rendered files; (P6-MEMLOCK,
+  C-1149) a locked memory's entry carries `locked: true`, omitted when false,
+  and installs `0444`), `render_inputs`
   (preamble data, brief, capability fragment inputs: apps with snippets and
-  docs links, presences, peers, memory language, schedules summary, timezone),
+  docs links, presences, peers, memory language, (P6-MEMLOCK, C-1151) `memory_locked` when the
+  agent holds at least one locked memory, schedules summary, timezone),
   `tools` (catalogue), (phase 5, P5-GUIDE-2) `apps` (the app folders' generated files, below), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
 - (phase 5, P5-GUIDE-2, D-171, SEC-117, `24 §7`) **`apps` parts** carry file entries
   `{ path, content }` (the entry shape of `skills`) for `.aurora/apps/<app_id>/<file>`: the
@@ -894,7 +898,7 @@ The home (`/workspace`) holds:
 - Desired generation = `agents.home_sync_generation` + workspace generation +
   org-skill generation (the API computes a combined monotonic value; phase 3, RFE-020: workspace-tier skill changes bump the workspace generation); any change
   to skills, memory, brief, name, presences, peers, grants/connected apps,
-  memory language, timezone or tool availability bumps it. A bump never wakes a
+  memory language, timezone, (P6-MEMLOCK, C-1148) a memory's lock or tool availability bumps it. A bump never wakes a
   parked sandbox.
 
 ### Memory harvest
@@ -904,6 +908,14 @@ files whose checksum trailer fails (or that are new) are uploaded with
 `memory.write {key, content}` (bounded; titles/descriptions parsed from
 optional YAML front matter). Invalid keys are reported back as a notice to the
 next turn. Files stay in place until superseded by the canonical render.
+(P6-MEMLOCK, C-1149) A **locked memory is never uploaded**: the supervisor
+installs its file `0444`, records the exact bytes it installed (in memory
+only), and on a failed checksum, a replaced file or a missing one writes those
+bytes back `0444` and gives the next turn one notice per changed digest —
+"memory `<key>` is locked: a person set it, and you can read it but not change
+or delete it. Your change was undone." An older supervisor that does upload
+gets the API's 409, which reaches the turn through the existing
+`memory.write.result` notice.
 
 ## Database relay and files (phase 2, P2-DBL-2, D-89)
 

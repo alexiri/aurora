@@ -8,18 +8,21 @@
 //!
 //! Entry shapes (the wire leaves them untyped, so they are defined here):
 //! - `skills`: `{path, content}`, `path` inside the harness skills dir (files become 0444).
-//! - `memory`: `{path: "memory/<key>.md", content}` (supervisor appends the checksum trailer; 0644)
+//! - `memory`: `{path: "memory/<key>.md", content}` (supervisor appends the checksum trailer; 0644,
+//!   or 0444 when the entry carries `locked: true` — P6-MEMLOCK, C-1149: a locked memory is
+//!   installed read-only and the harvest restores it instead of uploading it)
 //!   and `{path: "memory/index.md", content}` (verbatim, 0444).
 //! - `render_inputs`: objects whose keys are [`RenderInputs`] fields; merged across entries.
 //! - `skills` entries: `{path, content, exec?}`; `exec: true` installs the file 0555 instead of 0444.
 //! - `tools`: opaque catalogue entries, stored as `.aurora/tools.json`.
 //! - `manifest`: `{path}`; every managed path that should exist.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Write as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use aurora_protocol::runner::{HomeSync, HomeSyncKind};
 use serde::Deserialize;
@@ -86,6 +89,10 @@ struct FileEntry {
     /// Skill files only: install as 0555 instead of 0444 (`14` skills, executable bit).
     #[serde(default)]
     exec: bool,
+    /// (P6-MEMLOCK, C-1149) Memory files only: install as 0444 and never harvest an edit; an
+    /// older API never sends it, so the default is the old behaviour.
+    #[serde(default)]
+    locked: bool,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +106,12 @@ pub struct HomeProjector {
     /// A part of the current generation was invalid or failed; the generation must not be acked.
     failed: Option<&'static str>,
     current: Option<u64>,
+    /// (P6-MEMLOCK, C-1149) The memory files staged as locked in the current generation (their
+    /// rel paths); reset with the staging area. Only a memory file entry arrives with the flag.
+    locked_keys: BTreeSet<PathBuf>,
+    /// (P6-MEMLOCK, C-1149) The sealed bytes of every installed locked memory, key → file bytes;
+    /// held in memory only. The harvest restores them instead of uploading an agent's edit.
+    locked_bytes: Arc<HashMap<String, Vec<u8>>>,
 }
 
 /// Relative, normal components only.
@@ -187,6 +200,8 @@ impl HomeProjector {
             cfg,
             failed: None,
             current: None,
+            locked_keys: BTreeSet::new(),
+            locked_bytes: Arc::new(HashMap::new()),
         }
     }
 
@@ -233,6 +248,8 @@ impl HomeProjector {
             fs::create_dir_all(self.staged_files())?;
             fs::write(&gen_file, sync.generation.to_string())?;
             self.failed = None;
+            // (P6-MEMLOCK) The locked set belongs to the generation being staged.
+            self.locked_keys.clear();
         }
         self.current = Some(sync.generation);
         if let Err(e) = self.stage(sync) {
@@ -281,6 +298,10 @@ impl HomeProjector {
                     };
                     // The exec flag travels through staging as the owner-x bit.
                     let staged_mode = if e.exec && !memory { 0o700 } else { 0o600 };
+                    // (P6-MEMLOCK) The locked flag travels through staging as a tracked path.
+                    if memory && e.locked {
+                        self.locked_keys.insert(rel.clone());
+                    }
                     write_atomic(
                         &self.staged_files().join(&rel),
                         body.as_bytes(),
@@ -382,14 +403,17 @@ impl HomeProjector {
         let mut staged = Vec::new();
         walk_files(&self.staged_files(), &mut staged);
         staged.sort();
+        let mut locked_bytes: HashMap<String, Vec<u8>> = HashMap::new();
         for src in staged {
             let Ok(rel) = src.strip_prefix(self.staged_files()) else {
                 continue;
             };
             let rel = rel.to_path_buf();
             let dst = root.join(&rel);
+            let locked = self.locked_keys.contains(&rel);
             let mode = if rel.starts_with(MEMORY_DIR) {
-                if rel.file_name().is_some_and(|n| n == INDEX_FILE) {
+                if rel.file_name().is_some_and(|n| n == INDEX_FILE) || locked {
+                    // (P6-MEMLOCK) A locked memory installs read-only, like the index.
                     0o444
                 } else {
                     0o644
@@ -399,6 +423,22 @@ impl HomeProjector {
             } else {
                 0o444
             };
+            if locked {
+                // The harvest restores these exact (sealed) bytes instead of uploading an edit.
+                match rel.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => match fs::read(&src) {
+                        Ok(b) => {
+                            locked_bytes.insert(n.trim_end_matches(".md").to_owned(), b);
+                        }
+                        Err(e) => {
+                            tracing::warn!(path = %rel.display(), error = %e, "locked memory file not recorded");
+                        }
+                    },
+                    None => {
+                        tracing::warn!(path = %rel.display(), "locked memory file name refused")
+                    }
+                }
+            }
             if let Some(p) = dst.parent() {
                 // Every managed destination: no link in the chain from the home down.
                 if let Ok(rp) = p.strip_prefix(&root) {
@@ -484,7 +524,16 @@ impl HomeProjector {
         self.render_installed()?;
         let _ = fs::remove_dir_all(&sync);
         self.current = Some(generation);
+        // (P6-MEMLOCK) What the harvest protects from now on; an empty map unlocks everything.
+        self.locked_bytes = Arc::new(locked_bytes);
         Ok(())
+    }
+
+    /// (P6-MEMLOCK, C-1149) The sealed bytes of every installed locked memory, key → file bytes.
+    /// The harvest restores them instead of uploading an agent's edit. In memory only: it is
+    /// rebuilt by every committed generation.
+    pub fn locked_memories(&self) -> Arc<HashMap<String, Vec<u8>>> {
+        Arc::clone(&self.locked_bytes)
     }
 
     /// (P5-GUIDE-7, C-654) The bridge of a new harness session lists only the core tools: the
@@ -639,4 +688,26 @@ fn lock_tree(root: &Path) {
         );
     }
     set_dirs(root, 0o555);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (P6-MEMLOCK, C-1149) `locked` is optional on a file entry: an older API never sends it and
+    /// an unlocked memory's entry has no key at all; only `true` marks the file.
+    #[test]
+    fn file_entry_parses_with_and_without_locked() {
+        let old: FileEntry = serde_json::from_value(serde_json::json!({
+            "path": "memory/note.md", "content": "x"
+        }))
+        .unwrap();
+        assert!(!old.locked);
+        assert!(!old.exec);
+        let locked: FileEntry = serde_json::from_value(serde_json::json!({
+            "path": "memory/pinned.md", "content": "x", "locked": true
+        }))
+        .unwrap();
+        assert!(locked.locked);
+    }
 }

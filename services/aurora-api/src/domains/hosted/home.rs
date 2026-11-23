@@ -50,7 +50,14 @@ fn index_line(m: &hosted::MemoryRow) -> String {
         .or_else(|| m.content.lines().find(|l| !l.trim().is_empty()))
         .unwrap_or("");
     let one: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
-    format!("{}: {}", m.key, clamp(&one, 120))
+    // (P6-MEMLOCK, C-1149) A locked memory's line ends with ` (locked)` after the clamped line —
+    // the same rule as the memory service's index line, so the recall index, `memory_list` and
+    // `memory/index.md` agree. The suffix is inside the `MEMORY_INDEX_MAX` bound.
+    let mut out = format!("{}: {}", m.key, clamp(&one, 120));
+    if m.locked {
+        out.push_str(" (locked)");
+    }
+    out
 }
 
 /// `key: line` per memory, bounded by `MEMORY_INDEX_MAX` (also the turn-start recall index).
@@ -74,6 +81,10 @@ fn memory_file(m: &hosted::MemoryRow) -> String {
     }
     if let Some(d) = &m.description {
         fm.push_str(&format!("description: {}\n", yaml_str(d)));
+    }
+    // (P6-MEMLOCK, C-1149) The lock is front matter only when set; it is the last line.
+    if m.locked {
+        fm.push_str("locked: true\n");
     }
     if fm.is_empty() {
         m.content.clone()
@@ -770,13 +781,27 @@ pub async fn render(
     for m in &mems {
         let path = format!("memory/{}.md", m.key);
         manifest.push(json!({"path": path}));
-        memory_entries.push(json!({"path": path, "content": memory_file(m)}));
+        // (P6-MEMLOCK, C-1149) The entry carries `locked: true` only when locked, so an
+        // unlocked memory's entry is unchanged.
+        memory_entries.push(if m.locked {
+            json!({"path": path, "content": memory_file(m), "locked": true})
+        } else {
+            json!({"path": path, "content": memory_file(m)})
+        });
     }
     manifest.push(json!({"path": "memory/index.md"}));
     memory_entries.push(json!({"path": "memory/index.md", "content": memory_index(&mems)}));
 
     let (mut render_inputs, folders) =
         render_inputs(state, conn, claim.agent_id, &inputs, &taken, skills_root).await?;
+
+    // (P6-MEMLOCK, C-1151) The instruction fragment about locked memories renders only when the
+    // agent holds at least one locked memory.
+    if mems.iter().any(|m| m.locked)
+        && let Some(o) = render_inputs.as_object_mut()
+    {
+        o.insert("memory_locked".into(), json!(true));
+    }
 
     // (C-643, C-1134) The `apps` part: per app `app.md`, `tools.md` and `api.json`, nothing else. The
     // app skills are ordinary entries of the `skills` part (the lowest tier), with the provenance line

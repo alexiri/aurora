@@ -848,14 +848,31 @@ newest `MEMORY_REVISIONS_KEPT` revisions kept per memory.
 kind and denormalized label and provenance. **Redaction** scrubs one
 revision's content in place (never the latest — redact by saving a new
 version first), audited.
-- **Projection**: `memory/<key>.md` (agent-writable 0644) + generated read-only
-`memory/index.md`. Each projected file ends with a checksum trailer
-`<!-- aurora:checksum sha256=<hex> -->` computed over the file with the hex
-zeroed, so "unmodified projection?" is answerable locally.
+- **Locked memories** (P6-MEMLOCK, D-463, C-1148, C-1149, SEC-151): a person
+can lock a memory so the agent can **read it but not change or delete it**
+(people keep editing, restoring, redacting and deleting it). Every write or
+delete the agent authors — `memory_save`, `memory_delete` and a harvested file
+through `POST /v1/runner/memory-writes` — is refused with 409 `memory_locked`
+by one check in the memory service, inside the write's transaction after the
+agent row lock; the lock holds even if it commits while a tool write waits.
+No agent-reachable tool or route can lock or unlock. `PUT
+…/memories/{key}/locked` (`setMemoryLocked`, S/K) is idempotent, audited
+(`memory.lock` / `memory.unlock` only when the value changes), bumps the
+home-sync generation and writes **no revision** (a lock is not a content
+change). The index line ends with ` (locked)`, the projected file installs
+read-only (0444), and the harvest **restores** an edited or deleted locked
+file instead of uploading it. Locked memories count toward
+`MEMORY_MAX_PER_AGENT`.
+- **Projection**: `memory/<key>.md` (agent-writable 0644; a locked memory
+0444) + generated read-only `memory/index.md`. Each projected file ends with a
+checksum trailer `<!-- aurora:checksum sha256=<hex> -->` computed over the
+file with the hex zeroed, so "unmodified projection?" is answerable locally.
 - **Harvest**: files whose checksum does not verify (or new files) are agent
 edits; the supervisor uploads them (`memory.write`), leaves them in place, and
 the canonical render supersedes them at the next sync. Deleting a projected
-file does **not** delete the memory (use the tool).
+file does **not** delete the memory (use the tool). A locked memory is never
+uploaded: the supervisor restores the exact bytes it installed and tells the
+agent once per changed digest that the change was undone.
 
 ### Memory language (Proposal 03)
 
@@ -874,6 +891,11 @@ translated; search switches immediately (query-time vectors, no stored
 index).
 - The dashboard memory editor states the rule ("Memories in this workspace are
 written in German"); it is shown, not enforced.
+- (P6-MEMLOCK, C-1151) When the agent holds at least one locked memory, the
+memory capability fragment adds: *"Memories marked (locked) were set by a
+person. Use them, but do not try to change or delete them; if one looks wrong
+or out of date, say so."* Without it the instruction files are byte-identical
+to before.
 
 ### Search and recall
 
@@ -890,6 +912,8 @@ score = greatest(rank(<memory_language>), rank('simple'),
 ```
 
 - `memory_search`: top `MEMORY_SEARCH_HITS` by score &gt; 0, with a snippet.
+  (P6-MEMLOCK, C-1149) Each hit carries `locked`, and the index line of a
+locked memory ends with ` (locked)`.
 - **Turn-start recall** (composed at dispatch, delivered as context only, never
 stored in the transcript): the **index** (one `key: line` per memory, ≤
 `MEMORY_INDEX_MAX`, always included) plus up to `MEMORY_SNIPPETS` snippets

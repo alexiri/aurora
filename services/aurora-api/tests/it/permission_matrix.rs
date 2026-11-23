@@ -1030,6 +1030,13 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/agents/{agent}/memories/search", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/memories/{id}", G::WsUse, false),
     r("PUT", "/v1/agents/{agent}/memories/{id}", G::WsUse, false),
+    // (P6-MEMLOCK, C-1148) The lock route has the same workspace access as the others.
+    r(
+        "PUT",
+        "/v1/agents/{agent}/memories/{id}/locked",
+        G::WsUse,
+        false,
+    ),
     r(
         "DELETE",
         "/v1/agents/{agent}/memories/{id}",
@@ -1778,6 +1785,9 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
         }
         ("POST", "/v1/agents/{agent}/memories") => json!({"key": "k", "content": "c"}),
         ("PUT", "/v1/agents/{agent}/memories/{id}") => json!({"content": "c"}),
+        // (P6-MEMLOCK, C-1148) The matrix calls the routes that need a body; the lock route's
+        // authorization does not depend on the value.
+        ("PUT", "/v1/agents/{agent}/memories/{id}/locked") => json!({"locked": false}),
         ("POST", "/v1/agents/{agent}/memories/{id}/restore") => json!({"revision": 1}),
         ("POST", "/v1/agents/{agent}/schedules") => {
             json!({"name": "s", "prompt": "p", "cron": "0 * * * *"})

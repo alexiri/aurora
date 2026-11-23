@@ -315,14 +315,14 @@ fn harvest_skips_an_oversized_memory_file_with_a_notice() {
     )
     .unwrap();
     let mut h = Harvester::new(root);
-    let w = h.scan();
+    let w = h.scan(&Default::default());
     assert_eq!(w.len(), 1, "only the small file is harvested");
     assert_eq!(w[0].key, "ok");
     let notices = h.take_notices();
     assert_eq!(notices.len(), 1);
     assert!(notices[0].contains("huge.md") && notices[0].contains("larger than"));
     // The oversized file is reported once, not on every scan.
-    assert!(h.scan().is_empty());
+    assert!(h.scan(&Default::default()).is_empty());
     assert!(h.take_notices().is_empty());
 }
 
@@ -334,7 +334,10 @@ fn harvest_detects_edits_and_ignores_unchanged() {
     fs::write(root.join("memory/a.md"), seal("alpha")).unwrap();
     fs::write(root.join("memory/index.md"), "index").unwrap();
     let mut h = Harvester::new(root);
-    assert!(h.scan().is_empty(), "pristine projection is ignored");
+    assert!(
+        h.scan(&Default::default()).is_empty(),
+        "pristine projection is ignored"
+    );
 
     // Edit, new file, bad key.
     fs::write(
@@ -348,7 +351,7 @@ fn harvest_detects_edits_and_ignores_unchanged() {
     )
     .unwrap();
     fs::write(root.join("memory/Bad_Key.md"), "x").unwrap();
-    let w = h.scan();
+    let w = h.scan(&Default::default());
     assert_eq!(w.len(), 2);
     assert_eq!(w[0].key, "a");
     assert!(w[0].content.starts_with("alpha edited"));
@@ -361,13 +364,16 @@ fn harvest_detects_edits_and_ignores_unchanged() {
     assert_eq!(notices.len(), 1);
     assert!(notices[0].contains("Bad_Key.md"));
 
-    assert!(h.scan().is_empty(), "unchanged edits are not re-uploaded");
+    assert!(
+        h.scan(&Default::default()).is_empty(),
+        "unchanged edits are not re-uploaded"
+    );
     fs::write(root.join("memory/new.md"), "changed again").unwrap();
-    assert_eq!(h.scan().len(), 1);
+    assert_eq!(h.scan(&Default::default()).len(), 1);
 
     // Canonical render supersedes the edit; nothing more to upload.
     fs::write(root.join("memory/new.md"), seal("canonical")).unwrap();
-    assert!(h.scan().is_empty());
+    assert!(h.scan(&Default::default()).is_empty());
 }
 
 #[tokio::test]

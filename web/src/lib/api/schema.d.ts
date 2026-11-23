@@ -2120,6 +2120,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/memories/{key}/locked": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * (P6-MEMLOCK, C-1148) Sets or clears a memory's lock. Idempotent: the same value changes
+         *     nothing (no audit row, no generation bump); a change writes `memory.lock` / `memory.unlock`
+         *     and bumps the agent's home-sync generation, with no revision. No agent-reachable tool or
+         *     route can call this (SEC-151).
+         */
+        put: operations["setMemoryLocked"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/memories/{key}/restore": {
         parameters: {
             query?: never;
@@ -9134,6 +9156,11 @@ export interface components {
             description?: string | null;
             /** @description Immutable kebab-case key, at most 64 characters. */
             key: string;
+            /**
+             * @description (P6-MEMLOCK, C-1148) Create the memory locked; default false. `locked_at`/`locked_by` are
+             *     set from the caller (null for an API key without a user).
+             */
+            locked?: boolean | null;
             title?: string | null;
         };
         CreateOAuthClientRequest: {
@@ -11160,11 +11187,24 @@ export interface components {
             /** @description `key: line` as shown in the memory index. */
             index_line: string;
             key: string;
+            /** @description (P6-MEMLOCK, C-1148) The agent can read but not change or delete a locked memory. */
+            locked: boolean;
+            /**
+             * Format: date-time
+             * @description Set when `locked` became true, cleared when it became false.
+             */
+            locked_at?: string | null;
+            locked_by?: components["schemas"]["MemoryLockedBy"] | null;
             /** Format: int32 */
             revision: number;
             title?: string | null;
             /** Format: date-time */
             updated_at: string;
+        };
+        MemoryLockedBy: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         MemoryRevision: {
             /** @description `user` | `agent` | `system`. */
@@ -11182,6 +11222,8 @@ export interface components {
         };
         MemorySearchHit: {
             key: string;
+            /** @description (P6-MEMLOCK, C-1149) The hit's memory is locked. */
+            locked: boolean;
             /** Format: float */
             score: number;
             snippet: string;
@@ -12482,6 +12524,14 @@ export interface components {
                 /** @description `key: line` as shown in the memory index. */
                 index_line: string;
                 key: string;
+                /** @description (P6-MEMLOCK, C-1148) The agent can read but not change or delete a locked memory. */
+                locked: boolean;
+                /**
+                 * Format: date-time
+                 * @description Set when `locked` became true, cleared when it became false.
+                 */
+                locked_at?: string | null;
+                locked_by?: components["schemas"]["MemoryLockedBy"] | null;
                 /** Format: int32 */
                 revision: number;
                 title?: string | null;
@@ -15132,6 +15182,10 @@ export interface components {
             agent_id: string;
             /** Format: uuid */
             integration_id: string;
+        };
+        /** @description (P6-MEMLOCK, C-1148) `PUT …/memories/{key}/locked` (`setMemoryLocked`): idempotent. */
+        SetMemoryLockedRequest: {
+            locked: boolean;
         };
         SetPolicyBody: {
             /**
@@ -26094,6 +26148,68 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    setMemoryLocked: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Memory key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetMemoryLockedRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Memory"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
             401: {

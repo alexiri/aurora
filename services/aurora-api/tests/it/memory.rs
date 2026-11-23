@@ -471,3 +471,310 @@ async fn language_change_bumps_generation() {
         .await;
     assert_eq!(gen_of().await, before + 2);
 }
+
+/// (P6-MEMLOCK, C-1149) The exact 409 message every agent-authored refusal carries.
+const LOCKED_MESSAGE: &str = "This memory is locked: a person set it, and you can read it but not \
+     change or delete it. If it looks wrong or out of date, tell the person.";
+
+/// `audit::record` writes from a spawned task: poll until the action has landed.
+async fn audit_count(pool: &sqlx::PgPool, action: &str) -> i64 {
+    for _ in 0..60 {
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
+            .bind(action)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        if n > 0 {
+            return n;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    0
+}
+
+#[tokio::test]
+async fn locked_memory_routes_and_the_agent_refusal() {
+    let r = rig().await;
+    let a = r.agent("a1").await;
+    let base = format!("/v1/agents/{a}/memories");
+    let uid: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'o@x.io'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let gen_of = || async {
+        sqlx::query_scalar::<_, i64>("SELECT home_sync_generation FROM agents WHERE id = $1")
+            .bind(a)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap()
+    };
+    let revs_of = |key: String| async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM memory_revisions mr JOIN memories m ON m.id = mr.memory_id
+             WHERE m.agent_id = $1 AND m.key = $2",
+        )
+        .bind(a)
+        .bind(key)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap()
+    };
+
+    // A create may arrive locked: locked_at/locked_by come from the caller (C-1148).
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &base,
+            Some(json!({"key": "rules", "title": "Rules", "content": "no shoes", "locked": true})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["locked"], json!(true));
+    assert!(v["locked_at"].is_string());
+    assert_eq!(v["locked_by"]["id"], json!(uid.to_string()));
+    assert_eq!(v["locked_by"]["display_name"], json!("U"));
+    assert_eq!(v["index_line"], json!("rules: Rules (locked)"));
+
+    // The lock route: a change bumps the agent's home-sync generation and audits, no revision.
+    assert_eq!(r.put(a, "note", "hello").await.0, 200);
+    let gen_before = gen_of().await;
+    let (s, v) = r
+        .user(
+            Method::PUT,
+            &format!("{base}/note/locked"),
+            Some(json!({"locked": true})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["locked"], json!(true));
+    assert_eq!(v["locked_by"]["display_name"], json!("U"));
+    assert_eq!(gen_of().await, gen_before + 1);
+    assert_eq!(revs_of("note".into()).await, 1);
+    assert_eq!(audit_count(r.h.pool(), "memory.lock").await, 1);
+
+    // Idempotent: the same value changes nothing, audits nothing and bumps nothing (C-1148).
+    let (s, v) = r
+        .user(
+            Method::PUT,
+            &format!("{base}/note/locked"),
+            Some(json!({"locked": true})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(gen_of().await, gen_before + 1);
+    assert_eq!(revs_of("note".into()).await, 1);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let locks: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'memory.lock'")
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(locks, 1);
+
+    // A person's PUT on a locked memory works and keeps the lock; restore too (C-1148).
+    let (s, v) = r.put(a, "note", "hello again").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        (v["locked"].clone(), v["revision"].clone()),
+        (json!(true), json!(2))
+    );
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &format!("{base}/note/restore"),
+            Some(json!({"revision": 1})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["locked"], json!(true));
+
+    // Unlock clears locked_at/locked_by and audits `memory.unlock`.
+    let (s, v) = r
+        .user(
+            Method::PUT,
+            &format!("{base}/note/locked"),
+            Some(json!({"locked": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["locked"], json!(false));
+    assert!(v["locked_at"].is_null());
+    assert!(v["locked_by"].is_null());
+    // Lock (+1), person save (+1), restore (+1) and unlock (+1).
+    assert_eq!(gen_of().await, gen_before + 4);
+    assert_eq!(audit_count(r.h.pool(), "memory.unlock").await, 1);
+
+    // 404 for an unknown key (and the route has the same workspace access as the others).
+    let (s, _) = r
+        .user(
+            Method::PUT,
+            &format!("{base}/nope/locked"),
+            Some(json!({"locked": true})),
+        )
+        .await;
+    assert_eq!(s, 404);
+
+    // --- the agent refusal (C-1149, SEC-151) ---
+    // The tools act on the booted agent (`booted` creates its own): lock a memory of *that* agent.
+    let b = r.booted("t1").await;
+    let ta = b.agent;
+    assert_eq!(r.put(ta, "note", "hello").await.0, 200);
+    let (s, _) = r
+        .user(
+            Method::PUT,
+            &format!("/v1/agents/{ta}/memories/note/locked"),
+            Some(json!({"locked": true})),
+        )
+        .await;
+    assert_eq!(s, 200);
+    let revs_of_ta = |key: String| {
+        let pool = r.h.pool();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM memory_revisions mr JOIN memories m ON m.id = mr.memory_id
+                 WHERE m.agent_id = $1 AND m.key = $2",
+            )
+            .bind(ta)
+            .bind(key)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+        }
+    };
+    // Tool save on a locked key: refused with the exact message, nothing written.
+    let v = r
+        .tool(
+            &b,
+            "memory_save",
+            json!({"key": "note", "content": "mine now"}),
+        )
+        .await;
+    assert_eq!(v["ok"], json!(false), "{v}");
+    assert_eq!(v["error"]["message"], json!(LOCKED_MESSAGE));
+    assert_eq!(revs_of_ta("note".into()).await, 1);
+    // Tool delete on a locked key: refused, the row is still there.
+    let v = r.tool(&b, "memory_delete", json!({"key": "note"})).await;
+    assert_eq!(v["ok"], json!(false), "{v}");
+    assert_eq!(v["error"]["message"], json!(LOCKED_MESSAGE));
+    let (s, _) = r
+        .user(Method::GET, &format!("/v1/agents/{ta}/memories/note"), None)
+        .await;
+    assert_eq!(s, 200);
+    // The harvest write on a locked key: 409, no revision.
+    let body = json!({"sandbox_id": b.sandbox, "boot_id": b.boot, "key": "note",
+                      "content": "harvested"});
+    let (s, v) = r
+        .post(Some(r.replica), "/v1/runner/memory-writes", body)
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], json!("memory_locked"));
+    assert_eq!(v["error"]["message"], json!(LOCKED_MESSAGE));
+    assert_eq!(revs_of_ta("note".into()).await, 1);
+    // New keys are never refused (C-1149).
+    let v = r
+        .tool(&b, "memory_save", json!({"key": "fresh", "content": "ok"}))
+        .await;
+    assert_eq!(v["ok"], json!(true), "{v}");
+    // A person's DELETE of a locked memory deletes it (C-1148).
+    let (s, _) = r
+        .user(
+            Method::DELETE,
+            &format!("/v1/agents/{ta}/memories/note"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+}
+
+#[tokio::test]
+async fn the_cap_counts_locked_memories() {
+    let r = rig().await;
+    let a = r.agent("a1").await;
+    let base = format!("/v1/agents/{a}/memories");
+    for i in 0..100 {
+        sqlx::query(
+            "INSERT INTO memories (id, agent_id, key, content, revision) VALUES ($1,$2,$3,'c',1)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(a)
+        .bind(format!("k{i}"))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE memories SET locked = true, locked_at = now() WHERE agent_id = $1")
+        .bind(a)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    // Every existing memory is locked, and the cap still refuses a new key (C-1148).
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &base,
+            Some(json!({"key": "one-more", "content": "x"})),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (422, Some("memory_limit_reached"))
+    );
+}
+
+/// (P6-MEMLOCK, C-1149) The lock check runs inside the write's transaction after the agent row
+/// lock, so a lock that commits while a tool write waits on that lock still wins.
+#[tokio::test]
+async fn a_lock_committing_first_wins_over_a_waiting_agent_write() {
+    let r = rig().await;
+    let a = r.agent("a1").await;
+    assert_eq!(r.put(a, "note", "hello").await.0, 200);
+    let uid: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'o@x.io'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let note_id: Uuid = sqlx::query_scalar("SELECT id FROM memories WHERE agent_id = $1")
+        .bind(a)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+
+    // Hold the agent row lock; the agent's write blocks on it inside its own transaction.
+    let mut tx = r.h.pool().begin().await.unwrap();
+    aurora_db::repo::memory::lock_agent(&mut tx, a)
+        .await
+        .unwrap();
+    let pool = r.h.pool().clone();
+    let write = tokio::spawn(async move {
+        let w = memory::service::Write {
+            key: "note",
+            title: None,
+            description: None,
+            content: "mine",
+            max_content: 1_000,
+            create_only: false,
+            skip_unchanged: false,
+            locked: false,
+        };
+        let author = memory::Author {
+            kind: "agent",
+            user_id: None,
+            label: "A".into(),
+        };
+        memory::service::save(&pool, a, &w, &author, &memory::Source::Harvest).await
+    });
+    // The person locks while the write waits, then commits first.
+    aurora_db::repo::memory::set_locked(&mut tx, note_id, true, Some(uid))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let e = write.await.unwrap().unwrap_err();
+    assert_eq!(e.status().as_u16(), 409);
+    assert_eq!(e.message(), LOCKED_MESSAGE);
+    let locked: bool = sqlx::query_scalar("SELECT locked FROM memories WHERE id = $1")
+        .bind(note_id)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert!(locked);
+}

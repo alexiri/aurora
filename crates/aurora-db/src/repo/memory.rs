@@ -6,9 +6,6 @@ use serde_json::Value;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-const COLS: &str =
-    "id, agent_id, key, title, description, content, revision, created_at, updated_at";
-
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct MemoryRow {
     pub id: Uuid,
@@ -20,6 +17,10 @@ pub struct MemoryRow {
     pub revision: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub locked: bool,
+    pub locked_at: Option<DateTime<Utc>>,
+    pub locked_by: Option<Uuid>,
+    pub locked_by_name: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -43,6 +44,8 @@ pub struct SearchHit {
     pub title: Option<String>,
     pub score: f32,
     pub snippet: String,
+    /// (P6-MEMLOCK, C-1149) Hits carry the lock; the tool result shows it.
+    pub locked: bool,
 }
 
 /// Serializes memory writes of one agent for the duration of the transaction.
@@ -54,13 +57,29 @@ pub async fn lock_agent(conn: &mut PgConnection, agent: Uuid) -> Result<(), DbEr
     Ok(())
 }
 
+/// Column list for the read queries: the memory's own columns plus its lock (`C-1148`) and the
+/// locker's display name (null when the locker had no user or was later deleted).
+const READ_COLS: &str = "m.id, m.agent_id, m.key, m.title, m.description, m.content, m.revision, \
+                         m.created_at, m.updated_at, m.locked, m.locked_at, m.locked_by, \
+                         u.display_name AS locked_by_name";
+const FROM_MEM: &str = "FROM memories m LEFT JOIN users u ON u.id = m.locked_by";
+
+async fn by_id(conn: &mut PgConnection, id: Uuid) -> Result<MemoryRow, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {READ_COLS} {FROM_MEM} WHERE m.id = $1"
+    )))
+    .bind(id)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
 pub async fn get(
     conn: &mut PgConnection,
     agent: Uuid,
     key: &str,
 ) -> Result<Option<MemoryRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLS} FROM memories WHERE agent_id = $1 AND key = $2"
+        "SELECT {READ_COLS} {FROM_MEM} WHERE m.agent_id = $1 AND m.key = $2"
     )))
     .bind(agent)
     .bind(key)
@@ -70,7 +89,7 @@ pub async fn get(
 
 pub async fn list(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<MemoryRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLS} FROM memories WHERE agent_id = $1 ORDER BY key"
+        "SELECT {READ_COLS} {FROM_MEM} WHERE m.agent_id = $1 ORDER BY m.key"
     )))
     .bind(agent)
     .fetch_all(conn)
@@ -86,6 +105,9 @@ pub async fn count(conn: &mut PgConnection, agent: Uuid) -> Result<i64, DbError>
     )
 }
 
+/// Inserts a new memory at revision 1. (P6-MEMLOCK, C-1148) `locked`/`locked_by` come only from
+/// the create route: a tool write and the harvest pass `false`.
+#[allow(clippy::too_many_arguments)]
 pub async fn insert(
     conn: &mut PgConnection,
     agent: Uuid,
@@ -93,19 +115,26 @@ pub async fn insert(
     title: Option<&str>,
     description: Option<&str>,
     content: &str,
+    // (P6-MEMLOCK, C-1148) `create` may arrive locked; `locked_at`/`locked_by` are set here.
+    locked: bool,
+    locked_by: Option<Uuid>,
 ) -> Result<MemoryRow, DbError> {
-    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO memories (id, agent_id, key, title, description, content, revision)
-         VALUES ($1, $2, $3, $4, $5, $6, 1) RETURNING {COLS}"
-    )))
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO memories (id, agent_id, key, title, description, content, revision, locked, \
+                locked_at, locked_by)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, $7, CASE WHEN $7 THEN now() END, $8) RETURNING id",
+    )
     .bind(Uuid::now_v7())
     .bind(agent)
     .bind(key)
     .bind(title)
     .bind(description)
     .bind(content)
-    .fetch_one(conn)
-    .await?)
+    .bind(locked)
+    .bind(locked_by)
+    .fetch_one(&mut *conn)
+    .await?;
+    by_id(conn, id).await
 }
 
 pub async fn update(
@@ -115,17 +144,39 @@ pub async fn update(
     description: Option<&str>,
     content: &str,
 ) -> Result<MemoryRow, DbError> {
-    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    let id: Uuid = sqlx::query_scalar(
         "UPDATE memories SET title = $2, description = $3, content = $4,
                 revision = revision + 1, updated_at = now()
-         WHERE id = $1 RETURNING {COLS}"
-    )))
+         WHERE id = $1 RETURNING id",
+    )
     .bind(id)
     .bind(title)
     .bind(description)
     .bind(content)
-    .fetch_one(conn)
-    .await?)
+    .fetch_one(&mut *conn)
+    .await?;
+    by_id(conn, id).await
+}
+
+/// (P6-MEMLOCK, C-1148) Sets the lock: `locked_at`/`locked_by` set when it becomes true, cleared
+/// when it becomes false. The lock columns of a save or restore are never touched here.
+pub async fn set_locked(
+    conn: &mut PgConnection,
+    id: Uuid,
+    locked: bool,
+    locked_by: Option<Uuid>,
+) -> Result<MemoryRow, DbError> {
+    let id: Uuid = sqlx::query_scalar(
+        "UPDATE memories SET locked = $2, locked_at = CASE WHEN $2 THEN now() END,
+                locked_by = CASE WHEN $2 THEN $3 END
+         WHERE id = $1 RETURNING id",
+    )
+    .bind(id)
+    .bind(locked)
+    .bind(locked_by)
+    .fetch_one(&mut *conn)
+    .await?;
+    by_id(conn, id).await
 }
 
 pub async fn delete(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
@@ -282,7 +333,7 @@ pub async fn search(
     );
     let (dl, ds) = (doc("$2::regconfig"), doc("'simple'::regconfig"));
     let sql = format!(
-        "SELECT key, title, score, snippet FROM (
+        "SELECT key, title, score, snippet, locked FROM (
            SELECT m.key, m.title,
                   greatest(
                     ts_rank_cd({dl}, websearch_to_tsquery($2::regconfig, $3), 32),
@@ -290,7 +341,8 @@ pub async fn search(
                     CASE WHEN m.key ILIKE $4 OR m.title ILIKE $4 THEN 0.5 ELSE 0 END
                   )::real AS score,
                   ts_headline($2::regconfig, m.content, websearch_to_tsquery($2::regconfig, $3),
-                              'MaxFragments=1, MaxWords=60, MinWords=15') AS snippet
+                              'MaxFragments=1, MaxWords=60, MinWords=15') AS snippet,
+                  m.locked
            FROM memories m WHERE m.agent_id = $1
          ) s WHERE score > 0 AND score >= $5
          ORDER BY score DESC, key LIMIT $6"

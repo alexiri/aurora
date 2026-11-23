@@ -4,8 +4,11 @@
 //! Every projected `memory/<key>.md` ends with `<!-- aurora:checksum sha256=<hex> -->`, the hash of
 //! the whole file with the hex zeroed. A file that fails verification (or that is new) is an agent
 //! edit: it is uploaded with `memory.write` and left in place until the canonical render replaces it.
+//! (P6-MEMLOCK, C-1149) A locked memory is the exception: its recorded install is the truth, so an
+//! edit is never uploaded — the file is restored (0444) and the agent is told the change was undone.
 
 use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::MEMORY_CONTENT_MAX;
@@ -153,7 +156,10 @@ pub fn valid_key(key: &str) -> bool {
 }
 
 /// Scans `memory/*.md` for agent edits. Remembers what it already uploaded so unchanged edits
-/// are not re-sent every tick.
+/// are not re-sent every tick. (P6-MEMLOCK, C-1149) `locked` is the projector's map of installed
+/// locked memories (key → sealed file bytes): a locked memory is never uploaded — any change,
+/// including a deleted or chmod-ed file, is undone from the recorded bytes and the agent is told
+/// once per changed digest.
 #[derive(Debug)]
 pub struct Harvester {
     dir: PathBuf,
@@ -175,7 +181,7 @@ impl Harvester {
         std::mem::take(&mut self.notices)
     }
 
-    pub fn scan(&mut self) -> Vec<MemoryWrite> {
+    pub fn scan(&mut self, locked: &HashMap<String, Vec<u8>>) -> Vec<MemoryWrite> {
         let Ok(rd) = std::fs::read_dir(&self.dir) else {
             return Vec::new();
         };
@@ -187,41 +193,50 @@ impl Harvester {
             .collect();
         names.sort();
         let mut out = Vec::new();
-        for name in names {
+        for name in &names {
+            let key = name.trim_end_matches(".md");
+            if let Some(recorded) = locked.get(key) {
+                // (P6-MEMLOCK, C-1149) Never uploaded: the recorded install is the truth. A file
+                // that is gone or oversized counts as changed and is restored from the bytes.
+                let current = read_bounded(&self.dir.join(name), MEMORY_FILE_READ_MAX)
+                    .ok()
+                    .flatten();
+                self.guard_locked(key, name, recorded, current.as_deref());
+                continue;
+            }
             // (FIX-114) The agent writes these files: never read one whole before checking its
             // size (a multi-gigabyte file would kill the supervisor on the memory limit).
-            let text = match read_bounded(&self.dir.join(&name), MEMORY_FILE_READ_MAX) {
+            let text = match read_bounded(&self.dir.join(name), MEMORY_FILE_READ_MAX) {
                 Ok(Some(b)) => match String::from_utf8(b) {
                     Ok(t) => t,
                     Err(_) => continue,
                 },
                 Ok(None) => {
                     let digest = format!("oversized:{name}");
-                    if self.uploaded.get(&name) != Some(&digest) {
+                    if self.uploaded.get(name) != Some(&digest) {
                         self.notice(format!(
                             "memory file `{name}` was not saved: it is larger than {} KiB",
                             MEMORY_FILE_READ_MAX / 1024
                         ));
-                        self.uploaded.insert(name, digest);
+                        self.uploaded.insert(name.clone(), digest);
                     }
                     continue;
                 }
                 Err(_) => continue,
             };
             if verify(&text) {
-                self.uploaded.remove(&name);
+                self.uploaded.remove(name);
                 continue;
             }
             let digest = sha_hex(text.as_bytes());
-            if self.uploaded.get(&name) == Some(&digest) {
+            if self.uploaded.get(name) == Some(&digest) {
                 continue;
             }
-            let key = name.trim_end_matches(".md");
             if !valid_key(key) {
                 self.notice(format!(
                     "memory file `{name}` was not saved: keys are lowercase words joined by hyphens"
                 ));
-                self.uploaded.insert(name, digest);
+                self.uploaded.insert(name.clone(), digest);
                 continue;
             }
             let p = parse_memory(&text);
@@ -235,13 +250,68 @@ impl Harvester {
                 self.notice(format!(
                     "memory file `{name}` was not saved: content or metadata too long"
                 ));
-                self.uploaded.insert(name, digest);
+                self.uploaded.insert(name.clone(), digest);
                 continue;
             }
-            self.uploaded.insert(name, digest);
+            self.uploaded.insert(name.clone(), digest);
             out.push(write);
         }
+        // A locked memory whose file the agent deleted is restored too.
+        let mut missing: Vec<(&String, &Vec<u8>)> = locked
+            .iter()
+            .filter(|(k, _)| {
+                !names
+                    .iter()
+                    .any(|n| n.trim_end_matches(".md") == k.as_str())
+            })
+            .collect();
+        missing.sort();
+        for (k, recorded) in missing {
+            self.guard_locked(k, &format!("{k}.md"), recorded, None);
+        }
         out
+    }
+
+    /// One locked memory file: the unmodified projection keeps only its read-only mode enforced;
+    /// anything else (an edit, a deleted file) is restored from the recorded bytes with a notice
+    /// per changed digest.
+    fn guard_locked(&mut self, key: &str, name: &str, recorded: &[u8], current: Option<&[u8]>) {
+        let path = self.dir.join(name);
+        match current {
+            // The unmodified projection (the recorded bytes verify by construction).
+            Some(b) if b == recorded => {
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444));
+                self.uploaded.remove(name);
+            }
+            current => {
+                let digest = current.map_or_else(|| format!("missing:{name}"), sha_hex);
+                if self.uploaded.get(name) != Some(&digest) {
+                    self.notice(format!(
+                        "memory `{key}` is locked: a person set it, and you can read it but not \
+                         change or delete it. Your change was undone."
+                    ));
+                    self.uploaded.insert(name.to_owned(), digest);
+                }
+                self.restore_locked(name, recorded);
+            }
+        }
+    }
+
+    /// Rewrites a locked memory file from its recorded (sealed) bytes, 0444.
+    fn restore_locked(&self, name: &str, recorded: &[u8]) {
+        use std::io::Write as _;
+        let path = self.dir.join(name);
+        let tmp = self.dir.join(format!(".{name}.aurora-tmp"));
+        let done = std::fs::File::create(&tmp)
+            .and_then(|mut f| {
+                f.write_all(recorded)?;
+                f.set_permissions(std::fs::Permissions::from_mode(0o444))
+            })
+            .and_then(|()| std::fs::rename(&tmp, &path));
+        if let Err(e) = done {
+            tracing::warn!(name = %name, error = %e, "locked memory file not restored");
+            let _ = std::fs::remove_file(&tmp);
+        }
     }
 
     pub fn push_notice(&mut self, n: String) {
@@ -258,6 +328,7 @@ impl Harvester {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn seal_roundtrip_and_tamper() {
@@ -312,5 +383,92 @@ mod tests {
         assert!(!valid_key("A"));
         assert!(!valid_key("a--b"));
         assert!(!valid_key("-a"));
+    }
+
+    fn write_keys(writes: &[MemoryWrite]) -> Vec<&str> {
+        writes.iter().map(|w| w.key.as_str()).collect()
+    }
+
+    /// (P6-MEMLOCK, C-1149) `scan` with locked keys: an edited, deleted or chmod-ed locked file is
+    /// restored from the recorded bytes (0444) with one notice per changed digest and never
+    /// uploaded; the unlocked file beside it is harvested as usual; with no locked keys at all
+    /// (unlock) the file is harvestable again.
+    #[test]
+    fn scan_never_uploads_a_locked_key_and_restores_it() {
+        let dir = std::env::temp_dir().join(format!("aurora-harvest-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(dir.join(MEMORY_DIR)).unwrap();
+        let sealed = seal("the person's text\n");
+        std::fs::write(dir.join(MEMORY_DIR).join("pinned.md"), &sealed).unwrap();
+        std::fs::write(dir.join(MEMORY_DIR).join("free.md"), seal("agent text\n")).unwrap();
+        let mut locked = HashMap::new();
+        locked.insert("pinned".to_owned(), sealed.clone().into_bytes());
+        let mode_of = |name: &str| {
+            std::os::unix::fs::PermissionsExt::mode(
+                &std::fs::metadata(dir.join(MEMORY_DIR).join(name))
+                    .unwrap()
+                    .permissions(),
+            ) & 0o777
+        };
+        let mut h = Harvester::new(&dir);
+        let edit = |name: &str, text: &str| {
+            let p = dir.join(MEMORY_DIR).join(name);
+            let mut perm = std::fs::metadata(&p).unwrap().permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o644);
+            std::fs::set_permissions(&p, perm).unwrap();
+            std::fs::write(&p, text).unwrap();
+        };
+
+        // Clean: nothing uploaded, no notice.
+        assert!(h.scan(&locked).is_empty());
+        assert!(h.take_notices().is_empty());
+
+        // An edit is restored and noticed once per digest.
+        edit("pinned.md", "agent rewrote it\n");
+        assert!(
+            h.scan(&locked).is_empty(),
+            "a locked memory is never uploaded"
+        );
+        assert_eq!(
+            std::fs::read(dir.join(MEMORY_DIR).join("pinned.md")).unwrap(),
+            sealed.as_bytes()
+        );
+        assert_eq!(mode_of("pinned.md"), 0o444);
+        let notices = h.take_notices();
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].contains("memory `pinned` is locked"),
+            "{notices:?}"
+        );
+        // The same edit again: the notice is deduped by digest.
+        edit("pinned.md", "agent rewrote it\n");
+        let _ = h.scan(&locked);
+        assert!(h.take_notices().is_empty());
+
+        // A deleted locked file is restored with its own notice.
+        std::fs::remove_file(dir.join(MEMORY_DIR).join("pinned.md")).unwrap();
+        assert!(h.scan(&locked).is_empty());
+        assert_eq!(
+            std::fs::read(dir.join(MEMORY_DIR).join("pinned.md")).unwrap(),
+            sealed.as_bytes()
+        );
+        assert_eq!(h.take_notices().len(), 1);
+
+        // A chmod-ed locked file is set back to 0444 without a notice.
+        edit("pinned.md", &sealed);
+        assert!(h.scan(&locked).is_empty());
+        assert_eq!(mode_of("pinned.md"), 0o444);
+        assert!(h.take_notices().is_empty());
+
+        // The unlocked file beside it is harvested as usual.
+        edit("free.md", "agent edited this\n");
+        let writes = h.scan(&locked);
+        assert_eq!(write_keys(&writes), ["free"], "{writes:?}");
+
+        // After the unlock (an empty map) an edit of the file is uploaded again.
+        edit("pinned.md", "the agent tries again\n");
+        let writes = h.scan(&HashMap::new());
+        assert_eq!(write_keys(&writes), ["pinned"], "{writes:?}");
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -508,7 +508,12 @@ impl Supervisor {
         let home = self.home.clone();
         let writes = tokio::task::spawn_blocking(move || {
             home.lock()
-                .map(|mut h| h.harvester.scan())
+                .map(|mut h| {
+                    // (P6-MEMLOCK, C-1149) The projector's locked map: the harvest never uploads
+                    // a locked memory, it restores the recorded bytes instead.
+                    let locked = h.projector.locked_memories();
+                    h.harvester.scan(&locked)
+                })
                 .unwrap_or_default()
         })
         .await

@@ -88,6 +88,9 @@ pub struct RenderInputs {
     pub models: Option<ModelsInfo>,
     /// (P5-GUIDE-7, C-654) Absent from an older API: the bridge then lists everything.
     pub platform_tools: Option<PlatformToolsInfo>,
+    /// (P6-MEMLOCK, C-1151) True when the agent holds at least one locked memory; the memory
+    /// fragment then carries the sentence about them.
+    pub memory_locked: bool,
 }
 
 /// (P5-GUIDE-7, C-654) `render_inputs.platform_tools`.
@@ -191,6 +194,7 @@ impl Default for RenderInputs {
             approval_parking: false,
             models: None,
             platform_tools: None,
+            memory_locked: false,
         }
     }
 }
@@ -517,6 +521,14 @@ ASCII words joined by hyphens.\n\n",
         ),
     }
 
+    // (P6-MEMLOCK, C-1151) Only when the agent holds at least one locked memory.
+    if i.memory_locked {
+        o.push_str(
+            "Memories marked (locked) were set by a person. Use them, but do not try to change \
+or delete them; if one looks wrong or out of date, say so.\n\n",
+        );
+    }
+
     if let Some(m) = &i.models {
         o.push_str(&models_fragment(m));
     }
@@ -631,6 +643,7 @@ mod tests {
             approval_parking: false,
             models: None,
             platform_tools: None,
+            memory_locked: false,
         }
     }
 
@@ -966,5 +979,33 @@ mod tests {
         assert!(r.contains("- chat: Acme HQ (shared, @aurora)"));
         assert!(r.contains("- @bob: Bob (your side: ask; their side: allow)"));
         assert!(r.contains("daily: `0 9 * * *`"));
+    }
+
+    /// (P6-MEMLOCK, C-1151) The locked-memories sentence renders only when the API set
+    /// `memory_locked`; without it (and from an older API, which never sends it) the file is
+    /// byte-identical to before.
+    #[test]
+    fn locked_memory_sentence_only_when_the_input_is_set() {
+        let wire = serde_json::json!({
+            "agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"},
+            "memory_language": "english"
+        });
+        // An older API never sends the field: it parses and renders exactly as before.
+        let i: RenderInputs = serde_json::from_value(wire).unwrap();
+        assert!(!i.memory_locked);
+        let without = render(&i);
+        assert!(!without.contains("locked"), "{without}");
+
+        let mut with = i.clone();
+        with.memory_locked = true;
+        let r = render(&with);
+        assert!(
+            r.contains(
+                "Memories marked (locked) were set by a person. Use them, but do not try to \
+                 change or delete them; if one looks wrong or out of date, say so."
+            ),
+            "{r}"
+        );
+        assert_ne!(r, without);
     }
 }

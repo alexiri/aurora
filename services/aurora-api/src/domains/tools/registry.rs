@@ -371,6 +371,30 @@ mod exposure_tests {
         assert!(core.len() < limits::PLATFORM_TOOLS_CORE_MAX);
     }
 
+    /// (P6-MEMLOCK, SEC-151) The memory family stays exactly these five tools: nothing
+    /// agent-reachable may lock or unlock a memory, so no new memory tool can exist.
+    #[test]
+    fn the_memory_family_is_exactly_the_five_documented_tools() {
+        let r = registry();
+        let mut memory: Vec<&str> = r
+            .order
+            .iter()
+            .copied()
+            .filter(|n| r.tools[n].family() == "memory")
+            .collect();
+        memory.sort_unstable();
+        assert_eq!(
+            memory,
+            vec![
+                "memory_delete",
+                "memory_get",
+                "memory_list",
+                "memory_save",
+                "memory_search"
+            ]
+        );
+    }
+
     #[test]
     fn a_registry_over_the_core_maximum_is_refused() {
         struct C(&'static str);
