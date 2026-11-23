@@ -28,54 +28,16 @@ use dto::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
+
+/// The interval enum, jitter and lease owner of both git-source poll jobs (extracted from
+/// here by P6-TPL-2; the template sources C-1107 share them).
+pub use crate::domains::polling::{
+    INTERVALS, interval_secs, jitter, lease_owner, next_in_secs, valid_interval,
+};
 
 /// `(major, minor, patch, is_release)`: the derived tuple order is the semver order.
 type Semver = (u64, u64, u64, bool);
-
-/// The interval values of the owner's enum.
-pub const INTERVALS: [&str; 7] = ["6h", "12h", "1d", "1w", "2w", "1mo", "never"];
-
-/// Whether `v` is one of [`INTERVALS`].
-#[must_use]
-pub fn valid_interval(v: &str) -> bool {
-    INTERVALS.contains(&v)
-}
-
-/// Interval seconds for the owner's enum (`None` for `never`).
-#[must_use]
-pub fn interval_secs(interval: &str) -> Option<i64> {
-    match interval {
-        "6h" => Some(6 * 3600),
-        "12h" => Some(12 * 3600),
-        "1d" => Some(24 * 3600),
-        "1w" => Some(7 * 24 * 3600),
-        "2w" => Some(14 * 24 * 3600),
-        "1mo" => Some(30 * 24 * 3600),
-        _ => None,
-    }
-}
-
-/// ±10 % jitter keyed by the source id (stable per row, no clock read).
-fn jitter(id: Uuid) -> f64 {
-    let n = (id.as_u128() % 2001) as f64 / 10_000.0 - 0.1;
-    1.0 + n
-}
-
-/// Seconds until the next scheduled check, `None` for `never` (no schedule: manual only).
-fn next_in_secs(interval: &str, id: Uuid) -> Option<i64> {
-    interval_secs(interval).map(|s| ((s as f64) * jitter(id)) as i64)
-}
-
-/// The per-process lease owner id (random per call, like the library refresh).
-static OWNER: AtomicU64 = AtomicU64::new(0);
-
-fn lease_owner() -> Uuid {
-    let mut b = *ids::new_id().as_bytes();
-    b[0] = OWNER.fetch_add(1, Ordering::Relaxed) as u8;
-    Uuid::from_bytes(b)
-}
 
 fn refused(e: manifest::ManifestError) -> ApiError {
     match e {

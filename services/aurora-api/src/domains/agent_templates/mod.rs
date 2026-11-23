@@ -4,8 +4,11 @@
 //! (C-1108) and the poll job live in `check`/`poll`; the catalogue (C-1109/C-1110) in
 //! `catalogue`. Everything here mirrors the addon-source code with the signing parts removed.
 
+pub mod check;
 pub mod dto;
+pub mod fetch;
 pub mod git;
+pub mod poll;
 pub(crate) mod routes;
 pub use routes::router;
 
@@ -21,44 +24,16 @@ use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::skill_libraries::git::Token;
 use dto::{
-    AddTemplateSourceRequest, AgentTemplateSource, AgentTemplateSourcePreview,
-    ManifestRepoView, PreviewTemplateSourceRequest, PreviewTemplateView,
-    ResolvedRefView, SourceTemplateView, TemplateProblemView, UpdateTemplateSourceRequest,
+    AddTemplateSourceRequest, AgentTemplateSource, AgentTemplateSourcePreview, ManifestRepoView,
+    PreviewTemplateSourceRequest, PreviewTemplateView, ResolvedRefView, SourceTemplateView,
+    TemplateProblemView, UpdateTemplateSourceRequest,
 };
 
-/// The interval values of the owner's enum (C-1113, the same one the addon sources use).
-pub const INTERVALS: [&str; 7] = ["6h", "12h", "1d", "1w", "2w", "1mo", "never"];
-
-/// Whether `v` is one of [`INTERVALS`].
-#[must_use]
-pub fn valid_interval(v: &str) -> bool {
-    INTERVALS.contains(&v)
-}
-
-/// Interval seconds for the owner's enum (`None` for `never`).
-#[must_use]
-pub fn interval_secs(interval: &str) -> Option<i64> {
-    match interval {
-        "6h" => Some(6 * 3600),
-        "12h" => Some(12 * 3600),
-        "1d" => Some(24 * 3600),
-        "1w" => Some(7 * 24 * 3600),
-        "2w" => Some(14 * 24 * 3600),
-        "1mo" => Some(30 * 24 * 3600),
-        _ => None,
-    }
-}
-
-/// ±10 % jitter keyed by the source id (stable per row, no clock read).
-fn jitter(id: Uuid) -> f64 {
-    let n = (id.as_u128() % 2001) as f64 / 10_000.0 - 0.1;
-    1.0 + n
-}
-
-/// Seconds until the next scheduled check, `None` for `never` (no schedule: manual only).
-fn next_in_secs(interval: &str, id: Uuid) -> Option<i64> {
-    interval_secs(interval).map(|s| ((s as f64) * jitter(id)) as i64)
-}
+/// The interval enum, jitter and lease owner are shared with the addon sources (C-1107 is
+/// C-598's shape): `crate::domains::polling`.
+pub use crate::domains::polling::{
+    INTERVALS, interval_secs, jitter, lease_owner, next_in_secs, valid_interval,
+};
 
 fn bad_interval() -> ApiError {
     ApiError::invalid_request(
@@ -179,10 +154,7 @@ fn address(
 
 /// The token of a request (C-1122): 1..1024 printable ASCII without whitespace; the user name
 /// 1..100 of `[A-Za-z0-9._@-]`, default `x-access-token`; a user name needs a token.
-fn token_input(
-    token: Option<&str>,
-    username: Option<&str>,
-) -> Result<Option<Token>, ApiError> {
+fn token_input(token: Option<&str>, username: Option<&str>) -> Result<Option<Token>, ApiError> {
     let Some(t) = token else {
         if username.is_some() {
             return Err(bad("/token_username", "a user name needs a token"));
@@ -225,15 +197,14 @@ fn token_ctx(source: Uuid) -> SealContext {
     }
 }
 
-async fn seal_token(
-    state: &AppState,
-    source: Uuid,
-    t: &Token,
-) -> Result<String, ApiError> {
+async fn seal_token(state: &AppState, source: Uuid, t: &Token) -> Result<String, ApiError> {
     let plain = json!({"username": t.username, "token": t.token.expose()}).to_string();
     let r = state
         .vault
-        .seal(&token_ctx(source), aurora_core::Secret::new(plain.into_bytes()))
+        .seal(
+            &token_ctx(source),
+            aurora_core::Secret::new(plain.into_bytes()),
+        )
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "template source token not sealed");
@@ -276,8 +247,14 @@ pub(crate) async fn open_source_token(
         .await
         .map_err(|_| store_unavailable())?;
     let v: Value = serde_json::from_slice(plain.expose()).map_err(|_| store_unavailable())?;
-    let username = v["username"].as_str().ok_or_else(store_unavailable)?.to_owned();
-    let token = v["token"].as_str().ok_or_else(store_unavailable)?.to_owned();
+    let username = v["username"]
+        .as_str()
+        .ok_or_else(store_unavailable)?
+        .to_owned();
+    let token = v["token"]
+        .as_str()
+        .ok_or_else(store_unavailable)?
+        .to_owned();
     Ok(Some(Token {
         username,
         token: aurora_core::Secret::new(token),
@@ -351,9 +328,21 @@ pub async fn preview(
     user: Uuid,
     req: &PreviewTemplateSourceRequest,
 ) -> Result<AgentTemplateSourcePreview, ApiError> {
-    let addr = address(state, &req.url, req.reference.as_deref(), req.path.as_deref())?;
+    let addr = address(
+        state,
+        &req.url,
+        req.reference.as_deref(),
+        req.path.as_deref(),
+    )?;
     let token = token_input(req.token.as_deref(), req.token_username.as_deref())?;
-    if repo::addr_taken(&state.pool, &addr.url, addr.reference.as_deref(), &addr.path).await? {
+    if repo::addr_taken(
+        &state.pool,
+        &addr.url,
+        addr.reference.as_deref(),
+        &addr.path,
+    )
+    .await?
+    {
         return Err(source_exists());
     }
     check_rate(state, user)?;
@@ -376,11 +365,7 @@ async fn preview_of(
     read: &git::SourceRead,
     m: &aurora_template::TemplateManifest,
 ) -> Result<AgentTemplateSourcePreview, ApiError> {
-    let dirs: Vec<String> = read
-        .templates
-        .iter()
-        .map(|d| d.dir.clone())
-        .collect();
+    let dirs: Vec<String> = read.templates.iter().map(|d| d.dir.clone()).collect();
     let held: std::collections::BTreeSet<String> = repo::template_holders(&state.pool, &dirs)
         .await?
         .into_iter()
@@ -458,7 +443,12 @@ pub async fn add(
     user: Uuid,
     req: &AddTemplateSourceRequest,
 ) -> Result<SourceRow, ApiError> {
-    let addr = address(state, &req.url, req.reference.as_deref(), req.path.as_deref())?;
+    let addr = address(
+        state,
+        &req.url,
+        req.reference.as_deref(),
+        req.path.as_deref(),
+    )?;
     let token = token_input(req.token.as_deref(), req.token_username.as_deref())?;
     let interval = req
         .update_interval
@@ -470,7 +460,11 @@ pub async fn add(
     // Early refusals before the slow read; the authoritative checks run again in the
     // transaction (below).
     {
-        let mut c = state.pool.acquire().await.map_err(aurora_db::DbError::from)?;
+        let mut c = state
+            .pool
+            .acquire()
+            .await
+            .map_err(aurora_db::DbError::from)?;
         if repo::count_sources(&mut *c).await? >= limits::TEMPLATE_SOURCES_MAX as i64 {
             return Err(source_limit());
         }
@@ -674,9 +668,13 @@ pub async fn update(
                 TokenChange::Keep => "unchanged",
             });
         }
-        let ev = AuditEvent::new(actor.clone(), "agent_template_source.update", Outcome::Success)
-            .target("agent_template_source", id)
-            .metadata(meta);
+        let ev = AuditEvent::new(
+            actor.clone(),
+            "agent_template_source.update",
+            Outcome::Success,
+        )
+        .target("agent_template_source", id)
+        .metadata(meta);
         audit::commit_critical(tx, &ev).await?;
         Ok::<_, ApiError>(())
     }
@@ -689,9 +687,7 @@ pub async fn update(
     }
     result?;
     // The replaced or removed old token is discarded best effort after the write.
-    if token_touched
-        && let Some(old) = &row.token_ref
-    {
+    if token_touched && let Some(old) = &row.token_ref {
         discard_token(state, id, old).await;
     }
     repo::get_source(&state.pool, id)
@@ -709,9 +705,13 @@ pub async fn remove(state: &AppState, actor: &AuditActor, id: Uuid) -> Result<()
     let count = repo::templates_of(&state.pool, id).await?.len();
     let mut tx = audit::begin(state).await?;
     repo::delete_source(&mut tx, id).await?;
-    let ev = AuditEvent::new(actor.clone(), "agent_template_source.remove", Outcome::Success)
-        .target("agent_template_source", id)
-        .metadata(json!({"url": row.url, "templates": count}));
+    let ev = AuditEvent::new(
+        actor.clone(),
+        "agent_template_source.remove",
+        Outcome::Success,
+    )
+    .target("agent_template_source", id)
+    .metadata(json!({"url": row.url, "templates": count}));
     audit::commit_critical(tx, &ev).await?;
     if let Some(r) = &row.token_ref {
         discard_token(state, id, r).await;
@@ -719,14 +719,131 @@ pub async fn remove(state: &AppState, actor: &AuditActor, id: Uuid) -> Result<()
     Ok(())
 }
 
+// ---- the check routes' service (C-1108) -------------------------------------------------------
+
+/// The route's view of a check outcome.
+fn result_dto(source_id: Uuid, out: check::CheckOutcome) -> dto::TemplateSourceCheckResult {
+    dto::TemplateSourceCheckResult {
+        source_id,
+        status: out.status.to_owned(),
+        commit_sha: out.commit_sha,
+        ingested: out
+            .ingested
+            .into_iter()
+            .map(|i| dto::CheckIngestedView {
+                template_id: i.template_id,
+                version: i.version,
+                status: i.status,
+                status_reason: i.status_reason,
+            })
+            .collect(),
+        waiting: out
+            .waiting
+            .into_iter()
+            .map(|w| dto::CheckWaitingView {
+                template_id: w.template_id,
+                version: w.version,
+                since: w.since,
+                last_reason: w.last_reason,
+            })
+            .collect(),
+        problems: out
+            .problems
+            .into_iter()
+            .map(|p| dto::CheckProblemView {
+                template_id: p.template_id,
+                dir: p.dir,
+                code: p.code,
+                message: p.message,
+            })
+            .collect(),
+        check_failed_reason: out.check_failed_reason,
+    }
+}
+
+/// Manual check of one source (C-1107, C-596's lease rules): the same path under the same
+/// lease as the poll, synchronous. 409 `template_check_in_progress` when it is busy.
+pub async fn check_now(
+    state: &AppState,
+    actor: &AuditActor,
+    id: Uuid,
+) -> Result<dto::TemplateSourceCheckResult, ApiError> {
+    if repo::get_source(&state.pool, id).await?.is_none() {
+        return Err(ApiError::not_found("Template source not found."));
+    }
+    let owner = lease_owner();
+    let mut c = state
+        .pool
+        .acquire()
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    let source = repo::claim_one(&mut c, id, owner, limits::TEMPLATE_LEASE.as_secs_f64())
+        .await?
+        .ok_or_else(|| {
+            ApiError::conflict(
+                "template_check_in_progress",
+                "A check of this source is already running.",
+            )
+        })?;
+    drop(c);
+    let out = check::check_source(state, &source, actor).await;
+    if out.is_err() {
+        // The check died without writing its outcome: free the lease.
+        release(state, &source).await;
+    }
+    Ok(result_dto(id, out?))
+}
+
+/// Manual check of every source (C-1107): sequential; a failing or busy source never blocks
+/// the others.
+pub async fn check_all(
+    state: &AppState,
+    actor: &AuditActor,
+) -> Result<dto::TemplateSourceCheckAll, ApiError> {
+    let mut items = Vec::new();
+    for r in repo::list_sources(&state.pool).await? {
+        let owner = lease_owner();
+        let mut c = state
+            .pool
+            .acquire()
+            .await
+            .map_err(aurora_db::DbError::from)?;
+        let claimed =
+            repo::claim_one(&mut c, r.id, owner, limits::TEMPLATE_LEASE.as_secs_f64()).await?;
+        drop(c);
+        let Some(source) = claimed else {
+            items.push(dto::TemplateSourceCheckResult {
+                source_id: r.id,
+                status: "failed".to_owned(),
+                commit_sha: r.last_head_sha.clone().unwrap_or_default(),
+                ingested: Vec::new(),
+                waiting: Vec::new(),
+                problems: Vec::new(),
+                check_failed_reason: Some("busy".to_owned()),
+            });
+            continue;
+        };
+        let out = check::check_source(state, &source, actor).await;
+        if out.is_err() {
+            release(state, &source).await;
+        }
+        items.push(result_dto(r.id, out?));
+    }
+    Ok(dto::TemplateSourceCheckAll { items })
+}
+
+/// Free the lease of a check that ended without writing its outcome.
+pub(crate) async fn release(state: &AppState, source: &SourceRow) {
+    if let (Some(owner), Ok(mut c)) = (source.lease_owner, state.pool.acquire().await) {
+        let _ = repo::release_lease(&mut c, source.id, owner).await;
+    }
+}
+
 // ---- the stored views -------------------------------------------------------------------------
 
 /// The `AgentTemplateSource` of a row, from the stored rows (never a live read: the last known
 /// state keeps serving when the source is unreachable).
-pub async fn source_dto(
-    state: &AppState,
-    r: &SourceRow,
-) -> Result<AgentTemplateSource, ApiError> {
+pub async fn source_dto(state: &AppState, r: &SourceRow) -> Result<AgentTemplateSource, ApiError> {
     let templates = repo::templates_of(&state.pool, r.id).await?;
     let counted = repo::version_counts(&state.pool, r.id).await?;
     let has_versions: std::collections::BTreeSet<Uuid> = counted

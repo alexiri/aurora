@@ -48,6 +48,7 @@ pub mod people;
 pub mod placement;
 pub mod plugins;
 pub mod policy;
+pub mod polling;
 pub mod previews;
 pub mod push;
 pub mod relay;

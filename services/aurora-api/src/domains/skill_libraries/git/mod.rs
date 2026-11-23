@@ -23,7 +23,9 @@ use aurora_core::Secret;
 use aurora_core::limits;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION, RETRY_AFTER, USER_AGENT};
 
-use super::content::{ReadError, ReadProfile, RefKind, RepoSource, Resolved, TreeEntry, throttle_secs};
+use super::content::{
+    ReadError, ReadProfile, RefKind, RepoSource, Resolved, TreeEntry, throttle_secs,
+};
 use crate::domains::connect::env::{Env, classify_send_error};
 use discover::{Discovery, FetchAsk, ProtoError};
 use pack::{Kind, Object, Oid};

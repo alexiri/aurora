@@ -552,6 +552,8 @@ async fn serve(
     aurora_api::domains::skill_libraries::refresh::spawn(state.clone());
     // (P5-ASRC, D-250) addon source poll (lease per source; shared with the manual checks).
     aurora_api::domains::addon_sources::poll::spawn(state.clone());
+    // (P6-TPL-2, C-1107) template source poll (the same lease shape, the C-1108 check path).
+    aurora_api::domains::agent_templates::poll::spawn(state.clone());
     aurora_api::domains::plugins::scan::spawn(state.clone());
     // (P5-CHAT-4) index pre-existing messages for search (resumable; ends when complete).
     aurora_api::domains::conversations::search::spawn_backfill(state.clone());

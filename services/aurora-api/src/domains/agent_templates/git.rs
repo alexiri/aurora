@@ -101,7 +101,7 @@ pub async fn read_with(
         } else {
             p.strip_prefix(prefix)?.strip_prefix('/')
         }
-    }    // The repository manifest at the folder's root (C-1103: required).
+    } // The repository manifest at the folder's root (C-1103: required).
     let manifest_name = format!(
         "{}{}aurora-templates.yaml",
         prefix,

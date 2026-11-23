@@ -145,7 +145,7 @@ struct Source {
     update: &'static str,
 }
 
-const SOURCES: [Source; 12] = [
+const SOURCES: [Source; 13] = [
     // (phase 5, P4-UTOK, D-282) A person's chat-platform token (set only while `active`) and the
     // per-op copy a queued send or verify holds; the copy's org is kept in the op's payload.
     Source {

@@ -2,9 +2,10 @@
 
 use super::dto::{
     AddTemplateSourceRequest, AgentTemplateSource, AgentTemplateSourceList,
-    AgentTemplateSourcePreview, PreviewTemplateSourceRequest, UpdateTemplateSourceRequest,
+    AgentTemplateSourcePreview, PreviewTemplateSourceRequest, TemplateSourceCheckAll,
+    TemplateSourceCheckResult, UpdateTemplateSourceRequest,
 };
-use super::{add, preview, remove, source_dto, update};
+use super::{add, check_all, check_now, preview, remove, source_dto, update};
 use crate::app::AppState;
 use crate::audit::AuditActor;
 use crate::http::auth::InstanceAdmin;
@@ -22,6 +23,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(list_sources, create_source))
         .routes(routes!(preview_source))
         .routes(routes!(get_source, delete_source, update_source))
+        .routes(routes!(check_all_route))
+        .routes(routes!(check_source_route))
 }
 
 /// The preview answer is never cached (C-1107, as C-1124)./// The preview answer is never cached (C-1107, as C-1124).
@@ -78,10 +81,7 @@ async fn create_source(
 ) -> Result<(StatusCode, Json<AgentTemplateSource>), ApiError> {
     let actor = AuditActor::instance_admin(&c);
     let row = add(&s, &actor, c.user_id, &req).await?;
-    Ok((
-        StatusCode::CREATED,
-        Json(source_dto(&s, &row).await?),
-    ))
+    Ok((StatusCode::CREATED, Json(source_dto(&s, &row).await?)))
 }
 
 /// One template source, from its stored rows (never a live read).
@@ -136,4 +136,32 @@ async fn delete_source(
 ) -> Result<StatusCode, ApiError> {
     remove(&s, &AuditActor::instance_admin(&c), id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Check a source now (C-1107, C-596's lease rules): the shared C-1108 path, synchronous.
+/// A read failure is a result, not an error.
+#[utoipa::path(post, path = "/admin/agent-template-sources/{id}/check", operation_id = "adminCheckTemplateSource", tag = "agent-templates",
+    params(("id" = Uuid, Path, description = "Template source id")),
+    responses((status = 200, body = TemplateSourceCheckResult), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn check_source_route(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<TemplateSourceCheckResult>, ApiError> {
+    Ok(Json(
+        check_now(&s, &AuditActor::instance_admin(&c), id).await?,
+    ))
+}
+
+/// Check every source (C-1107): sequential; a failing or busy source never blocks the others.
+#[utoipa::path(post, path = "/admin/agent-template-sources/check-all", operation_id = "adminCheckAllTemplateSources", tag = "agent-templates",
+    responses((status = 200, body = TemplateSourceCheckAll), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn check_all_route(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<TemplateSourceCheckAll>, ApiError> {
+    Ok(Json(check_all(&s, &AuditActor::instance_admin(&c)).await?))
 }

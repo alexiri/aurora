@@ -409,10 +409,8 @@ pub fn assemble_with(path: &str, entries: &[TreeEntry], file_max: usize) -> Vec<
             if let Some(s) = &c.skill_md
                 && s.size.is_some_and(|n| n > file_max as u64)
             {
-                c.problems.push(format!(
-                    "SKILL.md is larger than {} bytes",
-                    file_max
-                ));
+                c.problems
+                    .push(format!("SKILL.md is larger than {} bytes", file_max));
             }
             c
         })
@@ -534,8 +532,7 @@ pub async fn load(reader: &Reader<'_>, c: &Candidate) -> Result<LoadedSkill, Loa
         if content.len() > reader.profile.file_max {
             return Err(invalid(format!(
                 "a file is larger than {} bytes ({})",
-                reader.profile.file_max,
-                f.rel
+                reader.profile.file_max, f.rel
             )));
         }
         files.push(LoadedFile {

@@ -32,6 +32,7 @@ pub use meta::parse_meta;
 pub use model::{
     AppEntry, AppTools, Automation, Effort, InputDecl, InputKind, Level, MemoryFile, SkillRef,
     TemplateContent, TemplateFile, TemplateManifest, TemplateMeta, TemplateSkill, TreeFile,
+    Verification,
 };
 pub use problem::{ProblemCode, TemplateProblem};
 pub use render::{
