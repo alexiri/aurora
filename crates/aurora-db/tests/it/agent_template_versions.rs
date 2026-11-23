@@ -4,8 +4,8 @@
 //! the new owner ingested the package and an admin already approved it) must not overwrite
 //! the approved version — zero rows match and the caller aborts its transaction.
 
-use aurora_db::repo::agent_templates as repo;
 use aurora_db::PgPool;
+use aurora_db::repo::agent_templates as repo;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -100,12 +100,52 @@ async fn a_stale_finish_does_not_change_an_approved_version(pool: PgPool) {
 
     // The stale finish matches nothing; the honest one matches.
     let mut c = pool.acquire().await.unwrap();
-    let moved = repo::finish_version(&mut *c, stale, "pending_approval", None, Some(&json!({})), Some(&"a".repeat(64)), None, Some(1), true).await.unwrap();
-    let again = repo::finish_version(&mut *c, stale, "pending_approval", None, None, None, None, None, true).await.unwrap();
-    let honest = repo::finish_version(&mut *c, waiting, "pending_approval", None, Some(&json!({})), Some(&"b".repeat(64)), None, Some(2), true).await.unwrap();
+    let moved = repo::finish_version(
+        &mut *c,
+        stale,
+        "pending_approval",
+        None,
+        Some(&json!({})),
+        Some(&"a".repeat(64)),
+        None,
+        Some(1),
+        true,
+    )
+    .await
+    .unwrap();
+    let again = repo::finish_version(
+        &mut *c,
+        stale,
+        "pending_approval",
+        None,
+        None,
+        None,
+        None,
+        None,
+        true,
+    )
+    .await
+    .unwrap();
+    let honest = repo::finish_version(
+        &mut *c,
+        waiting,
+        "pending_approval",
+        None,
+        Some(&json!({})),
+        Some(&"b".repeat(64)),
+        None,
+        Some(2),
+        true,
+    )
+    .await
+    .unwrap();
     drop(c);
 
-    assert_eq!((moved, again, honest), (0, 0, 1), "a finished (approved) row is never written again");
+    assert_eq!(
+        (moved, again, honest),
+        (0, 0, 1),
+        "a finished (approved) row is never written again"
+    );
     let (status, sha) = row_status(&pool, stale).await;
     assert_eq!(status, "approved");
     assert_eq!(sha.as_deref(), Some("a".repeat(64).as_str()));

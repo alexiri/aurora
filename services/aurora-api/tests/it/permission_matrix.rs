@@ -613,6 +613,78 @@ const ROWS: &[Row] = &[
         G::Inst,
         false,
     ),
+    // (P6-TPL-2, C-1107/C-1108) agent template sources and review: instance administrators
+    // only, session only (`InstanceAdmin` is a `SessionCaller`; an API key is 403
+    // `session_required` like the settings routes)
+    r("GET", "/v1/admin/agent-template-sources", G::Inst, true),
+    r("POST", "/v1/admin/agent-template-sources", G::Inst, true),
+    r(
+        "POST",
+        "/v1/admin/agent-template-sources/preview",
+        G::Inst,
+        true,
+    ),
+    r(
+        "POST",
+        "/v1/admin/agent-template-sources/check-all",
+        G::Inst,
+        true,
+    ),
+    r(
+        "GET",
+        "/v1/admin/agent-template-sources/{id}",
+        G::Inst,
+        true,
+    ),
+    r(
+        "PATCH",
+        "/v1/admin/agent-template-sources/{id}",
+        G::Inst,
+        true,
+    ),
+    r(
+        "DELETE",
+        "/v1/admin/agent-template-sources/{id}",
+        G::Inst,
+        true,
+    ),
+    r(
+        "POST",
+        "/v1/admin/agent-template-sources/{id}/check",
+        G::Inst,
+        true,
+    ),
+    r("GET", "/v1/admin/agent-templates", G::Inst, true),
+    r(
+        "GET",
+        "/v1/admin/agent-templates/{template_id}/versions/{version}",
+        G::Inst,
+        true,
+    ),
+    r(
+        "GET",
+        "/v1/admin/agent-templates/{template_id}/versions/{version}/avatar",
+        G::Inst,
+        true,
+    ),
+    r(
+        "POST",
+        "/v1/admin/agent-templates/{template_id}/versions/{version}/approve",
+        G::Inst,
+        true,
+    ),
+    r(
+        "POST",
+        "/v1/admin/agent-templates/{template_id}/versions/{version}/reject",
+        G::Inst,
+        true,
+    ),
+    r(
+        "PATCH",
+        "/v1/admin/agent-templates/{template_id}",
+        G::Inst,
+        true,
+    ),
     r("GET", "/v1/admin/audit", G::Inst, false),
     r("GET", "/v1/admin/usage", G::Inst, false),
     r("GET", "/v1/admin/users", G::Inst, false),
@@ -1127,6 +1199,34 @@ const ROWS: &[Row] = &[
         "GET",
         "/v1/workspaces/{ws}/skill-library-updates",
         G::WsOwn,
+        false,
+    ),
+    // (P6-TPL-2, C-1109) organization template switches: org owner/admin, session or key; a
+    // non-member (an instance admin included) is invisible (404), no IA bypass
+    r("GET", "/v1/orgs/{org}/agent-templates", G::Admin, false),
+    r(
+        "PUT",
+        "/v1/orgs/{org}/agent-templates/{template_id}",
+        G::Admin,
+        false,
+    ),
+    // (P6-TPL-2, C-1110) the workspace catalogue: `can_use` on the workspace
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/agent-templates",
+        G::WsUse,
+        false,
+    ),
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/agent-templates/{template_id}",
+        G::WsUse,
+        false,
+    ),
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/agent-templates/{template_id}/avatar",
+        G::WsUse,
         false,
     ),
     r(
@@ -1773,6 +1873,19 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"url": "https://matrix.example/repo"})
         }
         ("PATCH", "/v1/admin/addon-sources/{id}") => json!({"update_interval": "1d"}),
+        // (P6-TPL-2, C-1107/C-1108) the add runs a preview git read and the first check; an
+        // authorized instance admin gets the address's own 422, anyone else the denial
+        (
+            "POST",
+            "/v1/admin/agent-template-sources" | "/v1/admin/agent-template-sources/preview",
+        ) => json!({"url": "https://git.example/a/b"}),
+        ("PATCH", "/v1/admin/agent-template-sources/{id}") => json!({"update_interval": "1d"}),
+        // approve is bound to the content hash; an unknown template id answers 404 first
+        ("POST", "/v1/admin/agent-templates/{template_id}/versions/{version}/approve") => {
+            json!({"content_sha256": "0".repeat(64)})
+        }
+        ("PATCH", "/v1/admin/agent-templates/{template_id}") => json!({"offered": false}),
+        ("PUT", "/v1/orgs/{org}/agent-templates/{template_id}") => json!({"enabled": false}),
         ("POST", "/v1/admin/addon-sources/{id}/confirm-key") => {
             json!({"new_key_fingerprint": "sha256:000000000000"})
         }

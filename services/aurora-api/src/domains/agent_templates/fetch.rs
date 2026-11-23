@@ -167,14 +167,16 @@ mod tests {
             }
         });
         let ring = aurora_crypto::SecretRing::default();
-        let mut env =
-            Env::new("http://hooks.example:4104", &ring, &["localhost".to_owned()], None)
-                .unwrap();
+        let mut env = Env::new(
+            "http://hooks.example:4104",
+            &ring,
+            &["localhost".to_owned()],
+            None,
+        )
+        .unwrap();
         // The override dials the listener for the logical https URL (the test shape the IT
         // world uses, here straight on the Env).
-        env.override_origin = Some(
-            url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
-        );
+        env.override_origin = Some(url::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap());
         let started = std::time::Instant::now();
         let out = package_deadline(
             &env,

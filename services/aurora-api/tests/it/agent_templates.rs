@@ -1572,3 +1572,575 @@ async fn the_plan_resolves_apps_and_skill_references() {
     let (s, _) = ws_get(&w, ws, &owner, "/t2").await;
     assert_eq!(s, 404);
 }
+
+// ---- the acceptance gaps: decide, offer, attention, accounts, custom_only -----------------------
+
+/// A template whose `template.yaml` is `yaml` (the rest as [`files`]), committed to `repo`.
+fn seed_yaml(w: &W, repo: &str, dir: &str, yaml: String) {
+    w.git.add_repo(repo);
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        manifest_yaml().into_bytes(),
+    )];
+    for (p, b) in [
+        (format!("{dir}/template.yaml"), yaml.into_bytes()),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            INSTRUCTIONS.as_bytes().to_vec(),
+        ),
+        (
+            format!("{dir}/README.md"),
+            format!("# {dir}\nA test template.\n").into_bytes(),
+        ),
+    ] {
+        changes.push(put(p, b));
+    }
+    w.git.commit(repo, "main", &changes);
+}
+
+/// The package zip matching [`seed_yaml`].
+fn pack_yaml(dir: &str, yaml: String) -> Vec<u8> {
+    let tree: Vec<TreeFile> = [
+        (format!("{dir}/template.yaml"), yaml.into_bytes()),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            INSTRUCTIONS.as_bytes().to_vec(),
+        ),
+        (
+            format!("{dir}/README.md"),
+            format!("# {dir}\nA test template.\n").into_bytes(),
+        ),
+    ]
+    .into_iter()
+    .map(|(path, bytes)| TreeFile {
+        path,
+        bytes,
+        mode: 0o100644,
+    })
+    .collect();
+    aurora_template::pack(dir, &tree)
+}
+
+/// `template.yaml` naming one app (the plan's accounts and `custom_only` tests).
+fn app_yaml(id: &str, version: &str, tools: &str) -> String {
+    format!(
+        "format: 1\nid: {id}\nversion: {version}\nname: App template\nsummary: One app.\n\
+         inputs:\n  - id: zone\n    label: Zone\n    pattern: \"^[a-z]+$\"\n\
+         apps:\n  - app: com-example-thing\n    required: true\n    level: {level}\n    why: Needs the thing.{tools}",
+        level = if tools.is_empty() { "read" } else { "act" },
+    )
+}
+
+/// The active package the templates' app lives on (installed through the plugins lifecycle):
+/// `com-example-thing` with a two-tool catalogue and `custom_only`, plus an app no template
+/// names (an account that must never show in the plan's choices).
+const APP_PKG_YAML: &str = r#"package: { id: acme, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }
+apps:
+  - about: { id: com-example-thing, name: Thing, description: D, category: dev }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    grants: { custom_only: true, block_untooled: true }
+    tools:
+      read:
+        items:
+          - { id: look, name: Look, host: api.thing.example, path: /x, methods: [GET] }
+      write:
+        items:
+          - { id: change, name: Change, host: api.thing.example, path: /x, methods: [POST] }
+    hosts:
+      - match: { host: "api.thing.example" }
+        inject:
+          - bearer: "{credentials.api_token}"
+  - about: { id: com-example-other, name: Other, description: D, category: dev }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    hosts:
+      - match: { host: "api.other.example" }
+        inject:
+          - bearer: "{credentials.api_token}"
+"#;
+
+/// A real app connection of `app` (the org when `ws` is None) with `access`.
+async fn conn(w: &W, org: Uuid, app: &str, ws: Option<Uuid>, access: &str) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version,
+            label, status, credentials_ref, access)
+         VALUES ($1,$2,$3,$4,'acme','1.0.0',$5,'active','x',$6)",
+    )
+    .bind(id)
+    .bind(org)
+    .bind(ws)
+    .bind(app)
+    .bind(format!("{app} account"))
+    .bind(access)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// The attention items about agent template versions.
+async fn template_attention(w: &W) -> Vec<Value> {
+    let (s, v) = w.call(Method::GET, "/v1/admin/attention", None).await;
+    assert_eq!(s, 200, "{v}");
+    v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"].as_str() == Some("agent_template_version"))
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn approve_is_bound_to_the_reviewed_hash() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+
+    // A hash that is not the one the review showed (a lie, a wrong one, the empty string):
+    // 409, the version stays pending, no audit row.
+    let long = "f".repeat(64);
+    for sha in ["", "00", long.as_str()] {
+        let (s, v) = w
+            .call(
+                Method::POST,
+                "/v1/admin/agent-templates/t/versions/1.0.0/approve",
+                Some(json!({"content_sha256": sha})),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (409, "template_content_changed"), "{v}");
+    }
+    assert_eq!(
+        w.versions().await,
+        vec![("1.0.0".into(), "pending_approval".into(), None)]
+    );
+    assert_eq!(w.audit_critical("agent_template.approve").await, 0);
+
+    // The hash the detail showed approves; a second decide is a conflict, not a rewrite.
+    w.approve("t", "1.0.0").await;
+    assert_eq!(
+        w.versions().await,
+        vec![("1.0.0".into(), "approved".into(), None)]
+    );
+    assert_eq!(w.audit_critical("agent_template.approve").await, 1);
+    let sha = w.content_sha("1.0.0").await.unwrap();
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-templates/t/versions/1.0.0/approve",
+            Some(json!({"content_sha256": sha})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "invalid_state"), "{v}");
+    assert_eq!(w.audit_critical("agent_template.approve").await, 1);
+}
+
+#[tokio::test]
+async fn a_rejected_version_is_never_ingested_again() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-templates/t/versions/1.0.0/reject",
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["status"], "rejected", "{v}");
+    assert_eq!(w.audit_critical("agent_template.reject").await, 1);
+
+    // The same head again: up_to_date, nothing is re-ingested even though the package is
+    // still served.
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "up_to_date", "{out}");
+    assert_eq!(out["ingested"], json!([]), "{out}");
+
+    // Deciding a rejected version is a conflict in both directions.
+    for path in ["reject", "approve"] {
+        let (s, v) = w
+            .call(
+                Method::POST,
+                &format!("/v1/admin/agent-templates/t/versions/1.0.0/{path}"),
+                Some(json!({"content_sha256": "x"})),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (409, "invalid_state"), "{v}");
+    }
+
+    // A newer head comes in normally; the rejected one keeps its status.
+    w.bump(
+        "acme/tpl",
+        &files("t", "1.1.0")
+            .into_iter()
+            .map(|(p, b)| put(p, b))
+            .collect::<Vec<_>>(),
+    );
+    w.git.serve_file("pkg/t-1.1.0.zip", pack("t", "1.1.0"));
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "updated", "{out}");
+    assert_eq!(
+        w.versions().await,
+        vec![
+            ("1.0.0".into(), "rejected".into(), None),
+            ("1.1.0".into(), "pending_approval".into(), None),
+        ]
+    );
+
+    // And the head moving back to the rejected version is version_not_newer: still never
+    // ingested again.
+    w.bump(
+        "acme/tpl",
+        &files("t", "1.0.0")
+            .into_iter()
+            .map(|(p, b)| put(p, b))
+            .collect::<Vec<_>>(),
+    );
+    let out = w.check(id).await;
+    assert_eq!(out["problems"][0]["code"], "version_not_newer", "{out}");
+    assert_eq!(out["ingested"], json!([]), "{out}");
+    assert_eq!(
+        w.versions().await,
+        vec![
+            ("1.0.0".into(), "rejected".into(), None),
+            ("1.1.0".into(), "pending_approval".into(), None),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_previous_version_stays_offered_until_a_newer_one_is_approved() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("t", "1.0.0").await;
+
+    // The list's and the catalogue's offered version.
+    let current = || async {
+        let (s, v) = w.call(Method::GET, "/v1/admin/agent-templates", None).await;
+        assert_eq!(s, 200, "{v}");
+        v["items"][0]["current_version"].clone()
+    };
+    let catalogue = || async {
+        let (_, v) = ws_get(&w, ws, &owner, "").await;
+        v["items"][0]["version"].clone()
+    };
+    assert_eq!(current().await, json!("1.0.0"));
+    assert_eq!(catalogue().await, json!("1.0.0"));
+
+    // A newer head whose package never appeared: awaiting, the previous version keeps
+    // serving (the plan still says 1.0.0).
+    w.bump(
+        "acme/tpl",
+        &files("t", "1.1.0")
+            .into_iter()
+            .map(|(p, b)| put(p, b))
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(w.check(id).await["status"], "up_to_date");
+    assert_eq!(
+        w.versions().await,
+        vec![
+            ("1.0.0".into(), "approved".into(), None),
+            (
+                "1.1.0".into(),
+                "awaiting_package".into(),
+                Some("package_not_found".into())
+            ),
+        ]
+    );
+    assert_eq!(current().await, json!("1.0.0"));
+    let (s, v) = ws_get(&w, ws, &owner, "/t").await;
+    assert_eq!((s, v["version"].as_str()), (200, Some("1.0.0")), "{v}");
+
+    // The package arrives: pending, still 1.0.0.
+    w.git.serve_file("pkg/t-1.1.0.zip", pack("t", "1.1.0"));
+    assert_eq!(w.check(id).await["status"], "updated");
+    assert_eq!(current().await, json!("1.0.0"));
+
+    // Rejected: still 1.0.0.
+    let (s, _) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-templates/t/versions/1.1.0/reject",
+            None,
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(current().await, json!("1.0.0"));
+
+    // Invalid (a broken package): still 1.0.0.
+    w.bump(
+        "acme/tpl",
+        &files("t", "1.2.0")
+            .into_iter()
+            .map(|(p, b)| put(p, b))
+            .collect::<Vec<_>>(),
+    );
+    w.git
+        .serve_file("pkg/t-1.2.0.zip", vec![0x50, 0x4b, 0x00, 0x00]);
+    assert_eq!(w.check(id).await["status"], "updated");
+    assert_eq!(current().await, json!("1.0.0"));
+
+    // A failed check changes nothing either.
+    w.git.override_status("acme/tpl", 500, None);
+    assert_eq!(w.check(id).await["status"], "failed");
+    assert_eq!(current().await, json!("1.0.0"));
+    w.git.clear_overrides();
+
+    // After approve the newer one is offered — and withdraw falls back to the newest
+    // approved, offer again serves it.
+    w.bump(
+        "acme/tpl",
+        &files("t", "1.3.0")
+            .into_iter()
+            .map(|(p, b)| put(p, b))
+            .collect::<Vec<_>>(),
+    );
+    w.git.serve_file("pkg/t-1.3.0.zip", pack("t", "1.3.0"));
+    assert_eq!(w.check(id).await["status"], "updated");
+    w.approve("t", "1.3.0").await;
+    assert_eq!(current().await, json!("1.3.0"));
+    assert_eq!(catalogue().await, json!("1.3.0"));
+    let (s, _) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(current().await, json!(null));
+    let (_, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(v["items"].as_array().unwrap().len(), 0, "{v}");
+    let (s, _) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": true})),
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(current().await, json!("1.3.0"));
+    assert_eq!(catalogue().await, json!("1.3.0"));
+    assert_eq!(w.audit_critical("agent_template.update").await, 2);
+}
+
+#[tokio::test]
+async fn template_attention_items_appear_and_disappear() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+
+    // Nothing before the first check.
+    assert!(template_attention(&w).await.is_empty());
+
+    // A pending version: one decision item linking the review.
+    w.check(id).await;
+    let items = template_attention(&w).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0]["decision"], true, "{items:?}");
+    assert_eq!(
+        items[0]["href"], "/admin/agent-templates/t/versions/1.0.0",
+        "{items:?}"
+    );
+    assert!(
+        items[0]["title"]
+            .as_str()
+            .unwrap()
+            .contains("waiting for review"),
+        "{items:?}"
+    );
+    // The notice row (the one e-mail per admin) was written with it.
+    let notices: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM admin_attention_notices WHERE kind = 'agent_template_version'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(notices, 1);
+
+    // Approved: the item disappears.
+    w.approve("t", "1.0.0").await;
+    assert!(template_attention(&w).await.is_empty());
+
+    // A version waiting for its package is not an item yet (younger than the hour).
+    w.bump(
+        "acme/tpl",
+        &files("t", "1.1.0")
+            .into_iter()
+            .map(|(p, b)| put(p, b))
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(w.check(id).await["status"], "up_to_date");
+    assert!(template_attention(&w).await.is_empty());
+
+    // Older than an hour: the informative item appears (not a decision).
+    sqlx::query("UPDATE agent_template_versions SET created_at = now() - interval '2 hours' WHERE version = '1.1.0'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let items = template_attention(&w).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert!(
+        items[0]["title"]
+            .as_str()
+            .unwrap()
+            .contains("waiting for its package"),
+        "{items:?}"
+    );
+    assert_eq!(
+        items[0]["href"], "/admin/agent-templates/t/versions/1.1.0",
+        "{items:?}"
+    );
+
+    // The package arrives: the waiting item is gone, the decision item is back.
+    w.git.serve_file("pkg/t-1.1.0.zip", pack("t", "1.1.0"));
+    assert_eq!(w.check(id).await["status"], "updated");
+    let items = template_attention(&w).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0]["decision"], true, "{items:?}");
+    assert!(
+        items[0]["title"]
+            .as_str()
+            .unwrap()
+            .contains("waiting for review"),
+        "{items:?}"
+    );
+    let notices: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM admin_attention_notices WHERE kind = 'agent_template_version'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(notices, 2);
+
+    // Rejected: gone again.
+    let (s, _) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-templates/t/versions/1.1.0/reject",
+            None,
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert!(template_attention(&w).await.is_empty());
+}
+
+#[tokio::test]
+async fn the_plan_offers_only_the_accounts_the_caller_may_give() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let member = w.h.user("member@x.io", false).await;
+    w.h.member(org, member, "member", "active").await;
+    w.h.bind_ws(ws, member, "member").await;
+    let member_cookie = cookie(&w.h.good_session(member).await.1);
+
+    // The app is really installed (an active package with its two-tool catalogue).
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+
+    seed_yaml(&w, "acme/tpl", "t5", app_yaml("t5", "1.0.0", ""));
+    w.git.serve_file(
+        "pkg/t5-1.0.0.zip",
+        pack_yaml("t5", app_yaml("t5", "1.0.0", "")),
+    );
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("t5", "1.0.0").await;
+
+    // Real connections: two on the template's app (one org-wide, one this workspace), one
+    // on the app no template names.
+    let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
+    let org_wide = conn(&w, org, "com-example-thing", None, "write").await;
+    let _other = conn(&w, org, "com-example-other", Some(ws), "write").await;
+
+    // The owner's plan: exactly the app's two accounts, each givable.
+    let (s, v) = ws_get(&w, ws, &owner, "/t5").await;
+    assert_eq!(s, 200, "{v}");
+    let accounts = v["entries"][0]["choices"][0]["accounts"]
+        .as_array()
+        .unwrap();
+    let ids: Vec<Uuid> = accounts
+        .iter()
+        .map(|a| a["ref"]["id"].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 2, "{v}");
+    assert!(ids.contains(&mine) && ids.contains(&org_wide), "{v}");
+    assert!(
+        accounts.iter().all(|a| a["can"]["give_access"] == true),
+        "{v}"
+    );
+    assert_eq!(v["entries"][0]["choices"][0]["available"], true, "{v}");
+
+    // A plain member of the same workspace may not give any account: the choices list none.
+    let (s, v) = ws_get(&w, ws, &member_cookie, "/t5").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["entries"][0]["choices"][0]["accounts"], json!([]), "{v}");
+}
+
+#[tokio::test]
+async fn custom_only_caps_the_level_and_drops_unknown_tools() {
+    let w = world().await;
+    let (_org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+
+    let yaml = app_yaml(
+        "t6",
+        "1.0.0",
+        "\n    tools:\n      allow: [look, gone]\n      ask: [change, peek]\n",
+    );
+    seed_yaml(&w, "acme/tpl", "t6", yaml.clone());
+    w.git.serve_file("pkg/t6-1.0.0.zip", pack_yaml("t6", yaml));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("t6", "1.0.0").await;
+
+    // The plan: `act` capped to `ask` (the app is custom_only), the template's tools cut to
+    // the catalogue, the unknown ones named as dropped.
+    let (s, v) = ws_get(&w, ws, &owner, "/t6").await;
+    assert_eq!(s, 200, "{v}");
+    let choice = &v["entries"][0]["choices"][0];
+    assert_eq!(choice["app_id"], "com-example-thing", "{v}");
+    assert_eq!(choice["available"], true, "{v}");
+    assert_eq!(choice["level"], "ask", "{v}");
+    assert_eq!(choice["level_note"], "custom_only", "{v}");
+    assert_eq!(
+        choice["custom"],
+        json!({"allow_tools": ["look"], "ask_tools": ["change"], "dropped_tools": ["gone", "peek"]}),
+        "{v}"
+    );
+    // The required app is installed and available: ready.
+    assert_eq!(v["ready"], true, "{v}");
+    // The card says the same.
+    let (_, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(v["items"][0]["apps"][0]["available"], true, "{v}");
+    assert_eq!(v["items"][0]["ready"], true, "{v}");
+}
