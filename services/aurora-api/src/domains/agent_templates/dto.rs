@@ -432,12 +432,11 @@ pub(crate) const FILE_TEXT_MAX: usize = 256 * 1024;
 
 impl FileView {
     /// From the content column's file shape (`{ path, size, executable, sha256, bytes }`,
-    /// the bytes base64): decodes the bytes and cuts the text by the cap.
+    /// the bytes base64): decodes the bytes and cuts the text by the cap. A bad decode is
+    /// `None`, not empty bytes — the view fails and the version cannot be reviewed or
+    /// approved on a corrupted content column (SEC-146).
     fn from_json(f: &Value) -> Option<Self> {
-        let bytes = B64
-            .decode(f.get("bytes")?.as_str()?)
-            .ok()
-            .unwrap_or_default();
+        let bytes = B64.decode(f.get("bytes")?.as_str()?).ok()?;
         let size = f.get("size").and_then(Value::as_i64).unwrap_or(0);
         let executable = f
             .get("executable")

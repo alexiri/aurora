@@ -476,6 +476,56 @@ async fn the_first_check_ingests_the_current_head() {
 }
 
 #[tokio::test]
+async fn an_unreadable_stored_content_cannot_be_reviewed_or_approved() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(w.check(id).await["status"], "updated");
+
+    // Corrupt the stored content column: one helper file whose bytes are not base64 (a shape
+    // the encoder never writes — the point of this test is that the API refuses it).
+    sqlx::query(
+        "UPDATE agent_template_versions SET content = jsonb_set(content, '{helpers}',
+            '[{\"path\":\"h/run.sh\",\"size\":3,\"executable\":true,\"sha256\":\"aa\",\"bytes\":\"!!!not base64!!!\"}]')
+         WHERE agent_template_id = (SELECT id FROM agent_templates WHERE template_id = 't')
+            AND version = '1.0.0'",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+
+    // The detail cannot render the content: it shows null, not a file with empty bytes.
+    let (s, v) = w
+        .call(
+            Method::GET,
+            "/v1/admin/agent-templates/t/versions/1.0.0",
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["content"].is_null(), "{v}");
+
+    // Approve is refused even though the quoted hash matches the stored one: the admin has
+    // not reviewed (cannot have reviewed) what is stored.
+    let sha = w.content_sha("1.0.0").await.unwrap();
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-templates/t/versions/1.0.0/approve",
+            Some(json!({"content_sha256": sha})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "template_content_changed"), "{v}");
+    assert_eq!(
+        w.versions().await,
+        vec![("1.0.0".into(), "pending_approval".into(), None)]
+    );
+    assert_eq!(w.audit_critical("agent_template.approve").await, 0);
+}
+
+#[tokio::test]
 async fn a_missing_package_waits_and_is_retried_on_the_package_retry() {
     let w = world().await;
     w.seed("acme/tpl", "t", "1.0.0");

@@ -322,6 +322,16 @@ pub async fn approve(
     if v.content_sha256.as_deref() != Some(sha.as_str()) {
         return Err(content_changed());
     }
+    // The review approves what it read: the full content view. If the stored content cannot
+    // be rendered back into it (a shape this encoder never wrote — e.g. a corrupted base64
+    // file), the admin has not reviewed what is stored; refuse (SEC-146).
+    let content = v.content.as_ref().ok_or_else(content_changed)?;
+    if dto::TemplateContentView::from_json(content).is_none() {
+        return Err(ApiError::conflict(
+            "template_content_changed",
+            "This version's stored content cannot be rendered into the review view.",
+        ));
+    }
     let mut tx = audit::begin(state).await?;
     if !repo::approve(&mut tx, v.id, &sha, actor.id.unwrap_or_default()).await? {
         // A concurrent decide (or ingest) changed the row between the read and the write.
