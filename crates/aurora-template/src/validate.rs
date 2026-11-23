@@ -775,6 +775,16 @@ fn parse_skill_md(
     skill.body = body;
 }
 
+/// `helpers/<below>`: the C-1141 helper path rules a stored helper file's path must satisfy
+/// (C-1143 stores the path below `helpers/` and projects it at `.aurora/helpers/<below>`).
+/// The shared path grammar below the root (`rel_path_problem`: no `..`, no hidden segment, no
+/// empty segment, `[A-Za-z0-9._/-]`, at most 6 segments) plus the helpers' own depth cap of 4
+/// segments. The API's helper writer and the supervisor's managed root both call this (P6-TPL-6);
+/// it is never re-implemented elsewhere.
+pub fn helper_path_ok(below_helpers: &str) -> bool {
+    below_helpers.split('/').count() <= 4 && rel_path_problem(below_helpers).is_none()
+}
+
 /// `helpers/<path>`: byte-for-byte files, capped and shallow (C-1141; projected by C-1143).
 fn parse_helpers(
     raw: Vec<(String, &TreeFile)>,
@@ -794,7 +804,7 @@ fn parse_helpers(
     let mut out = Vec::new();
     for (rel, f) in raw {
         let below = &rel["helpers/".len()..];
-        if below.split('/').count() > 4 {
+        if !helper_path_ok(below) {
             problems.push(TemplateProblem::new(
                 ProblemCode::TemplateHelperInvalid,
                 &f.path,
@@ -1397,6 +1407,20 @@ pub(crate) mod tests {
                 .any(|p| p.code == ProblemCode::TemplateHelperInvalid
                     && p.message.contains("larger"))
         );
+    }
+
+    #[test]
+    fn helper_path_rules_below_root() {
+        // The path check the API writer and the supervisor's managed root both call.
+        assert!(helper_path_ok("alert-summary.sh"));
+        assert!(helper_path_ok("bin/tools/render.sh"));
+        assert!(helper_path_ok("a/b/c/d"));
+        assert!(!helper_path_ok("a/b/c/d/e"));
+        assert!(!helper_path_ok(""));
+        assert!(!helper_path_ok("../escape"));
+        assert!(!helper_path_ok(".hidden"));
+        assert!(!helper_path_ok("sp ace.sh"));
+        assert!(!helper_path_ok("a//b"));
     }
 
     #[test]

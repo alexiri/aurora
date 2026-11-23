@@ -1133,6 +1133,11 @@ const ROWS: &[Row] = &[
         G::WsUse,
         false,
     ),
+    // (P6-TPL-6, C-1143) The template helper files: list, read and remove; the same workspace
+    // access as the agent's other read/write routes.
+    r("GET", "/v1/agents/{agent}/helpers", G::WsUse, false),
+    r("GET", "/v1/agents/{agent}/helpers/content", G::WsUse, false),
+    r("DELETE", "/v1/agents/{agent}/helpers", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/skills", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/skills", G::WsUse, false),
     r(

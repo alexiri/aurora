@@ -10,4 +10,4 @@ pub mod sftp;
 
 mod routes;
 
-pub use routes::router;
+pub use routes::{content_disposition, router};

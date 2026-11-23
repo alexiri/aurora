@@ -39,7 +39,7 @@ pub use render::{
     CheckedInputs, InputProblem, InputProblemCode, RenderedAutomation, RenderedMemory,
     RenderedSkill, RenderedTemplate, check_inputs, render,
 };
-pub use validate::read_tree;
+pub use validate::{helper_path_ok, read_tree};
 
 /// Reads a packed template (a zip whose only top-level directory is `<id>/`, stored or deflate).
 /// Every C-1141 check runs; all problems (at most 20) come back when it is refused.

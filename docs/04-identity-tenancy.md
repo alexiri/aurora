@@ -673,7 +673,7 @@ the frozen payload.
 | Read the **published** Internet access of the workspace (rules and defaults of the active generation; `GET /v1/workspaces/{ws}/internet-access`, FIX-164, D-365; read-only, an exception to the row above) | `can_use` |
 | Workspace LLM keys | `can_own`, **and** org governance permits `workspace`-scoped keys for that endpoint, **and** the key's origin complies (`08 §11`) |
 | Space bindings for an agent of the workspace | `can_own` |
-| Create/edit/delete agents, brief, model, avatar; memory; agent-tier skills; schedules; webhooks; restart sandbox | `can_use` |
+| Create/edit/delete agents, brief, model, avatar; memory; agent-tier skills; helper files of an agent (list, read, remove — P6-TPL-6, C-1143); schedules; webhooks; restart sandbox | `can_use` |
 | Create/edit/delete **workspace-tier skills** (phase 3, RFE-020); read them | `can_own` to write (org owners/admins included); read: `can_use` |
 | Create a **BYO** agent; regenerate a BYO agent's token (phase 2, RFE-025) | phase 0/1: `can_use`. **From phase 2: by the effective BYO posture** (`08 §11.9`): `enabled` → `can_use`; `owners_only` (default) → `can_own`; `disabled` → nobody |
 | Edit a BYO agent's source CIDR list and "require context credentials" setting (phase 2, RFE-025) | `can_own` |
