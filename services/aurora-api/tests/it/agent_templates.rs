@@ -428,6 +428,137 @@ async fn preview_answers_the_read_without_storing_anything() {
     assert_eq!((s, code(&v)), (422, "template_manifest_invalid"), "{v}");
 }
 
+/// (C-1107) Every preview refusal carries its contract code: the address parser's
+/// `template_url_invalid` (with `details.reason`), `template_unreachable` for a repository
+/// that cannot be read, 409 `template_source_exists` for a stored address, and the
+/// 10-a-minute per-person allowance as 429 `rate_limited`.
+#[tokio::test]
+async fn the_preview_refusals_carry_their_codes() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    let preview = |body: Value| {
+        w.call(
+            Method::POST,
+            "/v1/admin/agent-template-sources/preview",
+            Some(body),
+        )
+    };
+
+    // Another scheme than https: 422 with the parser's reason.
+    let (s, v) = preview(json!({"url": "http://git.example/acme/tpl"})).await;
+    assert_eq!((s, code(&v)), (422, "template_url_invalid"), "{v}");
+    assert!(
+        v["error"]["details"]["reason"]
+            .as_str()
+            .is_some_and(|r| !r.is_empty()),
+        "{v}"
+    );
+
+    // A repository that is not there, and a branch that does not exist: 422, the reason in
+    // words, nothing stored.
+    for body in [
+        json!({"url": format!("{GIT_ORIGIN}/acme/missing")}),
+        json!({"url": format!("{GIT_ORIGIN}/acme/tpl"), "ref": "nope"}),
+    ] {
+        let (s, v) = preview(body).await;
+        assert_eq!((s, code(&v)), (422, "template_unreachable"), "{v}");
+        assert!(
+            v["error"]["details"]["reason"]
+                .as_str()
+                .is_some_and(|r| !r.is_empty()),
+            "{v}"
+        );
+    }
+    assert_eq!(
+        w.count("SELECT count(*) FROM agent_template_sources").await,
+        0
+    );
+
+    // 10 a minute per person (a token bucket: a slow machine may earn one back); the two
+    // unreachable reads above drew on the same allowance.
+    let mut limited = false;
+    let mut attempted = 2;
+    for _ in 0..12 {
+        let (s, v) = preview(json!({"url": format!("{GIT_ORIGIN}/acme/missing")})).await;
+        if s == 429 {
+            assert_eq!(code(&v), "rate_limited", "{v}");
+            limited = true;
+            break;
+        }
+        assert_eq!((s, code(&v)), (422, "template_unreachable"), "{v}");
+        attempted += 1;
+    }
+    assert!(
+        limited,
+        "a preview beyond the allowance is refused with 429"
+    );
+    assert!(
+        (10..=11).contains(&attempted),
+        "{attempted} previews went through"
+    );
+
+    // The other administrator still has their own allowance: they add the source, and a
+    // preview of a stored address is 409 `template_source_exists` (this check runs before
+    // the read and the allowance), while a free address is read normally.
+    let other = w.h.user("other-root@x.io", true).await;
+    let other = cookie(&w.h.good_session(other).await.1);
+    let (s, v) =
+        w.h.call(
+            &other,
+            Method::POST,
+            "/v1/admin/agent-template-sources",
+            Some(json!({"url": format!("{GIT_ORIGIN}/acme/tpl")})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = preview(json!({"url": format!("{GIT_ORIGIN}/acme/tpl")})).await;
+    assert_eq!((s, code(&v)), (409, "template_source_exists"), "{v}");
+    let (s, v) =
+        w.h.call(
+            &other,
+            Method::POST,
+            "/v1/admin/agent-template-sources/preview",
+            Some(json!({"url": format!("{GIT_ORIGIN}/acme/missing")})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_unreachable"), "{v}");
+}
+
+/// (C-1107) At most `TEMPLATE_SOURCES_MAX` (20) sources: the 20th add works, the 21st is
+/// 422 `template_source_limit` before any repository read.
+#[tokio::test]
+async fn the_twentieth_source_is_the_last() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    for i in 0..19 {
+        sqlx::query(
+            "INSERT INTO agent_template_sources (id, name, url, packages_url, manifest)
+             VALUES ($1, 'Filler', $2, 'https://git.example/pkg/{id}-{version}.zip', '{}')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(format!("{GIT_ORIGIN}/acme/filler{i}"))
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    }
+    // The 20th is a real add.
+    w.add_source("acme/tpl", json!({})).await;
+    // A 21st is refused before the read (the repository does not exist, so a read would fail
+    // differently).
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-template-sources",
+            Some(json!({"url": format!("{GIT_ORIGIN}/acme/onemore")})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_source_limit"), "{v}");
+    assert_eq!(
+        w.count("SELECT count(*) FROM agent_template_sources").await,
+        20
+    );
+}
+
 // ---- the check path (C-1108) -------------------------------------------------------------------
 
 #[tokio::test]
