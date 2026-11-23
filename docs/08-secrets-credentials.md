@@ -16,6 +16,8 @@ Phase: **0** (inline store, LiteLLM, Anthropic) · **3** (HashiCorp Vault store,
 | Credential copy of a self-contained deprovision op (RFE-024, owner = op id) | `channel_ops.payload.credentials_ref` | `channel_op.deprovision` |
 | A person's chat-platform token (phase 5, P4-UTOK, D-282, SEC-112; owner = the `user_tokens` row id; org = the integration's) | `user_tokens.token_ref` (set while `active`; an ended token keeps it only until the value is discarded, right after the ending commits or by the custody sweep) | `user_token` |
 | Per-op copy of a person's token for one `message.post` or `user_token.verify` (phase 5, P4-UTOK, D-282; owner = the op id; org = the integration's, kept in the op payload as `user_org_id`; opened only by the connector claim, discarded at the op's terminal state, a failed discard retried by the sweep every minute) | `channel_ops.payload.user_credential_ref` | `channel_op_user_token` |
+| A skill library's read-only access token (phase 5, P5-SKLIB-1, C-1126, SEC-148; owner = the library id, org = the library's or the nil UUID for an instance library; opened only by the repository reader) | `skill_libraries.token_ref` | `skill_library.token` |
+| An agent-template source's read-only access token (phase 6, P6-TPL-2, C-1106, SEC-146; owner = the source id, org = the nil UUID — sources are instance level; opened only by the repository reader and the package download) | `agent_template_sources.token_ref` | `template_source.token` |
 
 The two purposes are sealed, opened and discarded in exactly one module of the API (`domains/user_tokens/custody.rs`): no
 other code touches them, and `secrets migrate` moves both like every other purpose (a static test in

@@ -79,6 +79,58 @@
       "policy_b",
       "revision"
     ],
+    "agent_template_sources": [
+      "check_failed_at",
+      "check_failed_reason",
+      "check_lease_until",
+      "contact",
+      "created_by",
+      "homepage",
+      "id",
+      "last_checked_at",
+      "last_head_sha",
+      "lease_owner",
+      "manifest",
+      "name",
+      "next_check_at",
+      "packages_url",
+      "path",
+      "ref",
+      "status",
+      "token_ref",
+      "token_updated_at",
+      "update_interval",
+      "url"
+    ],
+    "agent_template_versions": [
+      "agent_template_id",
+      "archive_sha256",
+      "commit_sha",
+      "content",
+      "content_sha256",
+      "decided_at",
+      "decided_by",
+      "id",
+      "last_attempt_at",
+      "package_url",
+      "size_bytes",
+      "status",
+      "status_reason",
+      "version"
+    ],
+    "agent_templates": [
+      "dir",
+      "head_problems",
+      "head_state",
+      "head_version",
+      "id",
+      "name",
+      "offered",
+      "removed_upstream",
+      "source_id",
+      "summary",
+      "template_id"
+    ],
     "agents": [
       "avatar_blob_key",
       "avatar_public_key",
@@ -759,6 +811,12 @@
       "app_id",
       "org_id",
       "workspace_id"
+    ],
+    "org_disabled_agent_templates": [
+      "created_at",
+      "disabled_by",
+      "org_id",
+      "template_id"
     ],
     "org_member_removals": [
       "org_id",
@@ -1705,6 +1763,58 @@
       "policy_b": "text",
       "revision": "bigint not null"
     },
+    "agent_template_sources": {
+      "check_failed_at": "timestamptz null",
+      "check_failed_reason": "text null",
+      "check_lease_until": "timestamptz null",
+      "contact": "text null",
+      "created_by": "uuid null",
+      "homepage": "text null",
+      "id": "uuid not null",
+      "last_checked_at": "timestamptz null",
+      "last_head_sha": "text null",
+      "lease_owner": "uuid null",
+      "manifest": "jsonb not null",
+      "name": "text not null",
+      "next_check_at": "timestamptz not null",
+      "packages_url": "text not null",
+      "path": "text not null",
+      "ref": "text null",
+      "status": "text not null",
+      "token_ref": "text null",
+      "token_updated_at": "timestamptz null",
+      "update_interval": "text not null",
+      "url": "text not null"
+    },
+    "agent_template_versions": {
+      "agent_template_id": "uuid not null",
+      "archive_sha256": "text null",
+      "commit_sha": "text not null",
+      "content": "jsonb null",
+      "content_sha256": "text null",
+      "decided_at": "timestamptz null",
+      "decided_by": "uuid null",
+      "id": "uuid not null",
+      "last_attempt_at": "timestamptz null",
+      "package_url": "text not null",
+      "size_bytes": "integer null",
+      "status": "text not null",
+      "status_reason": "text null",
+      "version": "text not null"
+    },
+    "agent_templates": {
+      "dir": "text not null",
+      "head_problems": "jsonb null",
+      "head_state": "text not null",
+      "head_version": "text null",
+      "id": "uuid not null",
+      "name": "text not null",
+      "offered": "boolean not null",
+      "removed_upstream": "boolean not null",
+      "source_id": "uuid not null",
+      "summary": "text not null",
+      "template_id": "text not null"
+    },
     "agents": {
       "avatar_blob_key": "text null",
       "avatar_public_key": "text null",
@@ -2385,6 +2495,12 @@
       "app_id": "text",
       "org_id": "uuid",
       "workspace_id": "uuid null"
+    },
+    "org_disabled_agent_templates": {
+      "created_at": "timestamptz not null",
+      "disabled_by": "uuid null",
+      "org_id": "uuid not null",
+      "template_id": "text not null"
     },
     "org_member_removals": {
       "org_id": "uuid",

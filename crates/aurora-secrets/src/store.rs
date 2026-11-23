@@ -38,13 +38,17 @@ pub enum Purpose {
     /// `{ username, token }`; owner = the library id, org = the library's org (nil UUID for an
     /// instance library). Opened only by the repository reader.
     SkillLibraryToken,
+    /// (phase 6, P6-TPL-2, C-1106, SEC-146) An agent-template source's read-only access token
+    /// `{ username, token }`; owner = the source id, org = the nil UUID (sources are instance
+    /// level). Opened only by the repository reader and the package download.
+    TemplateSourceToken,
 }
 
 impl Purpose {
     /// The purposes the migration job and CLI know (one source table each). The Web Push
     /// purposes are not here: they are sealed in the `inline` store whatever the default store is
     /// (D-266(b)) and are never moved, rekeyed or counted by those tools.
-    pub const ALL: [Purpose; 12] = [
+    pub const ALL: [Purpose; 13] = [
         Purpose::SecretValue,
         Purpose::ConnectionCredentials,
         Purpose::OauthClientSecret,
@@ -57,6 +61,7 @@ impl Purpose {
         Purpose::UserToken,
         Purpose::ChannelOpUserToken,
         Purpose::SkillLibraryToken,
+        Purpose::TemplateSourceToken,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -75,6 +80,7 @@ impl Purpose {
             Self::WebpushVapid => "webpush.vapid",
             Self::WebpushSubscription => "webpush.subscription",
             Self::SkillLibraryToken => "skill_library.token",
+            Self::TemplateSourceToken => "template_source.token",
         }
     }
 }

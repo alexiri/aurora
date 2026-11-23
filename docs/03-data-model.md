@@ -906,6 +906,72 @@ All tokens the gateway accepts.
 
 Invariant: at most one non-revoked `agent` credential per agent.
 
+### `agent_template_sources` (phase 6, P6-TPL-2, D-435, D-456, D-457, C-1106; agent-template repositories)
+One row per template repository an instance admin added. No signing key (D-435(b)); the admin's review is the trust gate.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| name | text not null | from the manifest's `repo.name`, cleaned |
+| url | text not null | the stored, normalized https git address (C-1123 form) |
+| ref | text null | the tracked branch or tag; null = the repository's default branch |
+| path | text not null default `` | the folder in the repository (the root allowed; at most 4 segments) |
+| token_ref, token_updated_at | text null, timestamptz null | (C-1106, SEC-146/148) the sealed read-only access token `{ username, token }` (purpose `template_source.token`, owner = the source id); both null or both set (`agent_template_sources_token_ck`); never returned by any route, never logged |
+| homepage, contact | text null, text null | from the manifest's `repo` |
+| packages_url | text not null | the manifest's `packages.url` template (`{id}`, `{version}`) |
+| manifest | jsonb not null | the last accepted manifest as parsed (the dashboard reads this, never the live source) |
+| last_head_sha | text null | the head commit the last successful check compared |
+| update_interval | text not null default `1d` CHECK in (`6h`,`12h`,`1d`,`1w`,`2w`,`1mo`,`never`) | `never` = manual checks only |
+| status | text not null default `ok` CHECK in (`ok`,`check_failed`) | |
+| check_failed_at, check_failed_reason | timestamptz null, text null (≤ 200 chars) | sanitized; never a token or a URL with credentials |
+| last_checked_at, next_check_at | timestamptz null, timestamptz not null default now() | churn columns; `next_check_at` includes jitter and the failure backoff |
+| check_lease_until, lease_owner | timestamptz null, uuid null | the per-source lease of the poll job (`TEMPLATE_LEASE`) |
+| created_by | uuid null FK→users (set null) | |
+| unique | (url, coalesce(ref, ''), path) (`agent_template_sources_addr_uq`, 409 `template_source_exists`) | |
+| index | (next_check_at) | |
+
+### `agent_templates` (phase 6, P6-TPL-2, C-1106)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| template_id | text not null unique | the `<id>` of `template.yaml`; unique on the instance (409 when another source holds it) |
+| source_id | uuid not null FK→agent_template_sources (cascade) | |
+| dir | text not null | the template's directory in the repository |
+| name, summary | text not null, text not null | from `template.yaml` at the head, cleaned |
+| head_version | text null | the version at the head |
+| head_state | text not null default `ok` CHECK in (`ok`,`needs_newer_aurora`,`invalid`) | `invalid` = the head's `template.yaml` has problems; stored versions are kept |
+| head_problems | jsonb null | at most 20 C-1141 problems of the head's `template.yaml` |
+| offered | boolean not null default true | the admin's withdraw switch |
+| removed_upstream | boolean not null default false | the directory is gone at the head |
+| index | (source_id) | |
+
+### `agent_template_versions` (phase 6, P6-TPL-2, C-1106, SEC-146)
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| agent_template_id | uuid not null FK→agent_templates (cascade) | |
+| version | text not null | |
+| status | text not null CHECK in (`awaiting_package`,`pending_approval`,`approved`,`rejected`,`invalid`) | the offered version is the newest `approved` while `offered` |
+| status_reason | text null | a short code (`package_not_found`, `download_failed`, `source_mismatch`, …) |
+| commit_sha | text not null | the head commit where `template.yaml` had this version (the source comparison reads the tree **at this commit**) |
+| package_url | text not null | the rendered `packages.url` |
+| archive_sha256, size_bytes | text null, integer null | recorded at the download |
+| content_sha256 | text null | the canonical content hash the approval quotes |
+| content | jsonb null | the parsed TemplateContent (files base64; the avatar re-encoded to a 256×256 PNG); null only for `awaiting_package` and `invalid` (`agent_template_versions_content_ck`) |
+| last_attempt_at | timestamptz null | the last package download attempt |
+| decided_by, decided_at | uuid null FK→users (set null), timestamptz null | who approved or rejected, when |
+| unique | (agent_template_id, version) (`agent_template_versions_uq`) | a version string that was `rejected` is never ingested again |
+| index | (agent_template_id, created_at desc) | |
+
+### `org_disabled_agent_templates` (phase 6, P6-TPL-2, C-1109)
+| Column | Type | Notes |
+|---|---|---|
+| org_id | uuid not null FK→organizations (cascade) | pk part |
+| template_id | text not null | pk part; keyed by the template id (not a FK), so a source removed and added again keeps the organization's choice |
+| disabled_by | uuid null FK→users (set null) | |
+| created_at | timestamptz not null default now() | |
+
+The gateway role gets nothing on these tables.
+
 ---
 
 ## 6. Conversations, turns, transcript, attachments (owner doc: `10`)
@@ -1749,14 +1815,10 @@ tables above in the same change (and this section shrinks).
 `blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
 
 #### Agent templates (phase 6, P6-TEMPLATES, D-435, D-436, D-456, D-457, C-1106, C-1112, C-1143, SEC-146)
-Three migrations. P6-TPL-2 creates the four template tables. P6-TPL-6 creates `agent_helper_files`. P6-TPL-3 adds the `agents` columns and `agent_template_parts`. Full column lists are in C-1106, C-1143 and C-1112; summary:
+Three migrations. The four P6-TPL-2 tables are in §5 (migration `20261201000278`). P6-TPL-6 creates `agent_helper_files`. P6-TPL-3 adds the `agents` columns and `agent_template_parts`. Full column lists are in C-1106, C-1143 and C-1112; summary:
 
 | Planned table / column | Type | Notes | Phase |
 |---|---|---|---|
-| `agent_template_sources` | table | One row per template repository an instance admin added. It holds the git address (C-1123 form), `ref`, `path` (unique together), the sealed read-only token (`token_ref`, `token_updated_at`, purpose `TemplateSourceToken`), `packages_url` (the manifest's URL template), the last accepted manifest (jsonb), `last_head_sha`, `update_interval`, `status` (`ok`/`check_failed`), check timestamps, lease columns and `created_by`. No signing key (D-435(b)) | 6 (P6-TPL-2) |
-| `agent_templates` | table | One row per template id (`template_id` unique on the instance). FK source (cascade); `dir`; name and summary from the head's `template.yaml`; `head_version`, `head_state` (`ok`/`needs_newer_aurora`/`invalid`) and `head_problems`; `offered` (admin withdraw); `removed_upstream` | 6 (P6-TPL-2) |
-| `agent_template_versions` | table | One row per version seen at the head. `status` is `awaiting_package`/`pending_approval`/`approved`/`rejected`/`invalid`; also `status_reason`, `commit_sha`, `package_url`, `archive_sha256`, `size_bytes`, `content_sha256` and `content` (parsed; null only for `awaiting_package` and `invalid`), `last_attempt_at`, `decided_by`, `decided_at`. Unique `(agent_template_id, version)` | 6 (P6-TPL-2) |
-| `org_disabled_agent_templates` | table | `(org_id, template_id)` pk: a template turned off for an organization. It is keyed by template id, so it survives a source removed and added again | 6 (P6-TPL-2) |
 | `agent_helper_files` | table | `(agent_id, path)` pk: a template's helper files on an agent (`content` bytea, `executable`, `sha256`, `size`). Projected read-only at `.aurora/helpers/`; FK agent (cascade) | 6 (P6-TPL-6) |
 | `agents.template_id`, `.template_name`, `.template_version` | text null | Provenance as text (no FK): deleting a source or template changes no agent | 6 (P6-TPL-3) |
 | `agents.template_inputs` | jsonb null | The checked input values, reused to render update offers | 6 (P6-TPL-3) |

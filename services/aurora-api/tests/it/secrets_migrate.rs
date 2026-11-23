@@ -19,10 +19,14 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Where each purpose's ref lives: `(purpose, "SELECT <ref> FROM … WHERE id = $1")`.
-const REF_SQL: [(Purpose, &str); 12] = [
+const REF_SQL: [(Purpose, &str); 13] = [
     (
         Purpose::SkillLibraryToken,
         "SELECT token_ref FROM skill_libraries WHERE id = $1",
+    ),
+    (
+        Purpose::TemplateSourceToken,
+        "SELECT token_ref FROM agent_template_sources WHERE id = $1",
     ),
     (
         Purpose::UserToken,
@@ -179,6 +183,11 @@ async fn world(vault: SecretVault) -> World {
             Purpose::SkillLibraryToken => {
                 sqlx::query("INSERT INTO skill_libraries (id, org_id, label, url, repo, path, token_ref, token_updated_at) VALUES ($1,$2,'lib','https://git.example/a/b','git.example/a/b','',$3, now())")
                     .bind(id).bind(org).bind(&r).execute(pool).await.unwrap();
+            }
+            // (P6-TPL-2, C-1106) A template source's token; sources are instance level (nil org).
+            Purpose::TemplateSourceToken => {
+                sqlx::query("INSERT INTO agent_template_sources (id, name, url, path, packages_url, manifest, token_ref, token_updated_at) VALUES ($1,'src','https://git.example/a/b','','https://example/p','{}',$2, now())")
+                    .bind(id).bind(&r).execute(pool).await.unwrap();
             }
             Purpose::UserToken => {
                 let user = h.user(&format!("tok-{id}@example.com"), false).await;

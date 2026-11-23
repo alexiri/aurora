@@ -269,6 +269,16 @@ const SOURCES: [Source; 12] = [
         update: "UPDATE skill_libraries SET token_ref = $2, updated_at = now() \
                  WHERE id = $1 AND token_ref = $3",
     },
+    // (phase 6, P6-TPL-2, C-1106, SEC-146) An agent-template source's read-only access token;
+    // sources are instance level, so the sealing org is the nil UUID.
+    Source {
+        purpose: Purpose::TemplateSourceToken,
+        select: "SELECT id, '00000000-0000-0000-0000-000000000000'::uuid, NULL::uuid, token_ref \
+                 FROM agent_template_sources \
+                 WHERE token_ref IS NOT NULL AND id > $1 ORDER BY id LIMIT $2",
+        update: "UPDATE agent_template_sources SET token_ref = $2, updated_at = now() \
+                 WHERE id = $1 AND token_ref = $3",
+    },
 ];
 
 type Row = (Uuid, Option<Uuid>, Option<Uuid>, String);
