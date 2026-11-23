@@ -1021,6 +1021,1165 @@
         ]
       }
     },
+    "/v1/admin/agent-template-sources": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "List the template sources (instance administrators).",
+        "operationId": "adminListTemplateSources",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTemplateSourceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Add a source (C-1107): one audited transaction; the token is sealed, never returned.",
+        "operationId": "adminAddTemplateSource",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddTemplateSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTemplateSource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-template-sources/check-all": {
+      "post": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Check every source (C-1107): sequential; a failing or busy source never blocks the others.",
+        "operationId": "adminCheckAllTemplateSources",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateSourceCheckAll"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-template-sources/preview": {
+      "post": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Preview a repository before adding it (C-1107, as C-1124): read once, store nothing.",
+        "operationId": "adminPreviewTemplateSource",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewTemplateSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTemplateSourcePreview"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-template-sources/{id}": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "One template source, from its stored rows (never a live read).",
+        "operationId": "adminGetTemplateSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Template source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTemplateSource"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Remove a source (C-1107): always allowed; its templates and versions go with it. Agents made\nfrom them do not change (they are copies).",
+        "operationId": "adminDeleteTemplateSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Template source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Edit a source's schedule, branch, folder or token (C-1107); a change of branch, folder or\ntoken re-reads the repository first.",
+        "operationId": "adminUpdateTemplateSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Template source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTemplateSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTemplateSource"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-template-sources/{id}/check": {
+      "post": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Check a source now (C-1107, C-596's lease rules): the shared C-1108 path, synchronous.\nA read failure is a result, not an error.",
+        "operationId": "adminCheckTemplateSource",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Template source id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateSourceCheckResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-templates": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "The templates of every source, with their versions and what they need (instance\nadministrators).",
+        "operationId": "adminListTemplates",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTemplateList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-templates/{template_id}": {
+      "patch": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Withdraw a template or offer it again (C-1108): people keep using the current version\nwhile it is offered; the stored versions are untouched.",
+        "operationId": "adminUpdateTemplate",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTemplateView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-templates/{template_id}/versions/{version}": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "One version of a template: everything the review shows, in full (C-1108).",
+        "operationId": "adminGetTemplateVersion",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "description": "Version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateVersionDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-templates/{template_id}/versions/{version}/approve": {
+      "post": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Approve a version (C-1108): only from `pending_approval`, bound to the reviewed\n`content_sha256`.",
+        "operationId": "adminApproveTemplateVersion",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "description": "Version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateVersionDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-templates/{template_id}/versions/{version}/avatar": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "The version's avatar (C-1108), `image/png` from the stored content.",
+        "operationId": "adminGetTemplateVersionAvatar",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "description": "Version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/agent-templates/{template_id}/versions/{version}/reject": {
+      "post": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Reject a version (C-1108): that version string is never ingested again.",
+        "operationId": "adminRejectTemplateVersion",
+        "parameters": [
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "description": "Version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateVersionDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/admin/agents/{agent}/start-failures": {
       "get": {
         "tags": [
@@ -26327,6 +27486,182 @@
         ]
       }
     },
+    "/v1/orgs/{org}/agent-templates": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "The organization's offered templates with their switches (C-1109).",
+        "operationId": "listOrgTemplates",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgTemplateList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/agent-templates/{template_id}": {
+      "put": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Turn a template off or on for the organization (C-1109); 404 when the template does not\nexist (a switch for an unknown id is never stored).",
+        "operationId": "setOrgTemplate",
+        "parameters": [
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetOrgTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {},
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/orgs/{org}/agent-tokens": {
       "get": {
         "tags": [
@@ -38836,6 +40171,263 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/agent-templates": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "The workspace's available templates (C-1110), ordered by name.",
+        "operationId": "listWorkspaceTemplates",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateCardList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/agent-templates/{template_id}": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "One template's full plan (C-1110). A template that is not available is 404 `not_found`.",
+        "operationId": "getWorkspaceTemplatePlan",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplatePlan"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/agent-templates/{template_id}/avatar": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "The offered version's avatar (C-1110), `image/png`. A template that is not available is\n404 `not_found`.",
+        "operationId": "getWorkspaceTemplateAvatar",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "template_id",
+            "in": "path",
+            "description": "Template id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/agent-tokens": {
       "get": {
         "tags": [
@@ -43215,6 +44807,50 @@
           "pending"
         ]
       },
+      "AddTemplateSourceRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A read-only access token, sealed (C-1126); `token_username` defaults to `x-access-token`."
+          },
+          "token_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update_interval": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`6h|12h|1d|1w|2w|1mo|never`; default `agents.templates.update_interval`."
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "AddonEntry": {
         "type": "object",
         "required": [
@@ -43740,6 +45376,108 @@
           }
         }
       },
+      "AdminTemplateList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminTemplateView"
+            }
+          }
+        }
+      },
+      "AdminTemplateSourceRef": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminTemplateView": {
+        "type": "object",
+        "description": "One template of the admin list (C-1108): the stored rows, the offered version and what\nthe current version needs.",
+        "required": [
+          "template_id",
+          "name",
+          "summary",
+          "source",
+          "offered",
+          "removed_upstream",
+          "head_state",
+          "versions",
+          "needs_apps",
+          "needs_libraries"
+        ],
+        "properties": {
+          "current_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The offered version (newest `approved`, C-1108), null when none is approved."
+          },
+          "head_problems": {},
+          "head_state": {
+            "type": "string",
+            "description": "`ok` | `needs_newer_aurora` | `invalid`."
+          },
+          "head_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "needs_apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NeedsAppView"
+            }
+          },
+          "needs_libraries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NeedsLibraryView"
+            }
+          },
+          "offered": {
+            "type": "boolean"
+          },
+          "removed_upstream": {
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/AdminTemplateSourceRef"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TemplateVersionListItem"
+            }
+          }
+        }
+      },
       "AdminUser": {
         "allOf": [
           {
@@ -44225,6 +45963,188 @@
             "items": {
               "$ref": "#/components/schemas/AgentStartFailure"
             }
+          }
+        }
+      },
+      "AgentTemplateSource": {
+        "type": "object",
+        "description": "A template source (C-1107): the stored rows, never a live read.",
+        "required": [
+          "id",
+          "name",
+          "url",
+          "repo",
+          "path",
+          "token_set",
+          "packages_url",
+          "update_interval",
+          "status",
+          "templates",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "check_failed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "check_failed_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "homepage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_head_sha": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "packages_url": {
+            "type": "string",
+            "description": "The manifest's `packages.url` template."
+          },
+          "path": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "description": "The repository's display form (`host[:port]/path`, as C-1122 shows it)."
+          },
+          "status": {
+            "type": "string",
+            "description": "`ok` | `check_failed`."
+          },
+          "templates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceTemplateView"
+            }
+          },
+          "token_set": {
+            "type": "boolean",
+            "description": "Whether a sealed access token is set (the value is never returned)."
+          },
+          "token_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "update_interval": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "AgentTemplateSourceList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentTemplateSource"
+            }
+          }
+        }
+      },
+      "AgentTemplateSourcePreview": {
+        "type": "object",
+        "description": "What a preview read found (C-1107): check without saving, nothing stored, no audit row.",
+        "required": [
+          "url",
+          "repo",
+          "resolved",
+          "commit_sha",
+          "path",
+          "manifest",
+          "templates",
+          "truncated"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/ManifestRepoView"
+          },
+          "path": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "description": "The repository's display form."
+          },
+          "resolved": {
+            "$ref": "#/components/schemas/ResolvedRefView"
+          },
+          "templates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PreviewTemplateView"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string",
+            "description": "The normalized address."
           }
         }
       },
@@ -46029,18 +47949,15 @@
       "ApproveRequest": {
         "type": "object",
         "required": [
-          "user_code",
-          "workspace_id"
+          "content_sha256"
         ],
         "properties": {
-          "user_code": {
-            "type": "string"
-          },
-          "workspace_id": {
+          "content_sha256": {
             "type": "string",
-            "format": "uuid"
+            "description": "The hash the review showed; it must still be the stored one."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "AskBody": {
         "type": "object",
@@ -46485,6 +48402,7 @@
         "enum": [
           "connector_approval",
           "package_approval",
+          "agent_template_version",
           "addon_key_changed",
           "host_claim_conflict",
           "connector_down",
@@ -46678,6 +48596,23 @@
           "value_shape": {
             "type": "string",
             "description": "`string` | `aws_sigv4` | `aws_assume_role` | `azure_entra` | `gcp_service_account`."
+          }
+        }
+      },
+      "AutomationBrief": {
+        "type": "object",
+        "description": "One automation of the card (C-1110).",
+        "required": [
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`schedule` | `webhook`."
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -47039,6 +48974,68 @@
           }
         }
       },
+      "CardAppEntry": {
+        "type": "object",
+        "description": "One `apps:` entry of the card (C-1110, C-1142's app skills).",
+        "required": [
+          "app_ids",
+          "required",
+          "available",
+          "skills"
+        ],
+        "properties": {
+          "app_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The entry's app ids (`app`, or every id of `any_of`)."
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The app skills of the entry's available apps (C-1142), sorted, without repeats."
+          }
+        }
+      },
+      "CardSkillRef": {
+        "type": "object",
+        "description": "One skill reference of the card (C-1110).",
+        "required": [
+          "index",
+          "kind",
+          "name",
+          "required",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "`library` | `organization`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        }
+      },
       "ChangeActor": {
         "type": "object",
         "required": [
@@ -47114,6 +49111,59 @@
           }
         }
       },
+      "CheckIngestedView": {
+        "type": "object",
+        "description": "One version that left `awaiting_package` in the check.",
+        "required": [
+          "template_id",
+          "version",
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`pending_approval` | `invalid`."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "CheckProblemView": {
+        "type": "object",
+        "description": "A problem the check found (the head's `template.yaml`, an id another source holds, a head\nversion that is not newer).",
+        "required": [
+          "dir",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "dir": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "CheckSkillLibraryRequest": {
         "type": "object",
         "description": "`POST …/skill-libraries/check` (C-1124): the create body without `label`.",
@@ -47173,6 +49223,33 @@
           "valid": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "CheckWaitingView": {
+        "type": "object",
+        "description": "One version still `awaiting_package` after the check.",
+        "required": [
+          "template_id",
+          "version",
+          "since"
+        ],
+        "properties": {
+          "last_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
           }
         }
       },
@@ -48760,6 +50837,69 @@
           }
         }
       },
+      "ContentAgentView": {
+        "type": "object",
+        "description": "The agent line of a stored version (C-1108's `TemplateContentView.agent`).",
+        "required": [
+          "name",
+          "may_message_first"
+        ],
+        "properties": {
+          "may_message_first": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ContentMemoryView": {
+        "type": "object",
+        "description": "A memory of a stored version (C-1151's `locked` shown in the review).",
+        "required": [
+          "key",
+          "content",
+          "locked"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ContentSkillView": {
+        "type": "object",
+        "description": "A skill of a stored version (the review, C-1108).",
+        "required": [
+          "name",
+          "use_it_when",
+          "body",
+          "files"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileView"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "use_it_when": {
+            "type": "string"
+          }
+        }
+      },
       "ContentType": {
         "type": "string",
         "enum": [
@@ -50223,6 +52363,35 @@
           }
         }
       },
+      "CustomToolsView": {
+        "type": "object",
+        "description": "The template's tools of one choice that the app's current catalogue has, and the ones it\ndoes not (never written, C-1110).",
+        "required": [
+          "allow_tools",
+          "ask_tools",
+          "dropped_tools"
+        ],
+        "properties": {
+          "allow_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ask_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dropped_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "DatabaseRef": {
         "type": "object",
         "description": "How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps.",
@@ -50238,6 +52407,23 @@
           "service": {
             "type": "string",
             "description": "The libpq service name in the agent's `pg_service.conf`: `psql service=<service>`. When two\ndatabase connections granted to one agent share it, each gets `-<first 8 characters of the\nconnection id>` appended (`aurora_core::pgservice`)."
+          }
+        }
+      },
+      "DecidedByView": {
+        "type": "object",
+        "description": "Who decided a version (`decided_by`: id and display name, null when not decided yet).",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -52363,6 +54549,37 @@
           "truncated": {
             "type": "boolean",
             "description": "(P5-REFINE-4, C-1060) `content` is the file's first 256 KiB cut at a line end\n(`preview=1` on a file over 1 MiB); false for the whole file."
+          }
+        }
+      },
+      "FileView": {
+        "type": "object",
+        "description": "A text file of a stored version (C-1108's `FileView`): `text` for valid UTF-8 up to\n256 KiB (which includes every executable file, C-1141), else null.",
+        "required": [
+          "path",
+          "size",
+          "executable",
+          "sha256"
+        ],
+        "properties": {
+          "executable": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -55572,6 +57789,22 @@
           }
         }
       },
+      "ManifestRepoView": {
+        "type": "object",
+        "description": "The repository part of a manifest (C-1103).",
+        "required": [
+          "name",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "Me": {
         "type": "object",
         "required": [
@@ -56563,6 +58796,48 @@
             "format": "uuid"
           },
           "name": {
+            "type": "string"
+          }
+        }
+      },
+      "NeedsAppView": {
+        "type": "object",
+        "description": "An app the template's apps entries name, and whether the instance has it (C-1108).",
+        "required": [
+          "app_id",
+          "installed"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "installed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "NeedsLibraryView": {
+        "type": "object",
+        "description": "A skill library the template references, and whether one is added here (C-1108).",
+        "required": [
+          "url",
+          "path",
+          "added_here"
+        ],
+        "properties": {
+          "added_here": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
             "type": "string"
           }
         }
@@ -57598,6 +59873,51 @@
           },
           "slug": {
             "type": "string"
+          }
+        }
+      },
+      "OrgTemplateItem": {
+        "type": "object",
+        "description": "One template of an organization's list (C-1109): every offered template, on by default.",
+        "required": [
+          "template_id",
+          "name",
+          "summary",
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The offered version (C-1108's rule), null when none is approved."
+          }
+        }
+      },
+      "OrgTemplateList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrgTemplateItem"
+            }
           }
         }
       },
@@ -63739,6 +66059,92 @@
           }
         }
       },
+      "PlanChoice": {
+        "type": "object",
+        "description": "One app of one entry, with what creating would preselect (C-1110's choice).",
+        "required": [
+          "app_id",
+          "app_name",
+          "available",
+          "level",
+          "accounts"
+        ],
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Account"
+            },
+            "description": "The app's accounts the caller may give to an agent of this workspace (C-917 shape)."
+          },
+          "app_id": {
+            "type": "string"
+          },
+          "app_name": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "custom": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CustomToolsView",
+                "description": "The template's `tools:`, cut to the app's current catalogue; null without `tools:`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "level": {
+            "type": "string",
+            "description": "The template's, except `act` on a `custom_only` app, which becomes `ask`."
+          },
+          "level_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`custom_only` when the level was cut, else null."
+          },
+          "unavailable_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`not_installed` | `not_available_here` | null."
+          }
+        }
+      },
+      "PlanEntry": {
+        "type": "object",
+        "description": "One entry of the plan (C-1110).",
+        "required": [
+          "index",
+          "required",
+          "why",
+          "choices"
+        ],
+        "properties": {
+          "choices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanChoice"
+            }
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "why": {
+            "type": "string"
+          }
+        }
+      },
       "PluginActionRequest": {
         "type": "object",
         "properties": {
@@ -65108,6 +67514,87 @@
           "active",
           "paused"
         ]
+      },
+      "PreviewTemplateSourceRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The folder in the repository; default the root."
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A branch, tag or commit; default the repository's default branch."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An access token used for this read only (never stored)."
+          },
+          "token_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PreviewTemplateView": {
+        "type": "object",
+        "description": "One template the preview found in the folder.",
+        "required": [
+          "template_id",
+          "dir",
+          "name",
+          "summary",
+          "state",
+          "problems"
+        ],
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TemplateProblemView"
+            }
+          },
+          "state": {
+            "type": "string",
+            "description": "`new` | `id_taken` (a stored row's states cannot apply to a source that is not saved)."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       },
       "PreviewVisibility": {
         "type": "string",
@@ -66573,8 +69060,71 @@
           }
         }
       },
+      "ResolvedLibraryView": {
+        "type": "object",
+        "description": "The resolved library of a skill reference (C-1142's `SkillRefPlan.library`).",
+        "required": [
+          "id",
+          "label",
+          "scope",
+          "repo",
+          "path",
+          "commit_sha"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "description": "The display form `host/path`."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`organization` | `instance`."
+          }
+        }
+      },
       "ResolvedRef": {
         "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "default"
+        ],
+        "properties": {
+          "default": {
+            "type": "boolean",
+            "description": "Whether this is the repository's default branch."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`branch` | `tag` | `commit`."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ResolvedRefView": {
+        "type": "object",
+        "description": "What a ref resolved to (C-1107, as C-1124's `resolved`).",
         "required": [
           "kind",
           "name",
@@ -68529,6 +71079,19 @@
           }
         }
       },
+      "SetOrgTemplateRequest": {
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "On (`true`, the default) or off (`false`) for this organization."
+          }
+        },
+        "additionalProperties": false
+      },
       "SetPolicyBody": {
         "type": "object",
         "required": [
@@ -69841,6 +72404,29 @@
           }
         }
       },
+      "SkillContentBrief": {
+        "type": "object",
+        "description": "The referenced skill's content, exactly what an add would store (C-1142).",
+        "required": [
+          "use_it_when",
+          "body",
+          "files"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileView"
+            }
+          },
+          "use_it_when": {
+            "type": "string"
+          }
+        }
+      },
       "SkillCounts": {
         "type": "object",
         "required": [
@@ -70061,6 +72647,69 @@
           }
         }
       },
+      "SkillRefPlan": {
+        "type": "object",
+        "description": "One skill reference, resolved for the workspace (C-1142's `SkillRefPlan`).",
+        "required": [
+          "index",
+          "kind",
+          "name",
+          "required",
+          "why",
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "content": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillContentBrief",
+                "description": "The skill's content at that commit (the plan only); null while unavailable."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "`library` | `organization`."
+          },
+          "library": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResolvedLibraryView",
+                "description": "The matched library, with the commit the content comes from; null when unmatched."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`library_not_added` | `skill_not_in_library` | `library_unreadable` |\n`libraries_disabled` | `not_in_organization` | null."
+          },
+          "why": {
+            "type": "string"
+          }
+        }
+      },
       "SkillSource": {
         "type": "object",
         "description": "Provenance of a skill added from a git skill library (`10 §Git skill library`). Repository\ntext: untrusted, shown as data.",
@@ -70189,6 +72838,46 @@
           "enum",
           "json"
         ]
+      },
+      "SourceTemplateView": {
+        "type": "object",
+        "description": "The state of one template of a source (C-1107).",
+        "required": [
+          "template_id",
+          "dir",
+          "name",
+          "summary",
+          "head_state",
+          "state"
+        ],
+        "properties": {
+          "dir": {
+            "type": "string"
+          },
+          "head_state": {
+            "type": "string",
+            "description": "`ok` | `needs_newer_aurora` | `invalid` (the head's state)."
+          },
+          "head_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`new` | `ingested` | `id_taken` | `invalid`."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          }
+        }
       },
       "Sourced_Option_Vec_String": {
         "type": "object",
@@ -71410,6 +74099,456 @@
         ],
         "description": "Rule target (I-12: tagged with `type`)."
       },
+      "TemplateCard": {
+        "type": "object",
+        "description": "A template the workspace may use (C-1110's `TemplateCard`), about the offered version.",
+        "required": [
+          "template_id",
+          "name",
+          "summary",
+          "readme",
+          "version",
+          "has_avatar",
+          "apps",
+          "skill_refs",
+          "has_helpers",
+          "automations",
+          "ready"
+        ],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CardAppEntry"
+            }
+          },
+          "automations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomationBrief"
+            }
+          },
+          "has_avatar": {
+            "type": "boolean"
+          },
+          "has_helpers": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "readme": {
+            "type": "string",
+            "description": "The offered version's `README.md`, in full."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "Every required app entry has an available app and every required skill reference is\navailable."
+          },
+          "skill_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CardSkillRef"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "TemplateCardList": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TemplateCard"
+            }
+          }
+        }
+      },
+      "TemplateContentView": {
+        "type": "object",
+        "description": "Everything a version would tell or give an agent, in full, as data (C-1108's\n`TemplateContentView`): decoded from the stored content, never re-read from the source.\n`inputs`, `apps`, `skill_refs` and `automations` are C-1104's shapes, passed through as\nstored (the review renders them; P6-TPL-3's creation reads them back the same way).",
+        "required": [
+          "name",
+          "summary",
+          "readme",
+          "agent",
+          "instructions",
+          "inputs",
+          "apps",
+          "skills",
+          "skill_refs",
+          "helpers",
+          "memories",
+          "automations",
+          "has_avatar"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/ContentAgentView"
+          },
+          "apps": {
+            "type": "array",
+            "items": {}
+          },
+          "automations": {
+            "type": "array",
+            "items": {}
+          },
+          "effort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_avatar": {
+            "type": "boolean"
+          },
+          "helpers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileView"
+            }
+          },
+          "inputs": {
+            "type": "array",
+            "items": {}
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentMemoryView"
+            }
+          },
+          "min_core": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "readme": {
+            "type": "string",
+            "description": "The template's `README.md`, in full."
+          },
+          "skill_refs": {
+            "type": "array",
+            "items": {}
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentSkillView"
+            }
+          },
+          "summary": {
+            "type": "string"
+          }
+        }
+      },
+      "TemplatePlan": {
+        "type": "object",
+        "description": "The full plan of one template (C-1110's `TemplatePlan`): the card's fields, the reviewed\ncontent, the app entries with their per-app choices and the resolved skill references.",
+        "required": [
+          "template_id",
+          "name",
+          "summary",
+          "readme",
+          "version",
+          "has_avatar",
+          "apps",
+          "has_helpers",
+          "automations",
+          "ready",
+          "content",
+          "entries",
+          "skill_refs"
+        ],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CardAppEntry"
+            }
+          },
+          "automations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomationBrief"
+            }
+          },
+          "content": {
+            "$ref": "#/components/schemas/TemplateContentView"
+          },
+          "content_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanEntry"
+            }
+          },
+          "has_avatar": {
+            "type": "boolean"
+          },
+          "has_helpers": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "readme": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "skill_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillRefPlan"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "TemplateProblemView": {
+        "type": "object",
+        "description": "One C-1141 problem, as data (`code` is the fixed code, `path` where it applies).",
+        "required": [
+          "code",
+          "path",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "TemplateSourceCheckAll": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TemplateSourceCheckResult"
+            }
+          }
+        }
+      },
+      "TemplateSourceCheckResult": {
+        "type": "object",
+        "description": "The result of a check of one source (C-1108): a read failure is a result, not an error.",
+        "required": [
+          "source_id",
+          "status",
+          "commit_sha",
+          "ingested",
+          "waiting",
+          "problems"
+        ],
+        "properties": {
+          "check_failed_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_sha": {
+            "type": "string"
+          },
+          "ingested": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckIngestedView"
+            }
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckProblemView"
+            }
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "description": "`updated` | `up_to_date` | `failed`."
+          },
+          "waiting": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckWaitingView"
+            }
+          }
+        }
+      },
+      "TemplateVersionDetail": {
+        "type": "object",
+        "description": "One version of a template, everything the review shows (C-1108).",
+        "required": [
+          "template_id",
+          "version",
+          "status",
+          "commit_sha",
+          "source"
+        ],
+        "properties": {
+          "archive_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_sha": {
+            "type": "string"
+          },
+          "content": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TemplateContentView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "source": {
+            "$ref": "#/components/schemas/VersionSourceView"
+          },
+          "status": {
+            "type": "string"
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "TemplateVersionListItem": {
+        "type": "object",
+        "description": "One row of the admin list's `versions` (C-1108, newest first).",
+        "required": [
+          "version",
+          "status",
+          "commit_sha",
+          "created_at"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decided_by": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecidedByView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "status": {
+            "type": "string",
+            "description": "`awaiting_package` | `pending_approval` | `approved` | `rejected` | `invalid`."
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "TerminalShellPreference": {
         "type": "object",
         "description": "(FIX-218, D-459, C-1145) The shell preference of the signed-in person for an agent.",
@@ -72550,6 +75689,59 @@
           }
         }
       },
+      "UpdateTemplateRequest": {
+        "type": "object",
+        "required": [
+          "offered"
+        ],
+        "properties": {
+          "offered": {
+            "type": "boolean",
+            "description": "Withdraw (`false`) or offer again (`true`)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateTemplateSourceRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The folder in the repository."
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A branch, tag or commit; `\"\"` clears (the default branch again)."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A new token (replaces), or `null` (removes); absent = unchanged."
+          },
+          "token_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update_interval": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`6h|12h|1d|1w|2w|1mo|never`."
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateWebhookRequest": {
         "type": "object",
         "properties": {
@@ -73255,6 +76447,38 @@
         "properties": {
           "origin": {
             "$ref": "#/components/schemas/StoredOrigin"
+          }
+        }
+      },
+      "VersionSourceView": {
+        "type": "object",
+        "description": "The source behind a version (C-1108's `TemplateVersionDetail.source`).",
+        "required": [
+          "id",
+          "name",
+          "repo",
+          "path"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "type": "string",
+            "description": "The repository's display form (`host[:port]/path`)."
           }
         }
       },

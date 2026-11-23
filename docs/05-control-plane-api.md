@@ -932,6 +932,57 @@ admins and visible to every organization (C-1128).
 Items of every skill route gain `source: null | { kind: "library", library_id|null, label, repo, path, commit_sha, pinned_at, detached: bool, update_pending: bool }`;
 `GET /v1/agents/{agent}/skills/effective` shows it per skill. The pages are paginated like every list.
 
+### Agent templates (phase 6, P6-TPL-2, D-435, D-436; C-1106..C-1110, C-1113, C-1142)
+
+Instance administrators add template repositories by their https git address (C-1123's parser, the
+skill library's git reader). A check reads the tracked branch, downloads the package every new
+version waits for (`awaiting_package`), and accepts it only when its content equals the source at
+the recorded commit; the version then waits for an admin's approval. The offered version is the
+newest `approved` while the template is offered (one rule, C-1108). 404 `templates_disabled` on the
+organization and workspace routes while `agents.templates.enabled` is false; the admin routes keep
+working.
+
+**Template sources (C-1107)** — instance administrators, **session only**.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET/POST `/v1/admin/agent-template-sources` | S (IA) | list (creation order: the stored manifest, `status`, `check_failed_at`/`reason` (never the token, never a read detail), `last_checked_at`, `next_check_at`, `token_set`/`token_updated_at`) / add `{ url, ref?, path?, token?, token_username?, homepage?, contact?, update_interval? }`: the URL normalized by C-1123 (a page URL fills `ref`/`path` when absent), one read of the repository before saving, the token sealed; 422 `template_url_invalid` (`details.reason` as `library_url_invalid`), 422 `template_unreachable` (sanitized reason), 422 `template_manifest_invalid`, 409 `template_source_exists` (same normalized url + ref + path), 409 `template_source_limit` (`TEMPLATE_SOURCES_MAX`); 429 `rate_limited` (an add is a repository read: 10 preview/add per minute per person); 502 `template_unavailable` when this replica reads too many repositories; audit `agent_template_source.add` (critical; `url`, `ref`, `path`, `token: "set"` when one was given) |
+| POST `/v1/admin/agent-template-sources/preview` | S (IA) | (C-1124's shape) the add body without the label semantics: reads the repository once and answers 200 `AgentTemplateSourcePreview { url, repo, ref, resolved, commit_sha, path, templates: { found, ids }, truncated, suggested_name }`; stores nothing, no audit row; a token in the body is used once; same errors as add; `Cache-Control: no-store` |
+| GET/PATCH/DELETE `/v1/admin/agent-template-sources/{id}` | S (IA) | one source from the stored rows (never a live read) / patch `{ update_interval?, ref?, path?, token?, token_username?, url? }` — a change of url, ref, path or token re-reads the repository first and on failure the old address parts stay; `token: null` removes it; the `never` interval unschedules; DELETE removes the source with its templates and versions (agents made from them are copies and do not change), the organizations' switches stay; audit `agent_template_source.update`/`remove` (critical) |
+| POST `/v1/admin/agent-template-sources/{id}/check` | S (IA) | "Check now": the full C-1108 path, synchronous, under the same lease as the poll; 409 `template_check_in_progress` when busy; a read failure is a 200 result (`status: "failed"`), not an error |
+| POST `/v1/admin/agent-template-sources/check-all` | S (IA) | every source sequentially; a failing or busy source never blocks the others |
+
+**The templates, ingest and review (C-1108)** — instance administrators, **session only**. The
+poll job checks due sources under their lease (`agents.templates.update_interval`, default 1 h;
+a source with an `awaiting_package` version is due again within `TEMPLATE_PACKAGE_RETRY`).
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/admin/agent-templates` | S (IA) | every template of every source (creation order): `name`, `summary`, `source: { id, name }`, `offered`, `removed_upstream`, `head_version`/`head_state`/`head_problems`, `current_version` (the offered version), `versions` (newest first: `status`, `status_reason`, `commit_sha`, `size_bytes`, `decided_by`/`decided_at`, `last_attempt_at`), `needs_apps` (installed on the instance?) and `needs_libraries` (a matching library added here? the C-1142 address rule) of the current or newest pending version |
+| GET `/v1/admin/agent-templates/{template_id}/versions/{version}` | S (IA) | the review, everything in full: `TemplateVersionDetail { template_id, version, status, status_reason, commit_sha, source: { id, name, repo, ref, path }, content_sha256, archive_sha256, size_bytes, content: TemplateContentView }`; the content is the stored package's, never a live read |
+| GET `/v1/admin/agent-templates/{template_id}/versions/{version}/avatar` | S (IA) | `image/png` from the stored content; 404 without one |
+| POST `…/versions/{version}/approve` `{ content_sha256 }` | S (IA) | only from `pending_approval` and only when the hash is still the stored one; 409 `template_content_changed` (stale review or lost race), 409 `invalid_state`; audit `agent_template.approve` (critical, in the write's transaction) |
+| POST `…/versions/{version}/reject` | S (IA) | only from `pending_approval`; that version string is never ingested again; 409 `invalid_state`; audit `agent_template.reject` (critical) |
+| PATCH `/v1/admin/agent-templates/{template_id}` `{ offered }` | S (IA) | withdraw or offer again; the stored versions are untouched (the offered version is a rule over them); people keep using the current version while it is offered; audit `agent_template.update` (critical) |
+
+**Organization switches (C-1109)** — org owner/admin.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/orgs/{org}/agent-templates` | S/K | every offered template, by name: `{ template_id, name, summary, version (the offered version, null when none is approved), enabled }`; every template is on by default |
+| PUT `/v1/orgs/{org}/agent-templates/{template_id}` `{ enabled }` | S/K | writes or deletes the `org_disabled_agent_templates` row (keyed by the template id, so a source removed and added again keeps the choice); 404 for an unknown template (no row stored); audit `org.template_availability` (ordinary) |
+
+**Workspace catalogue (C-1110)** — `can_use` on the workspace, S/K; everything about the offered
+version. Availability: the app is active on the instance and available to the workspace under
+`07 §App availability`; a template is available when it is offered and not turned off for the
+workspace's organization (a not-available template is 404 `not_found`).
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| GET `/v1/workspaces/{ws}/agent-templates` | S/K | the available templates, by name: `TemplateCard { template_id, name, summary, readme (in full, D-458), version, has_avatar, apps: [{ app_ids, required, available, skills (the available apps' app skills) }], skill_refs: [{ index, kind, name, required, available }], has_helpers, automations: [{ kind, name }], ready }`; `ready` = every required app entry has an available app and every required skill reference is available |
+| GET `/v1/workspaces/{ws}/agent-templates/{template_id}` | S/K | `TemplatePlan` = the card's fields + `content_sha256`, `content: TemplateContentView`, `entries: [{ index, required, why, choices: [{ app_id, app_name, available, unavailable_reason: "not_installed"\|"not_available_here"\|null, level (the template's; `act` on a `custom_only` app becomes `ask` with `level_note: "custom_only"`), custom: { allow_tools, ask_tools, dropped_tools } from the app's current catalogue\|null, accounts: [Account] (C-917 shape, the C-504 check, with `limit`) }] }]`, `skill_refs: [SkillRefPlan]` (C-1142's resolution: `available`, `unavailable_reason` (`library_not_added`, `skill_not_in_library`, `library_unreadable`, `libraries_disabled`, `not_in_organization`), `library: { id, label, scope, repo, ref, path, commit_sha }\|null`, `content: { use_it_when, body, files }\|null`) |
+| GET `…/{template_id}/avatar` | S/K | the offered version's avatar, `image/png`; 404 `not_found` when the template is not available or has none |
+
 ### Channels (management)
 | Method & path | Auth | Purpose |
 |---|---|---|

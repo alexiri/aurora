@@ -456,7 +456,7 @@ pub async fn add(
     let interval = req
         .update_interval
         .clone()
-        .unwrap_or_else(|| state.config.agents.templates.update_interval.clone());
+        .unwrap_or_else(|| state.ops().agents.templates.update_interval.clone());
     if !valid_interval(&interval) {
         return Err(bad_interval());
     }

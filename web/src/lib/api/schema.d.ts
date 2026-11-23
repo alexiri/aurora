@@ -168,6 +168,214 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/agent-template-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the template sources (instance administrators). */
+        get: operations["adminListTemplateSources"];
+        put?: never;
+        /** Add a source (C-1107): one audited transaction; the token is sealed, never returned. */
+        post: operations["adminAddTemplateSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/agent-template-sources/check-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check every source (C-1107): sequential; a failing or busy source never blocks the others. */
+        post: operations["adminCheckAllTemplateSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/agent-template-sources/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview a repository before adding it (C-1107, as C-1124): read once, store nothing. */
+        post: operations["adminPreviewTemplateSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/agent-template-sources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One template source, from its stored rows (never a live read). */
+        get: operations["adminGetTemplateSource"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove a source (C-1107): always allowed; its templates and versions go with it. Agents made
+         *     from them do not change (they are copies).
+         */
+        delete: operations["adminDeleteTemplateSource"];
+        options?: never;
+        head?: never;
+        /**
+         * Edit a source's schedule, branch, folder or token (C-1107); a change of branch, folder or
+         *     token re-reads the repository first.
+         */
+        patch: operations["adminUpdateTemplateSource"];
+        trace?: never;
+    };
+    "/v1/admin/agent-template-sources/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check a source now (C-1107, C-596's lease rules): the shared C-1108 path, synchronous.
+         *     A read failure is a result, not an error.
+         */
+        post: operations["adminCheckTemplateSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/agent-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The templates of every source, with their versions and what they need (instance
+         *     administrators).
+         */
+        get: operations["adminListTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/agent-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Withdraw a template or offer it again (C-1108): people keep using the current version
+         *     while it is offered; the stored versions are untouched.
+         */
+        patch: operations["adminUpdateTemplate"];
+        trace?: never;
+    };
+    "/v1/admin/agent-templates/{template_id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One version of a template: everything the review shows, in full (C-1108). */
+        get: operations["adminGetTemplateVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/agent-templates/{template_id}/versions/{version}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve a version (C-1108): only from `pending_approval`, bound to the reviewed
+         *     `content_sha256`.
+         */
+        post: operations["adminApproveTemplateVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/agent-templates/{template_id}/versions/{version}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The version's avatar (C-1108), `image/png` from the stored content. */
+        get: operations["adminGetTemplateVersionAvatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/agent-templates/{template_id}/versions/{version}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject a version (C-1108): that version string is never ingested again. */
+        post: operations["adminRejectTemplateVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/agents/{agent}/start-failures": {
         parameters: {
             query?: never;
@@ -4529,6 +4737,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/orgs/{org}/agent-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The organization's offered templates with their switches (C-1109). */
+        get: operations["listOrgTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/agent-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Turn a template off or on for the organization (C-1109); 404 when the template does not
+         *     exist (a switch for an unknown id is never stored).
+         */
+        put: operations["setOrgTemplate"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/orgs/{org}/agent-tokens": {
         parameters: {
             query?: never;
@@ -6356,6 +6601,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/agent-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's available templates (C-1110), ordered by name. */
+        get: operations["listWorkspaceTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/agent-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One template's full plan (C-1110). A template that is not available is 404 `not_found`. */
+        get: operations["getWorkspaceTemplatePlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{ws}/agent-templates/{template_id}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The offered version's avatar (C-1110), `image/png`. A template that is not available is
+         *     404 `not_found`.
+         */
+        get: operations["getWorkspaceTemplateAvatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/agent-tokens": {
         parameters: {
             query?: never;
@@ -7124,6 +7423,16 @@ export interface components {
         };
         /** @enum {string} */
         AddResult: "added" | "pending";
+        AddTemplateSourceRequest: {
+            path?: string | null;
+            ref?: string | null;
+            /** @description A read-only access token, sealed (C-1126); `token_username` defaults to `x-access-token`. */
+            token?: string | null;
+            token_username?: string | null;
+            /** @description `6h|12h|1d|1w|2w|1mo|never`; default `agents.templates.update_interval`. */
+            update_interval?: string | null;
+            url: string;
+        };
         AddonEntry: {
             description: string;
             id: string;
@@ -7299,6 +7608,35 @@ export interface components {
              */
             tables: components["schemas"]["TableSize"][];
         };
+        AdminTemplateList: {
+            items: components["schemas"]["AdminTemplateView"][];
+        };
+        AdminTemplateSourceRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /**
+         * @description One template of the admin list (C-1108): the stored rows, the offered version and what
+         *     the current version needs.
+         */
+        AdminTemplateView: {
+            /** @description The offered version (newest `approved`, C-1108), null when none is approved. */
+            current_version?: string | null;
+            head_problems?: unknown;
+            /** @description `ok` | `needs_newer_aurora` | `invalid`. */
+            head_state: string;
+            head_version?: string | null;
+            name: string;
+            needs_apps: components["schemas"]["NeedsAppView"][];
+            needs_libraries: components["schemas"]["NeedsLibraryView"][];
+            offered: boolean;
+            removed_upstream: boolean;
+            source: components["schemas"]["AdminTemplateSourceRef"];
+            summary: string;
+            template_id: string;
+            versions: components["schemas"]["TemplateVersionListItem"][];
+        };
         AdminUser: components["schemas"]["User"] & {
             /** Format: date-time */
             disabled_at?: string | null;
@@ -7456,6 +7794,56 @@ export interface components {
         };
         AgentStartFailures: {
             items: components["schemas"]["AgentStartFailure"][];
+        };
+        /** @description A template source (C-1107): the stored rows, never a live read. */
+        AgentTemplateSource: {
+            /** Format: date-time */
+            check_failed_at?: string | null;
+            check_failed_reason?: string | null;
+            contact?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            homepage?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            last_checked_at?: string | null;
+            last_head_sha?: string | null;
+            name: string;
+            /** @description The manifest's `packages.url` template. */
+            packages_url: string;
+            path: string;
+            ref?: string | null;
+            /** @description The repository's display form (`host[:port]/path`, as C-1122 shows it). */
+            repo: string;
+            /** @description `ok` | `check_failed`. */
+            status: string;
+            templates: components["schemas"]["SourceTemplateView"][];
+            /** @description Whether a sealed access token is set (the value is never returned). */
+            token_set: boolean;
+            /** Format: date-time */
+            token_updated_at?: string | null;
+            update_interval: string;
+            /** Format: date-time */
+            updated_at: string;
+            url: string;
+        };
+        AgentTemplateSourceList: {
+            items: components["schemas"]["AgentTemplateSource"][];
+        };
+        /** @description What a preview read found (C-1107): check without saving, nothing stored, no audit row. */
+        AgentTemplateSourcePreview: {
+            commit_sha: string;
+            manifest: components["schemas"]["ManifestRepoView"];
+            path: string;
+            ref?: string | null;
+            /** @description The repository's display form. */
+            repo: string;
+            resolved: components["schemas"]["ResolvedRefView"];
+            templates: components["schemas"]["PreviewTemplateView"][];
+            truncated: boolean;
+            /** @description The normalized address. */
+            url: string;
         };
         AgentToken: {
             container_config: components["schemas"]["ContainerConfig"];
@@ -8006,9 +8394,8 @@ export interface components {
             content_sha256: string;
         };
         ApproveRequest: {
-            user_code: string;
-            /** Format: uuid */
-            workspace_id: string;
+            /** @description The hash the review showed; it must still be the stored one. */
+            content_sha256: string;
         };
         /** @description (C-1081) The optional body of `POST /workspaces/{ws}/apps/{app}/setup-request`. */
         AskBody: {
@@ -8161,7 +8548,7 @@ export interface components {
          * @description (FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.
          * @enum {string}
          */
-        AttentionKind: "connector_approval" | "package_approval" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "approval" | "access_request" | "broken_account" | "agent_cannot_answer" | "my_request";
+        AttentionKind: "connector_approval" | "package_approval" | "agent_template_version" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "approval" | "access_request" | "broken_account" | "agent_cannot_answer" | "my_request";
         /**
          * @description (C-1080) The level an item belongs to.
          * @enum {string}
@@ -8231,6 +8618,12 @@ export interface components {
             recommended: boolean;
             /** @description `string` | `aws_sigv4` | `aws_assume_role` | `azure_entra` | `gcp_service_account`. */
             value_shape: string;
+        };
+        /** @description One automation of the card (C-1110). */
+        AutomationBrief: {
+            /** @description `schedule` | `webhook`. */
+            kind: string;
+            name: string;
         };
         /**
          * @description What a backfill did: grants written, and grants that already existed or were refused
@@ -8345,6 +8738,24 @@ export interface components {
             source_cidrs?: string[] | null;
             token?: components["schemas"]["TokenView"] | null;
         };
+        /** @description One `apps:` entry of the card (C-1110, C-1142's app skills). */
+        CardAppEntry: {
+            /** @description The entry's app ids (`app`, or every id of `any_of`). */
+            app_ids: string[];
+            available: boolean;
+            required: boolean;
+            /** @description The app skills of the entry's available apps (C-1142), sorted, without repeats. */
+            skills: string[];
+        };
+        /** @description One skill reference of the card (C-1110). */
+        CardSkillRef: {
+            available: boolean;
+            index: number;
+            /** @description `library` | `organization`. */
+            kind: string;
+            name: string;
+            required: boolean;
+        };
         ChangeActor: {
             display_name: string;
         };
@@ -8369,6 +8780,24 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /** @description One version that left `awaiting_package` in the check. */
+        CheckIngestedView: {
+            /** @description `pending_approval` | `invalid`. */
+            status: string;
+            status_reason?: string | null;
+            template_id: string;
+            version: string;
+        };
+        /**
+         * @description A problem the check found (the head's `template.yaml`, an id another source holds, a head
+         *     version that is not newer).
+         */
+        CheckProblemView: {
+            code: string;
+            dir: string;
+            message: string;
+            template_id?: string | null;
+        };
         /** @description `POST …/skill-libraries/check` (C-1124): the create body without `label`. */
         CheckSkillLibraryRequest: {
             path?: string | null;
@@ -8383,6 +8812,14 @@ export interface components {
             /** @description The first 20 valid names, sorted (untrusted text). */
             names: string[];
             valid: number;
+        };
+        /** @description One version still `awaiting_package` after the check. */
+        CheckWaitingView: {
+            last_reason?: string | null;
+            /** Format: date-time */
+            since: string;
+            template_id: string;
+            version: string;
         };
         ChoiceConnection: {
             app_id: string;
@@ -8912,6 +9349,24 @@ export interface components {
             proxy_url: string;
             stubs: components["schemas"]["StubFile"][];
         };
+        /** @description The agent line of a stored version (C-1108's `TemplateContentView.agent`). */
+        ContentAgentView: {
+            may_message_first: boolean;
+            name: string;
+        };
+        /** @description A memory of a stored version (C-1151's `locked` shown in the review). */
+        ContentMemoryView: {
+            content: string;
+            key: string;
+            locked: boolean;
+        };
+        /** @description A skill of a stored version (the review, C-1108). */
+        ContentSkillView: {
+            body: string;
+            files: components["schemas"]["FileView"][];
+            name: string;
+            use_it_when: string;
+        };
         /** @enum {string} */
         ContentType: "application/json" | "application/x-www-form-urlencoded" | "text/plain";
         ContextCredential: {
@@ -9390,6 +9845,15 @@ export interface components {
              */
             differs: number;
         };
+        /**
+         * @description The template's tools of one choice that the app's current catalogue has, and the ones it
+         *     does not (never written, C-1110).
+         */
+        CustomToolsView: {
+            allow_tools: string[];
+            ask_tools: string[];
+            dropped_tools: string[];
+        };
         /** @description How an agent reaches a database connection (P2-DBL-2, C-230); `null` for other apps. */
         DatabaseRef: {
             /** @description `postgres`. */
@@ -9400,6 +9864,12 @@ export interface components {
              *     connection id>` appended (`aurora_core::pgservice`).
              */
             service: string;
+        };
+        /** @description Who decided a version (`decided_by`: id and display name, null when not decided yet). */
+        DecidedByView: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         /** @enum {string} */
         Decision: "approve" | "deny";
@@ -10080,6 +10550,18 @@ export interface components {
              *     (`preview=1` on a file over 1 MiB); false for the whole file.
              */
             truncated: boolean;
+        };
+        /**
+         * @description A text file of a stored version (C-1108's `FileView`): `text` for valid UTF-8 up to
+         *     256 KiB (which includes every executable file, C-1141), else null.
+         */
+        FileView: {
+            executable: boolean;
+            path: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+            text?: string | null;
         };
         FileWriteResult: {
             entry: components["schemas"]["FileEntry"];
@@ -11044,6 +11526,11 @@ export interface components {
             id: string;
             name: string;
         };
+        /** @description The repository part of a manifest (C-1103). */
+        ManifestRepoView: {
+            description: string;
+            name: string;
+        };
         Me: {
             /**
              * @description (FIX-167 Part B, C-1024) E-mail me when something new needs an instance admin's decision
@@ -11359,6 +11846,18 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /** @description An app the template's apps entries name, and whether the instance has it (C-1108). */
+        NeedsAppView: {
+            app_id: string;
+            installed: boolean;
+        };
+        /** @description A skill library the template references, and whether one is added here (C-1108). */
+        NeedsLibraryView: {
+            added_here: boolean;
+            path: string;
+            ref?: string | null;
+            url: string;
         };
         /** @description `POST /workspaces/{ws}/requests` (C-1047). */
         NewRequest: {
@@ -11792,6 +12291,18 @@ export interface components {
             id: string;
             name: string;
             slug: string;
+        };
+        /** @description One template of an organization's list (C-1109): every offered template, on by default. */
+        OrgTemplateItem: {
+            enabled: boolean;
+            name: string;
+            summary: string;
+            template_id: string;
+            /** @description The offered version (C-1108's rule), null when none is approved. */
+            version?: string | null;
+        };
+        OrgTemplateList: {
+            items: components["schemas"]["OrgTemplateItem"][];
         };
         /** @description `GET /v1/orgs/{org}/usage` (C-1006). */
         OrgUsage: {
@@ -13614,6 +14125,28 @@ export interface components {
             /** @description `placement_unsaved` | `per_user_orgs_active` | `default_org_missing`. */
             warnings: string[];
         };
+        /** @description One app of one entry, with what creating would preselect (C-1110's choice). */
+        PlanChoice: {
+            /** @description The app's accounts the caller may give to an agent of this workspace (C-917 shape). */
+            accounts: components["schemas"]["Account"][];
+            app_id: string;
+            app_name: string;
+            available: boolean;
+            custom?: components["schemas"]["CustomToolsView"] | null;
+            /** @description The template's, except `act` on a `custom_only` app, which becomes `ask`. */
+            level: string;
+            /** @description `custom_only` when the level was cut, else null. */
+            level_note?: string | null;
+            /** @description `not_installed` | `not_available_here` | null. */
+            unavailable_reason?: string | null;
+        };
+        /** @description One entry of the plan (C-1110). */
+        PlanEntry: {
+            choices: components["schemas"]["PlanChoice"][];
+            index: number;
+            required: boolean;
+            why: string;
+        };
         PluginActionRequest: {
             /** @description Free-text reason (at most 64 characters), stored as `status_reason`. */
             reason?: string | null;
@@ -14041,6 +14574,27 @@ export interface components {
          * @enum {string}
          */
         PreviewState: "active" | "paused";
+        PreviewTemplateSourceRequest: {
+            /** @description The folder in the repository; default the root. */
+            path?: string | null;
+            /** @description A branch, tag or commit; default the repository's default branch. */
+            ref?: string | null;
+            /** @description An access token used for this read only (never stored). */
+            token?: string | null;
+            token_username?: string | null;
+            url: string;
+        };
+        /** @description One template the preview found in the folder. */
+        PreviewTemplateView: {
+            dir: string;
+            name: string;
+            problems: components["schemas"]["TemplateProblemView"][];
+            /** @description `new` | `id_taken` (a stored row's states cannot apply to a source that is not saved). */
+            state: string;
+            summary: string;
+            template_id: string;
+            version?: string | null;
+        };
         /**
          * @description `private`: the only visibility in phase 4 (a live dashboard session or an API key of someone
          *     for whom `can_use(workspace)` holds; never an agent credential, docs/04 §Preview access).
@@ -14518,7 +15072,28 @@ export interface components {
             org: components["schemas"]["OrgSummary"];
             workspace?: components["schemas"]["ResolvedWorkspace"] | null;
         };
+        /** @description The resolved library of a skill reference (C-1142's `SkillRefPlan.library`). */
+        ResolvedLibraryView: {
+            commit_sha: string;
+            /** Format: uuid */
+            id: string;
+            label: string;
+            path: string;
+            ref?: string | null;
+            /** @description The display form `host/path`. */
+            repo: string;
+            /** @description `organization` | `instance`. */
+            scope: string;
+        };
         ResolvedRef: {
+            /** @description Whether this is the repository's default branch. */
+            default: boolean;
+            /** @description `branch` | `tag` | `commit`. */
+            kind: string;
+            name: string;
+        };
+        /** @description What a ref resolved to (C-1107, as C-1124's `resolved`). */
+        ResolvedRefView: {
             /** @description Whether this is the repository's default branch. */
             default: boolean;
             /** @description `branch` | `tag` | `commit`. */
@@ -15187,6 +15762,10 @@ export interface components {
         SetMemoryLockedRequest: {
             locked: boolean;
         };
+        SetOrgTemplateRequest: {
+            /** @description On (`true`, the default) or off (`false`) for this organization. */
+            enabled: boolean;
+        };
         SetPolicyBody: {
             /**
              * Format: uuid
@@ -15583,6 +16162,12 @@ export interface components {
             /** Format: uuid */
             workspace_id?: string | null;
         };
+        /** @description The referenced skill's content, exactly what an add would store (C-1142). */
+        SkillContentBrief: {
+            body: string;
+            files: components["schemas"]["FileView"][];
+            use_it_when: string;
+        };
         SkillCounts: {
             /** Format: int64 */
             agent: number;
@@ -15653,6 +16238,23 @@ export interface components {
             pinned_by?: string | null;
             update?: components["schemas"]["LibraryUpdateView"] | null;
         };
+        /** @description One skill reference, resolved for the workspace (C-1142's `SkillRefPlan`). */
+        SkillRefPlan: {
+            available: boolean;
+            content?: components["schemas"]["SkillContentBrief"] | null;
+            index: number;
+            /** @description `library` | `organization`. */
+            kind: string;
+            library?: components["schemas"]["ResolvedLibraryView"] | null;
+            name: string;
+            required: boolean;
+            /**
+             * @description `library_not_added` | `skill_not_in_library` | `library_unreadable` |
+             *     `libraries_disabled` | `not_in_organization` | null.
+             */
+            unavailable_reason?: string | null;
+            why: string;
+        };
         /**
          * @description Provenance of a skill added from a git skill library (`10 §Git skill library`). Repository
          *     text: untrusted, shown as data.
@@ -15699,6 +16301,18 @@ export interface components {
         };
         /** @enum {string} */
         SlotType: "string" | "integer" | "number" | "boolean" | "string_list" | "enum" | "json";
+        /** @description The state of one template of a source (C-1107). */
+        SourceTemplateView: {
+            dir: string;
+            /** @description `ok` | `needs_newer_aurora` | `invalid` (the head's state). */
+            head_state: string;
+            head_version?: string | null;
+            name: string;
+            /** @description `new` | `ingested` | `id_taken` | `invalid`. */
+            state: string;
+            summary: string;
+            template_id: string;
+        };
         Sourced_Option_Vec_String: {
             instance_setting?: components["schemas"]["InstanceSetting"] | null;
             /** @description `instance` | `org`. */
@@ -16056,6 +16670,124 @@ export interface components {
             /** @enum {string} */
             type: "network";
         };
+        /** @description A template the workspace may use (C-1110's `TemplateCard`), about the offered version. */
+        TemplateCard: {
+            apps: components["schemas"]["CardAppEntry"][];
+            automations: components["schemas"]["AutomationBrief"][];
+            has_avatar: boolean;
+            has_helpers: boolean;
+            name: string;
+            /** @description The offered version's `README.md`, in full. */
+            readme: string;
+            /**
+             * @description Every required app entry has an available app and every required skill reference is
+             *     available.
+             */
+            ready: boolean;
+            skill_refs: components["schemas"]["CardSkillRef"][];
+            summary: string;
+            template_id: string;
+            version: string;
+        };
+        TemplateCardList: {
+            items: components["schemas"]["TemplateCard"][];
+        };
+        /**
+         * @description Everything a version would tell or give an agent, in full, as data (C-1108's
+         *     `TemplateContentView`): decoded from the stored content, never re-read from the source.
+         *     `inputs`, `apps`, `skill_refs` and `automations` are C-1104's shapes, passed through as
+         *     stored (the review renders them; P6-TPL-3's creation reads them back the same way).
+         */
+        TemplateContentView: {
+            agent: components["schemas"]["ContentAgentView"];
+            apps: unknown[];
+            automations: unknown[];
+            effort?: string | null;
+            has_avatar: boolean;
+            helpers: components["schemas"]["FileView"][];
+            inputs: unknown[];
+            instructions: string;
+            memories: components["schemas"]["ContentMemoryView"][];
+            min_core?: string | null;
+            name: string;
+            /** @description The template's `README.md`, in full. */
+            readme: string;
+            skill_refs: unknown[];
+            skills: components["schemas"]["ContentSkillView"][];
+            summary: string;
+        };
+        /**
+         * @description The full plan of one template (C-1110's `TemplatePlan`): the card's fields, the reviewed
+         *     content, the app entries with their per-app choices and the resolved skill references.
+         */
+        TemplatePlan: {
+            apps: components["schemas"]["CardAppEntry"][];
+            automations: components["schemas"]["AutomationBrief"][];
+            content: components["schemas"]["TemplateContentView"];
+            content_sha256?: string | null;
+            entries: components["schemas"]["PlanEntry"][];
+            has_avatar: boolean;
+            has_helpers: boolean;
+            name: string;
+            readme: string;
+            ready: boolean;
+            skill_refs: components["schemas"]["SkillRefPlan"][];
+            summary: string;
+            template_id: string;
+            version: string;
+        };
+        /** @description One C-1141 problem, as data (`code` is the fixed code, `path` where it applies). */
+        TemplateProblemView: {
+            code: string;
+            message: string;
+            path: string;
+        };
+        TemplateSourceCheckAll: {
+            items: components["schemas"]["TemplateSourceCheckResult"][];
+        };
+        /** @description The result of a check of one source (C-1108): a read failure is a result, not an error. */
+        TemplateSourceCheckResult: {
+            check_failed_reason?: string | null;
+            commit_sha: string;
+            ingested: components["schemas"]["CheckIngestedView"][];
+            problems: components["schemas"]["CheckProblemView"][];
+            /** Format: uuid */
+            source_id: string;
+            /** @description `updated` | `up_to_date` | `failed`. */
+            status: string;
+            waiting: components["schemas"]["CheckWaitingView"][];
+        };
+        /** @description One version of a template, everything the review shows (C-1108). */
+        TemplateVersionDetail: {
+            archive_sha256?: string | null;
+            commit_sha: string;
+            content?: components["schemas"]["TemplateContentView"] | null;
+            content_sha256?: string | null;
+            /** Format: int32 */
+            size_bytes?: number | null;
+            source: components["schemas"]["VersionSourceView"];
+            status: string;
+            status_reason?: string | null;
+            template_id: string;
+            version: string;
+        };
+        /** @description One row of the admin list's `versions` (C-1108, newest first). */
+        TemplateVersionListItem: {
+            commit_sha: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at?: string | null;
+            decided_by?: components["schemas"]["DecidedByView"] | null;
+            /** Format: date-time */
+            last_attempt_at?: string | null;
+            /** Format: int32 */
+            size_bytes?: number | null;
+            /** @description `awaiting_package` | `pending_approval` | `approved` | `rejected` | `invalid`. */
+            status: string;
+            status_reason?: string | null;
+            version: string;
+        };
         /** @description (FIX-218, D-459, C-1145) The shell preference of the signed-in person for an agent. */
         TerminalShellPreference: {
             /**
@@ -16405,6 +17137,21 @@ export interface components {
             description?: string | null;
             enabled?: boolean | null;
         };
+        UpdateTemplateRequest: {
+            /** @description Withdraw (`false`) or offer again (`true`). */
+            offered: boolean;
+        };
+        UpdateTemplateSourceRequest: {
+            /** @description The folder in the repository. */
+            path?: string | null;
+            /** @description A branch, tag or commit; `""` clears (the default branch again). */
+            ref?: string | null;
+            /** @description A new token (replaces), or `null` (removes); absent = unchanged. */
+            token?: string | null;
+            token_username?: string | null;
+            /** @description `6h|12h|1d|1w|2w|1mo|never`. */
+            update_interval?: string | null;
+        };
         UpdateWebhookRequest: {
             /** @description `creator` | `workspace`; changing it needs `can_own` and is audited (RFE-021). */
             anchor?: string | null;
@@ -16654,6 +17401,16 @@ export interface components {
         };
         VerifyResult: {
             origin: components["schemas"]["StoredOrigin"];
+        };
+        /** @description The source behind a version (C-1108's `TemplateVersionDetail.source`). */
+        VersionSourceView: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            path: string;
+            ref?: string | null;
+            /** @description The repository's display form (`host[:port]/path`). */
+            repo: string;
         };
         /** @enum {string} */
         WarningCode: "shadowed" | "inert" | "overridden_by_org" | "rule_applies_to_all_agents" | "user_rule_needs_speaker" | "user_rule_no_agent_fallback" | "group_rule_needs_speaker" | "group_rule_no_agent_fallback" | "group_rule_empty" | "rule_names_removed_group";
@@ -17656,6 +18413,887 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListTemplateSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTemplateSourceList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminAddTemplateSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddTemplateSourceRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTemplateSource"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCheckAllTemplateSources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateSourceCheckAll"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPreviewTemplateSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewTemplateSourceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTemplateSourcePreview"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetTemplateSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTemplateSource"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminDeleteTemplateSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminUpdateTemplateSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTemplateSourceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTemplateSource"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminCheckTemplateSource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template source id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateSourceCheckResult"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminListTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminTemplateList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminUpdateTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template id */
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTemplateRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminTemplateView"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetTemplateVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template id */
+                template_id: string;
+                /** @description Version */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVersionDetail"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminApproveTemplateVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template id */
+                template_id: string;
+                /** @description Version */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVersionDetail"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminGetTemplateVersionAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template id */
+                template_id: string;
+                /** @description Version */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminRejectTemplateVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Template id */
+                template_id: string;
+                /** @description Version */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVersionDetail"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -36052,6 +37690,130 @@ export interface operations {
             };
         };
     };
+    listOrgTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgTemplateList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    setOrgTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+                /** @description Template id */
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetOrgTemplateRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     listOrgAgentTokens: {
         parameters: {
             query?: {
@@ -44678,6 +46440,178 @@ export interface operations {
             };
             /** @description Unauthenticated: no credential, or an invalid or expired one */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateCardList"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWorkspaceTemplatePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description Template id */
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplatePlan"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getWorkspaceTemplateAvatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+                /** @description Template id */
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": number[];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
