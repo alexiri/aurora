@@ -515,7 +515,6 @@ pub async fn add(
                 contact: m.repo.contact.as_deref(),
                 packages_url: &m.packages.url,
                 manifest: &manifest,
-                head_sha: &read.resolved.sha,
                 update_interval: &interval,
                 first_check_in_secs: next_in_secs(&interval, id),
                 created_by: user,
@@ -643,7 +642,6 @@ pub async fn update(
                     token_ref: new_token_ref.as_deref(),
                     packages_url: &m.packages.url,
                     manifest: &stored_manifest(&m),
-                    head_sha: &read.resolved.sha,
                 },
             )
             .await?;

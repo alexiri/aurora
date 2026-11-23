@@ -19,6 +19,7 @@ pub struct SourceRow {
     pub name: String,
     /// The stored, normalized https git address (C-1123 form).
     pub url: String,
+    #[sqlx(rename = "ref")]
     pub reference: Option<String>,
     /// The folder in the repository (may be the root).
     pub path: String,
@@ -76,25 +77,26 @@ pub struct NewSource<'a> {
     pub packages_url: &'a str,
     /// The manifest as parsed.
     pub manifest: &'a Value,
-    /// The commit the add read (also the first `last_head_sha`).
-    pub head_sha: &'a str,
     pub update_interval: &'a str,
     /// Seconds until the first scheduled check (`None`: never scheduled, manual only).
     pub first_check_in_secs: Option<i64>,
     pub created_by: Uuid,
 }
 
+/// Insert a source (C-1107). `last_head_sha` stays null: it is the head the last successful
+/// *check* compared (docs/03), so the first check after the add runs the full C-1108 pass and
+/// records the templates and candidates the add read.
 pub async fn insert_source(
     conn: &mut PgConnection,
     s: &NewSource<'_>,
 ) -> Result<SourceRow, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO agent_template_sources (id, name, url, ref, path, token_ref,
-            token_updated_at, homepage, contact, packages_url, manifest, last_head_sha,
+            token_updated_at, homepage, contact, packages_url, manifest,
             update_interval, next_check_at, last_checked_at, created_by)
          VALUES ($1,$2,$3,$4,$5,$6, CASE WHEN $6 IS NULL THEN NULL ELSE now() END,
-            $7,$8,$9,$10,$11,$12,
-            now() + make_interval(secs => COALESCE($13, 31536000)), now(), $14)
+            $7,$8,$9,$10,$11,
+            now() + make_interval(secs => COALESCE($12, 31536000)), NULL, $13)
          RETURNING {SEL}"
     )))
     .bind(s.id)
@@ -107,7 +109,6 @@ pub async fn insert_source(
     .bind(s.contact)
     .bind(s.packages_url)
     .bind(s.manifest)
-    .bind(s.head_sha)
     .bind(s.update_interval)
     .bind(s.first_check_in_secs)
     .bind(s.created_by)
@@ -248,11 +249,11 @@ pub struct NewAddress<'a> {
     pub packages_url: &'a str,
     /// The manifest as parsed.
     pub manifest: &'a Value,
-    /// The commit the patch read.
-    pub head_sha: &'a str,
 }
 
-/// Replace the source's address parts and head (a patch that re-read the repository first).
+/// Replace the source's address parts (a patch that re-read the repository first). The head
+/// is not written: `last_head_sha` is the head the last successful *check* compared
+/// (docs/03), so the next check compares freshly and records what the new address holds.
 pub async fn update_address(
     conn: &mut PgConnection,
     id: Uuid,
@@ -262,8 +263,7 @@ pub async fn update_address(
         "UPDATE agent_template_sources SET ref = $2, path = $3,
             token_ref = $4,
             token_updated_at = CASE WHEN $4 IS NULL THEN NULL ELSE now() END,
-            packages_url = $5, manifest = $6, last_head_sha = $7,
-            last_checked_at = now(), updated_at = now()
+            packages_url = $5, manifest = $6, updated_at = now()
          WHERE id = $1",
     )
     .bind(id)
@@ -272,7 +272,6 @@ pub async fn update_address(
     .bind(a.token_ref)
     .bind(a.packages_url)
     .bind(a.manifest)
-    .bind(a.head_sha)
     .execute(conn)
     .await?;
     Ok(())
@@ -535,6 +534,12 @@ const VSEL: &str = "id, agent_template_id, version, status, status_reason, commi
     package_url, archive_sha256, size_bytes, content_sha256, content, last_attempt_at,
     decided_by, decided_at, created_at";
 
+/// [`VSEL`] qualified for the joined query ([`versions_of_source`], which joins
+/// `agent_templates` and needs every column attributed).
+const VSELQ: &str = "v.id, v.agent_template_id, v.version, v.status, v.status_reason,
+    v.commit_sha, v.package_url, v.archive_sha256, v.size_bytes, v.content_sha256,
+    v.content, v.last_attempt_at, v.decided_by, v.decided_at, v.created_at";
+
 /// One ingested version of a template (03 §`agent_template_versions`).
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct VersionRow {
@@ -572,7 +577,7 @@ pub async fn versions_of_source<'e, E: PgExecutor<'e>>(
     source_id: Uuid,
 ) -> Result<Vec<SourceVersionRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {VSEL}, t.template_id, t.dir
+        "SELECT {VSELQ}, t.template_id, t.dir
          FROM agent_template_versions v
          JOIN agent_templates t ON t.id = v.agent_template_id
          WHERE t.source_id = $1

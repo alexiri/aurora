@@ -79,6 +79,8 @@ struct Inner {
     oversize: Option<usize>,
     /// Fetch requests get a valid pack of an unrelated object.
     wrong_pack: bool,
+    /// Plain GET answers by path (template packages).
+    raw: BTreeMap<String, Vec<u8>>,
     log: Vec<Recorded>,
 }
 
@@ -455,6 +457,17 @@ impl GitServer {
         self.inner.lock().unwrap().wrong_pack = on;
     }
 
+    /// Serves `bytes` for a plain GET of `path` (template packages in the P6-TPL-2 tests):
+    /// like the git answers, the request is recorded, so the tests can assert on the headers
+    /// the API sent (the token-origin rule). The auth switch applies to it too.
+    pub fn serve_file(&self, path: &str, bytes: Vec<u8>) {
+        self.inner
+            .lock()
+            .unwrap()
+            .raw
+            .insert(path.trim_start_matches('/').to_owned(), bytes);
+    }
+
     pub fn clear_overrides(&self) {
         let mut g = self.inner.lock().unwrap();
         g.statuses.clear();
@@ -614,6 +627,16 @@ async fn handle(inner: Arc<Mutex<Inner>>, root: PathBuf, req: Request<Body>) -> 
             );
             return r;
         }
+    }
+    if method == "GET"
+        && let Some(bytes) = inner.lock().unwrap().raw.get(path.trim_start_matches('/'))
+    {
+        let mut r = Response::new(Body::from(bytes.clone()));
+        r.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/zip"),
+        );
+        return r;
     }
     let fetch = method == "POST" && is_fetch(&body);
     let v2_req = v2

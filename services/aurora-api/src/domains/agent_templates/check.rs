@@ -469,15 +469,18 @@ pub async fn check_source(
             continue;
         };
         match newest {
-            Some(n) if candidate < n => problems.push(Problem {
-                template_id: Some(template_id.clone()),
-                dir: String::new(),
-                code: "version_not_newer".to_owned(),
-                message: format!(
-                    "the head version {} is lower than the stored version",
-                    meta.version
-                ),
-            }),
+            Some(n) if candidate < n => {
+                problems.push(Problem {
+                    template_id: Some(template_id.clone()),
+                    dir: String::new(),
+                    code: "version_not_newer".to_owned(),
+                    message: format!(
+                        "the head version {} is lower than the stored version",
+                        meta.version
+                    ),
+                });
+                continue;
+            }
             Some(n) if candidate == n => continue, // equal: ignored
             _ => {}                                // newer, or nothing stored yet: take it
         }
