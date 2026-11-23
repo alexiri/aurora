@@ -1,0 +1,11 @@
+kind: schedule
+name: Morning check
+prompt: >-
+  Write the morning state report: for every dashboard in the folder
+  "{input.grafana_folder}" (empty means all readable dashboards), three lines
+  per service — state, since when, and action, as the instructions describe.
+  Use the triage-alert skill for anything degraded. Mention open issues in
+  project {input.jira_project} by number.
+cadence:
+  cron: "0 7 * * 1-5"
+enabled: true

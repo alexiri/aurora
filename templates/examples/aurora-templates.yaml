@@ -1,0 +1,19 @@
+# The repository manifest (docs/25, C-1103). Strict: unknown keys are refused.
+api: 1
+
+# The repository, shown to the reviewing admin.
+repo:
+  name: Example agent templates
+  description: >-
+    Two small, complete example templates: a schedule manager for Indico plus
+    your calendar, and a service monitor that watches dashboards and files
+    tickets.
+  homepage: https://example.com/aurora-templates
+  contact: mailto:aurora-admin@example.com
+
+# Where CI publishes the packages. Replace `example/agent-templates` with your
+# repository. For GitHub releases the file name must be `<id>-<version>.zip`
+# and the tag `<id>-v<version>` — that is what .github/aurora-publish.sh
+# creates (docs/25 §Publishing a version).
+packages:
+  url: https://github.com/example/agent-templates/releases/download/{id}-v{version}/{id}-{version}.zip

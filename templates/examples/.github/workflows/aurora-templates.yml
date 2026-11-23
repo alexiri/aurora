@@ -1,0 +1,70 @@
+# The reference CI for a template repository (docs/25 §Publishing a version,
+# C-1144). Two jobs:
+#
+#   check   — every pull request and every push: `aurora template check .`
+#   publish — push to the default branch only, after check: pack each template
+#             and create the release <id>-v<version>. A published version is
+#             never replaced: if the release exists and the freshly packed
+#             bytes differ, the job fails and tells you to raise the version.
+#
+# This file sits inside templates/examples/ in the Aurora repository, so it
+# never runs here. Copy it to your own repository as
+# .github/workflows/aurora-templates.yml.
+
+name: aurora-templates
+
+on:
+  pull_request:
+  push:
+
+# `check` needs only read; `publish` narrows to contents: write below.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Install the aurora CLI at a pinned version. Either download the release
+      # binary (below) or build it:
+      #   cargo install --locked aurora-cli --version AURORA_CLI_VERSION
+      - name: Install the aurora CLI
+        run: |
+          cd /usr/local/bin
+          curl -fsSL \
+            "https://github.com/aurora/aurora/releases/download/aurora-cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
+            -o aurora
+          chmod +x aurora
+          aurora --version
+      - name: Check the templates
+        run: aurora template check .
+
+  publish:
+    # Only push to the default branch publishes. Adjust the ref if yours is
+    # not `main`.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Two merges in quick succession must publish one after the other, never
+    # in parallel, and must not cancel each other.
+    concurrency:
+      group: aurora-templates-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the aurora CLI
+        run: |
+          cd /usr/local/bin
+          curl -fsSL \
+            "https://github.com/aurora/aurora/releases/download/aurora-cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
+            -o aurora
+          chmod +x aurora
+          aurora --version
+      - name: Pack and publish every template
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: .github/aurora-publish.sh .

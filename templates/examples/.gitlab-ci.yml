@@ -1,0 +1,64 @@
+# The GitLab sketch of the reference CI (docs/25 §Publishing a version,
+# C-1144). The same two jobs as the GitHub workflow: check on merge requests
+# and pushes, publish on the default branch only.
+#
+# The publish job uploads to the generic package registry with CI_JOB_TOKEN,
+# after comparing against an existing package. Set the project setting
+# "Allow duplicate generic packages" OFF: that is the no-overwrite rule that
+# makes a published version immutable.
+
+stages: [check, publish]
+
+variables:
+  AURORA_CLI_VERSION: "AURORA_CLI_VERSION"
+
+.template-check: &template-check
+  - cargo install --locked aurora-cli --version "$AURORA_CLI_VERSION"
+  - aurora template check .
+
+check:
+  stage: check
+  image: rust
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+  script: *template-check
+
+publish:
+  stage: publish
+  image: rust
+  rules:
+    # The default branch only. Adjust the name if yours is not `main`.
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    # check once more on the exact commit being published.
+    - *template-check
+    # For each template: pack, and compare against an existing package when
+    # there is one. A published version is never replaced; a mismatch fails
+    # the job.
+    - |
+      aurora template list . --json | jq -c '.[]' | while IFS= read -r item; do
+        id=$(printf '%s' "$item" | jq -r '.id')
+        version=$(printf '%s' "$item" | jq -r '.version')
+        dir=$(printf '%s' "$item" | jq -r '.dir')
+        zip="dist/$id-$version.zip"
+        mkdir -p dist
+        url=$(printf '%s' "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$id/$version/$id-$version.zip")
+        aurora template pack "$dir" -o "$zip"
+        code=$(curl -s -o "dist/downloaded-$id-$version.zip" -w '%{http_code}' \
+          --header "JOB-TOKEN: $CI_JOB_TOKEN" "$url" || true)
+        if [ "$code" = 200 ]; then
+          if ! cmp -s "$zip" "dist/downloaded-$id-$version.zip"; then
+            printf '%s changed without a new version: raise version in %s/template.yaml\n' "$id" "$dir" >&2
+            exit 1
+          fi
+          printf '%s %s: package already exists and matches; nothing to publish.\n' "$id" "$version"
+        elif [ "$code" = 404 ]; then
+          curl -sf --request PUT --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+            --upload-file "$zip" "$url"
+          printf '%s %s: published %s.\n' "$id" "$version" "$url"
+        else
+          printf 'unexpected status %s for %s\n' "$code" "$url" >&2
+          exit 1
+        fi
+      done

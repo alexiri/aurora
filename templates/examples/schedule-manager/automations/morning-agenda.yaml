@@ -1,0 +1,10 @@
+kind: schedule
+name: Morning agenda
+prompt: >-
+  Write {person.name}'s agenda for today: the calendar events, the Indico
+  events from categories {input.indico_categories} that start today or
+  tomorrow, and up to three things to watch out for. Use the what-is-on skill
+  for the Indico part. Keep it under 25 lines.
+cadence:
+  cron: "30 8 * * 1-5"
+enabled: true

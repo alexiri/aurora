@@ -24,7 +24,7 @@ pub enum TemplateCmd {
         /// The template's directory (named by its id).
         dir: PathBuf,
         /// Output file (default: `<id>-<version>.zip` in the current directory).
-        #[arg(long)]
+        #[arg(short = 'o', long)]
         out: Option<PathBuf>,
     },
     /// List a repository folder's templates (what CI would publish).

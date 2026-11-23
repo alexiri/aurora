@@ -1,0 +1,29 @@
+format: 1
+id: schedule-manager
+version: 1.0.0
+name: Schedule manager
+summary: Posts your morning agenda from Indico and your calendar, and plans the week ahead with your approval.
+inputs:
+  - id: indico_categories
+    label: Indico category ids
+    help: The numeric ids of the Indico categories to follow, separated by commas (shown in the category's URL).
+    kind: text
+    required: true
+    pattern: "^[0-9]+(,[0-9]+)*$"
+    max_length: 100
+  - id: horizon
+    label: Planning horizon
+    help: How far ahead the weekly plan looks.
+    kind: choice
+    required: false
+    options: [7 days, 14 days]
+    default: 7 days
+apps:
+  - app: indico
+    required: true
+    level: read
+    why: Reads the events in the Indico categories you follow.
+  - any_of: [microsoft-365, caldav, google-workspace]
+    required: true
+    level: ask
+    why: Reads your calendar and books or moves events, but always asks before changing anything.

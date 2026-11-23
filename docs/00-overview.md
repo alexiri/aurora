@@ -96,6 +96,7 @@ Both kinds share the gateway, the secret stores and the policy engine.
 | **Transcript event** | A durable, vendor-neutral event of a turn. Streaming deltas are ephemeral. |
 | **Memory** | Agent-level markdown notes with revision history, projected into the sandbox and harvested back; written in the workspace's **memory language**. |
 | **Skill** | Agent- or org-scoped instruction bundle (`SKILL.md` + files) projected read-only into the sandbox. |
+| **Agent template** | Ready-made agent (instructions, skills, memories, automations, suggested apps) kept in a git repository by a publisher; a version is offered only after an instance admin approves it. See `25-agent-templates.md`. |
 | **Schedule** | Platform-owned cron that fires a turn in its own conversation, with an optional pre-run **gate** command. |
 | **Webhook** | Inbound capability URL that turns an external event into a turn. |
 | **Watch** | One-shot trigger on a background process (exit, output pattern, silence) that fires a turn. |

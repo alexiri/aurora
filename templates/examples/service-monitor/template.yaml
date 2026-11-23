@@ -1,0 +1,40 @@
+format: 1
+id: service-monitor
+version: 1.0.0
+name: Service monitor
+summary: Watches your Grafana dashboards, triages alerts into summaries, and files Jira issues after your approval.
+inputs:
+  - id: jira_project
+    label: Jira project key
+    help: The key used in issue numbers, like OPS in OPS-123.
+    kind: text
+    required: true
+    pattern: "^[A-Z][A-Z0-9]+$"
+    max_length: 20
+  - id: grafana_folder
+    label: Grafana folder
+    help: The exact name of the Grafana folder with the dashboards to watch; leave empty for all dashboards the token can read.
+    kind: text
+    required: false
+    max_length: 80
+apps:
+  - app: grafana
+    required: true
+    level: read
+    why: Reads the dashboards and runs the Prometheus queries it needs to judge a service.
+  - app: atlassian
+    required: true
+    level: ask
+    tools:
+      allow: [search_issues, get_issue, list_issue_comments]
+      ask: [create_issue, add_issue_comment]
+    why: Reads the project's issues; creating an issue or commenting always asks first.
+  - app: gitlab
+    required: false
+    level: read
+    why: Optionally checks pipelines and recent commits when an alert points at a deployment.
+skills:
+  - library: https://gitlab.cern.ch/agents/skills.git
+    skill: incident-writeup
+    required: false
+    why: Writes the incident summary in the format the service desk expects.
