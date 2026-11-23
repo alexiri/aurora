@@ -962,6 +962,17 @@ One row per template repository an instance admin added. No signing key (D-435(b
 | unique | (agent_template_id, version) (`agent_template_versions_uq`) | a version string that was `rejected` is never ingested again |
 | index | (agent_template_id, created_at desc) | |
 
+### `agent_helper_files` (phase 6, P6-TPL-6, D-456(e), D-457(d), C-1143; a template's helper files on an agent)
+One row per helper file of an agent (C-1141's `helpers/<path>`): projected read-only at `.aurora/helpers/<path>` (`0555` when `executable`, else `0444`). Written only through the API's `agent_helpers::replace_all` / `delete` in the caller's transaction (P6-TPL-3 from templates, the DELETE route); no agent tool exists.
+| Column | Type | Notes |
+|---|---|---|
+| agent_id | uuid not null FK→agents (cascade) | pk part |
+| path | text not null | the C-1141 helper path below `helpers/`; pk part |
+| content | bytea not null | the file's bytes, copied byte for byte (no placeholders) |
+| executable | boolean not null | |
+| sha256 | text not null | hex digest of `content` |
+| size | integer not null | |
+
 ### `org_disabled_agent_templates` (phase 6, P6-TPL-2, C-1109)
 | Column | Type | Notes |
 |---|---|---|
@@ -1815,11 +1826,10 @@ tables above in the same change (and this section shrinks).
 `blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
 
 #### Agent templates (phase 6, P6-TEMPLATES, D-435, D-436, D-456, D-457, C-1106, C-1112, C-1143, SEC-146)
-Three migrations. The four P6-TPL-2 tables are in §5 (migration `20261201000278`). P6-TPL-6 creates `agent_helper_files`. P6-TPL-3 adds the `agents` columns and `agent_template_parts`. Full column lists are in C-1106, C-1143 and C-1112; summary:
+Three migrations. The four P6-TPL-2 tables are in §5 (migration `20261201000278`); P6-TPL-6's `agent_helper_files` is in §5 next to them (migration `20261201000280`). P6-TPL-3 adds the `agents` columns and `agent_template_parts`. Full column lists are in C-1106, C-1143 and C-1112; summary:
 
 | Planned table / column | Type | Notes | Phase |
 |---|---|---|---|
-| `agent_helper_files` | table | `(agent_id, path)` pk: a template's helper files on an agent (`content` bytea, `executable`, `sha256`, `size`). Projected read-only at `.aurora/helpers/`; FK agent (cascade) | 6 (P6-TPL-6) |
 | `agents.template_id`, `.template_name`, `.template_version` | text null | Provenance as text (no FK): deleting a source or template changes no agent | 6 (P6-TPL-3) |
 | `agents.template_inputs` | jsonb null | The checked input values, reused to render update offers | 6 (P6-TPL-3) |
 | `agent_template_parts` | table | `(agent_id, kind, key)` pk. `kind` is one of `instructions`, `skill`, `helpers`, `library_skill`; `content_sha256` is the hash of what was last written from the template; FK agent (cascade) | 6 (P6-TPL-3) |

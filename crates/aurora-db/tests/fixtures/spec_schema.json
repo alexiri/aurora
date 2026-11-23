@@ -68,6 +68,14 @@
       "turn_id",
       "workspace_id"
     ],
+    "agent_helper_files": [
+      "agent_id",
+      "content",
+      "executable",
+      "path",
+      "sha256",
+      "size"
+    ],
     "agent_links": [
       "agent_a_id",
       "agent_b_id",
@@ -1751,6 +1759,14 @@
       "status": "text not null",
       "turn_id": "uuid null",
       "workspace_id": "uuid"
+    },
+    "agent_helper_files": {
+      "agent_id": "uuid not null",
+      "content": "bytea not null",
+      "executable": "boolean not null",
+      "path": "text not null",
+      "sha256": "text not null",
+      "size": "integer not null"
     },
     "agent_links": {
       "agent_a_id": "uuid",
