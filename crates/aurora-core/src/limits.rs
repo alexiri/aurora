@@ -757,6 +757,51 @@ pub const SSH_HEARTBEAT_FAILURES: u32 = 3;
 /// (03 §ssh_sessions) closed session rows are kept this long; grants are pruned after 24 h.
 pub const SSH_SESSION_RETENTION: Duration = Duration::from_secs(30 * 24 * 3600);
 
+// Agent templates (phase 6, P6-TPL-1, C-1113; docs/02 §Limits, docs/25-agent-templates.md).
+/// Packed zip of one template (`read_archive` refuses more; the download cap too).
+pub const TEMPLATE_ARCHIVE_MAX: usize = 5 * MIB;
+/// Unpacked bytes of one template, in either form (zip or tree).
+pub const TEMPLATE_UNPACKED_MAX: usize = 8 * MIB;
+/// Files of one template, in either form (directory entries of a zip do not count).
+pub const TEMPLATE_FILES_MAX: usize = 200;
+/// `memory/<key>.md` files of one template.
+pub const TEMPLATE_MEMORIES_MAX: usize = 20;
+/// Own skills under `skills/` of one template.
+pub const TEMPLATE_SKILLS_MAX: usize = 25;
+/// Skill references in `template.yaml` (`skills:`).
+pub const TEMPLATE_SKILL_REFS_MAX: usize = 20;
+/// Files under `helpers/` of one template.
+pub const TEMPLATE_HELPERS_MAX: usize = 50;
+/// One helper file (C-1141).
+pub const TEMPLATE_HELPER_FILE_MAX: usize = 256 * KIB;
+/// All helper files of one template together.
+pub const TEMPLATE_HELPERS_TOTAL_MAX: usize = 2 * MIB;
+/// `automations/*.yaml` files of one template.
+pub const TEMPLATE_AUTOMATIONS_MAX: usize = 10;
+/// `inputs:` entries of one template.
+pub const TEMPLATE_INPUTS_MAX: usize = 10;
+/// Longest input value an input's `max_length` may ask for (the default is 100).
+pub const TEMPLATE_INPUT_VALUE_MAX: usize = 200;
+/// The template's `README.md` (D-458): 1..=TEMPLATE_README_MAX characters after cleaning.
+pub const TEMPLATE_README_MAX: usize = 20_000;
+/// `apps:` entries of one template.
+pub const TEMPLATE_APPS_MAX: usize = 10;
+/// `aurora-templates.yaml` (C-1103).
+pub const TEMPLATE_MANIFEST_MAX: usize = 64 * KIB;
+/// Template directories per source folder (the ingest lists them).
+pub const TEMPLATES_PER_SOURCE_MAX: usize = 100;
+/// Template sources an instance may register (P6-TPL-2 wires it).
+pub const TEMPLATE_SOURCES_MAX: usize = 20;
+/// Poll-job lease per source check (P6-TPL-2 wires it).
+pub const TEMPLATE_LEASE: Duration = Duration::from_secs(5 * 60);
+/// Total time to download one package (P6-TPL-2 wires it).
+pub const TEMPLATE_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+/// While a version of the source is `awaiting_package`, the source is due again after at most
+/// this (P6-TPL-2 wires it).
+pub const TEMPLATE_PACKAGE_RETRY: Duration = Duration::from_secs(15 * 60);
+/// From `created_at`, after which an `awaiting_package` version becomes `invalid` (P6-TPL-2).
+pub const TEMPLATE_PACKAGE_WAIT: Duration = Duration::from_secs(24 * 3600);
+
 #[cfg(test)]
 mod tests {
     use super::*;

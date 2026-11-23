@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "crates/aurora-template",
   "crates/aurora-core",
   "crates/aurora-config",
   "crates/aurora-db",

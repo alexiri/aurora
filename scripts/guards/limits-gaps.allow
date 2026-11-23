@@ -88,6 +88,13 @@ S3_PROBE_INTERVAL doc-only
 S3_REQUEST_TIMEOUT doc-only
 S3_RETRIES doc-only
 S3_UPLOAD_CONCURRENCY doc-only
+# P6-TPL-1 (spec step, 2026-11-22, C-1113): the TEMPLATE_* constants land with the crate;
+# P6-TPL-2 (the source poll job and downloads) wires these five:
+TEMPLATE_SOURCES_MAX unread
+TEMPLATE_LEASE unread
+TEMPLATE_FETCH_TIMEOUT unread
+TEMPLATE_PACKAGE_RETRY unread
+TEMPLATE_PACKAGE_WAIT unread
 SANDBOX_DEFAULT_CPUS no-row
 SANDBOX_DEFAULT_HOME_MIB no-row
 SANDBOX_DEFAULT_MEMORY_MIB no-row
