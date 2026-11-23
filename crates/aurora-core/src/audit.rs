@@ -88,7 +88,10 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "addon_source.update",
     // Agent templates (phase 6, P6-TPL-2, C-1113; approve/reject/update arrive with the
     // approval routes of P6-TPL-2 slice 4)
+    "agent_template.approve",
     "agent_template.ingest",
+    "agent_template.reject",
+    "agent_template.update",
     "agent_template_source.add",
     "agent_template_source.update",
     "agent_template_source.remove",

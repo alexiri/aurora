@@ -137,6 +137,35 @@ pub fn key_changed_text(source_name: &str) -> (String, String) {
     )
 }
 
+/// (P6-TPL-2, C-1108) An agent template version reached `pending_approval`.
+pub fn template_version_text(template_name: &str, version: &str) -> (String, String) {
+    (
+        format!(
+            "{} is waiting for review",
+            versioned(template_name, Some(version))
+        ),
+        "A new agent template version was read from its source. Review and approve or reject it; people cannot use it until you approve."
+            .to_owned(),
+    )
+}
+
+/// (P6-TPL-2, C-1108) A version has been `awaiting_package` for more than an hour.
+pub fn template_version_waiting_text(template_name: &str, version: &str) -> (String, String) {
+    (
+        format!(
+            "{} is waiting for its package",
+            versioned(template_name, Some(version))
+        ),
+        "Aurora could not download the version's package yet and retries. The template's current version keeps serving."
+            .to_owned(),
+    )
+}
+
+/// The dashboard page that resolves a template version item (the review screen).
+pub fn template_version_href(template_id: &str, version: &str) -> String {
+    format!("/admin/agent-templates/{template_id}/versions/{version}")
+}
+
 fn down_text(display_name: &str, errored: bool) -> (String, String) {
     (
         format!("{} is not running", name(display_name)),
@@ -220,6 +249,27 @@ pub async fn notify_key_changed(
         "addon_key_changed",
         &source_id.to_string(),
         fingerprint,
+        &t,
+        &d,
+    )
+    .await?;
+    Ok(())
+}
+
+/// (P6-TPL-2, C-1108) An agent template version reached `pending_approval`; written in the
+/// check's final transaction, so the e-mail and the push happen exactly once per admin.
+pub async fn notify_template_version(
+    conn: &mut PgConnection,
+    version_row_id: uuid::Uuid,
+    template_name: &str,
+    version: &str,
+) -> Result<(), aurora_db::DbError> {
+    let (t, d) = template_version_text(template_name, version);
+    repo::record_notices(
+        conn,
+        "agent_template_version",
+        &version_row_id.to_string(),
+        version,
         &t,
         &d,
     )
@@ -317,6 +367,17 @@ pub async fn open_items(s: &AppState) -> Result<Vec<AttentionItem>, ApiError> {
             format!("/admin/apps?tab=advanced#{}", k.id),
         ));
     }
+    // (P6-TPL-2, C-1108) The template versions: one decision item per `pending_approval`
+    // version, then the informative `awaiting_package` ones (older than an hour).
+    for v in repo::template_versions_pending(&s.pool).await? {
+        items.push(item(
+            AttentionKind::AgentTemplateVersion,
+            v.id.to_string(),
+            template_version_text(&v.name, &v.version),
+            v.since,
+            template_version_href(&v.template_id, &v.version),
+        ));
+    }
     // Decisions first, oldest first; the stable sort keeps the kind order within a tie.
     items.sort_by_key(|i| (!i.decision, i.since));
     let mut info = Vec::new();
@@ -336,6 +397,15 @@ pub async fn open_items(s: &AppState) -> Result<Vec<AttentionItem>, ApiError> {
             ownerless_text(&o.slug, o.members),
             o.created_at,
             "/admin/people?tab=organizations".to_owned(),
+        ));
+    }
+    for v in repo::template_versions_awaiting(&s.pool, 3600.0).await? {
+        info.push(item(
+            AttentionKind::AgentTemplateVersion,
+            v.id.to_string(),
+            template_version_waiting_text(&v.name, &v.version),
+            v.since,
+            template_version_href(&v.template_id, &v.version),
         ));
     }
     info.sort_by_key(|i| i.since);

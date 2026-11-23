@@ -562,6 +562,28 @@ pub async fn check_source(
                     true,
                 )
                 .await?;
+                // (C-1022, C-1108) A version that now waits for review is a decision item:
+                // one notice per administrator, exactly once (this transaction).
+                if *status == "pending_approval" {
+                    let name = healthy
+                        .iter()
+                        .find(|(id, _, _, _)| *id == row.agent_template_id)
+                        .map(|(_, _, _, m)| sanitize::one_line(&m.name, 200))
+                        .or_else(|| {
+                            templates
+                                .iter()
+                                .find(|t| t.id == row.agent_template_id)
+                                .map(|t| t.name.clone())
+                        })
+                        .unwrap_or_default();
+                    crate::domains::admin::attention::notify_template_version(
+                        &mut tx,
+                        row.id,
+                        &name,
+                        &row.version,
+                    )
+                    .await?;
+                }
                 events.push(
                     AuditEvent::new(
                         actor.clone(),

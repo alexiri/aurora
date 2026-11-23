@@ -1,9 +1,11 @@
 //! Admin routes for agent template sources (C-1107, P6-TPL-2). All IA, all audited.
 
+use super::admin;
 use super::dto::{
-    AddTemplateSourceRequest, AgentTemplateSource, AgentTemplateSourceList,
-    AgentTemplateSourcePreview, PreviewTemplateSourceRequest, TemplateSourceCheckAll,
-    TemplateSourceCheckResult, UpdateTemplateSourceRequest,
+    AddTemplateSourceRequest, AdminTemplateList, AdminTemplateView, AgentTemplateSource,
+    AgentTemplateSourceList, AgentTemplateSourcePreview, ApproveRequest,
+    PreviewTemplateSourceRequest, TemplateSourceCheckAll, TemplateSourceCheckResult,
+    TemplateVersionDetail, UpdateTemplateRequest, UpdateTemplateSourceRequest,
 };
 use super::{add, check_all, check_now, preview, remove, source_dto, update};
 use crate::app::AppState;
@@ -25,6 +27,12 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_source, delete_source, update_source))
         .routes(routes!(check_all_route))
         .routes(routes!(check_source_route))
+        .routes(routes!(list_templates_route))
+        .routes(routes!(get_version_route))
+        .routes(routes!(avatar_route))
+        .routes(routes!(approve_route))
+        .routes(routes!(reject_route))
+        .routes(routes!(update_template_route))
 }
 
 /// The preview answer is never cached (C-1107, as C-1124)./// The preview answer is never cached (C-1107, as C-1124).
@@ -164,4 +172,113 @@ async fn check_all_route(
     State(s): State<AppState>,
 ) -> Result<Json<TemplateSourceCheckAll>, ApiError> {
     Ok(Json(check_all(&s, &AuditActor::instance_admin(&c)).await?))
+}
+
+// ---- the templates (C-1108) ---------------------------------------------------------------------
+
+/// The templates of every source, with their versions and what they need (instance
+/// administrators).
+#[utoipa::path(get, path = "/admin/agent-templates", operation_id = "adminListTemplates", tag = "agent-templates",
+    responses((status = 200, body = AdminTemplateList), (status = 403, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn list_templates_route(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+) -> Result<Json<AdminTemplateList>, ApiError> {
+    Ok(Json(admin::list_templates(&s).await?))
+}
+
+/// One version of a template: everything the review shows, in full (C-1108).
+#[utoipa::path(get, path = "/admin/agent-templates/{template_id}/versions/{version}", operation_id = "adminGetTemplateVersion", tag = "agent-templates",
+    params(("template_id" = String, Path, description = "Template id"), ("version" = String, Path, description = "Version")),
+    responses((status = 200, body = TemplateVersionDetail), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn get_version_route(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path((template_id, version)): Path<(String, String)>,
+) -> Result<Json<TemplateVersionDetail>, ApiError> {
+    Ok(Json(
+        admin::version_detail(&s, &template_id, &version).await?,
+    ))
+}
+
+/// The version's avatar (C-1108), `image/png` from the stored content.
+#[utoipa::path(get, path = "/admin/agent-templates/{template_id}/versions/{version}/avatar", operation_id = "adminGetTemplateVersionAvatar", tag = "agent-templates",
+    params(("template_id" = String, Path, description = "Template id"), ("version" = String, Path, description = "Version")),
+    responses((status = 200, body = Vec<u8>), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn avatar_route(
+    _c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path((template_id, version)): Path<(String, String)>,
+) -> Result<Response, ApiError> {
+    let bytes = admin::avatar(&s, &template_id, &version).await?;
+    Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response())
+}
+
+/// Approve a version (C-1108): only from `pending_approval`, bound to the reviewed
+/// `content_sha256`.
+#[utoipa::path(post, path = "/admin/agent-templates/{template_id}/versions/{version}/approve", operation_id = "adminApproveTemplateVersion", tag = "agent-templates",
+    params(("template_id" = String, Path, description = "Template id"), ("version" = String, Path, description = "Version")),
+    request_body = ApproveRequest,
+    responses((status = 200, body = TemplateVersionDetail), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
+        (status = 503, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn approve_route(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path((template_id, version)): Path<(String, String)>,
+    Json(req): Json<ApproveRequest>,
+) -> Result<Json<TemplateVersionDetail>, ApiError> {
+    Ok(Json(
+        admin::approve(
+            &s,
+            &AuditActor::instance_admin(&c),
+            &template_id,
+            &version,
+            &req,
+        )
+        .await?,
+    ))
+}
+
+/// Reject a version (C-1108): that version string is never ingested again.
+#[utoipa::path(post, path = "/admin/agent-templates/{template_id}/versions/{version}/reject", operation_id = "adminRejectTemplateVersion", tag = "agent-templates",
+    params(("template_id" = String, Path, description = "Template id"), ("version" = String, Path, description = "Version")),
+    responses((status = 200, body = TemplateVersionDetail), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
+        (status = 503, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn reject_route(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path((template_id, version)): Path<(String, String)>,
+) -> Result<Json<TemplateVersionDetail>, ApiError> {
+    Ok(Json(
+        admin::reject(&s, &AuditActor::instance_admin(&c), &template_id, &version).await?,
+    ))
+}
+
+/// Withdraw a template or offer it again (C-1108): people keep using the current version
+/// while it is offered; the stored versions are untouched.
+#[utoipa::path(patch, path = "/admin/agent-templates/{template_id}", operation_id = "adminUpdateTemplate", tag = "agent-templates",
+    params(("template_id" = String, Path, description = "Template id")),
+    request_body = UpdateTemplateRequest,
+    responses((status = 200, body = AdminTemplateView), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 503, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn update_template_route(
+    c: InstanceAdmin,
+    State(s): State<AppState>,
+    Path(template_id): Path<String>,
+    Json(req): Json<UpdateTemplateRequest>,
+) -> Result<Json<AdminTemplateView>, ApiError> {
+    Ok(Json(
+        admin::set_offered(&s, &AuditActor::instance_admin(&c), &template_id, &req).await?,
+    ))
 }

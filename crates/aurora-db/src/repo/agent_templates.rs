@@ -682,3 +682,149 @@ pub async fn get_version<'e, E: PgExecutor<'e>>(
     .fetch_optional(exec)
     .await?)
 }
+
+/// One version row by its id (the avatar route, the review of the check's writes).
+pub async fn version_by_id<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<VersionRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {VSEL} FROM agent_template_versions WHERE id = $1"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
+}
+
+// ---- the admin list and the review (C-1108) ----------------------------------------------------
+
+/// A template with its source's display name (the admin list's `source: { id, name }`).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TemplateWithSourceRow {
+    #[sqlx(flatten)]
+    pub template: TemplateRow,
+    pub source_name: String,
+}
+
+/// Every template of every source with the source's name, in creation order (C-1108).
+pub async fn all_templates_with_source<'e, E: PgExecutor<'e>>(
+    exec: E,
+) -> Result<Vec<TemplateWithSourceRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT t.id, t.template_id, t.source_id, t.dir, t.name, t.summary, t.head_version,
+            t.head_state, t.head_problems, t.offered, t.removed_upstream, t.created_at,
+            t.updated_at, s.name AS source_name
+         FROM agent_templates t JOIN agent_template_sources s ON s.id = t.source_id
+         ORDER BY t.created_at, t.id",
+    )
+    .fetch_all(exec)
+    .await?)
+}
+
+/// A stored template by its template id (whichever source holds it).
+pub async fn template_by_template_id<'e, E: PgExecutor<'e>>(
+    exec: E,
+    template_id: &str,
+) -> Result<Option<TemplateRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, template_id, source_id, dir, name, summary, head_version, head_state,
+            head_problems, offered, removed_upstream, created_at, updated_at
+         FROM agent_templates WHERE template_id = $1",
+    )
+    .bind(template_id)
+    .fetch_optional(exec)
+    .await?)
+}
+
+/// A version with its decider's display name (the admin list's `decided_by`).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct VersionWithDeciderRow {
+    #[sqlx(flatten)]
+    pub version: VersionRow,
+    pub decided_by_name: Option<String>,
+}
+
+/// The versions of a template, newest first, with the decider's display name (C-1108).
+pub async fn versions_with_decider<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_template_id: Uuid,
+) -> Result<Vec<VersionWithDeciderRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {VSELQ}, u.display_name AS decided_by_name
+         FROM agent_template_versions v
+         LEFT JOIN users u ON u.id = v.decided_by
+         WHERE v.agent_template_id = $1
+         ORDER BY v.created_at DESC, v.id DESC"
+    )))
+    .bind(agent_template_id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// The approved versions of an *offered* template, newest first (the offered version is the
+/// semver-newest of these; the caller picks it, one rule for every reader, C-1108).
+pub async fn approved_versions<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_template_id: Uuid,
+) -> Result<Vec<VersionRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {VSELQ}
+         FROM agent_template_versions v
+         JOIN agent_templates t ON t.id = v.agent_template_id
+         WHERE v.agent_template_id = $1 AND t.offered AND v.status = 'approved'
+         ORDER BY v.created_at DESC, v.id DESC"
+    )))
+    .bind(agent_template_id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Approve a version (C-1108): only from `pending_approval` and only when `content_sha256`
+/// is still the stored one. `Ok(false)` means the row did not match (the caller has already
+/// read it and answers 409 `template_content_changed`).
+pub async fn approve(
+    conn: &mut PgConnection,
+    id: Uuid,
+    content_sha256: &str,
+    decided_by: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE agent_template_versions SET status = 'approved', status_reason = NULL,
+            decided_by = $3, decided_at = now()
+         WHERE id = $1 AND status = 'pending_approval' AND content_sha256 = $2",
+    )
+    .bind(id)
+    .bind(content_sha256)
+    .bind(decided_by)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
+/// Reject a version (C-1108): only from `pending_approval`; that version string is never
+/// ingested again. `Ok(false)` means the row was not in `pending_approval`.
+pub async fn reject(conn: &mut PgConnection, id: Uuid, decided_by: Uuid) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE agent_template_versions SET status = 'rejected', status_reason = NULL,
+            decided_by = $2, decided_at = now()
+         WHERE id = $1 AND status = 'pending_approval'",
+    )
+    .bind(id)
+    .bind(decided_by)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
+/// Withdraw or offer again a template (C-1108's PATCH). The stored versions are untouched:
+/// the offered version is a rule over them.
+pub async fn set_offered(conn: &mut PgConnection, id: Uuid, offered: bool) -> Result<(), DbError> {
+    sqlx::query("UPDATE agent_templates SET offered = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(offered)
+        .execute(conn)
+        .await?;
+    Ok(())
+}

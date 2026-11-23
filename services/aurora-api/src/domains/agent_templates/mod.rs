@@ -4,6 +4,7 @@
 //! (C-1108) and the poll job live in `check`/`poll`; the catalogue (C-1109/C-1110) in
 //! `catalogue`. Everything here mirrors the addon-source code with the signing parts removed.
 
+pub mod admin;
 pub mod check;
 pub mod dto;
 pub mod fetch;

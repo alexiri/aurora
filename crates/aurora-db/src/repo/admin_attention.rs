@@ -223,6 +223,53 @@ pub async fn key_changed_sources<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// An agent template version waiting for a decision (C-1108's attention item).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TemplateVersionAttention {
+    /// The version row's id (the notice subject, the item's subject id).
+    pub id: Uuid,
+    pub agent_template_id: Uuid,
+    /// The template's id (`template.yaml` `id`, the admin routes' path part).
+    pub template_id: String,
+    /// The template's display name (the sentence).
+    pub name: String,
+    pub version: String,
+    pub since: DateTime<Utc>,
+}
+
+/// Every version in `pending_approval`, oldest first (C-1108: one decision item each).
+pub async fn template_versions_pending<'e, E: PgExecutor<'e>>(
+    exec: E,
+) -> Result<Vec<TemplateVersionAttention>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT v.id, v.agent_template_id, t.template_id, t.name, v.version, v.created_at AS since
+         FROM agent_template_versions v
+         JOIN agent_templates t ON t.id = v.agent_template_id
+         WHERE v.status = 'pending_approval'
+         ORDER BY v.created_at, v.id",
+    )
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Versions of offered sources that have been `awaiting_package` for more than `age_secs`
+/// (C-1108: an attention item without decision), oldest first.
+pub async fn template_versions_awaiting<'e, E: PgExecutor<'e>>(
+    exec: E,
+    age_secs: f64,
+) -> Result<Vec<TemplateVersionAttention>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT v.id, v.agent_template_id, t.template_id, t.name, v.version, v.created_at AS since
+         FROM agent_template_versions v
+         JOIN agent_templates t ON t.id = v.agent_template_id
+         WHERE v.status = 'awaiting_package' AND v.created_at < now() - make_interval(secs => $1)
+         ORDER BY v.created_at, v.id",
+    )
+    .bind(age_secs)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// A managed connector that is not being served.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct DownConnector {

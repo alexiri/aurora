@@ -99,6 +99,8 @@ pub enum AttentionKind {
     ConnectorApproval,
     /// A package version in `pending_approval`.
     PackageApproval,
+    /// (P6-TPL-2, C-1108) An agent template version in `pending_approval`.
+    AgentTemplateVersion,
     /// An add-on source whose signing key changed.
     AddonKeyChanged,
     /// Two packages claim the same host; one waits for a winner.

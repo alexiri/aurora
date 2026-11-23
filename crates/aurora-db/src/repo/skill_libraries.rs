@@ -171,6 +171,18 @@ pub async fn list_instance_libraries(conn: &mut PgConnection) -> Result<Vec<Libr
     .await?)
 }
 
+/// `(url, ref, path)` of every library that has a normalized address (P6-TPL-2: the template
+/// views' `added_here` and C-1142's resolution).
+pub async fn all_addresses<'e, E: sqlx::PgExecutor<'e>>(
+    exec: E,
+) -> Result<Vec<(Option<String>, Option<String>, String)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT url, ref, path FROM skill_libraries WHERE url IS NOT NULL ORDER BY id",
+    )
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Libraries of the scope: an organization's, or (`None`) the instance's.
 pub async fn count_libraries(conn: &mut PgConnection, org: Option<Uuid>) -> Result<i64, DbError> {
     Ok(sqlx::query_scalar(

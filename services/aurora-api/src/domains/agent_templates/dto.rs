@@ -4,6 +4,7 @@
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -409,4 +410,304 @@ pub struct TemplateSourceCheckResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct TemplateSourceCheckAll {
     pub items: Vec<TemplateSourceCheckResult>,
+}
+
+// ---- the admin templates list and the review (C-1108) ------------------------------------------
+
+/// A text file of a stored version (C-1108's `FileView`): `text` for valid UTF-8 up to
+/// 256 KiB (which includes every executable file, C-1141), else null.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct FileView {
+    pub path: String,
+    pub size: i64,
+    pub executable: bool,
+    pub sha256: String,
+    pub text: Option<String>,
+}
+
+/// The byte cap under which a file is shown as text (C-1108, `FileView`).
+pub(crate) const FILE_TEXT_MAX: usize = 256 * 1024;
+
+impl FileView {
+    /// From the content column's file shape (`{ path, size, executable, sha256, bytes }`,
+    /// the bytes base64): decodes the bytes and cuts the text by the cap.
+    fn from_json(f: &Value) -> Option<Self> {
+        let bytes = B64
+            .decode(f.get("bytes")?.as_str()?)
+            .ok()
+            .unwrap_or_default();
+        let size = f.get("size").and_then(Value::as_i64).unwrap_or(0);
+        let executable = f
+            .get("executable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let sha256 = f
+            .get("sha256")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let text = std::str::from_utf8(&bytes)
+            .ok()
+            .filter(|_| bytes.len() <= FILE_TEXT_MAX)
+            .map(str::to_owned);
+        Some(Self {
+            path: f.get("path")?.as_str()?.to_owned(),
+            size,
+            executable,
+            sha256,
+            text,
+        })
+    }
+}
+
+/// A skill of a stored version (the review, C-1108).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ContentSkillView {
+    pub name: String,
+    pub use_it_when: String,
+    pub body: String,
+    pub files: Vec<FileView>,
+}
+
+/// A memory of a stored version (C-1151's `locked` shown in the review).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ContentMemoryView {
+    pub key: String,
+    pub content: String,
+    pub locked: bool,
+}
+
+/// The agent line of a stored version (C-1108's `TemplateContentView.agent`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ContentAgentView {
+    pub name: String,
+    pub may_message_first: bool,
+}
+
+/// Everything a version would tell or give an agent, in full, as data (C-1108's
+/// `TemplateContentView`): decoded from the stored content, never re-read from the source.
+/// `inputs`, `apps`, `skill_refs` and `automations` are C-1104's shapes, passed through as
+/// stored (the review renders them; P6-TPL-3's creation reads them back the same way).
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct TemplateContentView {
+    pub name: String,
+    pub summary: String,
+    /// The template's `README.md`, in full.
+    pub readme: String,
+    pub effort: Option<String>,
+    pub min_core: Option<String>,
+    pub agent: ContentAgentView,
+    pub instructions: String,
+    pub inputs: Vec<Value>,
+    pub apps: Vec<Value>,
+    pub skills: Vec<ContentSkillView>,
+    pub skill_refs: Vec<Value>,
+    pub helpers: Vec<FileView>,
+    pub memories: Vec<ContentMemoryView>,
+    pub automations: Vec<Value>,
+    pub has_avatar: bool,
+}
+
+impl TemplateContentView {
+    /// Decode the content column's JSON (dto::content_json's shape) back into the view.
+    /// `None` for a shape that does not decode (never written by this version's encoder).
+    pub(crate) fn from_json(v: &Value) -> Option<Self> {
+        let meta = v.get("meta")?;
+        let str_of = |k: &str| meta.get(k).and_then(Value::as_str);
+        Some(Self {
+            name: str_of("name")?.to_owned(),
+            summary: str_of("summary")?.to_owned(),
+            readme: v.get("readme")?.as_str()?.to_owned(),
+            effort: meta
+                .get("effort")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            min_core: meta
+                .get("min_core")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            agent: ContentAgentView {
+                name: v.get("agent_name")?.as_str()?.to_owned(),
+                may_message_first: v
+                    .get("may_message_first")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            },
+            instructions: v.get("instructions")?.as_str()?.to_owned(),
+            inputs: meta
+                .get("inputs")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            apps: meta
+                .get("apps")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            skills: v
+                .get("skills")?
+                .as_array()?
+                .iter()
+                .map(|s| -> Option<ContentSkillView> {
+                    Some(ContentSkillView {
+                        name: s.get("name")?.as_str()?.to_owned(),
+                        use_it_when: s.get("use_it_when")?.as_str()?.to_owned(),
+                        body: s.get("body")?.as_str()?.to_owned(),
+                        files: s
+                            .get("files")?
+                            .as_array()?
+                            .iter()
+                            .map(FileView::from_json)
+                            .collect::<Option<Vec<_>>>()?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+            skill_refs: meta
+                .get("skill_refs")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            helpers: v
+                .get("helpers")?
+                .as_array()?
+                .iter()
+                .map(FileView::from_json)
+                .collect::<Option<Vec<_>>>()?,
+            memories: v
+                .get("memories")?
+                .as_array()?
+                .iter()
+                .map(|m| -> Option<ContentMemoryView> {
+                    Some(ContentMemoryView {
+                        key: m.get("key")?.as_str()?.to_owned(),
+                        content: m.get("content")?.as_str()?.to_owned(),
+                        locked: m.get("locked").and_then(Value::as_bool).unwrap_or(false),
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+            automations: v
+                .get("automations")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            has_avatar: v.get("avatar").map(|a| !a.is_null()).unwrap_or(false),
+        })
+    }
+
+    /// The avatar's PNG bytes (the content column's `avatar.bytes`, base64).
+    pub(crate) fn avatar_bytes(v: &Value) -> Option<Vec<u8>> {
+        B64.decode(v.get("avatar")?.get("bytes")?.as_str()?).ok()
+    }
+}
+
+/// Who decided a version (`decided_by`: id and display name, null when not decided yet).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct DecidedByView {
+    pub id: Uuid,
+    pub display_name: String,
+}
+
+/// One row of the admin list's `versions` (C-1108, newest first).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct TemplateVersionListItem {
+    pub version: String,
+    /// `awaiting_package` | `pending_approval` | `approved` | `rejected` | `invalid`.
+    pub status: String,
+    pub status_reason: Option<String>,
+    pub commit_sha: String,
+    pub size_bytes: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub decided_at: Option<DateTime<Utc>>,
+    pub decided_by: Option<DecidedByView>,
+}
+
+/// An app the template's apps entries name, and whether the instance has it (C-1108).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct NeedsAppView {
+    pub app_id: String,
+    pub installed: bool,
+}
+
+/// A skill library the template references, and whether one is added here (C-1108).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct NeedsLibraryView {
+    pub url: String,
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+    pub path: String,
+    pub added_here: bool,
+}
+
+/// One template of the admin list (C-1108): the stored rows, the offered version and what
+/// the current version needs.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct AdminTemplateView {
+    pub template_id: String,
+    pub name: String,
+    pub summary: String,
+    pub source: AdminTemplateSourceRef,
+    pub offered: bool,
+    pub removed_upstream: bool,
+    pub head_version: Option<String>,
+    /// `ok` | `needs_newer_aurora` | `invalid`.
+    pub head_state: String,
+    pub head_problems: Option<Value>,
+    /// The offered version (newest `approved`, C-1108), null when none is approved.
+    pub current_version: Option<String>,
+    pub versions: Vec<TemplateVersionListItem>,
+    pub needs_apps: Vec<NeedsAppView>,
+    pub needs_libraries: Vec<NeedsLibraryView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct AdminTemplateSourceRef {
+    pub id: Uuid,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct AdminTemplateList {
+    pub items: Vec<AdminTemplateView>,
+}
+
+/// The source behind a version (C-1108's `TemplateVersionDetail.source`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct VersionSourceView {
+    pub id: Uuid,
+    pub name: String,
+    /// The repository's display form (`host[:port]/path`).
+    pub repo: String,
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+    pub path: String,
+}
+
+/// One version of a template, everything the review shows (C-1108).
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct TemplateVersionDetail {
+    pub template_id: String,
+    pub version: String,
+    pub status: String,
+    pub status_reason: Option<String>,
+    pub commit_sha: String,
+    pub source: VersionSourceView,
+    pub content_sha256: Option<String>,
+    pub archive_sha256: Option<String>,
+    pub size_bytes: Option<i32>,
+    pub content: Option<TemplateContentView>,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApproveRequest {
+    /// The hash the review showed; it must still be the stored one.
+    pub content_sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateTemplateRequest {
+    /// Withdraw (`false`) or offer again (`true`).
+    pub offered: bool,
 }
