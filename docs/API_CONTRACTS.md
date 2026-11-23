@@ -2829,6 +2829,13 @@ Rule: `docs/tasks/P6-TEMPLATES.md` (design), `docs/25-agent-templates.md` (the p
   - Authorization is untouched: thread links, space bindings (`message.rs` `authorized`, `messaging.rs`), `bind <handle>`, Attach (C-34) and the dashboard keep `can_use`/`can_own`.
   - Labels: picker options read `Name (@handle) · Workspace` (the workspace part is shortened first when the 80-character label bound bites); the text fallback lists `` `handle` (Name · Workspace) ``; the `agents` reply shows `` `handle` (Name · Workspace) ``. `use <handle>` with several own matches writes nothing, replies with the matches and `<external_url>/account/channels` (inbox outcome `use_ambiguous`).
 
+- C-1158 **A refused OAuth sign-in says what the provider answered** (FIX-232, D-475; amends C-842 and C-14; no route, migration or OpenAPI change).
+  - **When.** The error code stays `oauth_exchange_failed`. A refusal is attached only when the flow is bound to the caller (the landing is known; an unbound or tampered flow still reveals nothing). There are two stages: `authorize`, when the provider sends the person back with `error` (and `error_description`) on the callback; and `token`, when the code exchange answers non-2xx or cannot be reached.
+  - **Shape.** `reason: { stage: "authorize" | "token", status?: number /* the token endpoint's HTTP status; absent at authorize and when unreachable */, error?: string /* the OAuth error code */, provider_code?: string }`. `error` is a fixed identifier: at most 64 characters of `[A-Za-z0-9_.-]`, otherwise dropped. `provider_code` is the provider's own error number at the start of `error_description`, before the first colon, as Microsoft Entra writes it (`AADSTS50194: …`): 1–32 ASCII letters and digits with at least one of each, otherwise absent. Nothing else of the provider's answer reaches the page or the dashboard.
+  - **Page.** The failure page adds one escaped line: "The provider refused the sign-in: <codes>." (authorize), "The provider refused the token request (HTTP <status>): <codes>." (token), or "The provider's token endpoint could not be reached." `<codes>` is `provider_code, error`, whichever are present. The channel message becomes `{ type: "aurora:connect-failed", app_id?, error, reason? }`.
+  - **Dashboard.** The waiting dialog shows "The sign-in did not complete (<error>)." followed by the same sentence. Without a `reason` it adds "Try again." as before.
+  - **Log.** The API logs one `warn` ("the provider refused the OAuth sign-in") with `app_id`, `stage`, `status`, `error`, `provider_code` and the `error_description` with control characters removed, cut to 300 characters. The description goes to the server log only.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._
