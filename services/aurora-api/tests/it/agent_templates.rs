@@ -898,6 +898,14 @@ async fn bad_packages_turn_invalid_with_the_right_reason() {
         ]
     );
     assert_eq!(w.audit_critical("agent_template.ingest").await, 3);
+
+    // A broken package is stored invalid once and never retried: the head is stored, the
+    // next check is up_to_date and touches nothing.
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "up_to_date", "{out}");
+    assert_eq!(out["ingested"], json!([]), "{out}");
+    assert_eq!(w.versions().await.len(), 3);
+    assert_eq!(w.audit_critical("agent_template.ingest").await, 3);
 }
 
 #[tokio::test]
@@ -1213,6 +1221,33 @@ async fn the_poll_claims_due_sources_only() {
     .await
     .unwrap();
     assert!(checked.is_some() && lease.is_none() && owner.is_none());
+}
+
+/// (C-1107, C-598's shape) Two replicas polling at once claim the due source once: one
+/// ingests, the other finds the lease taken; the versions and the audit rows are written once.
+#[tokio::test]
+async fn two_replicas_polling_at_once_claim_a_due_source_once() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query("UPDATE agent_template_sources SET next_check_at = now() - interval '1 second'")
+        .bind(id)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let state = w.h.state.clone();
+    let (a, b) = tokio::join!(poll::poll_once(&state), poll::poll_once(&state));
+    let claimed = a.unwrap() + b.unwrap();
+    assert_eq!(claimed, 1, "the two replicas together claim it once");
+    assert_eq!(
+        w.versions().await,
+        vec![("1.0.0".into(), "pending_approval".into(), None)]
+    );
+    assert_eq!(w.audit_critical("agent_template.ingest").await, 1);
+    // The lease is released, so the next poll finds nothing due.
+    assert_eq!(poll::poll_once(&state).await.unwrap(), 0);
 }
 
 #[tokio::test]
