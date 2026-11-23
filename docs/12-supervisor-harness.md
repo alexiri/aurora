@@ -854,6 +854,8 @@ The home (`/workspace`) holds:
    paths the harness declares, `.aurora/` (tool catalogue cache, inbox
    attachments), (phase 5, P5-GUIDE-2) `.aurora/apps/<app_id>/` (the files Aurora writes for each
    connected app: `app.md`, `tools.md`, `api.json`, 0444 in 0555 directories; `24 §5`, `§7`);
+   (phase 6, P6-TPL-6, C-1143) `.aurora/helpers/<path>` (a template's helper files, read-only to
+   the agent: files `0555` when executable, else `0444`, in `0555` directories);
    (P5-APPSKILL-2, C-1134) the app skills of the agent are ordinary entries of the `skills`
    projection (lowest tier, `0555` for a script, else `0444`).
    (P5-SKILLDIR, D-454, C-1140) The skills folder is exported as `SKILLS_DIR`
@@ -873,7 +875,9 @@ The home (`/workspace`) holds:
   (preamble data, brief, capability fragment inputs: apps with snippets and
   docs links, presences, peers, memory language, (P6-MEMLOCK, C-1151) `memory_locked` when the
   agent holds at least one locked memory, schedules summary, timezone),
-  `tools` (catalogue), (phase 5, P5-GUIDE-2) `apps` (the app folders' generated files, below), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
+  `tools` (catalogue), (phase 5, P5-GUIDE-2) `apps` (the app folders' generated files, below),
+  (phase 6, P6-TPL-6, C-1143) `helpers` (the agent's template helper files, below, between `apps`
+  and `previews`), (phase 4, P4-PRV-1) `previews` (the active preview shares, held in memory only, `§Previews`), `manifest` (the complete list of managed paths), `final`.
 - (phase 5, P5-GUIDE-2, D-171, SEC-117, `24 §7`) **`apps` parts** carry file entries
   `{ path, content }` (the entry shape of `skills`) for `.aurora/apps/<app_id>/<file>`: the
   files the API renders per connected app (`app.md`, `tools.md`, and from P5-GUIDE-6
@@ -889,6 +893,20 @@ The home (`/workspace`) holds:
   supervisor that gets no `guide_path` (an older API) renders as before. A sync that changes
   only files under `.aurora/apps/` leaves the instruction files byte-identical and therefore
   releases no idle session.
+- (phase 6, P6-TPL-6, C-1143) **`helpers` parts** carry file entries in the shape of `skills`
+  (`{ path, content, exec? }`) for `.aurora/helpers/<path>`: the template helper files stored
+  with the agent (`agent_helper_files`, written only by the API's template create/update and
+  the remove route — no agent tool exists). `.aurora/helpers/` is a **managed root**: an entry
+  is accepted only below it, with the C-1141 helper path rules (at most 4 segments below the
+  root, no `..`, no hidden or empty segment); a refused entry is a warning, never a write
+  elsewhere. Files are installed `0555` when executable and `0444` otherwise, in `0555`
+  directories, and the root is pruned to the manifest at commit, so a removed helper
+  disappears. When the agent has any, `render_inputs` carries
+  `helpers: { dir: ".aurora/helpers", count }` and the capability fragment says: "Helper files
+  from your template are in `.aurora/helpers/` (read-only). Run or read them from there." A
+  sync that changes only helper files leaves the instruction files byte-identical when the
+  count is unchanged. An older supervisor skips the kind, which only means no helper files; an
+  older API sends no part and no fragment, and the supervisor renders as before.
 - The supervisor applies each part idempotently without buffering; only the
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves

@@ -5,6 +5,9 @@
 
 use crate::common::*;
 use aurora_api::domains::agent_helpers::service::{self, HelperFile};
+use aurora_db::repo::agent_helpers as helpers_repo;
+use aurora_db::repo::hosted::HomeSyncClaim;
+use aurora_protocol::runner::{HomeSync, HomeSyncKind, MAX_HOME_SYNC_PART};
 use axum::body::Body;
 use http::{HeaderMap, Method, StatusCode};
 use http_body_util::BodyExt;
@@ -329,4 +332,169 @@ async fn another_workspaces_member_gets_404() {
         .await;
     assert_eq!(s, 404);
     assert_eq!(w.helper_count(a).await, 1);
+}
+
+// ----------------------------------------------------------- the `helpers` home-sync part (C-1143)
+
+impl W {
+    /// The real home-sync renderer's parts for `agent`.
+    async fn render_parts(&self, agent: Uuid) -> Vec<HomeSync> {
+        let mut conn = self.h.pool().acquire().await.unwrap();
+        let claim = HomeSyncClaim {
+            sandbox_id: Uuid::now_v7(),
+            boot_id: Uuid::now_v7(),
+            agent_id: agent,
+            generation: 7,
+            harness_id: None,
+        };
+        aurora_api::domains::hosted::home::render(&self.h.state, &mut conn, &claim)
+            .await
+            .unwrap()
+    }
+
+    /// Insert one helper row directly (bypassing the writer's path rules), for the projection
+    /// cases the writer refuses or skips.
+    async fn seed_raw(&self, agent: Uuid, path: &str, content: &[u8], executable: bool) {
+        let mut conn = self.h.pool().acquire().await.unwrap();
+        helpers_repo::insert(
+            &mut conn,
+            agent,
+            path,
+            content,
+            executable,
+            &hex::encode(Sha256::digest(content)),
+        )
+        .await
+        .unwrap();
+    }
+}
+
+fn helpers_parts(parts: &[HomeSync]) -> Vec<&HomeSync> {
+    parts
+        .iter()
+        .filter(|p| p.part.kind == HomeSyncKind::Helpers)
+        .collect()
+}
+
+fn render_inputs_of(parts: &[HomeSync]) -> Value {
+    parts
+        .iter()
+        .find(|p| p.part.kind == HomeSyncKind::RenderInputs)
+        .unwrap()
+        .part
+        .entries[0]
+        .clone()
+}
+
+/// The `helpers` part carries the agent's helper files at `.aurora/helpers/<path>` in the skills
+/// file-entry shape, the manifest lists the paths, `render_inputs.helpers` names the dir and the
+/// count, and the part sits between `apps` and `previews`. An agent without helpers has no part
+/// and no fragment.
+#[tokio::test]
+async fn helpers_part_entries_manifest_and_render_inputs() {
+    let w = world().await;
+    let a = w.agent("h1").await;
+
+    // No helpers: no part, no fragment.
+    let parts = w.render_parts(a).await;
+    assert!(helpers_parts(&parts).is_empty());
+    assert!(render_inputs_of(&parts).get("helpers").is_none());
+
+    w.seed(
+        a,
+        &[
+            f("docs/readme.md", b"# helpers\n", false),
+            f("run.sh", b"#!/bin/sh\necho hi\n", true),
+        ],
+    )
+    .await;
+    let parts = w.render_parts(a).await;
+    let hp = helpers_parts(&parts);
+    assert_eq!(hp.len(), 1, "small sets ride in one part");
+    let entries = &hp[0].part.entries;
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    assert_eq!(
+        entries[0],
+        json!({
+            "path": ".aurora/helpers/docs/readme.md",
+            "content": "# helpers\n",
+            "exec": false,
+        })
+    );
+    assert_eq!(
+        entries[1],
+        json!({
+            "path": ".aurora/helpers/run.sh",
+            "content": "#!/bin/sh\necho hi\n",
+            "exec": true,
+        })
+    );
+    // The manifest lists both paths and only the manifest's paths survive the commit.
+    let manifest = &parts
+        .iter()
+        .find(|p| p.part.kind == HomeSyncKind::Manifest)
+        .unwrap()
+        .part
+        .entries;
+    assert!(
+        manifest.contains(&json!({"path": ".aurora/helpers/run.sh"})),
+        "{manifest:?}"
+    );
+    assert!(
+        manifest.contains(&json!({"path": ".aurora/helpers/docs/readme.md"})),
+        "{manifest:?}"
+    );
+    // `render_inputs.helpers` names the dir and the projected count.
+    assert_eq!(
+        render_inputs_of(&parts)["helpers"],
+        json!({"dir": ".aurora/helpers", "count": 2})
+    );
+    // Between `render_inputs` and `manifest` (apps may be absent; previews, when present, come
+    // after; the manifest and final parts are last).
+    let idx = |k: HomeSyncKind| parts.iter().position(|p| p.part.kind == k).unwrap();
+    assert!(idx(HomeSyncKind::RenderInputs) < idx(HomeSyncKind::Helpers));
+    assert!(idx(HomeSyncKind::Helpers) < idx(HomeSyncKind::Manifest));
+}
+
+/// Parts split under `HOME_SYNC_PART_MAX` as the other kinds do, every entry still delivered,
+/// and a non-UTF-8 helper is skipped with a warning (content travels as UTF-8 text exactly as
+/// skills carry it) — it stays listed and readable through the API.
+#[tokio::test]
+async fn helpers_split_across_parts_and_non_utf8_is_skipped() {
+    let w = world().await;
+    let a = w.agent("h1").await;
+    // Four ~80 KiB files: over one part, each entry well under it.
+    let chunk = vec![b'a'; 80 * 1024];
+    w.seed(
+        a,
+        &[
+            f("a1.bin", &chunk, false),
+            f("a2.bin", &chunk, false),
+            f("a3.bin", &chunk, false),
+            f("a4.bin", &chunk, false),
+        ],
+    )
+    .await;
+    // A binary helper: stored, listed, downloadable — but not projected.
+    w.seed_raw(a, "blob.bin", &[0xff, 0x00, 0xfe, 0x01], false)
+        .await;
+
+    let parts = w.render_parts(a).await;
+    let hp = helpers_parts(&parts);
+    assert!(hp.len() > 1, "the set must split, got {}", hp.len());
+    let mut seen: Vec<Value> = Vec::new();
+    for p in &hp {
+        assert!(p.part.entries.len() <= MAX_HOME_SYNC_PART);
+        seen.extend(p.part.entries.iter().cloned());
+    }
+    assert_eq!(seen.len(), 4, "{seen:?}");
+    for (i, e) in seen.iter().enumerate() {
+        assert_eq!(e["path"], format!(".aurora/helpers/a{}.bin", i + 1));
+        assert_eq!(e["exec"], false);
+    }
+    assert_eq!(
+        render_inputs_of(&parts)["helpers"]["count"],
+        json!(4),
+        "the count is the projected one"
+    );
 }

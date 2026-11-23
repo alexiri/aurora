@@ -1,7 +1,8 @@
 //! Home projection rendering (docs/12 §Home projection / §Sync protocol). Produces exactly the
 //! entry shapes documented in `services/aurora-supervisor/src/home.rs`:
 //! `skills {path, content, exec?}`, `memory {path, content}`, `render_inputs` objects keyed by
-//! the supervisor's `RenderInputs` fields, `tools` (catalogue entries), `manifest {path}`.
+//! the supervisor's `RenderInputs` fields, `tools` (catalogue entries), `helpers {path, content,
+//! exec}` at `.aurora/helpers/<path>` (C-1143), `manifest {path}`.
 //! No credential is ever rendered (SEC-01).
 
 use crate::app::AppState;
@@ -726,6 +727,10 @@ fn projectable(sk: &AppSkill) -> Option<Vec<&aurora_registry::snapshot::SkillFil
 /// Home-relative root of the app folders (C-643).
 const APPS_ROOT: &str = ".aurora/apps";
 
+/// Home-relative root of the helper files (P6-TPL-6, C-1143): a managed root, read-only to the
+/// agent, pruned to the manifest at commit.
+const HELPERS_ROOT: &str = ".aurora/helpers";
+
 /// The one line the instruction file shows for an app: `agent.summary`, else `about.description`,
 /// clamped to one line (`24 §3.1`). Null when the app has neither.
 fn agent_summary(app: &aurora_registry::snapshot::AppEntry) -> Value {
@@ -851,6 +856,31 @@ pub async fn render(
             }
         }
     }
+    // (P6-TPL-6, C-1143) The `helpers` part: the agent's template helper files at
+    // `.aurora/helpers/<path>`, in the skills file-entry shape (content encoding and
+    // executable bit as there). Content travels as UTF-8 text exactly as skills carry it; a
+    // non-UTF-8 helper is skipped with a warning (it stays stored, listed and readable through
+    // the API — it is only not projected). The `render_inputs.helpers` fragment names the dir
+    // and the projected count, so the supervisor's instruction file mentions the root only
+    // when there is something in it.
+    let mut helper_entries: Vec<Value> = Vec::new();
+    for h in aurora_db::repo::agent_helpers::list(&mut *conn, claim.agent_id).await? {
+        let Ok(text) = String::from_utf8(h.content) else {
+            tracing::warn!(path = %h.path, "non-UTF-8 helper file not projected");
+            continue;
+        };
+        let path = format!("{HELPERS_ROOT}/{}", h.path);
+        manifest.push(json!({"path": path}));
+        helper_entries.push(json!({"path": path, "content": text, "exec": h.executable}));
+    }
+    if !helper_entries.is_empty()
+        && let Some(o) = render_inputs.as_object_mut()
+    {
+        o.insert(
+            "helpers".into(),
+            json!({"dir": HELPERS_ROOT, "count": helper_entries.len()}),
+        );
+    }
     // (P5-GUIDE-7, C-654) The catalogue of the agent's available tools, and from it the family
     // index of the instruction file.
     let catalogue = crate::domains::tools::catalogue(state, claim.agent_id).await?;
@@ -930,6 +960,9 @@ pub async fn render(
     });
     pack(HomeSyncKind::Tools, tools, &mut parts);
     pack(HomeSyncKind::Apps, app_entries, &mut parts);
+    // (P6-TPL-6, C-1143) Between `apps` and `previews`, as the contract places the kind. Empty
+    // when the agent has no helper files (no part at all, like the other file kinds).
+    pack(HomeSyncKind::Helpers, helper_entries, &mut parts);
     // Always present when the instance runs previews (even with no shares, org-off, frozen or
     // not — FIX-042): the single entry replaces the supervisor's in-memory list as a whole, so a
     // pause/delete/off switch reaches it on the next sync. When the instance is off the part

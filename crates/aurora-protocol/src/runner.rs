@@ -95,6 +95,9 @@ open_vocab! {
         Tools = "tools",
         // (phase 5, P5-GUIDE-2, C-643) The app folders `.aurora/apps/<app_id>/<file>`.
         Apps = "apps",
+        // (phase 6, P6-TPL-6, C-1143) The agent's template helper files, projected read-only at
+        // `.aurora/helpers/<path>`; a managed root the supervisor prunes at commit.
+        Helpers = "helpers",
         // (phase 4, P4-PRV-1, D-144) The active preview shares; held in supervisor memory only.
         Previews = "previews",
         Manifest = "manifest", Final = "final",
