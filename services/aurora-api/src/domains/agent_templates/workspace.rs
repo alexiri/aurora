@@ -26,6 +26,7 @@ use crate::domains::agent_templates::dto::{
 };
 use crate::domains::apps::service as apps;
 use crate::domains::skill_libraries;
+use crate::domains::skills;
 use crate::http::auth::Caller;
 
 use super::org::ensure_enabled;
@@ -403,12 +404,25 @@ impl<'a> Resolver<'a> {
             });
         };
         match listing.items.iter().find(|i| i.name == r.name) {
-            Some(i) if i.valid => Ok(Resolved {
-                available: true,
-                unavailable_reason: None,
-                matched: Some((row, listing.commit_sha.clone())),
-                dir: Some(i.path.clone()),
-            }),
+            Some(i) if i.valid => {
+                // The agent-tier library budget (C-1142's `over_budget`): the gallery answers
+                // from the listing's byte size; the plan re-checks the loaded content's exact
+                // budget unit.
+                if !skills::library::agent_tier_fits(self.state, i.size as usize) {
+                    return Ok(Resolved {
+                        available: false,
+                        unavailable_reason: Some("over_budget"),
+                        matched: None,
+                        dir: None,
+                    });
+                }
+                Ok(Resolved {
+                    available: true,
+                    unavailable_reason: None,
+                    matched: Some((row, listing.commit_sha.clone())),
+                    dir: Some(i.path.clone()),
+                })
+            }
             _ => Ok(Resolved {
                 available: false,
                 unavailable_reason: Some("skill_not_in_library"),
@@ -634,13 +648,19 @@ pub async fn plan(
     let mut resolver = Resolver::new(state, ctx.org, ctx.ws).await?;
     let mut refs = Vec::with_capacity(parsed.refs.len());
     for (index, r) in parsed.refs.iter().enumerate() {
-        let x = resolver.resolve(r).await?;
+        let mut x = resolver.resolve(r).await?;
         let (library, content_brief) = match (&x.matched, x.available) {
             (Some((row, commit)), true) => {
                 let dir = x.dir.clone().unwrap_or_default();
                 let c =
                     skill_libraries::service::skill_content(state, row, &dir, Some(commit)).await?;
                 if !c.valid {
+                    (None, None)
+                } else if !skills::library::agent_tier_fits(state, c.size) {
+                    // The loaded content's exact budget unit does not fit the agent tier
+                    // (C-1142's `over_budget`); the listing's estimate had let it through.
+                    x.available = false;
+                    x.unavailable_reason = Some("over_budget");
                     (None, None)
                 } else {
                     let view = ResolvedLibraryView {

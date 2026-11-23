@@ -132,6 +132,22 @@ async fn check_budget(
     Ok(())
 }
 
+/// Whether the agent tier could hold one more library skill of `add_size` budget units
+/// (C-1142's `over_budget` in the template catalogue): the add path's own limits, for a
+/// not-yet-existing agent (its usage is zero). The write itself is re-checked by the add
+/// path (C-1111).
+#[must_use]
+pub(crate) fn agent_tier_fits(state: &AppState, add_size: usize) -> bool {
+    let l = limits_of(
+        state,
+        Owner {
+            agent: Some(Uuid::nil()),
+            workspace: None,
+        },
+    );
+    add_size <= l.bytes && l.skills > 0
+}
+
 async fn lock_budget(conn: &mut PgConnection, org: Uuid, owner: Owner) -> Result<(), ApiError> {
     let key = format!(
         "skill_library_budget:{org}:{:?}:{:?}",

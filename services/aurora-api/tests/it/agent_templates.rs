@@ -29,7 +29,12 @@ struct W {
 }
 
 async fn world() -> W {
-    let mut h = Harness::with_config(|_| {}).await;
+    world_with(|_| {}).await
+}
+
+/// [`world`] with an instance-config mutation (the kill switch, the library budgets).
+async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> W {
+    let mut h = Harness::with_config(mutate).await;
     let git = GitServer::start().await;
     // Every origin is mapped to the git server (the reader still decides by the logical URL
     // which origin gets the token and which addresses are allowed).
@@ -1571,6 +1576,236 @@ async fn the_plan_resolves_apps_and_skill_references() {
     assert_eq!(v["items"].as_array().unwrap().len(), 0, "{v}");
     let (s, _) = ws_get(&w, ws, &owner, "/t2").await;
     assert_eq!(s, 404);
+}
+
+// ---- the catalogue availability reasons (C-1110, C-1142) ----------------------------------------
+
+#[tokio::test]
+async fn the_plan_names_why_an_app_or_a_skill_is_not_available() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+
+    // The rich template: one required app (nothing installed), a library reference and an
+    // organization reference.
+    w.git.add_repo("acme/tpl2");
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        manifest_yaml().into_bytes(),
+    )];
+    for (p, b) in rich_files("t2", "1.0.0") {
+        changes.push(put(p, b));
+    }
+    w.git.commit("acme/tpl2", "main", &changes);
+    w.git
+        .serve_file("pkg/t2-1.0.0.zip", rich_pack("t2", "1.0.0"));
+    let src = w.add_source("acme/tpl2", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("t2", "1.0.0").await;
+
+    // No library is added yet, the organization skill is missing, the app is not installed.
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["skill_refs"][0]["unavailable_reason"], "library_not_added",
+        "{v}"
+    );
+    assert_eq!(
+        v["skill_refs"][1]["unavailable_reason"], "not_in_organization",
+        "{v}"
+    );
+    assert_eq!(
+        v["entries"][0]["choices"][0]["unavailable_reason"], "not_installed",
+        "{v}"
+    );
+    assert_eq!(v["ready"], false, "{v}");
+    let (_, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(v["items"][0]["skill_refs"][0]["available"], false, "{v}");
+
+    // A library that does not carry the skill: skill_not_in_library.
+    w.git.add_repo("acme/skills");
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "beta/SKILL.md".into(),
+            b"---\ndescription: Beta skill\n---\n\nBeta body.\n".to_vec(),
+        )],
+    );
+    let (s, lib) =
+        w.h.call(
+            &owner,
+            Method::POST,
+            &format!("/v1/orgs/{org}/skill-libraries"),
+            Some(json!({"label": "lib", "url": format!("{GIT_ORIGIN}/acme/skills")})),
+        )
+        .await;
+    assert_eq!(s, 201, "{lib}");
+    let lib: Uuid = lib["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["skill_refs"][0]["unavailable_reason"], "skill_not_in_library",
+        "{v}"
+    );
+    assert_eq!(v["skill_refs"][0]["library"], json!(null), "{v}");
+
+    // The skill appears at the library's head; any patch forgets the browse cache: available,
+    // with the content the plan shows.
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "alpha/SKILL.md".into(),
+            b"---\ndescription: Alpha skill\n---\n\nAlpha body.\n".to_vec(),
+        )],
+    );
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::PATCH,
+            &format!("/v1/skill-libraries/{lib}"),
+            Some(json!({"label": "lib"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["skill_refs"][0]["available"], true, "{v}");
+    assert_eq!(v["skill_refs"][0]["unavailable_reason"], json!(null), "{v}");
+    assert_eq!(
+        v["skill_refs"][0]["content"]["use_it_when"], "Alpha skill",
+        "{v}"
+    );
+
+    // A paused library is unreadable (the card says the same).
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::PATCH,
+            &format!("/v1/skill-libraries/{lib}"),
+            Some(json!({"status": "paused"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["skill_refs"][0]["unavailable_reason"], "library_unreadable",
+        "{v}"
+    );
+    assert_eq!(v["skill_refs"][0]["content"], json!(null), "{v}");
+    let (_, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(v["items"][0]["skill_refs"][0]["available"], false, "{v}");
+
+    // Resume, install the app, and restrict the organization's app availability without an
+    // allow entry: the installed app is not_available_here.
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::PATCH,
+            &format!("/v1/skill-libraries/{lib}"),
+            Some(json!({"status": "active"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    sqlx::query("UPDATE organizations SET app_posture = 'restricted' WHERE id = $1")
+        .bind(org)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    let choice = &v["entries"][0]["choices"][0];
+    assert_eq!(choice["available"], false, "{v}");
+    assert_eq!(choice["unavailable_reason"], "not_available_here", "{v}");
+    assert_eq!(v["ready"], false, "{v}");
+
+    // An org-wide allow entry and the organization skill make it ready.
+    sqlx::query(
+        "INSERT INTO org_app_availability (org_id, app_id) VALUES ($1, 'com-example-thing')",
+    )
+    .bind(org)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::POST,
+            &format!("/v1/orgs/{org}/skills"),
+            Some(json!({"name": "notes", "description": "Org notes", "body": "How we note."})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["entries"][0]["choices"][0]["available"], true, "{v}");
+    assert_eq!(
+        v["entries"][0]["choices"][0]["unavailable_reason"],
+        json!(null),
+        "{v}"
+    );
+    assert_eq!(v["skill_refs"][1]["available"], true, "{v}");
+    assert_eq!(v["ready"], true, "{v}");
+}
+
+/// A skill that does not fit the agent tier's library budget is `over_budget` (C-1142), in
+/// the plan and on the card.
+#[tokio::test]
+async fn a_library_skill_that_does_not_fit_the_agent_budget_is_over_budget() {
+    // A tiny per-agent budget (the operator may only lower it).
+    let w = world_with(|c| c.skills_library.bytes_per_agent = 10).await;
+    let (org, ws, owner) = w.ws_owner().await;
+
+    w.git.add_repo("acme/skills");
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "alpha/SKILL.md".into(),
+            b"---\ndescription: Alpha skill\n---\n\nAlpha body.\n".to_vec(),
+        )],
+    );
+    let (s, lib) =
+        w.h.call(
+            &owner,
+            Method::POST,
+            &format!("/v1/orgs/{org}/skill-libraries"),
+            Some(json!({"label": "lib", "url": format!("{GIT_ORIGIN}/acme/skills")})),
+        )
+        .await;
+    assert_eq!(s, 201, "{lib}");
+
+    w.git.add_repo("acme/tpl");
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        manifest_yaml().into_bytes(),
+    )];
+    for (p, b) in rich_files("t2", "1.0.0") {
+        changes.push(put(p, b));
+    }
+    w.git.commit("acme/tpl", "main", &changes);
+    w.git
+        .serve_file("pkg/t2-1.0.0.zip", rich_pack("t2", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("t2", "1.0.0").await;
+
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["skill_refs"][0]["available"], false, "{v}");
+    assert_eq!(
+        v["skill_refs"][0]["unavailable_reason"], "over_budget",
+        "{v}"
+    );
+    assert_eq!(v["skill_refs"][0]["content"], json!(null), "{v}");
+    assert_eq!(v["ready"], false, "{v}");
+    let (_, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(v["items"][0]["skill_refs"][0]["available"], false, "{v}");
 }
 
 // ---- the acceptance gaps: decide, offer, attention, accounts, custom_only -----------------------
