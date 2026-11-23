@@ -19,6 +19,7 @@ path = "src/main.rs"
 [dependencies]
 aurora-core = { workspace = true }
 aurora-protocol = { workspace = true }
+aurora-template = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true }

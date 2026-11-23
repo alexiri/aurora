@@ -15,6 +15,9 @@
 //! - `render_inputs`: objects whose keys are [`RenderInputs`] fields; merged across entries.
 //! - `skills` entries: `{path, content, exec?}`; `exec: true` installs the file 0555 instead of 0444.
 //! - `tools`: opaque catalogue entries, stored as `.aurora/tools.json`.
+//! - `helpers` (P6-TPL-6, C-1143): `{path, content, exec?}` at `.aurora/helpers/<path>`; the
+//!   managed root is accepted only below it with the C-1141 rules, files install 0555 (exec) /
+//!   0444 in 0555 directories and the root is pruned to the manifest.
 //! - `manifest`: `{path}`; every managed path that should exist.
 
 use std::collections::{BTreeSet, HashMap};
@@ -143,6 +146,10 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
 /// (C-643) Root of the app folders in the home.
 pub const APPS_DIR: &str = ".aurora/apps";
 
+/// (P6-TPL-6, C-1143) Root of the helper files in the home: a managed root, read-only to the
+/// agent, pruned to the manifest at commit.
+pub const HELPERS_DIR: &str = ".aurora/helpers";
+
 /// App id grammar (`09 §3`): `[a-z][a-z0-9_-]{1,47}`.
 fn app_id_ok(s: &str) -> bool {
     let b = s.as_bytes();
@@ -170,6 +177,31 @@ fn is_app_path(rel: &Path) -> bool {
         (Some(Some(".aurora")), Some(Some("apps")), Some(Some(id)), Some(Some(f)), None)
             if app_id_ok(id) && app_file_ok(f)
     )
+}
+
+/// (P6-TPL-6, C-1143) Below `.aurora/helpers/` with the C-1141 helper path rules. The rules are
+/// the shared `aurora_template::helper_path_ok` check (at most 4 segments, no `..`, no hidden or
+/// empty segment) — the same function the API's writer calls, never a copy. A refused entry is a
+/// warning in the staging arm, never a write elsewhere.
+fn is_helper_path(rel: &Path) -> bool {
+    let mut c = rel.components().map(|c| match c {
+        Component::Normal(s) => s.to_str(),
+        _ => None,
+    });
+    if !matches!(
+        (c.next(), c.next()),
+        (Some(Some(".aurora")), Some(Some("helpers")))
+    ) {
+        return false;
+    }
+    let mut segs = Vec::new();
+    for s in c {
+        match s {
+            Some(seg) => segs.push(seg),
+            None => return false,
+        }
+    }
+    !segs.is_empty() && aurora_template::helper_path_ok(&segs.join("/"))
 }
 
 fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -217,10 +249,11 @@ impl HomeProjector {
         self.cfg.skills_dir.as_deref().and_then(clean_rel)
     }
 
-    /// A managed projection path: under the skills dir, `memory/<name>.md` or an app folder file
-    /// `.aurora/apps/<id>/<name>` (C-643).
+    /// A managed projection path: under the skills dir, `memory/<name>.md`, an app folder file
+    /// `.aurora/apps/<id>/<name>` (C-643) or a helper file `.aurora/helpers/<path>`
+    /// (P6-TPL-6, C-1143).
     fn managed(&self, rel: &Path) -> bool {
-        if is_app_path(rel) {
+        if is_app_path(rel) || is_helper_path(rel) {
             return true;
         }
         if let Some(s) = self.skills_prefix()
@@ -282,6 +315,7 @@ impl HomeProjector {
                         Some(r)
                             if self.managed(&r)
                                 && !is_app_path(&r)
+                                && !is_helper_path(&r)
                                 && memory == r.starts_with(MEMORY_DIR) =>
                         {
                             r
@@ -325,6 +359,33 @@ impl HomeProjector {
                         }
                         _ => {
                             tracing::warn!(path = %e.path.escape_debug(), "app file path refused");
+                        }
+                    }
+                }
+            }
+            // (P6-TPL-6, C-1143) The helper files: accepted only below `.aurora/helpers/` with
+            // the C-1141 rules; a refused entry is a warning, never a write elsewhere. The exec
+            // bit travels through staging as the owner-x bit, like a skill file's.
+            HomeSyncKind::Helpers => {
+                for v in entries {
+                    let Ok(e) = serde_json::from_value::<FileEntry>(v.clone()) else {
+                        tracing::warn!("malformed helper file entry refused");
+                        continue;
+                    };
+                    match clean_rel(&e.path) {
+                        Some(r) if is_helper_path(&r) => {
+                            let staged_mode = if e.exec { 0o700 } else { 0o600 };
+                            write_atomic(
+                                &self.staged_files().join(&r),
+                                e.content.as_bytes(),
+                                staged_mode,
+                            )?;
+                        }
+                        _ => {
+                            tracing::warn!(
+                                path = %e.path.escape_debug(),
+                                "helper file path outside the managed root refused"
+                            );
                         }
                     }
                 }
@@ -398,6 +459,12 @@ impl HomeProjector {
         clear_link_chain(&root, Path::new(APPS_DIR));
         unlink_tree_symlinks(&apps_root);
         set_dirs(&apps_root, 0o755);
+        // (P6-TPL-6, C-1143) The same link discipline for the helpers root: a link anywhere in
+        // the chain or the tree is removed, never followed.
+        let helpers_root = root.join(HELPERS_DIR);
+        clear_link_chain(&root, Path::new(HELPERS_DIR));
+        unlink_tree_symlinks(&helpers_root);
+        set_dirs(&helpers_root, 0o755);
 
         // Install.
         let mut staged = Vec::new();
@@ -508,6 +575,25 @@ impl HomeProjector {
             }
             if apps_root.is_dir() {
                 lock_tree(&apps_root);
+            }
+        }
+        // (P6-TPL-6, C-1143) The helper files: pruned to the manifest like the app folders, so a
+        // removed helper disappears, then locked read-only (0555/0444 files, 0555 dirs).
+        {
+            let mut files = Vec::new();
+            walk_files(&helpers_root, &mut files);
+            for f in files {
+                if f.strip_prefix(&root).is_ok_and(|r| !keep.contains(r)) {
+                    let _ = fs::remove_file(&f);
+                }
+            }
+            let mut dirs = Vec::new();
+            walk_dirs(&helpers_root, &mut dirs);
+            for d in dirs {
+                let _ = fs::remove_dir(&d);
+            }
+            if helpers_root.is_dir() {
+                lock_tree(&helpers_root);
             }
         }
 

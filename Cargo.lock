@@ -1013,6 +1013,7 @@ dependencies = [
  "async-trait",
  "aurora-core",
  "aurora-protocol",
+ "aurora-template",
  "aurora-testkit",
  "base64 0.23.1",
  "clap",

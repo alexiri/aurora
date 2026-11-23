@@ -88,9 +88,23 @@ pub struct RenderInputs {
     pub models: Option<ModelsInfo>,
     /// (P5-GUIDE-7, C-654) Absent from an older API: the bridge then lists everything.
     pub platform_tools: Option<PlatformToolsInfo>,
+    /// (P6-TPL-6, C-1143) `render_inputs.helpers`: present only when the agent holds at least one
+    /// template helper file; the capability fragment then names the managed root. Absent from an
+    /// older API, and the fragment is absent with it.
+    pub helpers: Option<HelpersInfo>,
     /// (P6-MEMLOCK, C-1151) True when the agent holds at least one locked memory; the memory
     /// fragment then carries the sentence about them.
     pub memory_locked: bool,
+}
+
+/// (P6-TPL-6, C-1143) `render_inputs.helpers`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct HelpersInfo {
+    /// The managed root, always `.aurora/helpers` today.
+    pub dir: String,
+    /// How many helper files are projected.
+    pub count: u32,
 }
 
 /// (P5-GUIDE-7, C-654) `render_inputs.platform_tools`.
@@ -194,6 +208,7 @@ impl Default for RenderInputs {
             approval_parking: false,
             models: None,
             platform_tools: None,
+            helpers: None,
             memory_locked: false,
         }
     }
@@ -535,6 +550,17 @@ or delete them; if one looks wrong or out of date, say so.\n\n",
 
     o.push_str(&skills_fragment(skills_path));
 
+    // (P6-TPL-6, C-1143) Only when the agent holds at least one helper file. The sentence names
+    // the managed root and nothing else about the set, so a sync that changes only helper
+    // contents (same count) leaves the instruction files byte-identical.
+    if let Some(h) = &i.helpers {
+        let _ = writeln!(
+            o,
+            "Helper files from your template are in `{}` (read-only). Run or read them from there.\n",
+            inline(&h.dir, 64)
+        );
+    }
+
     o.push_str("## Schedules\n\n");
     match i.schedules.as_deref().filter(|s| !s.trim().is_empty()) {
         Some(s) => {
@@ -643,6 +669,7 @@ mod tests {
             approval_parking: false,
             models: None,
             platform_tools: None,
+            helpers: None,
             memory_locked: false,
         }
     }

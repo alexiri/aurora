@@ -869,6 +869,215 @@ fn a_sync_that_changes_only_the_folders_keeps_the_instruction_files() {
     assert!(root.join(".aurora/tools.json").exists());
 }
 
+// ---- (P6-TPL-6, C-1143) the helper files
+
+/// A generation with the render inputs (optionally naming the helpers root), a `helpers` part and
+/// the manifest naming the paths.
+fn helpers_generation(g: u64, helpers: &[(&str, &str, bool)], with_inputs: bool) -> Vec<HomeSync> {
+    let entries: Vec<Value> = helpers
+        .iter()
+        .map(|(p, c, e)| json!({"path": p, "content": c, "exec": e}))
+        .collect();
+    let manifest: Vec<Value> = helpers.iter().map(|(p, _, _)| json!({"path": p})).collect();
+    let mut ri = json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}, "brief": "Be concise."}]);
+    if with_inputs {
+        ri[0]["helpers"] = json!({"dir": ".aurora/helpers", "count": helpers.len()});
+    }
+    vec![
+        part(g, 0, 4, "render_inputs", ri),
+        part(g, 1, 4, "helpers", json!(entries)),
+        part(g, 2, 4, "manifest", json!(manifest)),
+        part(g, 3, 4, "final", json!([])),
+    ]
+}
+
+/// Accepted helper paths install 0555 (exec) or 0444 in 0555 directories, refused paths
+/// (traversal, a hidden file, too deep, a space, the root itself, an absolute path, another
+/// root) install nothing, and a helper that leaves the manifest is pruned at the next commit.
+#[test]
+fn helper_files_are_installed_read_only_refused_outside_and_pruned() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let good = [
+        (".aurora/helpers/run.sh", "#!/bin/sh\n", true),
+        (".aurora/helpers/docs/note.md", "note", false),
+        // Four segments below the root is the deepest allowed path.
+        (".aurora/helpers/a/b/c/d.md", "deep", false),
+    ];
+    let bad = [
+        ".aurora/helpers/../escape.sh",
+        ".aurora/helpers/.hidden.sh",
+        // Five segments below the root is too deep.
+        ".aurora/helpers/a/b/c/d/e.md",
+        ".aurora/helpers/sp ace.sh",
+        ".aurora/helpers",
+        "/etc/passwd",
+        ".aurora/tools.json",
+        ".aurora/apps/gitlab/app.md",
+        ".claude/skills/s/SKILL.md",
+        "memory/m.md",
+    ];
+    let all: Vec<(&str, &str, bool)> = good
+        .iter()
+        .copied()
+        .chain(bad.iter().map(|p| (*p, "x", false)))
+        .collect();
+    let g = helpers_generation(1, &all, true);
+    assert!(matches!(
+        apply_all(&mut p, &g),
+        PartOutcome::ReadyToCommit(1)
+    ));
+    p.commit(1).unwrap();
+    for (rel, c, exec) in good {
+        let f = root.join(rel);
+        assert_eq!(fs::read_to_string(&f).unwrap(), c, "{rel}");
+        assert_eq!(mode(&f), if exec { 0o555 } else { 0o444 }, "{rel}");
+    }
+    assert_eq!(mode(&root.join(".aurora/helpers/docs")), 0o555);
+    assert_eq!(mode(&root.join(".aurora/helpers/a/b/c")), 0o555);
+    assert!(!root.join(".aurora/escape.sh").exists());
+    assert!(!root.join(".aurora/helpers/.hidden.sh").exists());
+    assert!(!root.join(".aurora/helpers/a/b/c/d/e.md").exists());
+    assert!(!root.join(".aurora/helpers/sp ace.sh").exists());
+    assert!(!root.join(".aurora/tools.json").exists());
+    assert!(!root.join(".aurora/apps").exists());
+    assert!(!root.join(".claude/skills/s").exists());
+    assert!(!root.join("memory/m.md").exists());
+
+    // Generation 2 keeps two helpers, changes both: the dropped one is pruned even though the
+    // tree is read-only, and the changed exec file is replaced.
+    let g = helpers_generation(
+        2,
+        &[
+            (".aurora/helpers/run.sh", "#!/bin/sh\necho v2\n", true),
+            (".aurora/helpers/docs/note.md", "note v2", false),
+        ],
+        true,
+    );
+    apply_all(&mut p, &g);
+    p.commit(2).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join(".aurora/helpers/run.sh")).unwrap(),
+        "#!/bin/sh\necho v2\n"
+    );
+    assert_eq!(mode(&root.join(".aurora/helpers/run.sh")), 0o555);
+    assert_eq!(
+        fs::read_to_string(root.join(".aurora/helpers/docs/note.md")).unwrap(),
+        "note v2"
+    );
+    assert!(!root.join(".aurora/helpers/a").exists());
+
+    // No helper at all: everything under the root is gone (the empty root itself stays, like the
+    // apps root).
+    apply_all(&mut p, &helpers_generation(3, &[], false));
+    p.commit(3).unwrap();
+    assert!(!root.join(".aurora/helpers/run.sh").exists());
+    assert!(!root.join(".aurora/helpers/docs").exists());
+    assert!(
+        fs::read_dir(root.join(".aurora/helpers"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+/// A path of a skills or memory part cannot reach `.aurora/helpers`, and a `helpers` part cannot
+/// reach skills, memory or the app folders.
+#[test]
+fn helper_paths_and_other_roots_do_not_cross_part_kinds() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let g = helpers_generation(
+        1,
+        &[
+            (".claude/skills/s/SKILL.md", "skill via helpers", false),
+            ("memory/m.md", "memory via helpers", false),
+            (".aurora/apps/gitlab/app.md", "app via helpers", false),
+        ],
+        false,
+    );
+    apply_all(&mut p, &g);
+    p.commit(1).unwrap();
+    assert!(!root.join(".claude/skills/s").exists());
+    assert!(!root.join("memory/m.md").exists());
+    assert!(!root.join(".aurora/apps").exists());
+    assert!(!root.join(".aurora/helpers").exists());
+
+    let mut g = generation(2, &[], &[]);
+    g[0] = part(
+        2,
+        0,
+        6,
+        "skills",
+        json!([{"path": ".aurora/helpers/x/h.sh", "content": "via skills"}]),
+    );
+    g[1] = part(
+        2,
+        1,
+        6,
+        "memory",
+        json!([{"path": ".aurora/helpers/x/h.sh", "content": "via memory"}]),
+    );
+    apply_all(&mut p, &g);
+    p.commit(2).unwrap();
+    assert!(!root.join(".aurora/helpers").exists());
+}
+
+/// A sync that changes only the contents of the helper files (same paths, same count) leaves the
+/// instruction files byte-identical (so nothing is released for it), and the capability sentence
+/// is present exactly when the render inputs name the helpers root.
+#[test]
+fn a_sync_that_changes_only_helper_contents_keeps_the_instruction_files() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    apply_all(
+        &mut p,
+        &helpers_generation(
+            1,
+            &[
+                (".aurora/helpers/run.sh", "one", true),
+                (".aurora/helpers/docs/note.md", "note", false),
+            ],
+            true,
+        ),
+    );
+    p.commit(1).unwrap();
+    let with_sentence = fs::read(root.join("AGENTS.md")).unwrap();
+    assert!(
+        String::from_utf8(with_sentence.clone())
+            .unwrap()
+            .contains("Helper files from your template are in `.aurora/helpers` (read-only).")
+    );
+
+    apply_all(
+        &mut p,
+        &helpers_generation(
+            2,
+            &[
+                (".aurora/helpers/run.sh", "two", true),
+                (".aurora/helpers/docs/note.md", "note v2", false),
+            ],
+            true,
+        ),
+    );
+    p.commit(2).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join(".aurora/helpers/run.sh")).unwrap(),
+        "two"
+    );
+    assert_eq!(fs::read(root.join("AGENTS.md")).unwrap(), with_sentence);
+
+    // Without the render input naming the root (and with no helper at all) the sentence is gone.
+    apply_all(&mut p, &helpers_generation(3, &[], false));
+    p.commit(3).unwrap();
+    let without = fs::read(root.join("AGENTS.md")).unwrap();
+    assert_ne!(without, with_sentence);
+    assert!(!String::from_utf8(without).unwrap().contains("Helper files"));
+}
+
 /// (written before the feature; passes before and after) A sync with a part kind this supervisor
 /// does not know and render-input fields it does not know commits, and the instruction file is
 /// exactly what the known fields render.
