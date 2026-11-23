@@ -525,6 +525,59 @@ async fn an_unreadable_stored_content_cannot_be_reviewed_or_approved() {
     assert_eq!(w.audit_critical("agent_template.approve").await, 0);
 }
 
+/// (SEC-146) A tree at the recorded commit with more files than a template may carry is
+/// refused after at most `TEMPLATE_FILES_MAX + 1` blobs were fetched: the version is
+/// `invalid` `template_too_large`, and a blob sorted past the stop point is never fetched
+/// (the old code fetched every blob and only the parse then refused the tree).
+#[tokio::test]
+async fn a_tree_with_more_files_than_the_cap_stops_reading_at_the_cap() {
+    let w = world().await;
+    w.git.add_repo("acme/tpl");
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        manifest_yaml().into_bytes(),
+    )];
+    for (p, b) in files("t", "1.0.0") {
+        changes.push(put(p, b));
+    }
+    // 198 distinct fillers: the tree holds TEMPLATE_FILES_MAX + 2 files in total, the
+    // package (the four plain files only) stays well under every cap.
+    let fillers = aurora_core::limits::TEMPLATE_FILES_MAX + 2 - files("t", "1.0.0").len();
+    for i in 0..fillers {
+        changes.push(put(
+            format!("t/f{i:05}.txt"),
+            format!("filler {i}\n").into_bytes(),
+        ));
+    }
+    // Sorted last: its blob lies past the stop point.
+    changes.push(put("t/zzsentinel.txt".into(), b"never read\n".to_vec()));
+    w.git.commit("acme/tpl", "main", &changes);
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "updated", "{out}");
+    assert_eq!(
+        w.versions().await,
+        vec![(
+            "1.0.0".into(),
+            "invalid".into(),
+            Some("template_too_large".into())
+        )]
+    );
+
+    // The early stop: no request ever wanted the sentinel's blob.
+    let oid = w.git.blob_id("acme/tpl", "main", "t/zzsentinel.txt");
+    assert!(
+        !w.git
+            .requests()
+            .iter()
+            .any(|r| r.body.windows(oid.len()).any(|w| w == oid.as_bytes())),
+        "the blob past the stop point was fetched"
+    );
+}
+
 #[tokio::test]
 async fn a_missing_package_waits_and_is_retried_on_the_package_retry() {
     let w = world().await;

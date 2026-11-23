@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 
 use aurora_core::{ApiError, ids, sanitize};
+use aurora_core::limits;
 use aurora_db::repo::agent_templates::{self as repo, SourceRow};
 use aurora_registry::manifest::parse_semver;
 use chrono::{DateTime, Utc};
@@ -126,13 +127,17 @@ async fn read_head(
 /// Every file under `dir` at `commit_sha` (step 6's source comparison): the reader at that
 /// commit, each blob through the template profile. A version's tree is read at the commit the
 /// version was recorded with, never at a newer head.
+///
+/// [`DirFailure::TooLarge`] is a definite outcome: the tree holds more files than a template
+/// may carry, answered after at most `TEMPLATE_FILES_MAX + 1` blobs were fetched — the rest
+/// are never read (SEC-146; before, every blob was fetched and only the parse then refused).
 async fn read_dir_at(
     state: &AppState,
     source: &SourceRow,
     token: Option<&Token>,
     commit_sha: &str,
     dir: &str,
-) -> Result<Vec<aurora_template::TreeFile>, String> {
+) -> Result<Vec<aurora_template::TreeFile>, DirFailure> {
     let dir = dir.to_owned();
     let run = async {
         let g = GitRepo::with_profile(
@@ -157,6 +162,14 @@ async fn read_dir_at(
             if e.kind != "blob" {
                 continue;
             }
+            // The file cap is enforced before the next blob is fetched: one past the cap
+            // proves the tree too large, and no further blob is read (SEC-146).
+            if files.len() > limits::TEMPLATE_FILES_MAX {
+                return Err(ApiError::conflict(
+                    "template_too_large",
+                    "the tree has more files than a template may carry",
+                ));
+            }
             let mode = u32::from_str_radix(&e.mode, 8).map_err(|_| {
                 git::read_failure(
                     &crate::domains::skill_libraries::content::ReadError::Unreachable(format!(
@@ -177,12 +190,19 @@ async fn read_dir_at(
         }
         Ok(files)
     };
-    state
-        .library
-        .reads
-        .interactive(run)
-        .await
-        .map_err(|e| reason_of(&e))
+    match state.library.reads.interactive(run).await {
+        Ok(files) => Ok(files),
+        Err(e) if e.code() == "template_too_large" => Err(DirFailure::TooLarge),
+        Err(_) => Err(DirFailure::Unreadable),
+    }
+}
+
+/// Why [`read_dir_at`] failed: a too-large tree is the version's outcome (`invalid`), any
+/// other read failure keeps it waiting (the sanitized reason is not stored — as before the
+/// guard, the stay reason is the fixed `source_unreadable`).
+enum DirFailure {
+    TooLarge,
+    Unreadable,
 }
 
 // ---- helpers -----------------------------------------------------------------------------------
@@ -739,11 +759,14 @@ async fn process_awaiting(
     if content.meta.id != v.template_id || content.meta.version != v.version.version {
         return Ok(invalid("identity_mismatch"));
     }
-    // The source comparison: the tree at the recorded commit. A tree that cannot be read
-    // keeps the row waiting.
+    // The source comparison: the tree at the recorded commit. A too-large tree invalidates
+    // the version; a tree that cannot be read keeps the row waiting.
     let files = match read_dir_at(state, source, token, &v.version.commit_sha, &v.dir).await {
         Ok(f) => f,
-        Err(_) => return Ok(StepOut::Stayed(Some("source_unreadable".into()))),
+        Err(DirFailure::TooLarge) => return Ok(invalid("template_too_large")),
+        Err(DirFailure::Unreadable) => {
+            return Ok(StepOut::Stayed(Some("source_unreadable".into())));
+        }
     };
     let tree = match aurora_template::read_tree(&v.dir, &files) {
         Ok(t) => t,
