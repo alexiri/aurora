@@ -1,6 +1,6 @@
 # Token lifecycle against recorded HTTP (P2-CAT-T, docs/09 §12): a stale Graph answer, the refresh
-# exchange against the Entra `common` token endpoint, and what the gateway does next. All values
-# are fake.
+# exchange against the Entra token endpoint (`common` when the sign-in app sets no directory, the
+# directory otherwise), and what the gateway does next. All values are fake.
 - name: "token: refresh on the common endpoint after InvalidAuthenticationToken retries with the new token"
   connection:
     credentials: { access_token: "oauth-fixture-old", refresh_token: "refresh-fixture-1" }
@@ -63,3 +63,26 @@
         response: { status: 503, body: "service unavailable" }
     expect: { outcome: unavailable }
   expect: { app: microsoft-365 }
+# (FIX-233, D-476) A single-tenant registration refreshes at its own directory, not `common`.
+- name: "token: a sign-in app with a directory ID refreshes at that tenant's endpoint"
+  connection:
+    credentials: { access_token: "oauth-fixture-old", refresh_token: "refresh-fixture-1" }
+    oauth_client: { client_id: "client-fixture", client_secret: "secret-fixture", tenant: "11111111-2222-3333-4444-555555555555" }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/messages" }
+  token:
+    upstream: { status: 401, body: '{"error":{"code":"InvalidAuthenticationToken"}}' }
+    http_cassette:
+      - request:
+          method: POST
+          url: "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/oauth2/v2.0/token"
+          form: { grant_type: refresh_token, refresh_token: "refresh-fixture-1", client_id: "client-fixture" }
+        response:
+          status: 200
+          body: '{"token_type":"Bearer","expires_in":3599,"access_token":"oauth-fixture-new","refresh_token":"refresh-fixture-2"}'
+    expect:
+      outcome: refreshed
+      credentials: { access_token: "oauth-fixture-new", refresh_token: "refresh-fixture-2" }
+      retried:
+        url: "https://graph.microsoft.com/v1.0/me/messages"
+        headers: { authorization: "Bearer oauth-fixture-new" }
+  expect: { app: microsoft-365, tool: list_messages }

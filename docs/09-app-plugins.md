@@ -129,6 +129,25 @@ oauth_clients:
       - { name: client_secret, label: Client secret, secret: true }
     setup_note: "Create an OAuth client of type Web application."
 ```
+(FIX-233, D-476, C-1159) A fixed authorize or token URL may place one of the client's own
+non-secret fields in its **path**, as a whole segment: `{client.<field>}`. Microsoft Entra puts
+the directory there, so a single-tenant registration signs in at its own tenant:
+```yaml
+    authorize_url: https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/authorize
+    token_url: https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/token
+    fields:
+      - { name: tenant, label: Directory (tenant) ID, default: common }
+```
+- The host stays literal, so `token_hosts`, claims and the upgrade diff read the manifest alone.
+  Only `{client.<field>}` placeholders are allowed in a fixed URL; `{instance}` URLs take none.
+- The field must be declared, non-secret, and have a `default` (1–256 characters, itself a valid
+  segment). A field with a `default` is optional when a client is registered; a secret field
+  never has one (`client_field_default_invalid`). Any other misuse is
+  `oauth_url_client_field_invalid`.
+- The value (the client's stored one, else the default) must be 1–253 characters of
+  `[A-Za-z0-9.-]`, start and end with a letter or digit, and contain no `..`: a GUID or a domain
+  name. The API refuses another value when the client is saved (422 on `/fields/<name>`), and the
+  API (sign-in, code exchange, Test) and the gateway (refresh) fail closed on one already stored.
 The redirect URI to register with every provider is always
 `<external_url>/v1/oauth/callback`.
 

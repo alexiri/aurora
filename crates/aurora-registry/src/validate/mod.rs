@@ -343,7 +343,19 @@ pub fn manifest(m: &Manifest) -> Vec<Violation> {
                 key,
                 url,
                 instance_clients.contains(c.id.as_str()),
+                &c.fields,
             );
+        }
+        // (FIX-233, C-1159) A default makes a field optional; a secret never has one.
+        for (j, f) in c.fields.iter().enumerate() {
+            let Some(d) = &f.default else { continue };
+            if f.secret || d.trim().is_empty() || d.len() > 256 {
+                out.push(Violation::new(
+                    "client_field_default_invalid",
+                    format!("/oauth_clients/{i}/fields/{j}/default"),
+                    "a default is 1-256 characters and never on a secret field",
+                ));
+            }
         }
     }
     let any_instances = m.apps.iter().any(|a| a.instances.is_some());
@@ -454,8 +466,21 @@ fn check_oauth_url(
     key: &str,
     url: &UrlOrTemplate,
     instance_bound: bool,
+    fields: &[crate::manifest::ClientField],
 ) {
     match url {
+        // (FIX-233, C-1159) A client field as a whole path segment of a fixed https URL.
+        UrlOrTemplate::Url(u)
+            if crate::manifest::has_client_refs(u) && !u.contains(INSTANCE_HOST) =>
+        {
+            for msg in crate::manifest::check_client_url(u, fields) {
+                out.push(Violation::new(
+                    "oauth_url_client_field_invalid",
+                    base,
+                    format!("{key}: {msg}"),
+                ));
+            }
+        }
         UrlOrTemplate::Url(u) if u.contains(INSTANCE_HOST) => {
             if !instance_bound
                 || !instance_url_ok(u)

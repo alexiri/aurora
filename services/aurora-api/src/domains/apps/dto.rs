@@ -231,6 +231,8 @@ pub struct OauthClientField {
     pub name: String,
     pub label: String,
     pub secret: bool,
+    /// (FIX-233, C-1159) Used when the field is left empty; a field with a default is optional.
+    pub default: Option<String>,
 }
 
 /// An OAuth client definition the app's connect methods use (bring-your-own-client forms).

@@ -6,6 +6,7 @@ use crate::domains::secrets::service::secret_err;
 use aurora_core::{ApiError, FieldError, ids};
 use aurora_db::repo::oauth_clients::{self as repo, ClientRow, NewClient};
 use aurora_db::{DbError, conflict_code};
+use aurora_registry::manifest::UrlOrTemplate;
 use aurora_registry::snapshot::OauthClientEntry;
 use aurora_secrets::{Purpose, SealContext, SecretRef, ValueSource};
 use serde_json::{Map, Value};
@@ -62,6 +63,15 @@ fn validate(
     partial: bool,
 ) -> Result<(), ApiError> {
     let mut errs = Vec::new();
+    // (FIX-233, C-1159) Fields an OAuth URL places in its path.
+    let in_url: Vec<&str> = [&decl.authorize_url, &decl.token_url]
+        .into_iter()
+        .filter_map(|u| match u {
+            UrlOrTemplate::Url(u) => Some(u.as_str()),
+            UrlOrTemplate::Templated(_) => None,
+        })
+        .flat_map(aurora_registry::manifest::client_ref_names)
+        .collect();
     for (k, v) in fields {
         let path = format!("/fields/{k}");
         if !decl.fields.iter().any(|f| &f.name == k) {
@@ -70,11 +80,17 @@ fn validate(
             errs.push(FieldError::new(path, "must not be empty"));
         } else if v.len() > VALUE_MAX {
             errs.push(FieldError::new(path, "too long"));
+        } else if in_url.contains(&k.as_str()) && !aurora_registry::manifest::segment_ok(v.trim()) {
+            errs.push(FieldError::new(
+                path,
+                "must be an ID or a domain name (letters, digits, dots and hyphens)",
+            ));
         }
     }
     if !partial {
         for f in &decl.fields {
-            if !fields.contains_key(&f.name) {
+            // A field with a default may be left out (C-1159).
+            if !fields.contains_key(&f.name) && f.default.is_none() {
                 errs.push(FieldError::new(format!("/fields/{}", f.name), "required"));
             }
         }
@@ -306,4 +322,70 @@ pub async fn delete(state: &AppState, row: &ClientRow, actor: &AuditActor) -> Re
     }
     crate::domains::app_setup_requests::service::reevaluate(state, row.org_id).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_registry::manifest::{BodyFormat, ClientAuth, ClientField};
+
+    fn decl() -> OauthClientEntry {
+        let f = |name: &str, secret: bool, default: Option<&str>| ClientField {
+            name: name.into(),
+            label: name.into(),
+            secret,
+            default: default.map(str::to_owned),
+        };
+        OauthClientEntry {
+            package_id: "microsoft-365".into(),
+            client_key: "microsoft".into(),
+            authorize_url: UrlOrTemplate::Url(
+                "https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/authorize".into(),
+            ),
+            token_url: UrlOrTemplate::Url(
+                "https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/token".into(),
+            ),
+            pkce: true,
+            client_auth: ClientAuth::Body,
+            body_format: BodyFormat::Form,
+            fields: vec![
+                f("client_id", false, None),
+                f("client_secret", true, None),
+                f("tenant", false, Some("common")),
+            ],
+            setup_note: None,
+        }
+    }
+
+    fn m(kv: &[(&str, &str)]) -> BTreeMap<String, String> {
+        kv.iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    /// (FIX-233, C-1159) A field with a default may be left out; a field the URL places in its
+    /// path must be an ID or a domain name.
+    #[test]
+    fn a_default_field_is_optional_and_a_path_field_is_a_segment() {
+        let d = decl();
+        assert!(validate(&d, &m(&[("client_id", "a"), ("client_secret", "s")]), false).is_ok());
+        assert!(validate(&d, &m(&[("client_secret", "s")]), false).is_err());
+        assert!(
+            validate(
+                &d,
+                &m(&[
+                    ("client_id", "a"),
+                    ("client_secret", "s"),
+                    ("tenant", "c80d3499-4a40-4a8c-986e-abce017d6b19")
+                ]),
+                false
+            )
+            .is_ok()
+        );
+        for bad in ["evil.example/x", "a?b", "..", "a b"] {
+            assert!(validate(&d, &m(&[("tenant", bad)]), true).is_err(), "{bad}");
+        }
+        // Another field is not held to the segment rule.
+        assert!(validate(&d, &m(&[("client_secret", "a/b?c")]), true).is_ok());
+    }
 }

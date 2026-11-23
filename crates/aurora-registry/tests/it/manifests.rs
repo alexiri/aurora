@@ -48,6 +48,10 @@ fn invalid_fixtures_yield_expected_code() {
         ("token-url-http", "token_url_not_https"),
         ("token-url-no-zone", "token_url_template_no_zone"),
         ("authorize-url-no-zone", "authorize_url_template_no_zone"),
+        // (FIX-233, C-1159) `{client.<field>}` needs a declared non-secret field with a default;
+        // a secret field has no default.
+        ("client-field-url", "oauth_url_client_field_invalid"),
+        ("client-field-default", "client_field_default_invalid"),
         ("oauth-field-credentials", "oauth_field_store"),
         ("tenant-zone", "bad_zone"),
         ("rewrite-zone", "bad_zone"),

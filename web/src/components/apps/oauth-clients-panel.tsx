@@ -122,8 +122,10 @@ function DefinitionInputs({
       <RedirectUri uri={def.redirect_uri} />
       {def.fields.map((f) => {
         const id = `ocf-${def.client_key}-${f.name}`;
+        // (FIX-233, C-1159) A field with a default is optional; empty means the default.
+        const hint = !f.secret && f.default ? `Optional. Leave empty to use “${f.default}”.` : undefined;
         return (
-          <Field key={f.name} id={id} label={f.label}>
+          <Field key={f.name} id={id} label={f.label} hint={hint}>
             {f.secret ? (
               <SecretInput
                 id={id}
@@ -138,6 +140,7 @@ function DefinitionInputs({
                 className={inputClass}
                 type="text"
                 autoComplete="off"
+                placeholder={f.default ?? undefined}
                 value={values[f.name] ?? ""}
                 onChange={(e) => onChange({ ...values, [f.name]: e.target.value })}
               />
