@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use aurora_core::limits::TEMPLATES_PER_SOURCE_MAX;
 use aurora_template::{
     TreeFile, content_sha256, pack, parse_manifest, parse_meta, read_archive, read_tree,
     render_package_url,
@@ -232,7 +233,7 @@ fn list(folder: &Path) -> Result<Vec<TemplateInfo>> {
 }
 
 /// The template directories directly in `folder`: every directory containing `template.yaml`,
-/// sorted (C-1103).
+/// sorted (C-1103). At most `TEMPLATES_PER_SOURCE_MAX` per source folder (C-1103).
 fn template_dirs(folder: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(folder)? {
@@ -246,6 +247,14 @@ fn template_dirs(folder: &Path) -> Result<Vec<String>> {
         }
     }
     out.sort();
+    if out.len() > TEMPLATES_PER_SOURCE_MAX {
+        bail!(
+            "{} holds {} template directories, more than the {} per source (TEMPLATES_PER_SOURCE_MAX)",
+            folder.display(),
+            out.len(),
+            TEMPLATES_PER_SOURCE_MAX
+        );
+    }
     Ok(out)
 }
 
@@ -368,8 +377,8 @@ packages:
             "# The repository's own README; ignored\n",
         )
         .unwrap();
-        fs::create_dir_all(root.join(".github")).unwrap();
-        fs::write(root.join(".github/ci.yml"), "ci: true\n").unwrap();
+        fs::create_dir_all(root.join(".ci")).unwrap();
+        fs::write(root.join(".ci/ci.yml"), "ci: true\n").unwrap();
     }
 
     #[test]
@@ -515,6 +524,25 @@ packages:
             out.problems
                 .iter()
                 .any(|p| p.contains("template_readme_missing"))
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn more_templates_than_the_per_source_cap_are_refused() {
+        let root = tmp_dir("cap");
+        for i in 0..TEMPLATES_PER_SOURCE_MAX + 1 {
+            let d = root.join(format!("t{i:03}"));
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("template.yaml"), "").unwrap();
+        }
+        let err = template_dirs(&root).unwrap_err().to_string();
+        assert!(err.contains("more than the 100 per source"), "{err}");
+        // At the cap exactly, the folder is still readable.
+        fs::remove_dir_all(root.join("t100")).unwrap();
+        assert_eq!(
+            template_dirs(&root).unwrap().len(),
+            TEMPLATES_PER_SOURCE_MAX
         );
         std::fs::remove_dir_all(&root).unwrap();
     }
