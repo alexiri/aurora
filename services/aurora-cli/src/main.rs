@@ -6,6 +6,7 @@ mod forward;
 mod plugin;
 mod run;
 mod ssh;
+mod template;
 mod token;
 
 use std::io::{IsTerminal, Write};
@@ -77,6 +78,11 @@ enum Cmd {
     },
     /// SSH into a hosted agent's sandbox (a short-lived certificate for your registered key).
     Ssh(ssh::SshCmd),
+    /// Agent template development: check, pack, list (docs/25).
+    Template {
+        #[command(subcommand)]
+        cmd: template::TemplateCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -139,6 +145,7 @@ async fn real_main() -> Result<i32> {
     match Cli::parse().cmd {
         Cmd::Plugin { cmd } => plugin::run(cmd),
         Cmd::Ssh(cmd) => ssh::run(cmd).await,
+        Cmd::Template { cmd } => template::run(cmd),
         Cmd::Login { url, hostname } => {
             let path = config::default_path()?;
             let url = match url {

@@ -68,6 +68,7 @@ aurora-secrets = { path = "crates/aurora-secrets" }
 aurora-policy = { path = "crates/aurora-policy" }
 aurora-sqlclass = { path = "crates/aurora-sqlclass" }
 aurora-registry = { path = "crates/aurora-registry" }
+aurora-template = { path = "crates/aurora-template" }
 aurora-webhook = { path = "crates/aurora-webhook" }
 aurora-llm = { path = "crates/aurora-llm" }
 aurora-summary = { path = "crates/aurora-summary" }

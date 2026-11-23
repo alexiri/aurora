@@ -22,7 +22,10 @@ aurora-core = { workspace = true }
 aurora-hookhost = { workspace = true }
 aurora-policy = { workspace = true }
 aurora-registry = { workspace = true }
+# the template format (`aurora template check/pack/list`, C-1105)
+aurora-template = { workspace = true }
 ed25519-dalek = { workspace = true }
+hex = { workspace = true }
 # (P4-SSH-1, C-798) reads a certificate's validity and key to decide whether to reuse it
 ssh-key = { workspace = true }
 pulldown-cmark = { workspace = true, features = ["html"] }
