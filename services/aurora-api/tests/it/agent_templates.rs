@@ -106,8 +106,53 @@ fn pack(dir: &str, version: &str) -> Vec<u8> {
     aurora_template::pack(dir, &tree(dir, version))
 }
 
+/// The package zip of the rich template's `dir` at `version`, exactly as the tree at that
+/// commit reads.
+fn rich_pack(dir: &str, version: &str) -> Vec<u8> {
+    let tree: Vec<TreeFile> = rich_files(dir, version)
+        .into_iter()
+        .map(|(path, bytes)| TreeFile {
+            path,
+            bytes,
+            mode: 0o100644,
+        })
+        .collect();
+    aurora_template::pack(dir, &tree)
+}
+
 fn put(path: String, content: Vec<u8>) -> Change {
     Change::Put(path, content)
+}
+
+/// A template that needs an app and references a library skill and an organization skill
+/// (C-1110's resolution).
+fn rich_yaml(id: &str, version: &str) -> String {
+    format!(
+        "format: 1\nid: {id}\nversion: {version}\nname: T2\nsummary: Apps and skills.\n\
+         inputs:\n  - id: zone\n    label: Zone\n    pattern: \"^[a-z]+$\"\n\
+         apps:\n  - app: com-example-thing\n    required: true\n    level: act\n    why: Needs the thing.\n\
+         skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: alpha\n    why: Does the work.\n  \
+         - organization: notes\n    why: Org knowledge.\n"
+    )
+}
+
+/// The files of the rich template (same byte-for-byte rule as [`files`]).
+fn rich_files(dir: &str, version: &str) -> Vec<(String, Vec<u8>)> {
+    vec![
+        (
+            format!("{dir}/template.yaml"),
+            rich_yaml(dir, version).into_bytes(),
+        ),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            INSTRUCTIONS.as_bytes().to_vec(),
+        ),
+        (
+            format!("{dir}/README.md"),
+            format!("# {dir}\nRich.\n").into_bytes(),
+        ),
+    ]
 }
 
 impl W {
@@ -207,6 +252,39 @@ impl W {
         .fetch_one(self.h.pool())
         .await
         .unwrap()
+    }
+
+    /// Approve the current `pending_approval` version (as the reviewing admin).
+    async fn approve(&self, template: &str, version: &str) {
+        let (s, v) = self
+            .call(
+                Method::GET,
+                &format!("/v1/admin/agent-templates/{template}/versions/{version}"),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        let sha = v["content_sha256"].as_str().unwrap().to_owned();
+        let (s, v) = self
+            .call(
+                Method::POST,
+                &format!("/v1/admin/agent-templates/{template}/versions/{version}/approve"),
+                Some(json!({"content_sha256": sha})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+    }
+
+    /// An organization with an owner and a workspace the owner can use; returns the ids and
+    /// the owner's cookie.
+    async fn ws_owner(&self) -> (Uuid, Uuid, String) {
+        let org = self.h.org().await;
+        let owner = self.h.user("owner@x.io", false).await;
+        self.h.member(org, owner, "owner", "active").await;
+        let ws = self.h.workspace(org).await;
+        self.h.bind_ws(ws, owner, "owner").await;
+        let cookie = cookie(&self.h.good_session(owner).await.1);
+        (org, ws, cookie)
     }
 }
 
@@ -1174,4 +1252,220 @@ async fn the_kill_switch_hides_the_org_routes_but_not_the_admin_ones() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["items"][0]["template_id"], "t", "{v}");
+}
+
+// ---- the workspace catalogue (C-1110) -----------------------------------------------------------
+
+async fn ws_get(w: &W, ws: Uuid, who: &str, path: &str) -> (u16, Value) {
+    w.h.call(
+        who,
+        Method::GET,
+        &format!("/v1/workspaces/{ws}/agent-templates{path}"),
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_workspace_catalogue_shows_available_templates() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("t", "1.0.0").await;
+
+    let (s, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(s, 200, "{v}");
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{v}");
+    assert_eq!(items[0]["template_id"], "t", "{v}");
+    assert_eq!(items[0]["version"], "1.0.0", "{v}");
+    assert!(
+        items[0]["readme"]
+            .as_str()
+            .unwrap()
+            .contains("A test template."),
+        "{v}"
+    );
+    assert_eq!(items[0]["has_avatar"], false, "{v}");
+    assert_eq!(items[0]["has_helpers"], false, "{v}");
+    assert_eq!(items[0]["apps"], json!([]), "{v}");
+    assert_eq!(items[0]["skill_refs"], json!([]), "{v}");
+    assert_eq!(items[0]["automations"], json!([]), "{v}");
+    assert_eq!(items[0]["ready"], true, "{v}");
+
+    // The plan: the reviewed content in full.
+    let (s, v) = ws_get(&w, ws, &owner, "/t").await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["content_sha256"].is_string(), "{v}");
+    assert_eq!(v["content"]["name"], "T", "{v}");
+    assert_eq!(v["entries"], json!([]), "{v}");
+    assert_eq!(v["skill_refs"], json!([]), "{v}");
+
+    // No avatar in the content.
+    let (s, _) = ws_get(&w, ws, &owner, "/t/avatar").await;
+    assert_eq!(s, 404);
+
+    // A person who cannot use the workspace is 404 (no bypass, not even for instance
+    // administrators).
+    let stranger = w.h.user("stranger@x.io", false).await;
+    let stranger_cookie = cookie(&w.h.good_session(stranger).await.1);
+    let (s, v) =
+        w.h.call(
+            &stranger_cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/agent-templates"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    let (s, v) =
+        w.h.call(
+            &w.root,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/agent-templates"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+
+    // Withdrawn: gone from the catalogue, the plan and the avatar 404.
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(v["items"].as_array().unwrap().len(), 0, "{v}");
+    let (s, _) = ws_get(&w, ws, &owner, "/t").await;
+    assert_eq!(s, 404);
+    let (s, _) = ws_get(&w, ws, &owner, "/t/avatar").await;
+    assert_eq!(s, 404);
+}
+
+#[tokio::test]
+async fn the_plan_resolves_apps_and_skill_references() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+
+    // The skill library the template references, with one valid skill.
+    w.git.add_repo("acme/skills");
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "alpha/SKILL.md".into(),
+            b"---\ndescription: Alpha skill\n---\n\nAlpha body.\n".to_vec(),
+        )],
+    );
+    let (s, lib) =
+        w.h.call(
+            &owner,
+            Method::POST,
+            &format!("/v1/orgs/{org}/skill-libraries"),
+            Some(json!({"label": "lib", "url": format!("{GIT_ORIGIN}/acme/skills")})),
+        )
+        .await;
+    assert_eq!(s, 201, "{lib}");
+    assert_eq!(lib["status"], "active", "{lib}");
+
+    // The template: one required app (nothing installed) and two skill references.
+    w.git.add_repo("acme/tpl2");
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        manifest_yaml().into_bytes(),
+    )];
+    for (p, b) in rich_files("t2", "1.0.0") {
+        changes.push(put(p, b));
+    }
+    w.git.commit("acme/tpl2", "main", &changes);
+    w.git
+        .serve_file("pkg/t2-1.0.0.zip", rich_pack("t2", "1.0.0"));
+    let src = w.add_source("acme/tpl2", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("t2", "1.0.0").await;
+
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ready"], false, "{v}");
+    let entries = v["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{v}");
+    assert_eq!(entries[0]["index"], 0, "{v}");
+    assert_eq!(entries[0]["required"], true, "{v}");
+    assert_eq!(entries[0]["why"], "Needs the thing.", "{v}");
+    let choice = &entries[0]["choices"][0];
+    assert_eq!(choice["app_id"], "com-example-thing", "{v}");
+    assert_eq!(choice["app_name"], "com-example-thing", "{v}");
+    assert_eq!(choice["available"], false, "{v}");
+    assert_eq!(choice["unavailable_reason"], "not_installed", "{v}");
+    assert_eq!(choice["level"], "act", "{v}");
+    assert_eq!(choice["level_note"], json!(null), "{v}");
+    assert_eq!(choice["custom"], json!(null), "{v}");
+    assert_eq!(choice["accounts"], json!([]), "{v}");
+    let refs = v["skill_refs"].as_array().unwrap();
+    assert_eq!(refs.len(), 2, "{v}");
+    assert_eq!(refs[0]["kind"], "library", "{v}");
+    assert_eq!(refs[0]["name"], "alpha", "{v}");
+    assert_eq!(refs[0]["available"], true, "{v}");
+    assert_eq!(refs[0]["unavailable_reason"], json!(null), "{v}");
+    assert!(refs[0]["library"]["id"].is_string(), "{v}");
+    assert_eq!(refs[0]["library"]["scope"], "organization", "{v}");
+    assert!(refs[0]["library"]["commit_sha"].is_string(), "{v}");
+    assert_eq!(refs[0]["content"]["use_it_when"], "Alpha skill", "{v}");
+    assert_eq!(refs[0]["content"]["body"], "Alpha body.\n", "{v}");
+    // The SKILL.md is the body; the skill has no other files.
+    assert_eq!(refs[0]["content"]["files"].as_array().unwrap().len(), 0);
+    assert_eq!(refs[1]["kind"], "organization", "{v}");
+    assert_eq!(refs[1]["name"], "notes", "{v}");
+    assert_eq!(refs[1]["available"], false, "{v}");
+    assert_eq!(refs[1]["unavailable_reason"], "not_in_organization", "{v}");
+    // The card carries the same availability.
+    let (s, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(s, 200, "{v}");
+    let item = &v["items"][0];
+    assert_eq!(item["apps"][0]["available"], false, "{v}");
+    assert_eq!(item["apps"][0]["skills"], json!([]), "{v}");
+    assert_eq!(item["skill_refs"][0]["available"], true, "{v}");
+    assert_eq!(item["skill_refs"][1]["available"], false, "{v}");
+    assert_eq!(item["ready"], false, "{v}");
+
+    // The organization-tier skill exists → the reference is available.
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::POST,
+            &format!("/v1/orgs/{org}/skills"),
+            Some(json!({"name": "notes", "description": "Org notes", "body": "How we note."})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["skill_refs"][1]["available"], true, "{v}");
+    assert_eq!(v["skill_refs"][1]["library"], json!(null), "{v}");
+    assert_eq!(v["skill_refs"][1]["content"], json!(null), "{v}");
+    // Still not ready: the app is not installed.
+    assert_eq!(v["ready"], false, "{v}");
+
+    // The organization turned the template off: gone from the catalogue, 404 elsewhere.
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::PUT,
+            &format!("/v1/orgs/{org}/agent-templates/t2"),
+            Some(json!({"enabled": false})),
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let (_, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(v["items"].as_array().unwrap().len(), 0, "{v}");
+    let (s, _) = ws_get(&w, ws, &owner, "/t2").await;
+    assert_eq!(s, 404);
 }

@@ -12,6 +12,7 @@ pub mod git;
 pub mod org;
 pub mod poll;
 pub(crate) mod routes;
+pub(crate) mod workspace;
 pub use routes::router;
 
 use aurora_core::git_url::{self, UrlError};

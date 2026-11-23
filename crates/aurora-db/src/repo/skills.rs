@@ -368,3 +368,24 @@ pub async fn bump_org(conn: &mut PgConnection, org: Uuid) -> Result<(), DbError>
     .await?;
     Ok(())
 }
+
+/// The names among `names` that exist as an enabled organization-tier skill of `org` or an
+/// enabled workspace-tier skill of `ws` (C-1142's organization reference resolution).
+pub async fn enabled_org_or_workspace_names<'e, E: sqlx::PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    ws: Uuid,
+    names: &[String],
+) -> Result<Vec<String>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT DISTINCT name FROM skills
+         WHERE name = ANY($1) AND enabled
+           AND ((agent_id IS NULL AND workspace_id IS NULL AND org_id = $2)
+                OR workspace_id = $3)",
+    )
+    .bind(names)
+    .bind(org)
+    .bind(ws)
+    .fetch_all(exec)
+    .await?)
+}

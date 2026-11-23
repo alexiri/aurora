@@ -8,6 +8,8 @@ use serde_json::Value;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::domains::accounts::dto::Account;
+
 /// One C-1141 problem, as data (`code` is the fixed code, `path` where it applies).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct TemplateProblemView {
@@ -733,4 +735,158 @@ pub struct OrgTemplateList {
 pub struct SetOrgTemplateRequest {
     /// On (`true`, the default) or off (`false`) for this organization.
     pub enabled: bool,
+}
+
+// ---- the workspace catalogue (C-1110) ------------------------------------------------------------
+
+/// One `apps:` entry of the card (C-1110, C-1142's app skills).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct CardAppEntry {
+    /// The entry's app ids (`app`, or every id of `any_of`).
+    pub app_ids: Vec<String>,
+    pub required: bool,
+    pub available: bool,
+    /// The app skills of the entry's available apps (C-1142), sorted, without repeats.
+    pub skills: Vec<String>,
+}
+
+/// One skill reference of the card (C-1110).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct CardSkillRef {
+    pub index: usize,
+    /// `library` | `organization`.
+    pub kind: String,
+    pub name: String,
+    pub required: bool,
+    pub available: bool,
+}
+
+/// One automation of the card (C-1110).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct AutomationBrief {
+    /// `schedule` | `webhook`.
+    pub kind: String,
+    pub name: String,
+}
+
+/// A template the workspace may use (C-1110's `TemplateCard`), about the offered version.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct TemplateCard {
+    pub template_id: String,
+    pub name: String,
+    pub summary: String,
+    /// The offered version's `README.md`, in full.
+    pub readme: String,
+    pub version: String,
+    pub has_avatar: bool,
+    pub apps: Vec<CardAppEntry>,
+    pub skill_refs: Vec<CardSkillRef>,
+    pub has_helpers: bool,
+    pub automations: Vec<AutomationBrief>,
+    /// Every required app entry has an available app and every required skill reference is
+    /// available.
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct TemplateCardList {
+    pub items: Vec<TemplateCard>,
+}
+
+/// The template's tools of one choice that the app's current catalogue has, and the ones it
+/// does not (never written, C-1110).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct CustomToolsView {
+    pub allow_tools: Vec<String>,
+    pub ask_tools: Vec<String>,
+    pub dropped_tools: Vec<String>,
+}
+
+/// One app of one entry, with what creating would preselect (C-1110's choice).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PlanChoice {
+    pub app_id: String,
+    pub app_name: String,
+    pub available: bool,
+    /// `not_installed` | `not_available_here` | null.
+    pub unavailable_reason: Option<String>,
+    /// The template's, except `act` on a `custom_only` app, which becomes `ask`.
+    pub level: String,
+    /// `custom_only` when the level was cut, else null.
+    pub level_note: Option<String>,
+    /// The template's `tools:`, cut to the app's current catalogue; null without `tools:`.
+    pub custom: Option<CustomToolsView>,
+    /// The app's accounts the caller may give to an agent of this workspace (C-917 shape).
+    pub accounts: Vec<Account>,
+}
+
+/// One entry of the plan (C-1110).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PlanEntry {
+    pub index: usize,
+    pub required: bool,
+    pub why: String,
+    pub choices: Vec<PlanChoice>,
+}
+
+/// The resolved library of a skill reference (C-1142's `SkillRefPlan.library`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ResolvedLibraryView {
+    pub id: Uuid,
+    pub label: String,
+    /// `organization` | `instance`.
+    pub scope: String,
+    /// The display form `host/path`.
+    pub repo: String,
+    #[serde(rename = "ref")]
+    pub reference: Option<String>,
+    pub path: String,
+    pub commit_sha: String,
+}
+
+/// The referenced skill's content, exactly what an add would store (C-1142).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SkillContentBrief {
+    pub use_it_when: String,
+    pub body: String,
+    pub files: Vec<FileView>,
+}
+
+/// One skill reference, resolved for the workspace (C-1142's `SkillRefPlan`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SkillRefPlan {
+    pub index: usize,
+    /// `library` | `organization`.
+    pub kind: String,
+    pub name: String,
+    pub required: bool,
+    pub why: String,
+    pub available: bool,
+    /// `library_not_added` | `skill_not_in_library` | `library_unreadable` |
+    /// `libraries_disabled` | `not_in_organization` | null.
+    pub unavailable_reason: Option<String>,
+    /// The matched library, with the commit the content comes from; null when unmatched.
+    pub library: Option<ResolvedLibraryView>,
+    /// The skill's content at that commit (the plan only); null while unavailable.
+    pub content: Option<SkillContentBrief>,
+}
+
+/// The full plan of one template (C-1110's `TemplatePlan`): the card's fields, the reviewed
+/// content, the app entries with their per-app choices and the resolved skill references.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TemplatePlan {
+    pub template_id: String,
+    pub name: String,
+    pub summary: String,
+    pub readme: String,
+    pub version: String,
+    pub has_avatar: bool,
+    pub apps: Vec<CardAppEntry>,
+    pub has_helpers: bool,
+    pub automations: Vec<AutomationBrief>,
+    pub ready: bool,
+    pub content_sha256: Option<String>,
+    pub content: TemplateContentView,
+    pub entries: Vec<PlanEntry>,
+    pub skill_refs: Vec<SkillRefPlan>,
 }
