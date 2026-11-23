@@ -836,12 +836,19 @@ fn token_lifecycle(
     let conn = &c.connection;
     let mut used = vec![false; t.http_cassette.len()];
     let mut tobs = json!({ "stale": true });
+    // (FIX-233) The case's client fields split as the store keeps them: a field the manifest
+    // declares non-secret is public (it may fill a `{client.<field>}` path segment).
+    let (public, secret): (serde_json::Map<_, _>, serde_json::Map<_, _>) = conn
+        .oauth_client
+        .clone()
+        .into_iter()
+        .partition(|(k, _)| client.fields.iter().any(|f| &f.name == k && !f.secret));
     let outcome = match build_exchange(
         client,
         token,
         &conn.credentials,
-        &serde_json::Map::new(),
-        &conn.oauth_client,
+        &public,
+        &secret,
         conn.tenant_host.as_deref(),
         // (D-86) A connection without a registered instance resolves `{instance}` to the app's
         // `default_host`, as the gateway resolver does.

@@ -193,7 +193,11 @@ describe("oauth client secrets", () => {
     const detail = {
       app_id: "a1", package_id: "p", name: "App", connect: [],
       oauth_clients: [{ client_key: "main", used_by_methods: [{ id: "oauth", label: "Sign in with App" }], setup_note: "Create an app first.", redirect_uri: "https://x.test/v1/oauth/callback",
-        fields: [{ name: "client_id", label: "Client ID", secret: false }, { name: "client_secret", label: "Client secret", secret: true }] }],
+        fields: [
+          { name: "client_id", label: "Client ID", secret: false },
+          { name: "client_secret", label: "Client secret", secret: true },
+          { name: "tenant", label: "Directory (tenant) ID", secret: false, default: "common" },
+        ] }],
     };
     vi.stubGlobal("fetch", vi.fn(async (input: Request) => {
       const u = new URL(input.url);
@@ -210,6 +214,11 @@ describe("oauth client secrets", () => {
     expect(secret).toHaveAttribute("type", "password");
     expect(secret).toHaveValue("");
     expect(screen.getByLabelText("Client ID")).toHaveValue("abc");
+    // (FIX-233, C-1159) A field with a default is optional and shows the default.
+    const tenant = screen.getByLabelText("Directory (tenant) ID");
+    expect(tenant).toHaveValue("");
+    expect(tenant).toHaveAttribute("placeholder", "common");
+    expect(screen.getByText("Optional. Leave empty to use “common”.")).toBeInTheDocument();
     expect(screen.getByText("Create an app first.")).toBeInTheDocument();
     expect(screen.getByText("https://x.test/v1/oauth/callback")).toBeInTheDocument();
   });

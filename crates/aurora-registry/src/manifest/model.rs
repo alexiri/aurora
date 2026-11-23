@@ -100,6 +100,11 @@ pub struct ClientField {
     pub label: String,
     #[serde(default)]
     pub secret: bool,
+    /// (FIX-233, C-1159) The value used when a client leaves the field out; such a field is
+    /// optional when a client is registered. Required for a field an OAuth URL places in its
+    /// path (`{client.<name>}`); never on a secret field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

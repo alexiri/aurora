@@ -475,7 +475,7 @@ pub fn build_exchange(
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
         .ok_or(RefreshError::Unavailable)?;
-    let url = token_url(client, tenant_host, instance)?;
+    let url = token_url(client, tenant_host, instance, public)?;
     let mut params: Vec<(String, String)> = vec![
         ("grant_type".into(), "refresh_token".into()),
         ("refresh_token".into(), refresh.to_owned()),
@@ -574,6 +574,7 @@ fn token_url(
     c: &OauthClientEntry,
     tenant_host: Option<&str>,
     instance: Option<InstanceBase<'_>>,
+    public: &Map<String, Value>,
 ) -> Result<String, RefreshError> {
     match &c.token_url {
         // (D-74, SEC-04) `https://{instance}/...`: the connection's own instance address (host and
@@ -581,7 +582,10 @@ fn token_url(
         UrlOrTemplate::Url(u) if u.contains(aurora_registry::manifest::INSTANCE_HOST) => {
             instance_token_url(u, instance)
         }
-        UrlOrTemplate::Url(u) => Ok(u.clone()),
+        // (FIX-233, C-1159) `{client.<field>}` path segments from the minting client's public
+        // fields (else the field's default), as the API's code exchange; a bad value fails closed.
+        UrlOrTemplate::Url(u) => aurora_registry::manifest::fill_client_url(u, &c.fields, public)
+            .ok_or(RefreshError::Unavailable),
         UrlOrTemplate::Templated(z) => {
             let creds = Map::new();
             let optional = BTreeSet::new();
@@ -662,8 +666,51 @@ fn store_err(e: aurora_secrets::SecretError) -> RefreshError {
 
 #[cfg(test)]
 mod token_url_tests {
-    use super::{check_templated_token_url, instance_token_url};
+    use super::{check_templated_token_url, instance_token_url, token_url};
     use aurora_registry::instance::InstanceBase;
+
+    /// (FIX-233, C-1159) A refresh goes to the minting client's own tenant, else the default; a
+    /// stored value that is not a path segment fails closed.
+    #[test]
+    fn a_client_field_fills_the_token_path() {
+        use aurora_registry::manifest::{BodyFormat, ClientAuth, ClientField, UrlOrTemplate};
+        use aurora_registry::snapshot::OauthClientEntry;
+        let c = OauthClientEntry {
+            package_id: "microsoft-365".into(),
+            client_key: "microsoft".into(),
+            authorize_url: UrlOrTemplate::Url(
+                "https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/authorize".into(),
+            ),
+            token_url: UrlOrTemplate::Url(
+                "https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/token".into(),
+            ),
+            pkce: true,
+            client_auth: ClientAuth::Body,
+            body_format: BodyFormat::Form,
+            fields: vec![ClientField {
+                name: "tenant".into(),
+                label: "Directory (tenant) ID".into(),
+                secret: false,
+                default: Some("common".into()),
+            }],
+            setup_note: None,
+        };
+        let public =
+            |v: &str| serde_json::Map::from_iter([("tenant".to_owned(), serde_json::json!(v))]);
+        assert_eq!(
+            token_url(&c, None, None, &serde_json::Map::new())
+                .ok()
+                .as_deref(),
+            Some("https://login.microsoftonline.com/common/oauth2/v2.0/token")
+        );
+        assert_eq!(
+            token_url(&c, None, None, &public("cern.onmicrosoft.com"))
+                .ok()
+                .as_deref(),
+            Some("https://login.microsoftonline.com/cern.onmicrosoft.com/oauth2/v2.0/token")
+        );
+        assert!(token_url(&c, None, None, &public("evil.example/x")).is_err());
+    }
 
     /// SEC-04/SEC-59: a refresh token is only ever sent to the connection's own instance host.
     #[test]

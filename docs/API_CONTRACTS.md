@@ -2836,6 +2836,14 @@ Rule: `docs/tasks/P6-TEMPLATES.md` (design), `docs/25-agent-templates.md` (the p
   - **Dashboard.** The waiting dialog shows "The sign-in did not complete (<error>)." followed by the same sentence. Without a `reason` it adds "Try again." as before.
   - **Log.** The API logs one `warn` ("the provider refused the OAuth sign-in") with `app_id`, `stage`, `status`, `error`, `provider_code` and the `error_description` with control characters removed, cut to 300 characters. The description goes to the server log only.
 
+- C-1159 **A sign-in app's own value in an OAuth URL's path** (FIX-233, D-476; amends C-244 and `09 §3.3`; no route or migration; one OpenAPI field).
+  - **Manifest.** A fixed `authorize_url`/`token_url` may contain `{client.<field>}` as a whole path segment (`https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/token`). The field must be declared in the client's `fields`, be non-secret, and have the new `default` (1–256 characters, a valid segment). A secret field never has a `default`. Only these placeholders are allowed in a fixed URL, and never beside `{instance}`. Violations: `oauth_url_client_field_invalid`, `client_field_default_invalid`.
+  - **Value rule.** 1–253 characters of `[A-Za-z0-9.-]`, starting and ending with a letter or digit, no `..` (a GUID, a domain name, `common`). The client's stored public value is used, trimmed; when it is absent or blank, the field's `default` is used.
+  - **Sign-in apps (C-244).** `POST /v1/…/oauth-clients` no longer requires a field that has a `default`. On create and `PATCH`, a value for a field that a URL places in its path must pass the value rule, else 422 `invalid_request` on `/fields/<name>` ("must be an ID or a domain name (letters, digits, dots and hyphens)").
+  - **App detail.** `AppOauthClient.fields[]` (`OauthClientField`) gains `default: string | null`. The dashboard's sign-in app form shows it as the placeholder, with the hint "Optional. Leave empty to use “<default>”."
+  - **Where it is filled.** The connect start (authorize and token URL), the code exchange, the sign-in app Test (C-1070) and the gateway's refresh all fill the URL from the minting client's public fields. A stored value that fails the rule fails closed: the connect start answers 422 as for a missing tenant, the exchange `oauth_exchange_failed`, the Test `not_testable`, and the refresh `unavailable`.
+  - **Microsoft 365 1.5.0.** Its client gains `tenant` ("Directory (tenant) ID", default `common`), and both URLs use `{client.tenant}`. Existing sign-in apps keep `common`.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._

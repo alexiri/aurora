@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.4.0
+  version: 1.5.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -12,15 +12,18 @@ permissions:
   token_hosts: [login.microsoftonline.com]
 oauth_clients:
   - id: microsoft
-    authorize_url: https://login.microsoftonline.com/common/oauth2/v2.0/authorize
-    token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+    # (FIX-233, D-476) The registration's directory goes in the path: a single-tenant
+    # registration signs in at its own tenant, a multitenant one at `common`.
+    authorize_url: https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/authorize
+    token_url: https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/token
     pkce: true
     client_auth: body
     body_format: form
     fields:
       - { name: client_id, label: Application (client) ID }
       - { name: client_secret, label: Client secret value, secret: true }
-    setup_note: "In the Microsoft Entra admin center open App registrations, add a Web registration whose supported account types include every organizational directory (and personal accounts if you need them), register the Aurora redirect URI, add a client secret, and grant only the delegated Graph permissions you will offer."
+      - { name: tenant, label: Directory (tenant) ID, default: common }
+    setup_note: "In the Microsoft Entra admin center open App registrations, add a Web registration, register the Aurora redirect URI, add a client secret, and grant only the delegated Graph permissions you will offer. For a registration limited to your own directory (single tenant), enter its Directory (tenant) ID from the Overview page; leave it empty for a multitenant registration."
 apps:
   - about:
       id: microsoft-365
@@ -32,7 +35,7 @@ apps:
       api_docs: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
       web_hosts: [outlook.office.com, outlook.live.com, onedrive.live.com]
       connect_note:
-        text: "Sign-in uses the multi-tenant Microsoft Entra endpoint (common), so the Aurora application must be registered as multitenant. Some permissions, such as SharePoint site access, need tenant admin consent."
+        text: "Sign-in uses the directory set on the sign-in app: its own tenant for a single-tenant registration, or the multitenant endpoint (common) when none is set. Some permissions, such as SharePoint site access, need tenant admin consent."
         url: https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview
       label_hint: Microsoft account name
     credentials:

@@ -369,6 +369,7 @@ fn oauth_clients(
                     name: f.name.clone(),
                     label: f.label.clone(),
                     secret: f.secret,
+                    default: f.default.clone(),
                 })
                 .collect(),
             setup_note: c.setup_note.clone(),

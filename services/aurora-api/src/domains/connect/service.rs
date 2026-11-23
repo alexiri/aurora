@@ -1464,14 +1464,21 @@ async fn start_oauth(
             "tenant host is not allowed for this app",
         ));
     }
-    let authorize = oauth_url(&ce.authorize_url, tenant.as_deref(), ctx.instance_base())
-        .ok_or_else(|| {
-            invalid(
-                "/fields",
-                "a tenant host is required for this connect method",
-            )
-        })?;
-    if oauth_url(&ce.token_url, tenant.as_deref(), ctx.instance_base()).is_none() {
+    let public = client.fields.as_object().cloned().unwrap_or_default();
+    let cv = (ce.fields.as_slice(), &public);
+    let authorize = oauth_url(
+        &ce.authorize_url,
+        tenant.as_deref(),
+        ctx.instance_base(),
+        cv,
+    )
+    .ok_or_else(|| {
+        invalid(
+            "/fields",
+            "a tenant host is required for this connect method",
+        )
+    })?;
+    if oauth_url(&ce.token_url, tenant.as_deref(), ctx.instance_base(), cv).is_none() {
         return Err(invalid(
             "/fields",
             "a tenant host is required for this connect method",
@@ -1688,18 +1695,27 @@ async fn run_callback(
     ))
 }
 
-/// Resolve an OAuth endpoint: fixed URLs as-is; templates render with the tenant host and must
+/// The manifest's client fields and one client's stored public values (C-1159).
+type ClientValues<'a> = (
+    &'a [aurora_registry::manifest::ClientField],
+    &'a Map<String, Value>,
+);
+
+/// Resolve an OAuth endpoint: fixed URLs as-is (client-field segments filled); templates render with the tenant host and must
 /// stay `https` inside their zone (SEC-17 / I-20).
 fn oauth_url(
     u: &UrlOrTemplate,
     tenant: Option<&str>,
     instance: Option<InstanceBase<'_>>,
+    client: ClientValues<'_>,
 ) -> Option<String> {
     match u {
         UrlOrTemplate::Url(u) if u.contains(aurora_registry::manifest::INSTANCE_HOST) => {
             probe::instance_url(u, instance?)
         }
-        UrlOrTemplate::Url(u) => Some(u.clone()),
+        // (FIX-233, C-1159) `{client.<field>}` path segments: the client's value, else the
+        // field's default; a bad value fails closed.
+        UrlOrTemplate::Url(u) => aurora_registry::manifest::fill_client_url(u, client.0, client.1),
         UrlOrTemplate::Templated(z) => {
             let url = probe::render_url(&z.template, tenant)?;
             probe::in_zone(&url, &z.zone).then_some(url)
@@ -1794,7 +1810,8 @@ pub(crate) async fn probe_token_endpoint(
     let base = instance
         .as_ref()
         .map(|i| InstanceBase::new(&i.host, i.base_path.as_deref()));
-    let Some(raw) = oauth_url(&ce.token_url, None, base) else {
+    let public = client.fields.as_object().cloned().unwrap_or_default();
+    let Some(raw) = oauth_url(&ce.token_url, None, base, (&ce.fields, &public)) else {
         return Ok(TokenProbe::NotTestable);
     };
     let host_of = |u: &str| {
@@ -1989,7 +2006,13 @@ async fn token_exchange(
     {
         return Err(ConnectErr::Exchange);
     }
-    let url = oauth_url(&ce.token_url, tenant, ctx.instance_base()).ok_or(ConnectErr::Exchange)?;
+    let url = oauth_url(
+        &ce.token_url,
+        tenant,
+        ctx.instance_base(),
+        (&ce.fields, &cf.0),
+    )
+    .ok_or(ConnectErr::Exchange)?;
     let url = env.prepare(&url).map_err(|_| ConnectErr::Exchange)?;
     // A registered instance is dialled through the guard that honours `gateway.allowed_private`.
     let http = if ctx.instance.is_some() {
@@ -2143,5 +2166,40 @@ mod refusal_tests {
         assert_eq!(r.provider_code.as_deref(), Some("AADSTS700016"));
         assert_eq!(log_text(Some("a\nb\u{7}c")), "abc");
         assert_eq!(log_text(Some(&"x".repeat(400))).len(), 300);
+    }
+
+    /// (FIX-233, C-1159) A fixed OAuth URL takes the client's directory, else the default.
+    #[test]
+    fn oauth_url_fills_the_clients_path_segment() {
+        let fields = vec![aurora_registry::manifest::ClientField {
+            name: "tenant".into(),
+            label: "Directory (tenant) ID".into(),
+            secret: false,
+            default: Some("common".into()),
+        }];
+        let u = UrlOrTemplate::Url(
+            "https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/authorize".into(),
+        );
+        let none = Map::new();
+        assert_eq!(
+            oauth_url(&u, None, None, (&fields, &none)).as_deref(),
+            Some("https://login.microsoftonline.com/common/oauth2/v2.0/authorize")
+        );
+        let set: Map<String, Value> = [(
+            "tenant".to_owned(),
+            json!("c80d3499-4a40-4a8c-986e-abce017d6b19"),
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            oauth_url(&u, None, None, (&fields, &set)).as_deref(),
+            Some(
+                "https://login.microsoftonline.com/c80d3499-4a40-4a8c-986e-abce017d6b19/oauth2/v2.0/authorize"
+            )
+        );
+        let bad: Map<String, Value> = [("tenant".to_owned(), json!("evil.example/x"))]
+            .into_iter()
+            .collect();
+        assert_eq!(oauth_url(&u, None, None, (&fields, &bad)), None);
     }
 }

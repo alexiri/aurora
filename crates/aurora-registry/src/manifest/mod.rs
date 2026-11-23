@@ -1,7 +1,9 @@
 //! Manifest model, strict parsing and sanitization (09 §3).
+mod client_path;
 mod model;
 mod sanitize;
 
+pub use client_path::*;
 pub use model::*;
 
 use crate::Violation;

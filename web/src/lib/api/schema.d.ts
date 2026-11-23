@@ -11935,6 +11935,8 @@ export interface components {
             result: components["schemas"]["TestResult"];
         };
         OauthClientField: {
+            /** @description (FIX-233, C-1159) Used when the field is left empty; a field with a default is optional. */
+            default?: string | null;
             label: string;
             name: string;
             secret: boolean;

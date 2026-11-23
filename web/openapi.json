@@ -59059,6 +59059,13 @@
           "secret"
         ],
         "properties": {
+          "default": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(FIX-233, C-1159) Used when the field is left empty; a field with a default is optional."
+          },
           "label": {
             "type": "string"
           },
