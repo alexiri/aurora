@@ -148,10 +148,16 @@ describe("runImport", () => {
 
   it("writes the checklist line", () => {
     expect(summaryLine(exp)).toBe("Instructions · 2 memories · 1 skill · 1 schedule · 1 webhook");
-    // (P6-MEMLOCK, C-1150) The locked count shows only when any memory is locked.
+    // (P6-MEMLOCK, C-1150) The locked count shows only when any memory is locked, as "N locked".
     expect(summaryLine({ ...exp, memories: [{ ...exp.memories[0]!, locked: true }] })).toBe(
       "Instructions · 1 memory (1 locked) · 1 skill · 1 schedule · 1 webhook",
     );
+    expect(
+      summaryLine({
+        ...exp,
+        memories: exp.memories.map((m) => ({ ...m, locked: true })),
+      }),
+    ).toBe("Instructions · 2 memories (2 locked) · 1 skill · 1 schedule · 1 webhook");
     expect(summaryLine({ ...exp, memories: [] })).toBe("Instructions · 1 skill · 1 schedule · 1 webhook");
   });
 });

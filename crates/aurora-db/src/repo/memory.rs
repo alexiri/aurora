@@ -115,14 +115,16 @@ pub async fn insert(
     title: Option<&str>,
     description: Option<&str>,
     content: &str,
-    // (P6-MEMLOCK, C-1148) `create` may arrive locked; `locked_at`/`locked_by` are set here.
+    // (P6-MEMLOCK, C-1148) `create` may arrive locked; `locked_at`/`locked_by` are set here, and
+    // only when it is true: an unlocked create stores no locker.
     locked: bool,
     locked_by: Option<Uuid>,
 ) -> Result<MemoryRow, DbError> {
     let id: Uuid = sqlx::query_scalar(
         "INSERT INTO memories (id, agent_id, key, title, description, content, revision, locked, \
                 locked_at, locked_by)
-         VALUES ($1, $2, $3, $4, $5, $6, 1, $7, CASE WHEN $7 THEN now() END, $8) RETURNING id",
+         VALUES ($1, $2, $3, $4, $5, $6, 1, $7, CASE WHEN $7 THEN now() END, \
+                CASE WHEN $7 THEN $8 END) RETURNING id",
     )
     .bind(Uuid::now_v7())
     .bind(agent)

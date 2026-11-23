@@ -148,7 +148,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** The checklist line. */
 export function summaryLine(e: AgentExport): string {
   const s = summarize(e);
-  const memories = s.memories ? `${plural(s.memories, "memory", "memories")}${s.locked ? ` (${plural(s.locked, "locked")})` : ""}` : null;
+  const memories = s.memories ? `${plural(s.memories, "memory", "memories")}${s.locked ? ` (${s.locked} locked)` : ""}` : null;
   return [s.instructions ? "Instructions" : null, memories, s.skills ? plural(s.skills, "skill") : null, s.schedules ? plural(s.schedules, "schedule") : null, s.webhooks ? plural(s.webhooks, "webhook") : null]
     .filter((x): x is string => x !== null)
     .join(" · ");

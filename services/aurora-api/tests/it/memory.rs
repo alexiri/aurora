@@ -535,6 +535,27 @@ async fn locked_memory_routes_and_the_agent_refusal() {
     assert_eq!(v["locked_by"]["display_name"], json!("U"));
     assert_eq!(v["index_line"], json!("rules: Rules (locked)"));
 
+    // An unlocked create stores no locker (C-1148: locked_at/locked_by only when locked).
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &base,
+            Some(json!({"key": "free-form", "title": "Free", "content": "anything"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["locked"], json!(false));
+    assert!(v["locked_at"].is_null());
+    assert!(v["locked_by"].is_null());
+    let locker: Option<Uuid> = sqlx::query_scalar(
+        "SELECT locked_by FROM memories WHERE agent_id = $1 AND key = 'free-form'",
+    )
+    .bind(a)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(locker.is_none(), "an unlocked create stores no locked_by");
+
     // The lock route: a change bumps the agent's home-sync generation and audits, no revision.
     assert_eq!(r.put(a, "note", "hello").await.0, 200);
     let gen_before = gen_of().await;
