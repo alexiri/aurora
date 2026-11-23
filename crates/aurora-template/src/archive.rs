@@ -182,7 +182,12 @@ pub fn read_archive(bytes: &[u8]) -> Result<crate::model::TemplateContent, Vec<T
             return Err(bad("the zip is damaged"));
         }
         let start = local + 30 + u16_at(local + 26) as usize + u16_at(local + 28) as usize;
-        if csize > bytes.len() - start {
+        // Checked: a hostile central directory may name a local header (and lengths) that run
+        // past the end of the archive; `bytes.len() - start` would underflow (SEC-146).
+        let Some(rest) = bytes.len().checked_sub(start) else {
+            return Err(bad("the zip is damaged"));
+        };
+        if csize > rest {
             return Err(bad("the zip is damaged"));
         }
         let raw = &bytes[start..start + csize];
@@ -720,6 +725,36 @@ mod tests {
         out.extend_from_slice(&cd_offset.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
         out
+    }
+
+    /// A hostile central directory that points at a valid local header whose declared name and
+    /// extra lengths run past the end of the archive: `start` must not underflow
+    /// `bytes.len() - start` (SEC-146, panic on a hostile zip).
+    #[test]
+    fn a_local_header_past_the_end_is_damaged_not_a_panic() {
+        let bytes = two_files_zip();
+        assert!(read_archive(&bytes).is_ok());
+        // The first local header is intact; only its name/extra lengths lie (each 0xFFFF), so
+        // `start` lands far past the end of the archive.
+        let mut hostile = bytes.clone();
+        let local = hostile
+            .windows(4)
+            .position(|w| w == LOCAL_SIG.to_le_bytes())
+            .unwrap();
+        hostile[local + 26..local + 28].copy_from_slice(&0xffffu16.to_le_bytes());
+        hostile[local + 28..local + 30].copy_from_slice(&0xffffu16.to_le_bytes());
+        let err = read_archive(&hostile).unwrap_err();
+        assert!(err.iter().any(|p| p.message == "the zip is damaged"));
+        // The same shape with the packed size inflated: the data must not reach past the end
+        // either (`csize` larger than the bytes after the local header's name).
+        let mut short = bytes.clone();
+        let pos = short
+            .windows(4)
+            .rposition(|w| w == CENTRAL_SIG.to_le_bytes())
+            .unwrap();
+        short[pos + 20..pos + 24].copy_from_slice(&(0xffff_ffffu32).to_le_bytes());
+        let err = read_archive(&short).unwrap_err();
+        assert!(err.iter().any(|p| p.message == "the zip is damaged"));
     }
 
     #[test]
