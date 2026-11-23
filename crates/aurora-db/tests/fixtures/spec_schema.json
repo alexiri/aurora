@@ -87,6 +87,12 @@
       "policy_b",
       "revision"
     ],
+    "agent_template_parts": [
+      "agent_id",
+      "content_sha256",
+      "key",
+      "kind"
+    ],
     "agent_template_sources": [
       "check_failed_at",
       "check_failed_reason",
@@ -174,6 +180,10 @@
       "proactive_messaging",
       "resource_overrides",
       "subagent_model",
+      "template_id",
+      "template_inputs",
+      "template_name",
+      "template_version",
       "workspace_id"
     ],
     "api_keys": [
@@ -1779,6 +1789,12 @@
       "policy_b": "text",
       "revision": "bigint not null"
     },
+    "agent_template_parts": {
+      "agent_id": "uuid not null",
+      "content_sha256": "text not null",
+      "key": "text not null",
+      "kind": "text not null"
+    },
     "agent_template_sources": {
       "check_failed_at": "timestamptz null",
       "check_failed_reason": "text null",
@@ -1866,6 +1882,10 @@
       "proactive_messaging": "text",
       "resource_overrides": "jsonb null",
       "subagent_model": "text not null",
+      "template_id": "text null",
+      "template_inputs": "jsonb null",
+      "template_name": "text null",
+      "template_version": "text null",
       "workspace_id": "uuid"
     },
     "api_keys": {

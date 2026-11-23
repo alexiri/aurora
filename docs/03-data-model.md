@@ -873,6 +873,8 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | eval_judge_test_result, eval_judge_test_reason, eval_judge_test_ms, eval_judge_tested_at | text null (`ok` or `failed`), text null, bigint null, timestamptz null | (P5-REFINE-20, C-1101) the last test of the grader, written with the judge in the same transaction; display data, never the provider's text |
 | avatar_blob_key | text null | the avatar's `blobs.key`; a reference the orphan-blob sweep honours (FIX-223, D-466); partial index `agents_avatar_blob_key_idx` (avatar_blob_key) WHERE avatar_blob_key IS NOT NULL (migration `20261201000274`, which also clears pointers to blobs that no longer exist) |
 | avatar_public_key | text null | unguessable, rotating; gates the public avatar GET; partial index (avatar_public_key) WHERE avatar_public_key IS NOT NULL |
+| template_id, template_name, template_version | text null | (phase 6, P6-TPL-3, C-1112) agent-template provenance as text (no FK): deleting a source or template changes no agent. Set at creation; at an apply only `template_version` moves; all three null after the detach (`DELETE /v1/agents/{agent}/template`) |
+| template_inputs | jsonb null | (phase 6, P6-TPL-3, C-1112) the checked input values, reused to render update offers (a needed input renders as `{input.<id>}`) |
 | resource_overrides | jsonb null | `ResourceProfile` (instance admins only) |
 | home_sync_generation | bigint not null default 0 | desired projection generation |
 | created_by | uuid null FK→users (set null) | |
@@ -972,6 +974,15 @@ One row per helper file of an agent (C-1141's `helpers/<path>`): projected read-
 | executable | boolean not null | |
 | sha256 | text not null | hex digest of `content` |
 | size | integer not null | |
+
+### `agent_template_parts` (phase 6, P6-TPL-3, D-457(f), C-1112; what an agent last took from its template)
+One row per part an agent last wrote from a template, written at creation and at each apply (C-1112). A part's `content_sha256` is diffed against the offered version's part hashes to build the update offer; the agent does not change until the person applies one.
+| Column | Type | Notes |
+|---|---|---|
+| agent_id | uuid not null FK→agents (cascade) | pk part |
+| kind | text not null CHECK in (`instructions`,`skill`,`helpers`,`library_skill`) | pk part |
+| key | text not null default `` | pk part: empty for `instructions` and `helpers`, the skill name for `skill`, the C-1104 `skill_ref_key` for `library_skill` |
+| content_sha256 | text not null | the C-1104 part hash of what was last written from the template (after rendering, for `library_skill` the hash of the ref key); a library skill's content is never compared |
 
 ### `org_disabled_agent_templates` (phase 6, P6-TPL-2, C-1109)
 | Column | Type | Notes |
@@ -1826,13 +1837,7 @@ tables above in the same change (and this section shrinks).
 `blobs` (the Postgres backend table), `agents.avatar_blob_key` (avatars) and `plugin_blobs` are unchanged and stay in Postgres. No new table: S3 state is the bucket. The `attachments` index on `blob_key` serves the S3 orphan sweep (rows are looked up by `(blob_backend, blob_key)`). `GET /v1/admin/storage` reports bytes and counts **per backend** from `attachments` (never by listing the bucket).
 
 #### Agent templates (phase 6, P6-TEMPLATES, D-435, D-436, D-456, D-457, C-1106, C-1112, C-1143, SEC-146)
-Three migrations. The four P6-TPL-2 tables are in §5 (migration `20261201000278`); P6-TPL-6's `agent_helper_files` is in §5 next to them (migration `20261201000280`). P6-TPL-3 adds the `agents` columns and `agent_template_parts`. Full column lists are in C-1106, C-1143 and C-1112; summary:
-
-| Planned table / column | Type | Notes | Phase |
-|---|---|---|---|
-| `agents.template_id`, `.template_name`, `.template_version` | text null | Provenance as text (no FK): deleting a source or template changes no agent | 6 (P6-TPL-3) |
-| `agents.template_inputs` | jsonb null | The checked input values, reused to render update offers | 6 (P6-TPL-3) |
-| `agent_template_parts` | table | `(agent_id, kind, key)` pk. `kind` is one of `instructions`, `skill`, `helpers`, `library_skill`; `content_sha256` is the hash of what was last written from the template; FK agent (cascade) | 6 (P6-TPL-3) |
+Landed: the four P6-TPL-2 tables are in §5 (migration `20261201000278`), P6-TPL-6's `agent_helper_files` is in §5 next to them (migration `20261201000280`), and P6-TPL-3's `agents` provenance columns and `agent_template_parts` are in §5 (migration `20261201000281`). Full column lists are in C-1106, C-1143 and C-1112.
 
 The gateway role has no access to any of these tables.
 
