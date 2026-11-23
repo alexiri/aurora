@@ -123,7 +123,8 @@ async fn get_helper(
 }
 
 /// Remove one helper file (`?path=`) or every helper file of the agent (C-1143) → 204. Audited
-/// `agent.helpers_remove` (ordinary) with the removed paths.
+/// `agent.helpers_remove` (ordinary) with the removed paths, only when something was removed: a
+/// delete that removes nothing (an unknown path, a repeat call, an empty set) stays unaudited.
 #[utoipa::path(delete, path = "/agents/{agent}/helpers", operation_id = "deleteAgentHelper",
     tag = "helpers", params(("agent" = Uuid, Path, description = "Agent id"), HelperPathQuery),
     responses((status = 204), (status = 400, body = ErrorEnvelope),
@@ -145,8 +146,10 @@ async fn delete_helper(
             .collect(),
     };
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
-    service::delete(&mut tx, a.id, q.path.as_deref()).await?;
+    let removed = service::delete(&mut tx, a.id, q.path.as_deref()).await?;
     tx.commit().await.map_err(DbError::from)?;
-    record(&c, &s, &a, paths);
+    if removed > 0 {
+        record(&c, &s, &a, paths);
+    }
     Ok(StatusCode::NO_CONTENT)
 }

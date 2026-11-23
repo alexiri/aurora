@@ -313,6 +313,56 @@ async fn list_read_and_delete() {
     assert_eq!(w.generation(a).await, before);
 }
 
+/// A delete that removes nothing (an unknown path, a repeat call, an empty set) still answers
+/// 204 but writes no `agent.helpers_remove` audit row and bumps no generation: only a real
+/// removal is audited.
+#[tokio::test]
+async fn a_delete_that_removes_nothing_is_not_audited() {
+    let w = world().await;
+    let a = w.agent("h1").await;
+    w.seed(a, &[f("run.sh", b"x", false)]).await;
+    let before = w.generation(a).await;
+
+    // An unknown path (twice) and later an empty set: 204 every time, nothing changed.
+    for _ in 0..2 {
+        let (s, _) = w
+            .delete(&format!("/v1/agents/{a}/helpers?path=nope.sh"), &w.tok)
+            .await;
+        assert_eq!(s, 204);
+        assert_eq!(
+            w.helper_count(a).await,
+            1,
+            "an unknown path removes nothing"
+        );
+    }
+    assert_eq!(
+        w.generation(a).await,
+        before,
+        "no removal, no generation bump"
+    );
+
+    // A real removal is still audited with the removed path.
+    let (s, _) = w
+        .delete(&format!("/v1/agents/{a}/helpers?path=run.sh"), &w.tok)
+        .await;
+    assert_eq!(s, 204);
+    assert_eq!(w.wait_audit_paths(1).await, json!(["run.sh"]));
+
+    // Now the set is empty: a repeat delete answers 204, changes nothing and stays unaudited.
+    let before = w.generation(a).await;
+    let (s, _) = w.delete(&format!("/v1/agents/{a}/helpers"), &w.tok).await;
+    assert_eq!(s, 204);
+    assert_eq!(w.generation(a).await, before);
+    // The audit write is fire-and-forget, so give a wrongly spawned row time to land.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'agent.helpers_remove'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(n, 1, "the no-removal deletes wrote no audit row");
+}
+
 /// `can_use` of the agent's workspace: a member of another workspace of the same organization
 /// gets 404 everywhere (ids are not confirmed).
 #[tokio::test]
