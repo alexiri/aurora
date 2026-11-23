@@ -22,8 +22,10 @@
 //! principal's successful delete cannot change another principal's outcome.
 
 use crate::common::*;
+use aurora_db::repo::agent_helpers as helpers_repo;
 use http::Method;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
@@ -1643,6 +1645,20 @@ async fn seed(h: &Harness, n: u32) -> Fx {
         .execute(h.pool())
         .await
         .unwrap();
+    // (P6-TPL-6) A helper file, so `GET .../helpers/content?path=matrix.sh` (probed in `fire`)
+    // has a 200 outcome for an authorized principal to compare against instead of a 404.
+    let mut conn = h.pool().acquire().await.unwrap();
+    helpers_repo::insert(
+        &mut conn,
+        agent,
+        "matrix.sh",
+        b"matrix",
+        false,
+        &hex::encode(Sha256::digest(b"matrix")),
+    )
+    .await
+    .unwrap();
+    drop(conn);
     let ws2 = h.workspace(org).await;
 
     let adm = h.user(&format!("adm{n}@x.io"), false).await;
@@ -2023,6 +2039,12 @@ async fn fire(h: &Harness, fx: &Fx, row: &Row, p: P) -> (u16, Value) {
     }
     if row.p == "/v1/channel-links/preview" {
         uri.push_str("?token=aui_matrix");
+    }
+    // (P6-TPL-6) The content route's `path` is required (400 `invalid_request` from the query
+    // extractor before authorization), so probe with a seeded helper's path like the search
+    // routes are probed with `?q=`.
+    if row.p == "/v1/agents/{agent}/helpers/content" {
+        uri.push_str("?path=matrix.sh");
     }
     let method = Method::from_bytes(row.m.as_bytes()).unwrap();
     let body = (matches!(method, Method::POST | Method::PUT | Method::PATCH)

@@ -13130,7 +13130,7 @@
         "tags": [
           "helpers"
         ],
-        "summary": "Remove one helper file (`?path=`) or every helper file of the agent (C-1143) → 204. Audited\n`agent.helpers_remove` (ordinary) with the removed paths.",
+        "summary": "Remove one helper file (`?path=`) or every helper file of the agent (C-1143) → 204. Audited\n`agent.helpers_remove` (ordinary) with the removed paths, only when something was removed: a\ndelete that removes nothing (an unknown path, a repeat call, an empty set) stays unaudited.",
         "operationId": "deleteAgentHelper",
         "parameters": [
           {
@@ -13221,7 +13221,7 @@
         "tags": [
           "helpers"
         ],
-        "summary": "Read one helper file's bytes (C-1143): the C-903 content-safety headers — always an\nattachment of `application/octet-stream`, never rendered inline — plus\n`X-Helper-Executable: true|false`.",
+        "summary": "Read one helper file's bytes (C-1143): the C-903 content-safety headers — always an\nattachment of `application/octet-stream`, never rendered inline — plus\n`X-Helper-Executable: true|false`. A missing `?path=` is 400 `invalid_request`.",
         "operationId": "getAgentHelper",
         "parameters": [
           {
@@ -13237,13 +13237,10 @@
           {
             "name": "path",
             "in": "query",
-            "description": "The helper path below `helpers/`. Absent on the delete route = every helper file.",
-            "required": false,
+            "description": "The helper path below `helpers/`.",
+            "required": true,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -13283,15 +13280,6 @@
             }
           },
           "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
             "content": {
               "application/json": {
                 "schema": {

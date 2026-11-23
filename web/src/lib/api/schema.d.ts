@@ -2249,7 +2249,8 @@ export interface paths {
         post?: never;
         /**
          * Remove one helper file (`?path=`) or every helper file of the agent (C-1143) → 204. Audited
-         *     `agent.helpers_remove` (ordinary) with the removed paths.
+         *     `agent.helpers_remove` (ordinary) with the removed paths, only when something was removed: a
+         *     delete that removes nothing (an unknown path, a repeat call, an empty set) stays unaudited.
          */
         delete: operations["deleteAgentHelper"];
         options?: never;
@@ -2267,7 +2268,7 @@ export interface paths {
         /**
          * Read one helper file's bytes (C-1143): the C-903 content-safety headers — always an
          *     attachment of `application/octet-stream`, never rendered inline — plus
-         *     `X-Helper-Executable: true|false`.
+         *     `X-Helper-Executable: true|false`. A missing `?path=` is 400 `invalid_request`.
          */
         get: operations["getAgentHelper"];
         put?: never;
@@ -27459,9 +27460,9 @@ export interface operations {
     };
     getAgentHelper: {
         parameters: {
-            query?: {
-                /** @description The helper path below `helpers/`. Absent on the delete route = every helper file. */
-                path?: string | null;
+            query: {
+                /** @description The helper path below `helpers/`. */
+                path: string;
             };
             header?: never;
             path: {
@@ -27499,14 +27500,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            422: {
                 headers: {
                     [name: string]: unknown;
                 };

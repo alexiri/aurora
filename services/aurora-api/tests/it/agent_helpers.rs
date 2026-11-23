@@ -283,10 +283,14 @@ async fn list_read_and_delete() {
         )
         .await;
     assert_eq!((s, v["error"]["code"].as_str()), (404, Some("not_found")));
-    let (s, _) = w
+    let (s, v) = w
         .get(&format!("/v1/agents/{a}/helpers/content"), &w.tok)
         .await;
-    assert_eq!(s, 422);
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (400, Some("invalid_request")),
+        "a missing ?path= is the standard 400, not a 422"
+    );
 
     // Remove one: 204, one file left, generation bumped, audit row with the path.
     let before = w.generation(a).await;

@@ -36,6 +36,14 @@ pub struct HelperPathQuery {
     pub path: Option<String>,
 }
 
+/// The content route's `path` is required: a missing one is the standard 400 `invalid_request`
+/// from the [`Query`](crate::http::json::Query) extractor, never a 422.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub struct HelperContentQuery {
+    /// The helper path below `helpers/`.
+    pub path: String,
+}
+
 async fn visible_agent(c: &Caller, s: &AppState, id: Uuid) -> Result<agents::AgentRow, ApiError> {
     let row = agents::get(&s.pool, id)
         .await?
@@ -77,23 +85,20 @@ async fn list_helpers(
 
 /// Read one helper file's bytes (C-1143): the C-903 content-safety headers — always an
 /// attachment of `application/octet-stream`, never rendered inline — plus
-/// `X-Helper-Executable: true|false`.
+/// `X-Helper-Executable: true|false`. A missing `?path=` is 400 `invalid_request`.
 #[utoipa::path(get, path = "/agents/{agent}/helpers/content", operation_id = "getAgentHelper",
-    tag = "helpers", params(("agent" = Uuid, Path, description = "Agent id"), HelperPathQuery),
+    tag = "helpers", params(("agent" = Uuid, Path, description = "Agent id"), HelperContentQuery),
     responses((status = 200, description = "Helper bytes", content_type = "application/octet-stream", body = Vec<u8>),
-        (status = 400, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 422, body = ErrorEnvelope)),
+        (status = 400, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn get_helper(
     c: Caller,
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
-    Query(q): Query<HelperPathQuery>,
+    Query(q): Query<HelperContentQuery>,
 ) -> Result<Response, ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
-    let path = q.path.as_deref().ok_or_else(|| {
-        ApiError::unprocessable("template_helper_invalid", "Give the helper path to read.")
-    })?;
+    let path = q.path.as_str();
     let row = repo::get(&s.pool, a.id, path)
         .await?
         .ok_or_else(|| ApiError::not_found("Helper not found."))?;
