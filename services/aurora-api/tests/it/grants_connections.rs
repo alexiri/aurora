@@ -420,7 +420,8 @@ async fn app_detail_lists_oauth_clients_for_byoc_forms() {
     assert_eq!(c["setup_note"], "Create an OAuth app first.");
     assert_eq!(
         c["fields"][1],
-        json!({"name": "client_secret", "label": "Secret", "secret": true})
+        // (FIX-233, C-1159) `default` is null for a field without one.
+        json!({"name": "client_secret", "label": "Secret", "secret": true, "default": null})
     );
     assert!(
         c["redirect_uri"]
