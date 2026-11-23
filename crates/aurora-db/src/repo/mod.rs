@@ -4,6 +4,7 @@ pub mod access_requests;
 pub mod account;
 pub mod action_approvals;
 pub mod addon_sources;
+pub mod agent_templates;
 pub mod admin_attention;
 pub mod agent_links;
 pub mod agents;

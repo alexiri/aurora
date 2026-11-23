@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 aurora-core = { workspace = true, features = ["service"] }
 aurora-config = { workspace = true }
+aurora-template = { workspace = true }
 arc-swap = { workspace = true }
 axum = { workspace = true }
 http-body-util = { workspace = true }

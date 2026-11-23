@@ -567,12 +567,37 @@ pub struct EgressEntry {
 pub struct AgentsSection {
     pub default_name: String,
     pub default_brief: String,
+    /// (phase 6, P6-TPL-2, C-1113) Agent templates: the kill switch and the default schedule.
+    pub templates: AgentTemplatesSection,
 }
 impl Default for AgentsSection {
     fn default() -> Self {
         Self {
             default_name: "Daneel".into(),
             default_brief: DEFAULT_AGENT_BRIEF.into(),
+            templates: AgentTemplatesSection::default(),
+        }
+    }
+}
+
+/// `[agents.templates]` (phase 6, P6-TPL-2, C-1113; docs/15). Not a settings-registry key: the
+/// admin routes keep working while the feature is off, and a source's schedule is per source.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentTemplatesSection {
+    /// The instance kill switch: when off, the organization and workspace template routes
+    /// answer 404 `templates_disabled` and nothing else changes (C-1107).
+    pub enabled: bool,
+    /// The schedule a newly added template source starts with (an admin can change it per
+    /// source): `6h|12h|1d|1w|2w|1mo|never` (`never` = manual checks only). Validated in
+    /// `validate_for`.
+    pub update_interval: String,
+}
+impl Default for AgentTemplatesSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            update_interval: "1d".into(),
         }
     }
 }

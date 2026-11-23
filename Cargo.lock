@@ -297,6 +297,7 @@ dependencies = [
  "aurora-registry",
  "aurora-secrets",
  "aurora-supervisor",
+ "aurora-template",
  "aurora-testkit",
  "aurora-webhook",
  "aws-lc-rs",

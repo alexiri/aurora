@@ -8,6 +8,7 @@ pub mod activity;
 pub mod addon_sources;
 pub mod admin;
 pub mod agent_links;
+pub mod agent_templates;
 pub mod agents;
 pub mod app_instances;
 pub mod app_setup_requests;

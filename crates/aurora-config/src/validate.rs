@@ -648,6 +648,16 @@ impl RawConfig {
                 "must be one of 6h, 12h, 1d, 1w, 2w, 1mo, never",
             );
         }
+        // (P6-TPL-2, C-1113) the template source poll interval: the same enum.
+        if !matches!(
+            self.agents.templates.update_interval.as_str(),
+            "6h" | "12h" | "1d" | "1w" | "2w" | "1mo" | "never"
+        ) {
+            c.err(
+                "agents.templates.update_interval",
+                "must be one of 6h, 12h, 1d, 1w, 2w, 1mo, never",
+            );
+        }
         check_pos(
             &mut c,
             "retention.request_log_days",

@@ -109,19 +109,51 @@ impl ReadError {
     }
 }
 
+/// The tunable values of a repository read (P6-TPL-2 §3, C-1107): the skill library's values
+/// are the default, so its behaviour is unchanged; template sources pass their own (the
+/// `aurora-templates/<version>` user agent and `TEMPLATE_HELPER_FILE_MAX`). The token's purpose
+/// and owner are not read-dependent: they are parameters of the token open ([`SealContext`]),
+/// which each caller builds from its own row.
+///
+/// [`SealContext`]: aurora_secrets::SealContext
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadProfile {
+    /// The `USER_AGENT` of every git request (the reader appends ` git/2.0`, as git clients do).
+    pub user_agent: String,
+    /// The largest blob one read accepts (`LIBRARY_FILE_MAX`, `TEMPLATE_HELPER_FILE_MAX`).
+    pub file_max: usize,
+}
+
+impl Default for ReadProfile {
+    fn default() -> Self {
+        Self {
+            user_agent: format!("aurora-skill-library/{}", env!("CARGO_PKG_VERSION")),
+            file_max: limits::LIBRARY_FILE_MAX,
+        }
+    }
+}
+
 /// One read of a library: the repository, the library path and the blobs fetched so far.
 pub struct Reader<'a> {
     src: &'a dyn RepoSource,
     path: &'a str,
+    profile: ReadProfile,
     cache: Mutex<HashMap<String, Vec<u8>>>,
 }
 
 impl<'a> Reader<'a> {
     #[must_use]
     pub fn new(src: &'a dyn RepoSource, path: &'a str) -> Self {
+        Self::with_profile(src, path, ReadProfile::default())
+    }
+
+    /// A read with another profile (template sources, C-1107).
+    #[must_use]
+    pub fn with_profile(src: &'a dyn RepoSource, path: &'a str, profile: ReadProfile) -> Self {
         Self {
             src,
             path,
+            profile,
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -253,6 +285,12 @@ const REGULAR: [&str; 2] = ["100644", "100755"];
 /// unusable paths are problems of their directory, never stored.
 #[must_use]
 pub fn assemble(path: &str, entries: &[TreeEntry]) -> Vec<Candidate> {
+    assemble_with(path, entries, limits::LIBRARY_FILE_MAX)
+}
+
+/// [`assemble`] with another per-file cap (template sources read with their own, C-1107).
+#[must_use]
+pub fn assemble_with(path: &str, entries: &[TreeEntry], file_max: usize) -> Vec<Candidate> {
     let prefix = path.trim_matches('/');
     let mut dirs: BTreeMap<String, Candidate> = BTreeMap::new();
     let mut marker: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -345,10 +383,10 @@ pub fn assemble(path: &str, entries: &[TreeEntry]) -> Vec<Candidate> {
                 .push(format!("an unsupported file path ({inner})"));
             continue;
         }
-        if f.size.is_some_and(|s| s > limits::LIBRARY_FILE_MAX as u64) {
+        if f.size.is_some_and(|s| s > file_max as u64) {
             c.problems.push(format!(
                 "a file is larger than {} bytes ({inner})",
-                limits::LIBRARY_FILE_MAX
+                file_max
             ));
             continue;
         }
@@ -369,11 +407,11 @@ pub fn assemble(path: &str, entries: &[TreeEntry]) -> Vec<Candidate> {
                     .push("the directory name is not a valid skill name".into());
             }
             if let Some(s) = &c.skill_md
-                && s.size.is_some_and(|n| n > limits::LIBRARY_FILE_MAX as u64)
+                && s.size.is_some_and(|n| n > file_max as u64)
             {
                 c.problems.push(format!(
                     "SKILL.md is larger than {} bytes",
-                    limits::LIBRARY_FILE_MAX
+                    file_max
                 ));
             }
             c
@@ -483,20 +521,20 @@ pub async fn load(reader: &Reader<'_>, c: &Candidate) -> Result<LoadedSkill, Loa
     // One blob request for the whole skill (a no-op when the caller prefetched).
     reader.prefetch(&c.blob_ids()).await?;
     let raw = reader.blob(&sm.blob).await?;
-    if raw.len() > limits::LIBRARY_FILE_MAX {
+    if raw.len() > reader.profile.file_max {
         return Err(invalid(format!(
             "SKILL.md is larger than {} bytes",
-            limits::LIBRARY_FILE_MAX
+            reader.profile.file_max
         )));
     }
     let (description, body) = parse_skill_md(&raw, &c.dir).map_err(invalid)?;
     let mut files = Vec::with_capacity(c.files.len());
     for f in &c.files {
         let content = reader.blob(&f.blob).await?;
-        if content.len() > limits::LIBRARY_FILE_MAX {
+        if content.len() > reader.profile.file_max {
             return Err(invalid(format!(
                 "a file is larger than {} bytes ({})",
-                limits::LIBRARY_FILE_MAX,
+                reader.profile.file_max,
                 f.rel
             )));
         }

@@ -23,7 +23,7 @@ use aurora_core::Secret;
 use aurora_core::limits;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION, RETRY_AFTER, USER_AGENT};
 
-use super::content::{ReadError, RefKind, RepoSource, Resolved, TreeEntry, throttle_secs};
+use super::content::{ReadError, ReadProfile, RefKind, RepoSource, Resolved, TreeEntry, throttle_secs};
 use crate::domains::connect::env::{Env, classify_send_error};
 use discover::{Discovery, FetchAsk, ProtoError};
 use pack::{Kind, Object, Oid};
@@ -84,10 +84,6 @@ fn pack_err(e: pack::PackError) -> ReadError {
     }
 }
 
-fn agent() -> String {
-    format!("aurora-skill-library/{}", env!("CARGO_PKG_VERSION"))
-}
-
 #[derive(Default)]
 struct State {
     /// Base URL after discovery redirects (this read only; never stored).
@@ -106,16 +102,29 @@ pub struct GitRepo<'a> {
     origin: url::Origin,
     token: Option<&'a Token>,
     timeout: Duration,
+    /// The read's tunables (user agent; the profile of a skill library by default, C-1107).
+    profile: ReadProfile,
     state: tokio::sync::Mutex<State>,
 }
 
 impl<'a> GitRepo<'a> {
-    /// `url` is a stored, normalized address (C-1123).
+    /// `url` is a stored, normalized address (C-1123). The skill library's profile applies.
     pub fn new(
         env: &'a Env,
         url: &str,
         token: Option<&'a Token>,
         timeout: Duration,
+    ) -> Result<Self, ReadError> {
+        Self::with_profile(env, url, token, timeout, ReadProfile::default())
+    }
+
+    /// A read with another profile (template sources: their user agent and blob cap, C-1107).
+    pub fn with_profile(
+        env: &'a Env,
+        url: &str,
+        token: Option<&'a Token>,
+        timeout: Duration,
+        profile: ReadProfile,
     ) -> Result<Self, ReadError> {
         let parsed = url::Url::parse(url).map_err(|_| unreachable(reason::ENTER_URL))?;
         if parsed.scheme() != "https" {
@@ -127,6 +136,7 @@ impl<'a> GitRepo<'a> {
             origin: parsed.origin(),
             token,
             timeout,
+            profile,
             state: tokio::sync::Mutex::new(State::default()),
         })
     }
@@ -183,7 +193,7 @@ impl<'a> GitRepo<'a> {
         };
         rb = rb
             .timeout(self.timeout)
-            .header(USER_AGENT, format!("{} git/2.0", agent()));
+            .header(USER_AGENT, format!("{} git/2.0", self.profile.user_agent));
         if v2 {
             rb = rb.header("Git-Protocol", "version=2");
         }
@@ -330,8 +340,8 @@ impl<'a> GitRepo<'a> {
             filter: filter && caps.filter,
         };
         let req = match disc {
-            Discovery::V2 { .. } => discover::fetch_v2(&agent(), &ask),
-            Discovery::V0(_) => discover::fetch_v0(&agent(), &ask),
+            Discovery::V2 { .. } => discover::fetch_v2(&self.profile.user_agent, &ask),
+            Discovery::V0(_) => discover::fetch_v0(&self.profile.user_agent, &ask),
         };
         let raw = self.upload_pack(req).await?;
         let bytes = match discover::demux_pack(&raw) {
@@ -350,7 +360,10 @@ impl<'a> GitRepo<'a> {
         match disc {
             Discovery::V2 { ls_refs: true, .. } => {
                 let raw = self
-                    .upload_pack(discover::ls_refs_request(&agent(), prefixes))
+                    .upload_pack(discover::ls_refs_request(
+                        &self.profile.user_agent,
+                        prefixes,
+                    ))
                     .await?;
                 discover::parse_ls_refs(&raw).map_err(proto)
             }
