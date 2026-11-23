@@ -728,9 +728,14 @@ one. Like all credentials, LLM secrets are used only when granted.
     names differ.
   - **Automatic pick (`source = "key_listing"`, `litellm` only).** Next, the **first** model
     of the key's listing **in LiteLLM's order** (the operator's order), that is allowed and is
-    a chat model. A model counts as a chat model unless `GET <base>/model/info` gives it a
-    non-chat `model_info.mode` (embedding, image, audio, rerank, …). Only the public
-    `model_name` is a candidate, never `litellm_params.model`.
+    a chat model. A model counts as a chat model unless LiteLLM gives it a non-chat mode
+    (embedding, image, audio, rerank, …). (FIX-231, D-474) The mode is read with the key from
+    `GET <base>/model_group/info` (`data[].model_group` → `mode`), which an ordinary team key can
+    read; when that answer is empty or fails, from `GET <base>/model/info`
+    (`data[].model_name` → `model_info.mode`), which LiteLLM may answer with an empty `data` for
+    a team key. Only the public name is a candidate, never `litellm_params.model`. When neither
+    route gives a mode, every model counts as a chat model, and the listing is kept for the 30
+    seconds of a failed read instead of `MODEL_CACHE_TTL`, so the pick is re-read soon.
   - The allow-list's first entry and the static `models` apply only when the listing could
     not be read. `no_default_model` remains for "nothing resolves": the listing failed with no
     static fallback, or the key serves no allowed chat model. The server message says which.

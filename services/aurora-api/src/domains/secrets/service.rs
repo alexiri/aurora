@@ -1089,7 +1089,8 @@ fn model_cache() -> &'static ModelCache {
 
 /// (D-372) What the key serves, read with the key itself and **without** the static-list fallback of
 /// [`models`]: the model ids in the provider's order, and (LiteLLM) the `mode` of each public name from
-/// `GET /model/info` (`None` when that read failed: every model then counts as a chat model).
+/// `GET /model_group/info` or `GET /model/info` (`None` when neither read gave a mode: every model then
+/// counts as a chat model, and the caller keeps the listing only briefly, D-474).
 /// The caller caches it (`hosted::model`); nothing is read here from or written to a database transaction.
 pub async fn fetch_listing(
     state: &AppState,
@@ -1121,11 +1122,13 @@ pub async fn fetch_listing(
                 "The LLM endpoint could not be reached.",
             )
         })?;
+    // (FIX-231, D-474) An empty answer is no answer: a LiteLLM team key can get `{"data": []}`.
     let modes = lc
         .provider
         .model_modes(&lc.ep, &key, &state.llm_http)
         .await
-        .ok();
+        .ok()
+        .filter(|m| !m.is_empty());
     Ok((list.into_iter().map(|m| m.id).collect(), modes))
 }
 

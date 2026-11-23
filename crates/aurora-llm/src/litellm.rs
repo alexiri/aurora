@@ -51,10 +51,31 @@ pub fn modes_from_model_info(v: &serde_json::Value) -> std::collections::HashMap
     out
 }
 
+/// (FIX-231, D-474) `model_group` → `mode` from a `GET /model_group/info` answer: one entry per public
+/// model name, readable by an ordinary (team) key. `GET /model/info` may answer such a key with an empty
+/// `data` (seen on a production LiteLLM), so this route is read first. An entry without a mode adds nothing.
+#[must_use]
+pub fn modes_from_model_group_info(
+    v: &serde_json::Value,
+) -> std::collections::HashMap<String, String> {
+    v.get("data")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|g| {
+            Some((
+                g.get("model_group")?.as_str()?.to_owned(),
+                g.get("mode")?.as_str()?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
 /// LiteLLM proxy (operator-configured base URL).
 ///
 /// Pinned calls: models `GET <base>/v1/models`; team origin `GET <base>/key/info` called
-/// with the key as `Authorization: Bearer`, reading `info.team_id` / `info.user_id`.
+/// with the key as `Authorization: Bearer`, reading `info.team_id` / `info.user_id`; model modes
+/// `GET <base>/model_group/info`, then `GET <base>/model/info` (D-372, D-474).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LitellmProvider;
 
@@ -153,9 +174,26 @@ impl LlmProvider for LitellmProvider {
         key: &Secret<String>,
         http: &reqwest::Client,
     ) -> Result<std::collections::HashMap<String, String>> {
-        let url = format!("{}/model/info", ep.base());
-        let resp = check(send(http.get(url).bearer_auth(key.expose())).await?)?;
-        Ok(modes_from_model_info(&json(resp).await?))
+        // (FIX-231, D-474) `/model_group/info` first: a team key may get an empty `/model/info`. The first
+        // non-empty answer wins; an empty map means "no modes known" to the caller.
+        let read = |route: &'static str| {
+            let url = format!("{}/{route}", ep.base());
+            async move {
+                let resp = check(send(http.get(url).bearer_auth(key.expose())).await?)?;
+                json(resp).await
+            }
+        };
+        let group = read("model_group/info")
+            .await
+            .map(|v| modes_from_model_group_info(&v));
+        if group.as_ref().is_ok_and(|m| !m.is_empty()) {
+            return group;
+        }
+        match read("model/info").await.map(|v| modes_from_model_info(&v)) {
+            Ok(m) if !m.is_empty() => Ok(m),
+            Ok(m) => Ok(group.unwrap_or(m)),
+            Err(e) => group.or(Err(e)),
+        }
     }
     fn default_model(&self, ep: &Endpoint) -> Option<String> {
         ep.default_model.clone()
@@ -263,6 +301,29 @@ mod tests {
         assert_eq!(m.get("both").map(String::as_str), Some("responses"));
         assert!(!m.contains_key("nomode") && !m.contains_key("hosted_vllm/orphan"));
         assert!(is_chat_mode("chat") && is_chat_mode("responses") && !is_chat_mode("embedding"));
+    }
+
+    /// (FIX-231) `/model_group/info` as aigw answers a team key: one entry per public name, with its mode.
+    #[test]
+    fn group_modes_read_the_public_name() {
+        let v = serde_json::json!({"data": [
+            {"model_group": "glm-5.3-flash-int4", "mode": "chat", "supports_function_calling": true},
+            {"model_group": "qwen3-asr-1.7b", "mode": "audio_transcription", "supports_function_calling": false},
+            {"model_group": "embeddinggemma-300m", "mode": "embedding"},
+            {"model_group": "nomode", "mode": null},
+            {"mode": "chat"},
+        ]});
+        let m = modes_from_model_group_info(&v);
+        assert_eq!(m.len(), 3);
+        assert_eq!(
+            m.get("glm-5.3-flash-int4").map(String::as_str),
+            Some("chat")
+        );
+        assert_eq!(
+            m.get("qwen3-asr-1.7b").map(String::as_str),
+            Some("audio_transcription")
+        );
+        assert!(!m.contains_key("nomode"));
     }
 
     fn ep(base: &str, allowed: &[&str]) -> Endpoint {

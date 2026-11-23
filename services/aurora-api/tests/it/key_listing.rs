@@ -44,6 +44,31 @@ async fn litellm() -> MockServer {
             .mount(&s)
             .await;
     }
+    // (FIX-231) Key `sk-c` is a team key as aigw.cern.ch answers it: `/model/info` is empty, and only
+    // `/model_group/info` gives the modes; a speech-to-text and an embedding model come before the chat model.
+    let bearer = "Bearer sk-c";
+    for (route, body) in [
+        (
+            "/v1/models",
+            json!({"data": [{"id": "asr-c"}, {"id": "emb-c"}, {"id": "m-c"}]}),
+        ),
+        ("/model/info", json!({"data": []})),
+        (
+            "/model_group/info",
+            json!({"data": [
+                {"model_group": "m-c", "mode": "chat", "supports_function_calling": true},
+                {"model_group": "asr-c", "mode": "audio_transcription", "supports_function_calling": false},
+                {"model_group": "emb-c", "mode": "embedding", "supports_function_calling": false},
+            ]}),
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(route))
+            .and(header("authorization", bearer))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&s)
+            .await;
+    }
     s
 }
 
@@ -191,6 +216,28 @@ async fn an_endpoint_default_the_key_does_not_serve_is_skipped_with_a_warning() 
     assert_eq!(v["default"]["model_id"], "m-elsewhere", "{v}");
     assert_eq!(v["default"]["source"], "override", "{v}");
     assert_eq!(v["warnings"], json!(["override_not_served"]), "{v}");
+}
+
+/// (FIX-231, D-474) A team key whose `/model/info` is empty: the modes come from `/model_group/info`, so the
+/// speech-to-text and embedding models listed first are skipped and the chat model is picked.
+#[tokio::test]
+async fn a_team_key_gets_its_modes_from_the_model_groups() {
+    let lite = litellm().await;
+    let r = rig(lite.uri(), None).await;
+    let ck = cookie_of(&r, "owner@x.io", "member", "owner").await;
+    let key = post_key(
+        &r,
+        &ck,
+        &format!("/v1/workspaces/{}/secrets", r.ws),
+        "ws-c",
+        "sk-c",
+    )
+    .await;
+    let a = claude_agent(&r, "teamkey").await;
+    grant(&r, a, key).await;
+    let v = readiness(&r, &ck, a).await;
+    assert_eq!(v["default"]["model_id"], "m-c", "{v}");
+    assert_eq!(v["default"]["source"], "key_listing", "{v}");
 }
 
 /// The owner's production shape: an endpoint with only `base_url` and an agent with no model. The queued turn

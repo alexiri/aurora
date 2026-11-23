@@ -286,9 +286,10 @@ pub trait LlmProvider: Send + Sync {
         let _ = check;
         self.list_models(ep, key, http).await
     }
-    /// (D-372) The `mode` of each public model name, from a provider route that carries it (LiteLLM's
-    /// `GET /model/info`), so an automatic pick can skip embedding, image and audio models. A name the
-    /// answer does not cover is a chat model. Providers without such a route answer an empty map.
+    /// (D-372, D-474) The `mode` of each public model name, from a provider route that carries it (LiteLLM's
+    /// `GET /model_group/info`, then `GET /model/info`), so an automatic pick can skip embedding, image and
+    /// audio models. A name the answer does not cover is a chat model. An empty map means no mode is known
+    /// (providers without such a route, or a key the route tells nothing).
     async fn model_modes(
         &self,
         ep: &Endpoint,

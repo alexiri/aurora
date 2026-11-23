@@ -441,7 +441,8 @@ pub struct KeyState<'a> {
 }
 
 /// (D-372) The models one key serves, in the order the provider returned them, and, for LiteLLM, the
-/// `mode` of each public model name (`None` = `/model/info` could not be read: every model counts as chat).
+/// `mode` of each public model name (`None` = neither `/model_group/info` nor `/model/info` gave a mode: every
+/// model counts as chat).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KeyListing {
     pub models: Vec<String>,
@@ -1008,7 +1009,8 @@ impl DefaultPick {
 type ListingKey = (Uuid, i32, String);
 type ListingMap = HashMap<ListingKey, (Instant, Option<Arc<KeyListing>>)>;
 
-/// A failed read is remembered briefly so an unreachable endpoint is not asked once per agent per poll.
+/// A failed read is remembered briefly so an unreachable endpoint is not asked once per agent per poll; so
+/// is a listing whose modes could not be read (D-474).
 const LISTING_FAILED_TTL: Duration = Duration::from_secs(30);
 
 fn listings() -> &'static Mutex<ListingMap> {
@@ -1025,7 +1027,9 @@ fn listing_cached(k: &ListingKey) -> Option<Option<Arc<KeyListing>>> {
     let mut m = listings().lock().unwrap_or_else(|p| p.into_inner());
     match m.get(k) {
         Some((at, v)) => {
-            let ttl = if v.is_some() {
+            // (FIX-231, D-474) A listing without modes is kept only as long as a failed read: a pick from
+            // it may be a non-chat model, so the next readiness asks again soon.
+            let ttl = if v.as_ref().is_some_and(|l| l.modes.is_some()) {
                 crate::domains::secrets::service::MODEL_CACHE_TTL
             } else {
                 LISTING_FAILED_TTL

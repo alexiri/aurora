@@ -33,7 +33,9 @@ pub use aurora_core::llm_classify::{LlmErrorClass, classify};
 pub use aurora_core::model_id::{MODEL_ID_PATTERN, validate_model_id};
 pub use endpoint::Endpoint;
 pub use error::{LlmError, Result};
-pub use litellm::{LitellmProvider, is_chat_mode, modes_from_model_info};
+pub use litellm::{
+    LitellmProvider, is_chat_mode, modes_from_model_group_info, modes_from_model_info,
+};
 pub use model::{inference_path_permitted, model_from_request};
 pub use openai::{OPENAI_BASE_URL, OpenaiProvider};
 pub use openai_compatible::OpenaiCompatibleProvider;
