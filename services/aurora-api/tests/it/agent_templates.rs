@@ -999,3 +999,179 @@ async fn the_token_goes_to_the_repository_origin_only() {
     assert_eq!(files.len(), 1, "{reqs:?}");
     assert!(files[0].authorization.is_none(), "{:?}", files[0]);
 }
+
+// ---- the organization switches (C-1109) ---------------------------------------------------------
+
+async fn org_list(w: &W, org: Uuid, who: &str) -> (u16, Value) {
+    w.h.call(
+        who,
+        Method::GET,
+        &format!("/v1/orgs/{org}/agent-templates"),
+        None,
+    )
+    .await
+}
+
+async fn org_put(w: &W, org: Uuid, who: &str, template: &str, body: Value) -> (u16, Value) {
+    w.h.call(
+        who,
+        Method::PUT,
+        &format!("/v1/orgs/{org}/agent-templates/{template}"),
+        Some(body),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn org_switches_turn_templates_off_and_on() {
+    let w = world().await;
+    let org = w.h.org().await;
+    let owner = w.h.user("owner@x.io", false).await;
+    w.h.member(org, owner, "owner", "active").await;
+    let member = w.h.user("member@x.io", false).await;
+    w.h.member(org, member, "member", "active").await;
+    let owner_cookie = cookie(&w.h.good_session(owner).await.1);
+    let member_cookie = cookie(&w.h.good_session(member).await.1);
+    w.seed("acme/tpl", "t", "1.0.0");
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+
+    // Every offered template is on by default; nothing is approved yet, so the version is null.
+    let (s, v) = org_list(&w, org, &owner_cookie).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["items"],
+        json!([{
+            "template_id": "t",
+            "name": "T",
+            "summary": "A test template.",
+            "version": null,
+            "enabled": true,
+        }]),
+        "{v}"
+    );
+
+    // A plain member is refused (403); a non-member sees 404 (no bypass, not even for
+    // instance administrators).
+    let (s, v) = org_put(&w, org, &member_cookie, "t", json!({"enabled": false})).await;
+    assert_eq!(s, 403, "{v}");
+    let (s, v) = org_list(&w, org, &w.root).await;
+    assert_eq!(s, 404, "{v}");
+
+    // Turn it off and back on.
+    let (s, v) = org_put(&w, org, &owner_cookie, "t", json!({"enabled": false})).await;
+    assert_eq!(s, 204, "{v}");
+    let (_, v) = org_list(&w, org, &owner_cookie).await;
+    assert_eq!(v["items"][0]["enabled"], false, "{v}");
+    let (s, v) = org_put(&w, org, &owner_cookie, "t", json!({"enabled": true})).await;
+    assert_eq!(s, 204, "{v}");
+    let (_, v) = org_list(&w, org, &owner_cookie).await;
+    assert_eq!(v["items"][0]["enabled"], true, "{v}");
+
+    // A switch for an unknown template is never stored (404).
+    let (s, v) = org_put(&w, org, &owner_cookie, "nope", json!({"enabled": false})).await;
+    assert_eq!(s, 404, "{v}");
+    assert_eq!(code(&v), "not_found", "{v}");
+    let n: i64 = w
+        .count("SELECT count(*) FROM org_disabled_agent_templates")
+        .await;
+    assert_eq!(n, 0);
+
+    // Ordinary audit, two writes (the on and the off); the write is fire-and-forget, so
+    // poll briefly for it.
+    let mut rows: Vec<(String, bool)> = Vec::new();
+    for _ in 0..100 {
+        rows = sqlx::query_as(
+            "SELECT action, critical FROM audit_log WHERE action = 'org.template_availability'",
+        )
+        .fetch_all(w.h.pool())
+        .await
+        .unwrap();
+        if rows.len() >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        rows,
+        vec![("org.template_availability".into(), false); 2],
+        "the ordinary audit rows"
+    );
+}
+
+#[tokio::test]
+async fn the_kill_switch_hides_the_org_routes_but_not_the_admin_ones() {
+    let mut h = Harness::with_config(|c| c.agents.templates.enabled = false).await;
+    let git = GitServer::start().await;
+    let state = h
+        .state
+        .clone()
+        .with_connect_override(&git.base())
+        .with_library_fetch_timeout(std::time::Duration::from_secs(5));
+    h.app = test_router(state.clone());
+    h.state = state;
+    let root = h.user("root@x.io", true).await;
+    let root_cookie = cookie(&h.good_session(root).await.1);
+    let org = h.org().await;
+    git.add_repo("acme/tpl");
+    git.commit(
+        "acme/tpl",
+        "main",
+        &[
+            put("aurora-templates.yaml".into(), manifest_yaml().into_bytes()),
+            put(
+                "t/template.yaml".into(),
+                template_yaml("t", "1.0.0").into_bytes(),
+            ),
+            put("t/agent.yaml".into(), AGENT_YAML.as_bytes().to_vec()),
+            put("t/instructions.md".into(), INSTRUCTIONS.as_bytes().to_vec()),
+        ],
+    );
+    let (s, src) = h
+        .call(
+            &root_cookie,
+            Method::POST,
+            "/v1/admin/agent-template-sources",
+            Some(json!({"url": format!("{GIT_ORIGIN}/acme/tpl")})),
+        )
+        .await;
+    assert_eq!(s, 201, "{src}");
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    let (s, out) = h
+        .call(
+            &root_cookie,
+            Method::POST,
+            &format!("/v1/admin/agent-template-sources/{id}/check"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{out}");
+
+    // The org routes answer 404 templates_disabled; the admin routes keep working.
+    let (s, v) = h
+        .call(
+            &root_cookie,
+            Method::GET,
+            &format!("/v1/orgs/{org}/agent-templates"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    assert_eq!(code(&v), "templates_disabled", "{v}");
+    let (s, v) = h
+        .call(
+            &root_cookie,
+            Method::PUT,
+            &format!("/v1/orgs/{org}/agent-templates/t"),
+            Some(json!({"enabled": false})),
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    assert_eq!(code(&v), "templates_disabled", "{v}");
+    let (s, v) = h
+        .call(&root_cookie, Method::GET, "/v1/admin/agent-templates", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"][0]["template_id"], "t", "{v}");
+}

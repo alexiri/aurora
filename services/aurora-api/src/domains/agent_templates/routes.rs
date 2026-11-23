@@ -33,6 +33,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(approve_route))
         .routes(routes!(reject_route))
         .routes(routes!(update_template_route))
+        .merge(super::org::router())
 }
 
 /// The preview answer is never cached (C-1107, as C-1124)./// The preview answer is never cached (C-1107, as C-1124).

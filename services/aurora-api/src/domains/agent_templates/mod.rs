@@ -9,6 +9,7 @@ pub mod check;
 pub mod dto;
 pub mod fetch;
 pub mod git;
+pub mod org;
 pub mod poll;
 pub(crate) mod routes;
 pub use routes::router;

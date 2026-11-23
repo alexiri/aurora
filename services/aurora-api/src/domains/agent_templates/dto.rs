@@ -711,3 +711,26 @@ pub struct UpdateTemplateRequest {
     /// Withdraw (`false`) or offer again (`true`).
     pub offered: bool,
 }
+
+/// One template of an organization's list (C-1109): every offered template, on by default.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct OrgTemplateItem {
+    pub template_id: String,
+    pub name: String,
+    pub summary: String,
+    /// The offered version (C-1108's rule), null when none is approved.
+    pub version: Option<String>,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct OrgTemplateList {
+    pub items: Vec<OrgTemplateItem>,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetOrgTemplateRequest {
+    /// On (`true`, the default) or off (`false`) for this organization.
+    pub enabled: bool,
+}

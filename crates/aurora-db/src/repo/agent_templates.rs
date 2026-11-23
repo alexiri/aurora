@@ -828,3 +828,57 @@ pub async fn set_offered(conn: &mut PgConnection, id: Uuid, offered: bool) -> Re
         .await?;
     Ok(())
 }
+
+// ---- the organizations' switches (C-1109) ------------------------------------------------------
+
+/// The template ids the organization turned off (C-1109); every other offered template is on.
+pub async fn org_disabled<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+) -> Result<Vec<String>, DbError> {
+    Ok(
+        sqlx::query_scalar(
+            "SELECT template_id FROM org_disabled_agent_templates WHERE org_id = $1",
+        )
+        .bind(org)
+        .fetch_all(exec)
+        .await?,
+    )
+}
+
+/// Turn a template off for one organization (C-1109): write the switch row, keeping who did it
+/// current when one already exists. Keyed by the template id (not a FK), so a source removed
+/// and added again keeps the organization's choice.
+pub async fn set_org_disabled<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    template_id: &str,
+    disabled_by: Uuid,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO org_disabled_agent_templates (org_id, template_id, disabled_by)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (org_id, template_id) DO UPDATE SET disabled_by = $3",
+    )
+    .bind(org)
+    .bind(template_id)
+    .bind(disabled_by)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// Turn a template back on for one organization (C-1109): delete the switch row. Every
+/// template is on by default, so this is a no-op when there is none.
+pub async fn set_org_enabled<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    template_id: &str,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM org_disabled_agent_templates WHERE org_id = $1 AND template_id = $2")
+        .bind(org)
+        .bind(template_id)
+        .execute(exec)
+        .await?;
+    Ok(())
+}
