@@ -1,6 +1,6 @@
 //! Tiny HTML pages for the OAuth callback (C-14).
 use super::flow;
-use super::service::{Applied, Landing};
+use super::service::{Applied, Landing, Refusal};
 use axum::response::{IntoResponse, Response};
 use http::{HeaderValue, StatusCode, header};
 
@@ -112,23 +112,76 @@ pub fn connected(
 /// Failure: the page carries `error=<code>` (codes are fixed identifiers) and posts
 /// `aurora:connect-failed` on the channel (`app_id` only when the flow is known).
 pub fn error(code: &str, landing: Option<&Landing>) -> Response {
+    error_with(code, landing, None)
+}
+
+/// (FIX-232, C-1158) [`error`] with the provider's refusal: a line on the page and `reason` in
+/// the channel message. Only for a flow bound to this caller (the landing is known).
+pub fn error_with(code: &str, landing: Option<&Landing>, refusal: Option<&Refusal>) -> Response {
+    let refusal = refusal.filter(|_| landing.is_some());
     let Ok(nonce) = flow::random(16) else {
-        return respond(error_body(code, landing, ""), None);
+        return respond(error_body(code, landing, refusal, ""), None);
     };
     let app = landing
         .map(|l| format!("app_id:{},", js(&l.app_id)))
         .unwrap_or_default();
-    let msg = format!("{{type:\"aurora:connect-failed\",{app}error:{}}}", js(code));
+    let reason = refusal.map(reason_js).unwrap_or_default();
+    let msg = format!(
+        "{{type:\"aurora:connect-failed\",{app}error:{}{reason}}}",
+        js(code)
+    );
     let script = channel_script(&nonce, &msg, "error", "error");
-    respond(error_body(code, landing, &script), Some(&nonce))
+    respond(error_body(code, landing, refusal, &script), Some(&nonce))
 }
 
-fn error_body(code: &str, landing: Option<&Landing>, script: &str) -> String {
+/// `,reason:{stage,status?,error?,provider_code?}` for the channel message.
+fn reason_js(r: &Refusal) -> String {
+    let mut parts = vec![format!("stage:{}", js(r.stage))];
+    if let Some(s) = r.status {
+        parts.push(format!("status:{s}"));
+    }
+    if let Some(e) = &r.error {
+        parts.push(format!("error:{}", js(e)));
+    }
+    if let Some(p) = &r.provider_code {
+        parts.push(format!("provider_code:{}", js(p)));
+    }
+    format!(",reason:{{{}}}", parts.join(","))
+}
+
+/// One sentence for the page: what the provider said, in its codes.
+pub fn refusal_text(r: &Refusal) -> String {
+    let codes = [r.provider_code.as_deref(), r.error.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let codes = if codes.is_empty() {
+        String::new()
+    } else {
+        format!(": {codes}")
+    };
+    match (r.stage, r.status) {
+        ("authorize", _) => format!("The provider refused the sign-in{codes}."),
+        (_, Some(s)) => format!("The provider refused the token request (HTTP {s}){codes}."),
+        (_, None) => "The provider's token endpoint could not be reached.".to_owned(),
+    }
+}
+
+fn error_body(
+    code: &str,
+    landing: Option<&Landing>,
+    refusal: Option<&Refusal>,
+    script: &str,
+) -> String {
     let link = continue_link(landing);
+    let why = refusal
+        .map(|r| format!("<p>{}</p>", html_escape(&refusal_text(r))))
+        .unwrap_or_default();
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>Connection failed</title>\
          <meta name=\"aurora-error\" content=\"{code}\"></head><body>\
-         <p>The connection could not be completed.</p><p>error={code}</p>{link}{script}</body></html>"
+         <p>The connection could not be completed.</p><p>error={code}</p>{why}{link}{script}</body></html>"
     )
 }
 
@@ -215,5 +268,71 @@ mod tests {
         let anon = html(error("oauth_state_invalid", None)).await;
         assert!(anon.contains("type:\"aurora:connect-failed\""), "{anon}");
         assert!(!anon.contains("app_id"), "{anon}");
+    }
+
+    /// (FIX-232, C-1158) The provider's refusal reaches the page and the channel, only for a
+    /// bound flow.
+    #[tokio::test]
+    async fn the_refusal_is_on_the_page_and_the_channel() {
+        let r = Refusal {
+            stage: "token",
+            status: Some(400),
+            error: Some("invalid_request".into()),
+            provider_code: Some("AADSTS50194".into()),
+        };
+        let pg = html(error_with(
+            "oauth_exchange_failed",
+            Some(&landing()),
+            Some(&r),
+        ))
+        .await;
+        assert!(pg.contains("error=oauth_exchange_failed"), "{pg}");
+        assert!(
+            pg.contains(
+                "The provider refused the token request (HTTP 400): AADSTS50194, invalid_request."
+            ),
+            "{pg}"
+        );
+        assert!(
+            pg.contains(
+                "error:\"oauth_exchange_failed\",reason:{stage:\"token\",status:400,error:\"invalid_request\",provider_code:\"AADSTS50194\"}"
+            ),
+            "{pg}"
+        );
+        // An unbound flow shows nothing of the provider's answer.
+        let anon = html(error_with("oauth_state_invalid", None, Some(&r))).await;
+        assert!(!anon.contains("reason"), "{anon}");
+        assert!(!anon.contains("AADSTS"), "{anon}");
+
+        let auth = Refusal {
+            stage: "authorize",
+            status: None,
+            error: Some("access_denied".into()),
+            provider_code: None,
+        };
+        assert_eq!(
+            refusal_text(&auth),
+            "The provider refused the sign-in: access_denied."
+        );
+        let down = Refusal {
+            stage: "token",
+            status: None,
+            error: None,
+            provider_code: None,
+        };
+        assert_eq!(
+            refusal_text(&down),
+            "The provider's token endpoint could not be reached."
+        );
+        let bare = Refusal {
+            stage: "token",
+            status: Some(500),
+            error: None,
+            provider_code: None,
+        };
+        assert_eq!(
+            refusal_text(&bare),
+            "The provider refused the token request (HTTP 500)."
+        );
     }
 }

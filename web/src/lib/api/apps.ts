@@ -379,7 +379,7 @@ export type ConnectChannelMessage =
       /** (C-957) The code of the access part's failure: the account was made, the access was not. */
       grantFailed: string | null;
     }
-  | { type: "failed"; appId: string | null; error: string };
+  | { type: "failed"; appId: string | null; error: string; reason: ConnectRefusal | null };
 
 /** Accept only the callback page's two message shapes; anything else (including our own acks) is null. */
 export function parseConnectMessage(data: unknown): ConnectChannelMessage | null {
@@ -396,9 +396,45 @@ export function parseConnectMessage(data: unknown): ConnectChannelMessage | null
     return { type: "connected", appId: d.app_id, connectionId: d.connection_id, missingScopes: missing, grantedAgentIds: granted, grantFailed };
   }
   if (d.type === "aurora:connect-failed" && typeof d.error === "string") {
-    return { type: "failed", appId: typeof d.app_id === "string" ? d.app_id : null, error: d.error };
+    return {
+      type: "failed",
+      appId: typeof d.app_id === "string" ? d.app_id : null,
+      error: d.error,
+      reason: parseConnectRefusal(d.reason),
+    };
   }
   return null;
+}
+
+/** (FIX-232, C-1158) Why the provider refused the sign-in, in its codes; null when the page sent none. */
+export type ConnectRefusal = {
+  stage: "authorize" | "token";
+  status: number | null;
+  error: string | null;
+  providerCode: string | null;
+};
+
+function parseConnectRefusal(v: unknown): ConnectRefusal | null {
+  if (typeof v !== "object" || v === null) return null;
+  const r = v as Record<string, unknown>;
+  if (r.stage !== "authorize" && r.stage !== "token") return null;
+  return {
+    stage: r.stage,
+    status: typeof r.status === "number" ? r.status : null,
+    error: typeof r.error === "string" ? r.error : null,
+    providerCode: typeof r.provider_code === "string" ? r.provider_code : null,
+  };
+}
+
+/** The dialog's line for a sign-in that did not complete (C-842, C-1158). */
+export function connectFailureText(error: string, reason: ConnectRefusal | null): string {
+  const head = `The sign-in did not complete (${error}).`;
+  if (!reason) return `${head} Try again.`;
+  const codes = [reason.providerCode, reason.error].filter((c): c is string => !!c).join(", ");
+  const tail = codes ? `: ${codes}` : "";
+  if (reason.stage === "authorize") return `${head} The provider refused the sign-in${tail}.`;
+  if (reason.status === null) return `${head} The provider's token endpoint could not be reached.`;
+  return `${head} The provider refused the token request (HTTP ${reason.status})${tail}.`;
 }
 
 /** Tell the callback page a dialog took its result, so the page closes itself. */

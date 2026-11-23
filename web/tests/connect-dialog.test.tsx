@@ -278,6 +278,25 @@ describe("OAuth sign-in in the dialog (C-842)", () => {
     expect(screen.getByRole("button", { name: "Sign in to GitHub" })).toBeInTheDocument();
   });
 
+  it("a refused sign-in says what the provider answered (FIX-232, C-1158)", async () => {
+    openSpy.mockReturnValue(fakeWindow());
+    stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "redirect", url: "https://provider.example/a" }) });
+    wrap(apps());
+    await openOauth();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
+    await screen.findByText("Waiting for you to sign in to GitHub…");
+    await emit({
+      type: "aurora:connect-failed",
+      error: "oauth_exchange_failed",
+      reason: { stage: "authorize", error: "invalid_request", provider_code: "AADSTS50194" },
+    });
+    expect(
+      await screen.findByText(
+        "The sign-in did not complete (oauth_exchange_failed). The provider refused the sign-in: AADSTS50194, invalid_request.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("a sign-in window closed without a result returns to the form", async () => {
     const w = fakeWindow();
     openSpy.mockReturnValue(w);

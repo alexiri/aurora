@@ -706,6 +706,34 @@ async fn a_scopeless_oauth_method_connects_with_an_expiring_token() {
     assert_eq!(keys, ["access_token", "refresh_token"]);
 }
 
+/// (FIX-232, C-1158) A token endpoint that refuses the code: the page says what it answered.
+#[tokio::test]
+async fn a_refused_code_exchange_shows_the_providers_answer() {
+    let w = world(None).await;
+    w.oauth_client().await;
+    let (url, ck) = w.start_oauth().await;
+    let loc = w.oauth.approve(&url).await;
+    let cb = local(&loc);
+    let (head, tail) = cb.split_once("code=").expect("code in the callback");
+    let rest = tail.split_once('&').map_or("", |(_, r)| r);
+    let bad = format!("{head}code=not-issued&{rest}");
+    let (pg, _) = w.page(&w.owner, Some(&ck), &bad).await;
+    assert!(pg.contains("error=oauth_exchange_failed"), "{pg}");
+    assert!(
+        pg.contains("The provider refused the token request (HTTP 400): invalid_grant."),
+        "{pg}"
+    );
+    assert!(
+        pg.contains("reason:{stage:\"token\",status:400,error:\"invalid_grant\"}"),
+        "{pg}"
+    );
+    let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM app_connections")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
 #[tokio::test]
 async fn expired_state_and_fragment_bridge() {
     let w = world(None).await;
@@ -717,9 +745,25 @@ async fn expired_state_and_fragment_bridge() {
     let loc = w.oauth.approve(&url).await;
     let cb = local(&loc);
     let (pg, _) = w
-        .page(&w.owner, Some(&ck), &format!("{cb}&error=access_denied"))
+        .page(
+            &w.owner,
+            Some(&ck),
+            &format!("{cb}&error=access_denied&error_description=AADSTS65004%3A+User+declined"),
+        )
         .await;
     assert!(pg.contains("error=oauth_exchange_failed"));
+    // (FIX-232, C-1158) The provider's refusal is on the page and in the channel message.
+    assert!(
+        pg.contains("The provider refused the sign-in: AADSTS65004, access_denied."),
+        "{pg}"
+    );
+    assert!(
+        pg.contains(
+            "reason:{stage:\"authorize\",error:\"access_denied\",provider_code:\"AADSTS65004\"}"
+        ),
+        "{pg}"
+    );
+    assert!(!pg.contains("User declined"), "{pg}");
     // (FIX-149, C-842) The failure page reports on the channel too, for the flow's app.
     assert!(pg.contains("type:\"aurora:connect-failed\""), "{pg}");
     assert!(pg.contains("app_id:\"acme_app\""), "{pg}");

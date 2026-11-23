@@ -8,6 +8,7 @@ import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import {
   buildClientPatchFields,
   buildConnectFields,
+  connectFailureText,
   parseConnectMessage,
   parseJsonFile,
   toggleAllow,
@@ -62,15 +63,42 @@ describe("connect channel messages (C-842)", () => {
       type: "connected", appId: "a", connectionId: "c1", missingScopes: ["x"], grantedAgentIds: [], grantFailed: null,
     });
     expect(parseConnectMessage({ type: "aurora:connect-failed", app_id: "a", error: "oauth_exchange_failed" })).toEqual({
-      type: "failed", appId: "a", error: "oauth_exchange_failed",
+      type: "failed", appId: "a", error: "oauth_exchange_failed", reason: null,
     });
     expect(parseConnectMessage({ type: "aurora:connect-failed", error: "oauth_state_invalid" })).toEqual({
-      type: "failed", appId: null, error: "oauth_state_invalid",
+      type: "failed", appId: null, error: "oauth_state_invalid", reason: null,
     });
+    // (FIX-232, C-1158) The provider's refusal, in its codes; an unknown stage is no reason.
+    expect(
+      parseConnectMessage({
+        type: "aurora:connect-failed", app_id: "a", error: "oauth_exchange_failed",
+        reason: { stage: "token", status: 400, error: "invalid_request", provider_code: "AADSTS50194" },
+      }),
+    ).toEqual({
+      type: "failed", appId: "a", error: "oauth_exchange_failed",
+      reason: { stage: "token", status: 400, error: "invalid_request", providerCode: "AADSTS50194" },
+    });
+    expect(
+      parseConnectMessage({ type: "aurora:connect-failed", error: "oauth_exchange_failed", reason: { stage: "x" } }),
+    ).toMatchObject({ reason: null });
     expect(parseConnectMessage({ type: "aurora:connected", connection_id: "c1" })).toBeNull();
     expect(parseConnectMessage({ type: "aurora:connect-ack", connection_id: "c1" })).toBeNull();
     expect(parseConnectMessage({ type: "other" })).toBeNull();
     expect(parseConnectMessage(null)).toBeNull();
+  });
+
+  it("says what the provider answered (FIX-232, C-1158)", () => {
+    const e = "oauth_exchange_failed";
+    expect(connectFailureText(e, null)).toBe("The sign-in did not complete (oauth_exchange_failed). Try again.");
+    expect(connectFailureText(e, { stage: "token", status: 400, error: "invalid_request", providerCode: "AADSTS50194" })).toBe(
+      "The sign-in did not complete (oauth_exchange_failed). The provider refused the token request (HTTP 400): AADSTS50194, invalid_request.",
+    );
+    expect(connectFailureText(e, { stage: "authorize", status: null, error: "access_denied", providerCode: null })).toBe(
+      "The sign-in did not complete (oauth_exchange_failed). The provider refused the sign-in: access_denied.",
+    );
+    expect(connectFailureText(e, { stage: "token", status: null, error: null, providerCode: null })).toBe(
+      "The sign-in did not complete (oauth_exchange_failed). The provider's token endpoint could not be reached.",
+    );
   });
 });
 

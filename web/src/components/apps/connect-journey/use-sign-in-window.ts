@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ackConnect,
+  connectFailureText,
   navigateSignIn,
   openSignInWindow,
   useConnectChannel,
@@ -47,7 +48,7 @@ export function useSignInWindow(appId: string, onConnected: (m: ConnectedMessage
         ackConnect({ error: m.error });
         win.current = null;
         setPhase("form");
-        setNotice({ tone: "danger", text: `The sign-in did not complete (${m.error}). Try again.` });
+        setNotice({ tone: "danger", text: connectFailureText(m.error, m.reason) });
       }
     },
     [phase, appId, onConnected],

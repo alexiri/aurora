@@ -40,6 +40,8 @@ pub enum ConnectErr {
     Probe(probe::ProbeFail),
     Hook(String),
     Exchange,
+    /// (FIX-232, C-1158) The provider refused the sign-in; the code stays `oauth_exchange_failed`.
+    Refused(Box<Refusal>),
 }
 
 impl From<ApiError> for ConnectErr {
@@ -69,7 +71,7 @@ impl From<ConnectErr> for ApiError {
                     }))
             }
             ConnectErr::Hook(m) => ApiError::unprocessable("connect_hook_failed", m),
-            ConnectErr::Exchange => {
+            ConnectErr::Exchange | ConnectErr::Refused(_) => {
                 ApiError::unprocessable("oauth_exchange_failed", "The token exchange failed.")
             }
         }
@@ -81,7 +83,7 @@ impl ConnectErr {
         match self {
             Self::Probe(_) => "connect_probe_failed",
             Self::Hook(_) => "connect_hook_failed",
-            Self::Api(_) | Self::Exchange => "oauth_exchange_failed",
+            Self::Api(_) | Self::Exchange | Self::Refused(_) => "oauth_exchange_failed",
         }
     }
 }
@@ -129,10 +131,12 @@ pub struct Landing {
 }
 
 /// A failed callback: the fixed error code, plus the landing once the flow was opened and bound
-/// to this user (an unbound or tampered flow reveals nothing, not even the app id).
+/// to this user (an unbound or tampered flow reveals nothing, not even the app id), and then the
+/// provider's refusal when it refused (FIX-232, C-1158).
 pub struct Failure {
     pub code: &'static str,
     pub landing: Option<Landing>,
+    pub refusal: Option<Box<Refusal>>,
 }
 
 impl From<&'static str> for Failure {
@@ -140,6 +144,7 @@ impl From<&'static str> for Failure {
         Self {
             code,
             landing: None,
+            refusal: None,
         }
     }
 }
@@ -1526,6 +1531,7 @@ pub async fn callback(
         return Err(Failure {
             code: "oauth_exchange_failed",
             landing: Some(landing(state, &flow).await),
+            refusal: Some(Box::new(Refusal::authorize(q, &flow.app_id))),
         });
     }
     let land = landing(state, &flow).await;
@@ -1538,9 +1544,14 @@ pub async fn callback(
             if let ConnectErr::Api(a) = &e {
                 tracing::warn!(code = a.code(), "connect callback failed");
             }
+            let code = e.code();
             Err(Failure {
-                code: e.code(),
+                code,
                 landing: Some(land),
+                refusal: match e {
+                    ConnectErr::Refused(r) => Some(r),
+                    _ => None,
+                },
             })
         }
     }
@@ -1845,24 +1856,118 @@ async fn read_at_most(mut resp: reqwest::Response, cap: usize) -> Vec<u8> {
     out
 }
 
-/// The OAuth `error` code of a token endpoint's answer (JSON, or form-encoded as some providers
-/// answer), at most 64 characters of `[A-Za-z0-9_.-]`; nothing else of the body.
-fn oauth_error_code(body: &[u8]) -> Option<String> {
-    let clean = |s: &str| {
-        let s = s.trim();
-        (!s.is_empty()
-            && s.len() <= 64
-            && s.chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')))
-        .then(|| s.to_owned())
-    };
+/// A fixed identifier: at most 64 characters of `[A-Za-z0-9_.-]`, else nothing.
+fn ident(s: &str) -> Option<String> {
+    let s = s.trim();
+    (!s.is_empty()
+        && s.len() <= 64
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')))
+    .then(|| s.to_owned())
+}
+
+/// One string field of a token endpoint's answer (JSON, or form-encoded as some providers answer).
+fn oauth_body_field(body: &[u8], key: &str) -> Option<String> {
     if let Ok(v) = serde_json::from_slice::<Value>(body) {
-        return v.get("error").and_then(Value::as_str).and_then(clean);
+        return v.get(key).and_then(Value::as_str).map(str::to_owned);
     }
     let text = std::str::from_utf8(body).ok()?;
     url::form_urlencoded::parse(text.as_bytes())
-        .find(|(k, _)| k == "error")
-        .and_then(|(_, v)| clean(&v))
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.into_owned())
+}
+
+/// The OAuth `error` code of a token endpoint's answer, as an [`ident`]; nothing else of the body.
+fn oauth_error_code(body: &[u8]) -> Option<String> {
+    oauth_body_field(body, "error").as_deref().and_then(ident)
+}
+
+/// (FIX-232, C-1158) The provider's own error number at the start of an `error_description`, as
+/// Microsoft Entra writes it (`AADSTS50194: Application …`): letters and digits (with at least
+/// one of each) before the first colon, at most 32 characters. Nothing else of the text.
+fn provider_code(description: &str) -> Option<String> {
+    let (head, _) = description.trim_start().split_once(':')?;
+    (!head.is_empty()
+        && head.len() <= 32
+        && head.chars().all(|c| c.is_ascii_alphanumeric())
+        && head.chars().any(|c| c.is_ascii_digit())
+        && head.chars().any(|c| c.is_ascii_alphabetic()))
+    .then(|| head.to_owned())
+}
+
+/// An `error_description` made fit for one log field: control characters dropped, at most 300
+/// characters. It goes to the server log only, never to the page (C-1158).
+fn log_text(description: Option<&str>) -> String {
+    description
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(300)
+        .collect()
+}
+
+/// (FIX-232, C-1158) Why the provider refused a sign-in, in fixed identifiers only: the stage
+/// (`authorize`: the provider sent the person back with `error`; `token`: the code exchange), the
+/// token endpoint's HTTP status (none when it could not be reached), the OAuth `error` code and
+/// the provider's own error number. The description itself is logged, not shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub stage: &'static str,
+    pub status: Option<u16>,
+    pub error: Option<String>,
+    pub provider_code: Option<String>,
+}
+
+impl Refusal {
+    /// From the authorization callback's `error` and `error_description` query parameters.
+    fn authorize(q: &HashMap<String, String>, app_id: &str) -> Self {
+        let description = q.get("error_description").map(String::as_str);
+        let r = Self {
+            stage: "authorize",
+            status: None,
+            error: q.get("error").and_then(|e| ident(e)),
+            provider_code: description.and_then(provider_code),
+        };
+        r.log(app_id, description);
+        r
+    }
+
+    /// From a token endpoint's non-2xx answer.
+    fn token(status: u16, body: &[u8], app_id: &str) -> Self {
+        let description = oauth_body_field(body, "error_description");
+        let r = Self {
+            stage: "token",
+            status: Some(status),
+            error: oauth_error_code(body),
+            provider_code: description.as_deref().and_then(provider_code),
+        };
+        r.log(app_id, description.as_deref());
+        r
+    }
+
+    /// The token endpoint could not be reached (DNS, connect, TLS, timeout, the destination guard).
+    fn unreachable(app_id: &str) -> Self {
+        let r = Self {
+            stage: "token",
+            status: None,
+            error: None,
+            provider_code: None,
+        };
+        r.log(app_id, None);
+        r
+    }
+
+    fn log(&self, app_id: &str, description: Option<&str>) {
+        tracing::warn!(
+            app_id,
+            stage = self.stage,
+            status = self.status,
+            error = self.error.as_deref(),
+            provider_code = self.provider_code.as_deref(),
+            description = %log_text(description),
+            "the provider refused the OAuth sign-in"
+        );
+    }
 }
 
 async fn token_exchange(
@@ -1901,9 +2006,17 @@ async fn token_exchange(
         redirect_uri(ctx.state),
         flow.pkce_verifier.as_deref(),
     );
-    let resp = req.send().await.map_err(|_| ConnectErr::Exchange)?;
+    let app_id = ctx.app.app_id.as_str();
+    let resp = req
+        .send()
+        .await
+        .map_err(|_| ConnectErr::Refused(Box::new(Refusal::unreachable(app_id))))?;
     if !resp.status().is_success() {
-        return Err(ConnectErr::Exchange);
+        let status = resp.status().as_u16();
+        let body = read_at_most(resp, 8 * 1024).await;
+        return Err(ConnectErr::Refused(Box::new(Refusal::token(
+            status, &body, app_id,
+        ))));
     }
     let body = probe::read_capped(resp).await.ok_or(ConnectErr::Exchange)?;
     let doc: Value = serde_json::from_slice(&body).map_err(|_| ConnectErr::Exchange)?;
@@ -1968,4 +2081,67 @@ async fn token_exchange(
     g.tenant_host = tenant.map(str::to_owned);
     g.metadata = flow.metadata.clone();
     Ok(g)
+}
+
+#[cfg(test)]
+mod refusal_tests {
+    use super::*;
+
+    #[test]
+    fn provider_code_is_only_a_leading_number() {
+        assert_eq!(
+            provider_code("AADSTS50194: Application 'x'(Aurora) is not configured as a multi-tenant application.").as_deref(),
+            Some("AADSTS50194")
+        );
+        assert_eq!(provider_code("Invalid: the code expired"), None);
+        assert_eq!(provider_code("12345: digits only"), None);
+        assert_eq!(provider_code("no colon at all"), None);
+        assert_eq!(provider_code("AADSTS<b>1: tag"), None);
+        assert_eq!(provider_code(&format!("A{}: long", "1".repeat(40))), None);
+    }
+
+    #[test]
+    fn a_token_answer_gives_the_codes_and_nothing_else() {
+        let json = br#"{"error":"invalid_request","error_description":"AADSTS50194: Application is not multi-tenant.","error_codes":[50194]}"#;
+        let r = Refusal::token(400, json, "microsoft-365");
+        assert_eq!(
+            r,
+            Refusal {
+                stage: "token",
+                status: Some(400),
+                error: Some("invalid_request".into()),
+                provider_code: Some("AADSTS50194".into()),
+            }
+        );
+        let form = b"error=invalid_grant&error_description=bad+code";
+        let r = Refusal::token(401, form, "a");
+        assert_eq!(r.error.as_deref(), Some("invalid_grant"));
+        assert_eq!(r.provider_code, None);
+        // A code that is not a fixed identifier is dropped.
+        let r = Refusal::token(400, br#"{"error":"<script>"}"#, "a");
+        assert_eq!(r.error, None);
+        let r = Refusal::token(502, b"<html>Bad gateway</html>", "a");
+        assert_eq!(
+            (r.status, r.error, r.provider_code),
+            (Some(502), None, None)
+        );
+    }
+
+    #[test]
+    fn an_authorize_error_reads_the_query() {
+        let q: HashMap<String, String> = [
+            ("error".to_owned(), "invalid_request".to_owned()),
+            (
+                "error_description".to_owned(),
+                "AADSTS700016: Application with identifier 'x' was not found.".to_owned(),
+            ),
+        ]
+        .into();
+        let r = Refusal::authorize(&q, "microsoft-365");
+        assert_eq!(r.stage, "authorize");
+        assert_eq!(r.error.as_deref(), Some("invalid_request"));
+        assert_eq!(r.provider_code.as_deref(), Some("AADSTS700016"));
+        assert_eq!(log_text(Some("a\nb\u{7}c")), "abc");
+        assert_eq!(log_text(Some(&"x".repeat(400))).len(), 300);
+    }
 }

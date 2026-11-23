@@ -87,7 +87,7 @@ async fn callback(
             h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             r
         }
-        Err(f) => page::error(f.code, f.landing.as_ref()),
+        Err(f) => page::error_with(f.code, f.landing.as_ref(), f.refusal.as_deref()),
     }
 }
 
