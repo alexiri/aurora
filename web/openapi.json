@@ -12806,7 +12806,7 @@
         "tags": [
           "grants"
         ],
-        "summary": "Revoke a connection grant (`can_own`).",
+        "summary": "Revoke a connection grant (`can_own`; for an organization's account also its org owners and\nadmins — FIX-234, C-1160).",
         "operationId": "revokeConnectionGrant",
         "parameters": [
           {
@@ -34997,7 +34997,7 @@
         "tags": [
           "schedules"
         ],
-        "summary": "Reassign the schedule's creator (fire-time authority) to an active member who can use the\nworkspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited\n`automation.reassign`.",
+        "summary": "Reassign the schedule's creator (fire-time authority) to an active member who can use the\nworkspace (`can_administer`, FIX-234 C-1160; the new creator still needs own `can_use`);\n`re_enable` re-enables an item disabled for `authorization`. Audited `automation.reassign`.",
         "operationId": "reassignScheduleCreator",
         "parameters": [
           {
@@ -38726,7 +38726,7 @@
         "tags": [
           "webhooks"
         ],
-        "summary": "Reassign the webhook's creator (fire-time authority) to an active member who can use the\nworkspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited\n`automation.reassign`.",
+        "summary": "Reassign the webhook's creator (fire-time authority) to an active member who can use the\nworkspace (`can_administer`, FIX-234 C-1160; the new creator still needs own `can_use`);\n`re_enable` re-enables an item disabled for `authorization`. Audited `automation.reassign`.",
         "operationId": "reassignWebhookCreator",
         "parameters": [
           {
@@ -39066,7 +39066,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Get a workspace.",
+        "summary": "Get a workspace: the caller's own access answers in full; an administrator without own\naccess gets the metadata, `contacts` and `audience` (C-1160, C-1162).",
         "operationId": "getWorkspace",
         "parameters": [
           {
@@ -39133,7 +39133,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Delete a workspace (`can_own`, typed confirmation).",
+        "summary": "Delete a workspace (own `can_own` or `can_administer`, C-1160; typed confirmation).",
         "operationId": "deleteWorkspace",
         "parameters": [
           {
@@ -39319,7 +39319,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "List workspace access bindings, including implicit org owners/admins (`can_own`; I-27).",
+        "summary": "List the workspace's access bindings (`can_administer`, C-1160; the rows are the bindings in\none's own right — since FIX-234 there are no implicit rows).",
         "operationId": "listAccess",
         "parameters": [
           {
@@ -39535,7 +39535,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Add one person to the workspace by e-mail (`can_own`; C-919).",
+        "summary": "Add one person to the workspace by e-mail (`can_administer`, FIX-234 C-1160; C-919). In a\npersonal workspace only its person adds people or raises roles, and its person is never\nlowered there (C-1161). Giving *oneself* access is a self-grant (C-1161).",
         "operationId": "addAccessByEmail",
         "parameters": [
           {
@@ -39598,6 +39598,15 @@
             }
           },
           "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -39827,7 +39836,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "The workspace's people waiting for their first sign-in (`can_own`; C-920).",
+        "summary": "The workspace's people waiting for their first sign-in (`can_administer`, FIX-234 C-1160;\nC-920).",
         "operationId": "listPendingAccess",
         "parameters": [
           {
@@ -39905,7 +39914,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Remove one waiting person (`can_own`; C-920). A row of another workspace is a 404.",
+        "summary": "Remove one waiting person (`can_administer`, FIX-234 C-1160; C-920). A row of another\nworkspace is a 404.",
         "operationId": "deletePendingAccess",
         "parameters": [
           {
@@ -39987,7 +39996,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Bind an org member to the workspace (`can_own`).",
+        "summary": "Bind an org member to the workspace (`can_administer`, C-1160). In a personal workspace only\nits person adds people or raises a role, and the person themselves can never be lowered\nthere (C-1161). An administrator giving *themselves* access is a self-grant: session only,\naudited critical, the other owners are told.",
         "operationId": "putAccess",
         "parameters": [
           {
@@ -40059,6 +40068,15 @@
               }
             }
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "422": {
             "content": {
               "application/json": {
@@ -40092,7 +40110,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Remove a user's workspace binding (`can_own`).",
+        "summary": "Remove a user's workspace binding (`can_administer`, C-1160; a personal workspace's person\nis never removed there, C-1161).",
         "operationId": "deleteAccess",
         "parameters": [
           {
@@ -40160,6 +40178,15 @@
               }
             }
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "422": {
             "content": {
               "application/json": {
@@ -40193,7 +40220,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Suspend or restore a person's direct binding in this workspace only (`can_own`; P5-APIGAP-4,\nC-1051, SEC-138). A suspended binding grants nothing here, direct or through a group.",
+        "summary": "Suspend or restore a person's direct binding in this workspace only (`can_administer`,\nC-1160; P5-APIGAP-4, C-1051, SEC-138). A suspended binding grants nothing here, direct or\nthrough a group. A personal workspace's person is never suspended there (C-1161).",
         "operationId": "patchAccess",
         "parameters": [
           {
@@ -40936,7 +40963,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "Live BYO agent tokens of a workspace with expiry and use (workspace owner).",
+        "summary": "Live BYO agent tokens of a workspace with expiry and use (`can_administer`, FIX-234 C-1160:\nmetadata, not content).",
         "operationId": "listWorkspaceAgentTokens",
         "parameters": [
           {
@@ -42096,7 +42123,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Reassign every schedule/webhook of one creator in the workspace (or just `ids`) to another\nmember or to the workspace, in one transaction with one audit row per item (`can_own`).",
+        "summary": "Reassign every schedule/webhook of one creator in the workspace (or just `ids`) to another\nmember or to the workspace, in one transaction with one audit row per item\n(`can_administer`, FIX-234 C-1160; `\"workspace\"` needs an own-right active owner).",
         "operationId": "bulkReassignAutomations",
         "parameters": [
           {
@@ -42486,7 +42513,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "What removing a person's binding on this workspace would disable (`can_own`). Org\nowners/admins have implicit access that a binding removal cannot take away, so their list\nis empty.",
+        "summary": "What removing a person's binding on this workspace would disable (`can_administer`, FIX-234\nC-1160). Since an org role grants no workspace right, an admin's binding is removed like\nanyone's and their list is computed the same way.",
         "operationId": "workspaceMemberOffboarding",
         "parameters": [
           {
@@ -44516,7 +44543,7 @@
         "tags": [
           "usage"
         ],
-        "summary": "Usage of a workspace: turns, turn time, awake time and tokens per day, agent and model (aggregates\nonly: invisible direct conversations are counted). No cost.",
+        "summary": "Usage of a workspace: turns, turn time, awake time and tokens per day, agent and model (aggregates\nonly: invisible direct conversations are counted). No cost. Aggregates are metadata, so\n`can_administer` is enough (FIX-234, C-1160) — never a conversation's content.",
         "operationId": "getWorkspaceUsage",
         "parameters": [
           {
@@ -44698,7 +44725,7 @@
           },
           "implicit": {
             "type": "boolean",
-            "description": "True for org owners/admins (no row)."
+            "description": "Always `false` since FIX-234 (D-477): an organization role grants no workspace right, so\nno implicit rows are returned. Kept one release for older dashboards (FIX-235 stops\nreading it)."
           },
           "joined_at": {
             "type": [
@@ -44706,7 +44733,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "(phase 5, P5-APIGAP-4, C-1050) When the direct binding was created; `null` for an implicit\nrow without one (the org role's start is not recorded)."
+            "description": "(phase 5, P5-APIGAP-4, C-1050) When the direct binding was created."
           },
           "role": {
             "$ref": "#/components/schemas/WorkspaceRole"
@@ -44717,7 +44744,7 @@
           },
           "status": {
             "$ref": "#/components/schemas/AccessStatus",
-            "description": "(phase 5, P5-APIGAP-4, C-1051) `suspended`: the person has no access to this workspace\n(direct or through a group) until restored. An `implicit` row's access comes from the org\nrole and is not affected."
+            "description": "(phase 5, P5-APIGAP-4, C-1051) `suspended`: the person has no access to this workspace\n(direct or through a group) until restored."
           },
           "user_id": {
             "type": "string",
@@ -44883,7 +44910,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/GroupName",
-                "description": "The group, for `group` and `org_role_via_group`."
+                "description": "The group, for `group`."
               },
               {
                 "type": "null"
@@ -44892,7 +44919,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`direct` | `idp_claim` | `group` | `org_role` | `org_role_via_group`."
+            "description": "`direct` | `idp_claim` | `group` (only own-right sources appear: D-477)."
           },
           "value": {
             "type": [
@@ -65798,11 +65825,26 @@
                 "name",
                 "timezone",
                 "memory_language",
-                "my_role",
+                "administers",
                 "created_at",
                 "updated_at"
               ],
               "properties": {
+                "administers": {
+                  "type": "boolean",
+                  "description": "(FIX-234, C-1160) The caller manages this workspace through their organization role\n(own-right `owner` there or an active org owner/admin) but may hold no own access."
+                },
+                "audience": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceAudience",
+                      "description": "(FIX-234, C-1162) Who the workspace's people are; present on `GET /v1/workspaces/{ws}`."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "byo_posture": {
                   "type": [
                     "string",
@@ -65855,8 +65897,15 @@
                   "type": "string"
                 },
                 "my_role": {
-                  "$ref": "#/components/schemas/WorkspaceRole",
-                  "description": "Org owner/admin => `owner`."
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceRole",
+                      "description": "(FIX-234, C-1160) The caller's own workspace role; `null` when they hold none — an\norganization role grants no workspace right (D-477). An administrator without own\naccess has `administers: true` instead."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "name": {
                   "type": "string"
@@ -78269,11 +78318,26 @@
           "name",
           "timezone",
           "memory_language",
-          "my_role",
+          "administers",
           "created_at",
           "updated_at"
         ],
         "properties": {
+          "administers": {
+            "type": "boolean",
+            "description": "(FIX-234, C-1160) The caller manages this workspace through their organization role\n(own-right `owner` there or an active org owner/admin) but may hold no own access."
+          },
+          "audience": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceAudience",
+                "description": "(FIX-234, C-1162) Who the workspace's people are; present on `GET /v1/workspaces/{ws}`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "byo_posture": {
             "type": [
               "string",
@@ -78326,8 +78390,15 @@
             "type": "string"
           },
           "my_role": {
-            "$ref": "#/components/schemas/WorkspaceRole",
-            "description": "Org owner/admin => `owner`."
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceRole",
+                "description": "(FIX-234, C-1160) The caller's own workspace role; `null` when they hold none — an\norganization role grants no workspace right (D-477). An administrator without own\naccess has `administers: true` instead."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "type": "string"
@@ -78356,6 +78427,50 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "WorkspaceAudience": {
+        "type": "object",
+        "description": "(FIX-234, C-1162) `Workspace.audience`: the workspace's people in their own right and its\nown-right owners. Names only; never content.",
+        "required": [
+          "people",
+          "owners",
+          "owners_total"
+        ],
+        "properties": {
+          "owners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceAudienceOwner"
+            },
+            "description": "The own-right owners: at most 5, the caller first if an owner, then by display name."
+          },
+          "owners_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many own-right owners the workspace has."
+          },
+          "people": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct active people with access in their own right."
+          }
+        }
+      },
+      "WorkspaceAudienceOwner": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },

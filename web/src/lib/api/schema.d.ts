@@ -2208,7 +2208,10 @@ export interface paths {
         /** Grant a connection to an agent, replacing any previous grant (`can_own`). */
         put: operations["grantConnection"];
         post?: never;
-        /** Revoke a connection grant (`can_own`). */
+        /**
+         * Revoke a connection grant (`can_own`; for an organization's account also its org owners and
+         *     admins — FIX-234, C-1160).
+         */
         delete: operations["revokeConnectionGrant"];
         options?: never;
         head?: never;
@@ -5845,8 +5848,8 @@ export interface paths {
         get?: never;
         /**
          * Reassign the schedule's creator (fire-time authority) to an active member who can use the
-         *     workspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited
-         *     `automation.reassign`.
+         *     workspace (`can_administer`, FIX-234 C-1160; the new creator still needs own `can_use`);
+         *     `re_enable` re-enables an item disabled for `authorization`. Audited `automation.reassign`.
          */
         put: operations["reassignScheduleCreator"];
         post?: never;
@@ -6418,8 +6421,8 @@ export interface paths {
         get?: never;
         /**
          * Reassign the webhook's creator (fire-time authority) to an active member who can use the
-         *     workspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited
-         *     `automation.reassign`.
+         *     workspace (`can_administer`, FIX-234 C-1160; the new creator still needs own `can_use`);
+         *     `re_enable` re-enables an item disabled for `authorization`. Audited `automation.reassign`.
          */
         put: operations["reassignWebhookCreator"];
         post?: never;
@@ -6487,11 +6490,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a workspace. */
+        /**
+         * Get a workspace: the caller's own access answers in full; an administrator without own
+         *     access gets the metadata, `contacts` and `audience` (C-1160, C-1162).
+         */
         get: operations["getWorkspace"];
         put?: never;
         post?: never;
-        /** Delete a workspace (`can_own`, typed confirmation). */
+        /** Delete a workspace (own `can_own` or `can_administer`, C-1160; typed confirmation). */
         delete: operations["deleteWorkspace"];
         options?: never;
         head?: never;
@@ -6506,7 +6512,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List workspace access bindings, including implicit org owners/admins (`can_own`; I-27). */
+        /**
+         * List the workspace's access bindings (`can_administer`, C-1160; the rows are the bindings in
+         *     one's own right — since FIX-234 there are no implicit rows).
+         */
         get: operations["listAccess"];
         put?: never;
         post?: never;
@@ -6545,7 +6554,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Add one person to the workspace by e-mail (`can_own`; C-919). */
+        /**
+         * Add one person to the workspace by e-mail (`can_administer`, FIX-234 C-1160; C-919). In a
+         *     personal workspace only its person adds people or raises roles, and its person is never
+         *     lowered there (C-1161). Giving *oneself* access is a self-grant (C-1161).
+         */
         post: operations["addAccessByEmail"];
         delete?: never;
         options?: never;
@@ -6581,7 +6594,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The workspace's people waiting for their first sign-in (`can_own`; C-920). */
+        /**
+         * The workspace's people waiting for their first sign-in (`can_administer`, FIX-234 C-1160;
+         *     C-920).
+         */
         get: operations["listPendingAccess"];
         put?: never;
         post?: never;
@@ -6601,7 +6617,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Remove one waiting person (`can_own`; C-920). A row of another workspace is a 404. */
+        /**
+         * Remove one waiting person (`can_administer`, FIX-234 C-1160; C-920). A row of another
+         *     workspace is a 404.
+         */
         delete: operations["deletePendingAccess"];
         options?: never;
         head?: never;
@@ -6616,16 +6635,25 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Bind an org member to the workspace (`can_own`). */
+        /**
+         * Bind an org member to the workspace (`can_administer`, C-1160). In a personal workspace only
+         *     its person adds people or raises a role, and the person themselves can never be lowered
+         *     there (C-1161). An administrator giving *themselves* access is a self-grant: session only,
+         *     audited critical, the other owners are told.
+         */
         put: operations["putAccess"];
         post?: never;
-        /** Remove a user's workspace binding (`can_own`). */
+        /**
+         * Remove a user's workspace binding (`can_administer`, C-1160; a personal workspace's person
+         *     is never removed there, C-1161).
+         */
         delete: operations["deleteAccess"];
         options?: never;
         head?: never;
         /**
-         * Suspend or restore a person's direct binding in this workspace only (`can_own`; P5-APIGAP-4,
-         *     C-1051, SEC-138). A suspended binding grants nothing here, direct or through a group.
+         * Suspend or restore a person's direct binding in this workspace only (`can_administer`,
+         *     C-1160; P5-APIGAP-4, C-1051, SEC-138). A suspended binding grants nothing here, direct or
+         *     through a group. A personal workspace's person is never suspended there (C-1161).
          */
         patch: operations["patchAccess"];
         trace?: never;
@@ -6746,7 +6774,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Live BYO agent tokens of a workspace with expiry and use (workspace owner). */
+        /**
+         * Live BYO agent tokens of a workspace with expiry and use (`can_administer`, FIX-234 C-1160:
+         *     metadata, not content).
+         */
         get: operations["listWorkspaceAgentTokens"];
         put?: never;
         post?: never;
@@ -6898,7 +6929,8 @@ export interface paths {
         put?: never;
         /**
          * Reassign every schedule/webhook of one creator in the workspace (or just `ids`) to another
-         *     member or to the workspace, in one transaction with one audit row per item (`can_own`).
+         *     member or to the workspace, in one transaction with one audit row per item
+         *     (`can_administer`, FIX-234 C-1160; `"workspace"` needs an own-right active owner).
          */
         post: operations["bulkReassignAutomations"];
         delete?: never;
@@ -6969,9 +7001,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * What removing a person's binding on this workspace would disable (`can_own`). Org
-         *     owners/admins have implicit access that a binding removal cannot take away, so their list
-         *     is empty.
+         * What removing a person's binding on this workspace would disable (`can_administer`, FIX-234
+         *     C-1160). Since an org role grants no workspace right, an admin's binding is removed like
+         *     anyone's and their list is computed the same way.
          */
         get: operations["workspaceMemberOffboarding"];
         put?: never;
@@ -7263,7 +7295,8 @@ export interface paths {
         };
         /**
          * Usage of a workspace: turns, turn time, awake time and tokens per day, agent and model (aggregates
-         *     only: invisible direct conversations are counted). No cost.
+         *     only: invisible direct conversations are counted). No cost. Aggregates are metadata, so
+         *     `can_administer` is enough (FIX-234, C-1160) — never a conversation's content.
          */
         get: operations["getWorkspaceUsage"];
         put?: never;
@@ -7293,12 +7326,15 @@ export interface components {
             email: string;
             /** @description (phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual. */
             idp_value?: string | null;
-            /** @description True for org owners/admins (no row). */
+            /**
+             * @description Always `false` since FIX-234 (D-477): an organization role grants no workspace right, so
+             *     no implicit rows are returned. Kept one release for older dashboards (FIX-235 stops
+             *     reading it).
+             */
             implicit: boolean;
             /**
              * Format: date-time
-             * @description (phase 5, P5-APIGAP-4, C-1050) When the direct binding was created; `null` for an implicit
-             *     row without one (the org role's start is not recorded).
+             * @description (phase 5, P5-APIGAP-4, C-1050) When the direct binding was created.
              */
             joined_at?: string | null;
             role: components["schemas"]["WorkspaceRole"];
@@ -7306,8 +7342,7 @@ export interface components {
             signed_in: boolean;
             /**
              * @description (phase 5, P5-APIGAP-4, C-1051) `suspended`: the person has no access to this workspace
-             *     (direct or through a group) until restored. An `implicit` row's access comes from the org
-             *     role and is not affected.
+             *     (direct or through a group) until restored.
              */
             status: components["schemas"]["AccessStatus"];
             /** Format: uuid */
@@ -7361,7 +7396,7 @@ export interface components {
         /** @description Why a person has access: informational only (`04 §Groups`). */
         AccessSourceView: {
             group?: components["schemas"]["GroupName"] | null;
-            /** @description `direct` | `idp_claim` | `group` | `org_role` | `org_role_via_group`. */
+            /** @description `direct` | `idp_claim` | `group` (only own-right sources appear: D-477). */
             kind: string;
             /** @description The `idp:<provider>:<value>` source, for `idp_claim`. */
             value?: string | null;
@@ -13990,6 +14025,12 @@ export interface components {
         };
         Page_Workspace: {
             items: {
+                /**
+                 * @description (FIX-234, C-1160) The caller manages this workspace through their organization role
+                 *     (own-right `owner` there or an active org owner/admin) but may hold no own access.
+                 */
+                administers: boolean;
+                audience?: components["schemas"]["WorkspaceAudience"] | null;
                 /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
                 byo_posture?: string | null;
                 contacts?: components["schemas"]["Contacts"] | null;
@@ -14000,8 +14041,7 @@ export interface components {
                 /** Format: uuid */
                 id: string;
                 memory_language: string;
-                /** @description Org owner/admin => `owner`. */
-                my_role: components["schemas"]["WorkspaceRole"];
+                my_role?: components["schemas"]["WorkspaceRole"] | null;
                 name: string;
                 /** Format: uuid */
                 org_id: string;
@@ -17900,6 +17940,12 @@ export interface components {
             name: string;
         };
         Workspace: {
+            /**
+             * @description (FIX-234, C-1160) The caller manages this workspace through their organization role
+             *     (own-right `owner` there or an active org owner/admin) but may hold no own access.
+             */
+            administers: boolean;
+            audience?: components["schemas"]["WorkspaceAudience"] | null;
             /** @description (phase 2, RFE-025) The workspace's own BYO posture (`null` = inherit). */
             byo_posture?: string | null;
             contacts?: components["schemas"]["Contacts"] | null;
@@ -17910,8 +17956,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             memory_language: string;
-            /** @description Org owner/admin => `owner`. */
-            my_role: components["schemas"]["WorkspaceRole"];
+            my_role?: components["schemas"]["WorkspaceRole"] | null;
             name: string;
             /** Format: uuid */
             org_id: string;
@@ -17920,6 +17965,29 @@ export interface components {
             timezone: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /**
+         * @description (FIX-234, C-1162) `Workspace.audience`: the workspace's people in their own right and its
+         *     own-right owners. Names only; never content.
+         */
+        WorkspaceAudience: {
+            /** @description The own-right owners: at most 5, the caller first if an owner, then by display name. */
+            owners: components["schemas"]["WorkspaceAudienceOwner"][];
+            /**
+             * Format: int64
+             * @description How many own-right owners the workspace has.
+             */
+            owners_total: number;
+            /**
+             * Format: int64
+             * @description Distinct active people with access in their own right.
+             */
+            people: number;
+        };
+        WorkspaceAudienceOwner: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
         };
         WorkspaceCount: {
             /** Format: int64 */
@@ -46493,6 +46561,14 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -46802,6 +46878,14 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -46866,6 +46950,14 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
