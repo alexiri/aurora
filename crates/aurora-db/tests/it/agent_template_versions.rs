@@ -77,6 +77,38 @@ async fn row_status(pool: &PgPool, id: Uuid) -> (String, Option<String>) {
 }
 
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn the_package_wait_expiry_is_measured_by_the_database_clock(pool: PgPool) {
+    aurora_db::migrate(&pool).await.unwrap();
+    let source = seed_source(&pool).await;
+    let template = seed_template(&pool, source, "service-monitor").await;
+    let v = seed_version(&pool, template, "1.0.0").await;
+
+    // A fresh row is inside the 24 h window. The comparison runs entirely in SQL against
+    // the database's `now()` (the row's `created_at` is the database's clock), so a
+    // replica's clock skew cannot move the expiry.
+    assert!(
+        !repo::package_wait_expired(&pool, v, 24 * 3600)
+            .await
+            .unwrap()
+    );
+    sqlx::query("UPDATE agent_template_versions SET created_at = now() - interval '25 hours'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        repo::package_wait_expired(&pool, v, 24 * 3600)
+            .await
+            .unwrap()
+    );
+    // Two windows (the transient extra retry window) still inside at 25 h.
+    assert!(
+        !repo::package_wait_expired(&pool, v, 2 * 24 * 3600)
+            .await
+            .unwrap()
+    );
+}
+
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
 async fn a_stale_finish_does_not_change_an_approved_version(pool: PgPool) {
     aurora_db::migrate(&pool).await.unwrap();
     let source = seed_source(&pool).await;

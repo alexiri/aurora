@@ -892,6 +892,51 @@ async fn one_broken_template_does_not_block_the_others() {
     assert_eq!(new_rows, 2, "the healthy two are recorded, broken is not");
 }
 
+/// A version whose last attempt failed transiently gets ONE more retry window before it
+/// expires (the comparison uses the database's clock): a network failure in the very last
+/// attempt must not retire a version for good when an equal version is ignored afterwards
+/// and only a version bump would recover it.
+#[tokio::test]
+async fn a_transient_last_attempt_gets_one_more_retry_window() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    // The package host answers 500 — the classic transient download failure.
+    w.git.override_status("pkg/t-1.0.0.zip", 500, None);
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    let out = w.check(id).await;
+    assert_eq!(out["waiting"][0]["last_reason"], "download_failed", "{out}");
+
+    // Past the 24 h window: the transient reason earns one more window (the version keeps
+    // waiting and is retried), where a non-transient reason is already invalid.
+    sqlx::query("UPDATE agent_template_versions SET created_at = now() - interval '25 hours'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "up_to_date", "{out}");
+    assert_eq!(
+        w.versions().await,
+        vec![(
+            "1.0.0".into(),
+            "awaiting_package".into(),
+            Some("download_failed".into())
+        )]
+    );
+
+    // Past the extra window too: invalid, with the transient reason it last failed with.
+    sqlx::query("UPDATE agent_template_versions SET created_at = now() - interval '49 hours'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let out = w.check(id).await;
+    assert_eq!(out["ingested"][0]["status"], "invalid", "{out}");
+    assert_eq!(
+        out["ingested"][0]["status_reason"], "download_failed",
+        "{out}"
+    );
+}
+
 #[tokio::test]
 async fn bad_packages_turn_invalid_with_the_right_reason() {
     let w = world().await;

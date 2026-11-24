@@ -414,6 +414,24 @@ pub async fn set_head_sha(conn: &mut PgConnection, id: Uuid, sha: &str) -> Resul
     Ok(())
 }
 
+/// Whether a version has waited past `wait_secs` since its `created_at`. The comparison runs
+/// against the database's `now()`: the row's `created_at` is the database's clock, and a
+/// replica's clock skew must not move the package-wait expiry.
+pub async fn package_wait_expired<'e, E: PgExecutor<'e>>(
+    exec: E,
+    version_id: Uuid,
+    wait_secs: i64,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT created_at + make_interval(secs => $2) <= now()
+         FROM agent_template_versions WHERE id = $1",
+    )
+    .bind(version_id)
+    .bind(wait_secs)
+    .fetch_one(exec)
+    .await?)
+}
+
 // ---- the templates of a source ---------------------------------------------------------------
 
 /// Whether a template id is held by a template of *another* source (the `id_taken` rule).

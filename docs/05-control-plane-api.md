@@ -941,7 +941,16 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 Instance administrators add template repositories by their https git address (C-1123's parser, the
 skill library's git reader). A check reads the tracked branch, downloads the package every new
 version waits for (`awaiting_package`), and accepts it only when its content equals the source at
-the recorded commit; the version then waits for an admin's approval. The offered version is the
+the recorded commit; the version then waits for an admin's approval. A version still
+`awaiting_package` past `TEMPLATE_PACKAGE_WAIT` from its creation — measured by the database's
+clock, so replica clock skew cannot move the expiry — becomes `invalid` with the reason it last
+failed with, and that version string is never tried again (a new version supersedes it). A
+failure that can resolve on its own is **transient**: the package download (`download_failed`),
+the repository read (`source_unreadable`) and this replica's avatar re-encode
+(`avatar_reencode_failed`). A version whose last reason is transient gets one more retry window
+before it expires, so a network failure in the very last attempt does not retire a version that
+nothing is wrong with; `package_not_found` (the package URL answered 404) and every content
+verdict are not transient. The offered version is the
 newest `approved` while the template is offered (one rule, C-1108). 404 `templates_disabled` on the
 organization and workspace routes while `agents.templates.enabled` is false; the admin routes keep
 working.

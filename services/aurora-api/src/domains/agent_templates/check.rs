@@ -749,10 +749,23 @@ pub async fn check_source(
     })
 }
 
+/// Whether a version's last stay reason is transient: the fetching machinery failed, where
+/// nothing in the repository or the package needs to change for a retry to succeed — the
+/// package download (`download_failed`), the repository read (`source_unreadable`) or this
+/// replica's avatar re-encode (`avatar_reencode_failed`). Such a version gets one more
+/// retry window before it expires (docs/05 §Agent templates). Not transient:
+/// `package_not_found` (the URL answered 404 — the package is not where the manifest
+/// points) and every content verdict, which is `invalid` at once anyway.
+fn is_transient_stay(reason: &str) -> bool {
+    matches!(
+        reason,
+        "download_failed" | "source_unreadable" | "avatar_reencode_failed"
+    )
+}
+
 /// What one `awaiting_package` row did in this check (the write lands in the check's final
 /// transaction). `Left` carries everything the row needs to become `pending_approval` or
-/// `invalid`.
-#[allow(clippy::type_complexity)]
+/// `invalid`.#[allow(clippy::type_complexity)]
 enum StepOut {
     Left(
         /// `pending_approval` | `invalid`.
@@ -776,19 +789,28 @@ async fn process_awaiting(
     v: &repo::SourceVersionRow,
 ) -> Result<StepOut, ApiError> {
     // Step 5, expiry: waited past `TEMPLATE_PACKAGE_WAIT` from `created_at` — invalid with
-    // the reason it last failed with. That version is never tried again.
-    if v.version.created_at
-        + chrono::Duration::from_std(aurora_core::limits::TEMPLATE_PACKAGE_WAIT).unwrap_or_default()
-        <= Utc::now()
-    {
+    // the reason it last failed with. The comparison runs against the database's `now()`
+    // (`repo::package_wait_expired`): the row's `created_at` is the database's clock, and a
+    // replica's clock skew must not move the expiry. A version whose last attempt failed
+    // transiently gets ONE more retry window before it expires (see
+    // [`is_transient_stay`]): a network failure in the very last attempt must not retire a
+    // perfectly good version for good, when an equal version is ignored afterwards and
+    // only a version bump would recover it.
+    let last_reason = v
+        .version
+        .status_reason
+        .clone()
+        .unwrap_or_else(|| "download_failed".to_owned());
+    let wait_secs = aurora_core::limits::TEMPLATE_PACKAGE_WAIT.as_secs() as i64;
+    let windows = if is_transient_stay(&last_reason) {
+        2
+    } else {
+        1
+    };
+    if repo::package_wait_expired(&state.pool, v.version.id, wait_secs * windows).await? {
         return Ok(StepOut::Left(
             "invalid",
-            Some(
-                v.version
-                    .status_reason
-                    .clone()
-                    .unwrap_or_else(|| "download_failed".to_owned()),
-            ),
+            Some(last_reason),
             None,
             None,
             None,
