@@ -1,0 +1,41 @@
+{
+  "format": "aurora.operations/1",
+  "operations": [
+    {
+      "id": "send_mail",
+      "method": "POST",
+      "path": "/v1.0/me/sendMail",
+      "host": "graph.microsoft.com",
+      "summary": "Send a mail as the person (held for their approval); nested JSON body: --body @file, see the microsoft-365-send-mail skill",
+      "tags": ["mail"],
+      "params": [],
+      "body": { "content_type": "application/json" },
+      "tool": "send_mail"
+    },
+    {
+      "id": "create_event",
+      "method": "POST",
+      "path": "/v1.0/me/events",
+      "host": "graph.microsoft.com",
+      "summary": "Create an event in the default calendar and invite its attendees (held for approval); --body @file, see microsoft-365-schedule-meeting",
+      "tags": ["calendar"],
+      "params": [],
+      "body": { "content_type": "application/json" },
+      "tool": "create_event"
+    },
+    {
+      "id": "create_calendar_event",
+      "method": "POST",
+      "path": "/v1.0/me/calendars/{calendar_id}/events",
+      "host": "graph.microsoft.com",
+      "summary": "Create an event in one calendar (held for approval); --body @file as create_event",
+      "tags": ["calendar"],
+      "params": [
+        { "name": "calendar_id", "in": "path", "required": true, "type": "string",
+          "description": "The calendar's id, from list_calendars (GET /v1.0/me/calendars)" }
+      ],
+      "body": { "content_type": "application/json" },
+      "tool": "create_calendar_event"
+    }
+  ]
+}

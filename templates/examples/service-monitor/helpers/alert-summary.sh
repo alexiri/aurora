@@ -1,5 +1,5 @@
 #!/bin/sh
-# Summarize a Grafana alert for the triage report (docs/25 §Helper files).
+# Summarize a Grafana alert for the triage report.
 #
 # Reads the alert's JSON on stdin and prints the four summary lines of the
 # report format:

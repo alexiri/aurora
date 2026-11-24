@@ -744,6 +744,13 @@ async fn a_catalogue_entry_needs_an_explicit_path_and_an_unlisted_app_is_a_usage
     let o = agent_cli::execute(&s.env, &s.apps, call("demo", &["list_events"])).await;
     assert_eq!(o.code, 2);
     assert!(o.err.contains("explicit --path"), "{}", o.err);
+    // (FIX-239) The refusal gives the command that works.
+    assert!(
+        o.err
+            .contains("aurora-agent call demo --method GET --path /events/<id>"),
+        "{}",
+        o.err
+    );
     let o = agent_cli::execute(&s.env, &s.apps, call("nope", &["x"])).await;
     assert_eq!(o.code, 2);
     // A database app (a folder without api.json) says so and points to app.md.

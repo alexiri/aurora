@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.6.0
+  version: 1.7.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -140,6 +140,8 @@ apps:
         for or write a token. Use only the signed-in user's mail, calendar and profile (/me/...);
         files (OneDrive, SharePoint) are not available. Send JSON
         bodies with content-type application/json so approvals can show what a change does. Use
-        $select, $top and $filter to keep responses small.
+        $select, $top and $filter to keep responses small. Read the microsoft-365-graph-conventions
+        skill before the first request, and microsoft-365-send-mail before sending.
+      operations: operations.json
       env:
         - { name: MICROSOFT_GRAPH_URL, value: "https://graph.microsoft.com/v1.0" }

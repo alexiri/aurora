@@ -126,7 +126,7 @@ pub fn unavailable_sentence(harness_name: &str, why: TerminalModelUnavailable) -
 pub fn render(cfg: &HarnessEnvConfig, models: &TerminalModels) -> String {
     let mut out = String::from(
         "# Written by aurora-supervisor. No secret: the gateway adds the agent's real LLM key.\n\
-         # Parsed (never sourced) by the wrappers in /opt/aurora/bin (docs/12 §Terminal).\n",
+         # Parsed (never sourced) by the wrappers in /opt/aurora/bin.\n",
     );
     let mut set = |k: &str, v: &str| out.push_str(&format!("{k}={}\n", q(v)));
     set("HARNESSES_ENABLED", &cfg.enabled.join(" "));

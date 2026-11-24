@@ -33,8 +33,8 @@ the proxy:
 - Rules: `list_alert_rule_states` / `list_alert_rules` (Grafana-managed); the data source's own
   (`prometheus_rules`) is unreachable: report a data gap.
 
-Read statements only: a SQL or InfluxDB data source whose user can write could be changed by a query
-(D-462). Never send `INSERT`, `UPDATE`, `DELETE`, `DROP`, `SELECT … INTO`.
+Read statements only: a SQL or InfluxDB data source whose user can write could be changed by a
+query. Never send `INSERT`, `UPDATE`, `DELETE`, `DROP`, `SELECT … INTO`.
 
 ## Dashboards and the data source UID
 

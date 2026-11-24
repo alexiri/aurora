@@ -228,7 +228,12 @@ async fn send(env: &Env, url: &Url, built: &Built, connection_id: &str) -> Resul
     let mut resp = tokio::select! {
         r = &mut fut => r,
         () = tokio::time::sleep(env.wait_notice) => {
-            eprintln!("waiting: the request is slow or held for approval (07 §Approvals)");
+            // (FIX-239) Say what a hold means without pointing at a document the agent cannot read.
+            eprintln!(
+                "waiting: the request is slow, or held until a person allows or blocks it in Aurora \
+                 (see Approvals in your instructions). This command waits up to 15 minutes; do not \
+                 send the request again meanwhile."
+            );
             fut.await
         }
     }
@@ -466,11 +471,15 @@ async fn call_doc(
             "call <app> <operation>, or call <app> --path <path>".into(),
         ));
     }
-    if op.is_some_and(Operation::is_catalogue) && opts.path.is_none() {
+    if let Some(o) = op.filter(|o| o.is_catalogue())
+        && opts.path.is_none()
+    {
+        // (FIX-239) Say the command that works, not only that this one does not.
         return Err(usage(format!(
-            "{} is a catalogue entry (pattern {}): call it with an explicit --path",
+            "{} is a catalogue entry (pattern {}): call it with an explicit --path, e.g. {}",
             name.unwrap_or_default(),
-            op.map_or("", |o| o.path.as_str())
+            o.path,
+            super::show::catalogue_example(&doc.app.id, o)
         )));
     }
     let bound_to = op

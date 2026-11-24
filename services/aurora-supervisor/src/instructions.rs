@@ -284,6 +284,27 @@ fn index_mode(apps: &[AppInfo]) -> bool {
         })
 }
 
+/// (FIX-239, D-483) What a held request means, once for every app: apps' skills refer here
+/// instead of repeating it. The `aurora-agent` sentence only where the command exists.
+fn approvals(o: &mut String, agent_cli: bool) {
+    o.push_str(
+        "## Approvals\n\n\
+Some requests to apps (sending a mail, creating an event, most changes) are held until a person \
+allows or refuses them in Aurora. Before such a write, agree on its details with the person, so the \
+approval holds no surprises. A held request simply waits, usually up to 5 minutes: keep it waiting, \
+do not end the command early or set a short timeout, and do not send it again meanwhile.",
+    );
+    if agent_cli {
+        o.push_str(" `aurora-agent call` says it is waiting and waits up to 15 minutes.");
+    }
+    o.push_str(
+        " A `403` with `manual_approval_denied` means the person refused it: do not retry; ask what \
+to change. `manual_approval_expired` means nobody answered in time: tell the person, and send it \
+again only if they ask. After an error or a timeout on a write, check whether it took effect before \
+you try again, so nothing is done twice.\n\n",
+    );
+}
+
 /// Platform voice, only with the index (`24 §6`, *Preamble paragraph*).
 fn result_discipline(o: &mut String, agent_cli: bool) {
     o.push_str(
@@ -392,7 +413,11 @@ injects credentials into your requests for connected apps. If a request is refus
 refusal message: it explains what is missing (for example a connection that needs approval) and \
 what to do next.\n\n",
     );
-    // (P4-011B-2, `10 §Agent instructions`) Only while parking is enabled.
+    if index {
+        result_discipline(&mut o, agent_cli);
+    }
+    approvals(&mut o, agent_cli);
+    // (P4-011B-2, `10 §Agent instructions`) Only while parking is enabled; part of Approvals.
     if i.approval_parking {
         o.push_str(
             "If a request is refused with `approval_parked`, it was not sent: a person must \
@@ -401,10 +426,6 @@ you can, tell the user what you are waiting for, and end your turn. When you get
 it was approved, repeat exactly the same request once, byte for byte; if it was denied, do not try \
 again.\n\n",
         );
-    }
-
-    if index {
-        result_discipline(&mut o, agent_cli);
     }
 
     // 2. Operator's brief.

@@ -164,7 +164,7 @@ write_config() {
         umask 077
         set -C
         {
-            echo "# Written by Aurora's goose wrapper (FIX-189) because goose needs a config file;"
+            echo "# Written by Aurora's goose wrapper because goose needs a config file;"
             echo "# the terminal's environment sets the provider and model. Edit freely: this file is yours."
             printf 'GOOSE_PROVIDER: %s\n' "$(yaml_str "$GOOSE_PROVIDER")"
             printf 'GOOSE_MODEL: %s\n' "$(yaml_str "$GOOSE_MODEL")"
