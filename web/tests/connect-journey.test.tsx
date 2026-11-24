@@ -74,6 +74,14 @@ describe("the step machine and its skips", () => {
     expect(prevStep(s, "signin")).toBe("access");
     expect(prevStep(s, "access")).toBeNull();
   });
+  it("account-only (a template's accounts step) has no Agent or Access step", () => {
+    expect(stepsOf(shape({ accountOnly: true }))).toEqual(["app", "signin", "done"]);
+    expect(stepsOf(shape({ accountOnly: true, hasExisting: true }))).toEqual(["app", "account", "signin", "done"]);
+    // Using the existing account skips Sign in: (app, if not given,) account, done.
+    expect(stepsOf(shape({ accountOnly: true, appGiven: true, hasExisting: true, useExisting: true }))).toEqual(["account", "done"]);
+    // A choice to make changes nothing: the access is not asked.
+    expect(stepsOf(shape({ accountOnly: true, hasChoice: true, noAgentChosen: true }))).toEqual(["app", "signin", "done"]);
+  });
 });
 
 describe("words and payloads", () => {
@@ -436,6 +444,35 @@ describe("the journey for a fixed agent and a given app", () => {
     expect(await screen.findByText("Daneel can now read GitHub.")).toBeInTheDocument();
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ level: "read" });
     expect(calls.filter((c) => c.method === "POST").length).toBe(before);
+  });
+});
+
+describe("the account-only journey (a template's accounts step, P6-TPL-4 B1)", () => {
+  it("using an existing account: account then done, nothing is written, no Give access or Another app", async () => {
+    const calls = stub({ "GET /v1/workspaces/w1/accounts": () => json(200, { items: [ACCOUNT], next_cursor: null }) });
+    open({ agent: undefined, accountOnly: true });
+    expect(await screen.findByRole("radio", { name: /Use GitHub · bob-builder \(connected by Bob\)/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("GitHub is connected. No agent can use it yet.")).toBeInTheDocument();
+    // The one POST is the account test after Done (a read); no connect, no grant.
+    expect(calls.filter((c) => c.method === "PUT" || (c.method === "POST" && !c.path.endsWith("/test")))).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Give access" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Another app" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Close" }).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("connecting a new account sends the account alone: no grant, no access", async () => {
+    const calls = stub({ "POST /v1/apps/github/connect": () => json(200, { kind: "connected", connection: CONN, grants: [], missing_scopes: [] }) });
+    open({ agent: undefined, accountOnly: true });
+    // No existing account of the app: no Account step, straight to Sign in.
+    fireEvent.change(await screen.findByLabelText("Token"), { target: { value: "ghp_x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByText("GitHub is connected. No agent can use it yet.")).toBeInTheDocument();
+    expect(post(calls)?.body).toMatchObject({ method_id: "token", fields: { access_token: "ghp_x" } });
+    expect(post(calls)?.body).not.toHaveProperty("grant");
+    expect(post(calls)?.body).not.toHaveProperty("access");
+    expect(screen.queryByRole("button", { name: "Give access" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Open chat/ })).toBeNull();
   });
 });
 

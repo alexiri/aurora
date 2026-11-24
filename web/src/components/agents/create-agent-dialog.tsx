@@ -21,7 +21,8 @@ import { personName } from "@/lib/workspace-name";
 import { TemplateGalleryDialog } from "@/components/templates/gallery";
 import { AgentRevealDialog, type Revealed } from "./reveal";
 
-const HANDLE_RE = /^[a-z][a-z0-9-]{0,39}$/;
+/** Also used by the template's About step (C-1116), which asks the same handle. */
+export const HANDLE_RE = /^[a-z][a-z0-9-]{0,39}$/;
 
 /** A handle made from a name ("Rex the Ops helper" → "rex-the-ops-helper"); empty when nothing usable is left. */
 export function handleFromName(name: string): string {

@@ -12,6 +12,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import { ArrowLeftIcon, CheckIcon } from "@/components/ui/icons";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
+import { Stepper } from "@/components/ui/stepper";
 import { levelLabel, LEVEL_ORDER, preselectAgents } from "@/lib/accounts";
 import { savedButText } from "@/lib/account-health";
 import { accountKeys, useAccounts, usePutAccess, useTestAccount, type Account, type Level } from "@/lib/api/accounts";
@@ -73,20 +74,7 @@ function names(list: string[]): string {
 const Footer = BackNext;
 
 function Steps({ steps, current }: { steps: StepId[]; current: StepId }) {
-  const at = steps.indexOf(current);
-  return (
-    <ol className="flex gap-1.5 text-xs font-semibold uppercase tracking-wider" aria-label="Steps">
-      {steps.map((s, i) => (
-        <li
-          key={s}
-          aria-current={s === current ? "step" : undefined}
-          className={cn("flex-1 border-t-4 pt-1.5", i < at ? "border-accent text-accent-ink" : s === current ? "border-accent text-ink" : "border-line text-muted")}
-        >
-          {STEP_LABEL[s]}
-        </li>
-      ))}
-    </ol>
-  );
+  return <Stepper steps={steps.map((s) => ({ id: s, label: STEP_LABEL[s] }))} current={current} />;
 }
 
 /**
@@ -102,6 +90,8 @@ export function ConnectJourney({
   appId,
   instanceId,
   where: initialWhere,
+  /** (P6-TPL-4 B1) Only the account is made (a template's accounts step): no Agent or Access step, nothing granted. */
+  accountOnly,
   onClose,
 }: {
   workspaceId: string;
@@ -112,6 +102,7 @@ export function ConnectJourney({
   instanceId?: string;
   /** (FIX-202) A family's apps: open on "Where does your <App> run?" (no App step before it). */
   where?: AppSummary[] | null;
+  accountOnly?: boolean;
   onClose: () => void;
 }) {
   const { org, ws } = useParams<{ org: string; ws: string }>();
@@ -163,18 +154,18 @@ export function ConnectJourney({
     const all: AgentRef[] = agents.data?.items ?? [];
     return agent ? [all.find((a) => a.id === agent.id) ?? agent] : all;
   }, [agent, agents.data]);
-  const agentIds = agent ? [agent.id] : [...(picked ?? new Set(preselectAgents(agentList)))];
+  const agentIds = accountOnly ? [] : agent ? [agent.id] : [...(picked ?? new Set(preselectAgents(agentList)))];
   const chosenAgents = agentIds.map((id) => agentList.find((a) => a.id === id)).filter((a): a is AgentRef => !!a);
 
   const existing: Account[] =
-    choice?.kind === "app" && agentIds.length > 0
+    choice?.kind === "app" && (accountOnly || agentIds.length > 0)
       ? (accounts.data?.items ?? []).filter(
           (a) =>
             a.kind === "app" &&
             a.app?.app_id === choice.appId &&
             a.can.give_access &&
-            a.given !== true &&
-            !agentIds.every((id) => a.agents.some((x) => x.agent.id === id)),
+            // Account-only: the account's agents do not matter, it is used as it is.
+            (accountOnly || (a.given !== true && !agentIds.every((id) => a.agents.some((x) => x.agent.id === id)))),
         )
       : [];
   const account = accountPick ?? existing[0]?.ref.id ?? "new";
@@ -196,6 +187,7 @@ export function ConnectJourney({
     hasChoice: levels.length > 0,
     noAgentChosen: agentIds.length === 0,
     webhook: choice?.kind === "app" && choice.appId === "webhook",
+    accountOnly,
   };
   const steps = stepsOf(shape);
 
@@ -395,8 +387,9 @@ export function ConnectJourney({
         <ErrorNotice error={error} />
         <Footer
           onBack={back}
-          onNext={useExisting && levels.length === 0 ? () => void saveExisting() : () => afterNext("account")}
-          nextLabel={useExisting && levels.length === 0 ? `Give ${agentWord} access` : "Next"}
+          // Account-only: using an existing account saves nothing (no agent to grant it to), so Next goes to Done.
+          onNext={useExisting && (levels.length === 0 || accountOnly) ? () => void saveExisting() : () => afterNext("account")}
+          nextLabel={useExisting && levels.length === 0 && !accountOnly ? `Give ${agentWord} access` : "Next"}
           busy={busy}
         />
       </div>
@@ -479,7 +472,7 @@ export function ConnectJourney({
           setAdvancing(false);
           setStepState("app");
         }}
-        hasWriteTools={app.tools.some((t) => t.group === "write")}
+        hasWriteTools={accountOnly ? false : app.tools.some((t) => t.group === "write")}
         onBack={prevStep(shape, "signin") ? back : undefined}
         onResult={finishSignIn}
       />
@@ -553,7 +546,7 @@ export function ConnectJourney({
           <Button type="button" variant="ghost" onClick={onClose}>
             Close
           </Button>
-          {!done.grantFailed ? (
+          {!done.grantFailed && !accountOnly ? (
             <>
               <span className="flex-1" />
               {first ? (
