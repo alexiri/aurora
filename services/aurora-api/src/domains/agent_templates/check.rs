@@ -57,6 +57,20 @@ pub struct Problem {
     pub message: String,
 }
 
+/// A template's own write failed (a row-level failure, e.g. the database refusing one row):
+/// it becomes that template's problem and its row stays as it is (retried next check) — the
+/// source's other templates are still ingested. A database that is down for everything
+/// still aborts the check at the whole-check writes (the version reads, the final
+/// transaction), so this only ever eats one row's failure.
+fn row_problem(template_id: &str, dir: &str, message: &str) -> Problem {
+    Problem {
+        template_id: Some(template_id.to_owned()),
+        dir: dir.to_owned(),
+        code: "template_not_stored".to_owned(),
+        message: sanitize::one_line(message, 200),
+    }
+}
+
 /// The outcome of one check (C-1108's `CheckResult`, before the route adds `source_id`).
 #[derive(Debug, Clone)]
 pub struct CheckOutcome {
@@ -445,17 +459,25 @@ pub async fn check_source(
                 } else {
                     "needs_newer_aurora"
                 };
-                let row = match store_head(state, source.id, m, &d.dir, head_state).await? {
-                    Some(row) => row,
+                let row = match store_head(state, source.id, m, &d.dir, head_state).await {
+                    Ok(Some(row)) => row,
                     // The upsert landed after another source took the id (the pre-check
                     // above read before that): the id stays where it is.
-                    None => {
+                    Ok(None) => {
                         problems.push(Problem {
                             template_id: Some(m.id.clone()),
                             dir: d.dir.clone(),
                             code: "id_taken".to_owned(),
                             message: "another source already holds this template id".to_owned(),
                         });
+                        continue;
+                    }
+                    // This template's row could not be written (a row-level failure). That
+                    // is one template's problem, not the source's: the others are still
+                    // ingested (see [`row_problem`]).
+                    Err(e) => {
+                        tracing::warn!(template = %m.id, error = %e.message(), "template row not stored");
+                        problems.push(row_problem(&m.id, &d.dir, e.message()));
                         continue;
                     }
                 };
@@ -470,18 +492,26 @@ pub async fn check_source(
                     .iter()
                     .map(super::dto::TemplateProblemView::from)
                     .collect();
-                let mut c = state
-                    .pool
-                    .acquire()
+                // A failed state write leaves the row as it is (retried next check) and is
+                // one template's problem, not the source's.
+                let write = async {
+                    let mut c = state
+                        .pool
+                        .acquire()
+                        .await
+                        .map_err(aurora_db::DbError::from)?;
+                    repo::set_head_state(
+                        &mut c,
+                        t.id,
+                        "invalid",
+                        Some(&serde_json::to_value(listed).unwrap_or_default()),
+                    )
                     .await
-                    .map_err(aurora_db::DbError::from)?;
-                repo::set_head_state(
-                    &mut c,
-                    t.id,
-                    "invalid",
-                    Some(&serde_json::to_value(listed).unwrap_or_default()),
-                )
-                .await?;
+                };
+                if let Err(e) = write.await {
+                    tracing::warn!(template = %t.template_id, error = %e, "head state not stored");
+                    problems.push(row_problem(&t.template_id, &t.dir, &e.to_string()));
+                }
             }
             _ => {}
         }
@@ -491,12 +521,19 @@ pub async fn check_source(
     for t in &templates {
         let present = head_dirs.contains(&t.dir);
         if present != !t.removed_upstream {
-            let mut c = state
-                .pool
-                .acquire()
-                .await
-                .map_err(aurora_db::DbError::from)?;
-            repo::set_removed_upstream(&mut c, t.id, !present).await?;
+            let write = async {
+                let mut c = state
+                    .pool
+                    .acquire()
+                    .await
+                    .map_err(aurora_db::DbError::from)?;
+                repo::set_removed_upstream(&mut c, t.id, !present).await
+            };
+            // One template's flag write is one template's problem (retried next check).
+            if let Err(e) = write.await {
+                tracing::warn!(template = %t.template_id, error = %e, "removed_upstream not stored");
+                problems.push(row_problem(&t.template_id, &t.dir, &e.to_string()));
+            }
         }
     }
 
@@ -555,7 +592,12 @@ pub async fn check_source(
                 dir: dir.clone(),
             }),
             Err(aurora_db::DbError::UniqueViolation { .. }) => {}
-            Err(e) => return Err(e.into()),
+            // This version's row could not be recorded: one template's problem, not the
+            // source's — and since nothing was stored, the next check offers it again.
+            Err(e) => {
+                tracing::warn!(template = %template_id, version = %meta.version, error = %e, "version not stored");
+                problems.push(row_problem(template_id, dir, &e.to_string()));
+            }
         }
     }
 
@@ -809,9 +851,15 @@ async fn process_awaiting(
     // `invalid` `template_field` (C-1108 step 6).
     let mut content = content;
     if let Some((name, raw)) = content.avatar.take() {
-        let png = tokio::task::spawn_blocking(move || avatar::reencode(&raw))
-            .await
-            .map_err(|e| ApiError::internal(format!("avatar re-encode join failed: {e}")))?;
+        let png = match tokio::task::spawn_blocking(move || avatar::reencode(&raw)).await {
+            Ok(png) => png,
+            Err(e) => {
+                // The version is fine; this replica could not run the re-encode. Stay and
+                // retry (the reason is stored and becomes the expiry reason, see step 5).
+                tracing::warn!(template = %v.template_id, version = %v.version.version, error = %e, "avatar re-encode join failed");
+                return Ok(StepOut::Stayed(Some("avatar_reencode_failed".into())));
+            }
+        };
         match png {
             Ok(png) => content.avatar = Some((name, png)),
             Err(_) => return Ok(invalid("template_field")),

@@ -814,6 +814,84 @@ async fn an_expired_wait_turns_invalid_with_its_last_reason() {
     assert_eq!(w.audit_critical("agent_template.ingest").await, 1);
 }
 
+/// One template whose version row cannot be recorded (a row-level database failure, the way
+/// the SEC-146 D fixture refuses a commit) must not block the source's other templates: the
+/// healthy ones are still ingested in the same check, the broken one is listed as a problem
+/// and offered again on the next check.
+#[tokio::test]
+async fn one_broken_template_does_not_block_the_others() {
+    let w = world().await;
+    // Three template directories in one commit.
+    w.git.add_repo("acme/tpl");
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        manifest_yaml().into_bytes(),
+    )];
+    for dir in ["a", "b", "broken"] {
+        for (p, b) in files(dir, "1.0.0") {
+            changes.push(put(p, b));
+        }
+    }
+    w.git.commit("acme/tpl", "main", &changes);
+    for dir in ["a", "b", "broken"] {
+        w.git
+            .serve_file(&format!("pkg/{dir}-1.0.0.zip"), pack(dir, "1.0.0"));
+    }
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(w.check(id).await["status"], "updated");
+    assert_eq!(
+        w.count("SELECT count(*) FROM agent_template_versions")
+            .await,
+        3
+    );
+
+    // The database refuses every new version row of `broken`.
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION aurora_tpl_fail_version() RETURNS trigger AS $$
+         BEGIN IF (SELECT template_id FROM agent_templates WHERE id = NEW.agent_template_id) = 'broken'
+         THEN RAISE EXCEPTION 'test: refused version write'; END IF; RETURN NEW; END;
+         $$ LANGUAGE plpgsql",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER aurora_tpl_ver_trg BEFORE INSERT ON agent_template_versions
+         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_fail_version()",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+
+    // All three templates bump to 2.0.0 in one commit.
+    let mut bump = Vec::new();
+    for dir in ["a", "b", "broken"] {
+        bump.push(put(
+            format!("{dir}/template.yaml"),
+            template_yaml(dir, "2.0.0").into_bytes(),
+        ));
+        w.git
+            .serve_file(&format!("pkg/{dir}-2.0.0.zip"), pack(dir, "2.0.0"));
+    }
+    w.bump("acme/tpl", &bump);
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "updated", "{out}");
+    let ingested = out["ingested"].as_array().unwrap();
+    assert_eq!(ingested.len(), 2, "{out}");
+    assert!(
+        ingested.iter().all(|i| i["template_id"] != json!("broken")),
+        "{out}"
+    );
+    assert_eq!(out["problems"][0]["template_id"], "broken", "{out}");
+    let new_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agent_template_versions WHERE version = '2.0.0'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(new_rows, 2, "the healthy two are recorded, broken is not");
+}
+
 #[tokio::test]
 async fn bad_packages_turn_invalid_with_the_right_reason() {
     let w = world().await;
@@ -1324,19 +1402,21 @@ async fn a_check_that_errors_backs_off_instead_of_being_retried_every_tick() {
     w.seed("acme/tpl", "t", "1.0.0");
     let src = w.add_source("acme/tpl", json!({})).await;
     let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
-    // The database refuses every template write, so `check_source` returns Err at
-    // `store_head` — past the reads, before any outcome was written.
+    // The database refuses the check's head write (`set_head_sha`, only written by the
+    // check's final transaction), so `check_source` returns Err — past the reads, before
+    // any outcome was written.
     sqlx::query(
-        "CREATE OR REPLACE FUNCTION aurora_tpl_fail_tpl() RETURNS trigger AS $$
-         BEGIN RAISE EXCEPTION 'test: refused template write'; END;
+        "CREATE OR REPLACE FUNCTION aurora_tpl_fail_head() RETURNS trigger AS $$
+         BEGIN IF NEW.last_head_sha IS DISTINCT FROM OLD.last_head_sha
+         THEN RAISE EXCEPTION 'test: refused head write'; END IF; RETURN NEW; END;
          $$ LANGUAGE plpgsql",
     )
     .execute(w.h.pool())
     .await
     .unwrap();
     sqlx::query(
-        "CREATE TRIGGER aurora_tpl_tpl_trg BEFORE INSERT ON agent_templates
-         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_fail_tpl()",
+        "CREATE TRIGGER aurora_tpl_head_trg BEFORE UPDATE ON agent_template_sources
+         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_fail_head()",
     )
     .execute(w.h.pool())
     .await
@@ -1385,16 +1465,17 @@ async fn a_failed_check_leaves_a_never_source_unscheduled() {
         .await;
     let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
     sqlx::query(
-        "CREATE OR REPLACE FUNCTION aurora_tpl_fail_tpl() RETURNS trigger AS $$
-         BEGIN RAISE EXCEPTION 'test: refused template write'; END;
+        "CREATE OR REPLACE FUNCTION aurora_tpl_fail_head() RETURNS trigger AS $$
+         BEGIN IF NEW.last_head_sha IS DISTINCT FROM OLD.last_head_sha
+         THEN RAISE EXCEPTION 'test: refused head write'; END IF; RETURN NEW; END;
          $$ LANGUAGE plpgsql",
     )
     .execute(w.h.pool())
     .await
     .unwrap();
     sqlx::query(
-        "CREATE TRIGGER aurora_tpl_tpl_trg BEFORE INSERT ON agent_templates
-         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_fail_tpl()",
+        "CREATE TRIGGER aurora_tpl_head_trg BEFORE UPDATE ON agent_template_sources
+         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_fail_head()",
     )
     .execute(w.h.pool())
     .await
