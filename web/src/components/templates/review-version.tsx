@@ -307,7 +307,6 @@ export function TemplateVersionReview({ templateId, version }: { templateId: str
   const current = list.data?.items.find((t) => t.template_id === templateId)?.current_version ?? null;
   const offered = useTemplateVersion(current && current !== version ? templateId : undefined, current ?? undefined);
   const stale = approve.error instanceof ApiError && approve.error.status === 409;
-  const decidable = d?.status === "pending_approval" && !!d.content;
   const title = d ? `${d.content?.name ?? templateId} ${version}` : `${templateId} ${version}`;
   return (
     <div className="space-y-8">
