@@ -12,6 +12,11 @@ export const MAX_UNPACKED_BYTES = 5 * 1024 * 1024;
 export interface ZipEntry {
   name: string;
   data: Uint8Array;
+  /**
+   * (P6-TPL-5, C-1141) The Unix executable bit, needed for a template's `helpers/` files. The agent
+   * export never sets it, so its bytes stay exactly what they were.
+   */
+  executable?: boolean;
 }
 
 /** An error whose message is one sentence for the person. */
@@ -99,6 +104,9 @@ export function writeZip(entries: ZipEntry[], now: Date = new Date()): Uint8Arra
     cv.setUint32(20, e.data.length, true);
     cv.setUint32(24, e.data.length, true);
     cv.setUint16(28, name.length, true);
+    // (P6-TPL-5) The executable bit rides in the high bytes of the external attributes, as the
+    // readers of both sides (web and Rust) expect; zero otherwise, so exports are unchanged.
+    if (e.executable) cv.setUint32(38, (0o100755 << 16) >>> 0, true);
     cv.setUint32(42, offset, true);
     cd.set(name, 46);
     chunks.push(local, e.data);
