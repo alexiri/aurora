@@ -36,3 +36,27 @@ export function useAppName() {
     return a ? appDisplayName(a) : appId;
   };
 }
+
+// ---- The gallery and the details view (C-1116) -------------------------------------------------
+
+type CardLike = {
+  apps: { app_ids: string[]; available: boolean; required: boolean }[];
+  skill_refs: { index: number; kind: string; name: string; required: boolean; available: boolean }[];
+  ready: boolean;
+};
+
+/** Why a template is not ready, one line per missing thing (C-1116): the apps first, then the skill references. */
+export function notReadyWords(card: CardLike, appName: (id: string) => string): string[] {
+  const out: string[] = [];
+  for (const entry of card.apps) {
+    if (entry.required && !entry.available) out.push(`Needs ${appName(entry.app_ids[0] ?? "")}, which isn't available here.`);
+  }
+  for (const ref of card.skill_refs) {
+    if (ref.required && !ref.available) {
+      if (ref.kind === "organization") out.push(`Needs your organization's ${ref.name} skill.`);
+      // The card carries no repository address, so the line names the skill the library must hold.
+      else out.push(`Needs the skill library for the ${ref.name} skill.`);
+    }
+  }
+  return out;
+}

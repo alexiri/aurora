@@ -21,6 +21,56 @@ export type TemplateContentView = components["schemas"]["TemplateContentView"];
 export type FileView = components["schemas"]["FileView"];
 export type OrgTemplateItem = components["schemas"]["OrgTemplateItem"];
 
+// ---- Workspace catalogue, plan and create (C-1110, C-1111, C-1116) -----------------------------
+
+export type TemplateCard = components["schemas"]["TemplateCard"];
+export type TemplateCardList = components["schemas"]["TemplateCardList"];
+export type TemplatePlan = components["schemas"]["TemplatePlan"];
+export type PlanEntry = components["schemas"]["PlanEntry"];
+export type PlanChoice = components["schemas"]["PlanChoice"];
+export type SkillRefPlan = components["schemas"]["SkillRefPlan"];
+export type CreateFromTemplateRequest = components["schemas"]["CreateFromTemplateRequest"];
+export type CreatedFromTemplate = components["schemas"]["CreatedFromTemplate"];
+
+export const workspaceTemplateKeys = {
+  list: (ws: string) => ["workspaces", ws, "agent-templates"] as const,
+  plan: (ws: string, templateId: string) => ["workspaces", ws, "agent-templates", templateId] as const,
+};
+
+/** The same-origin avatar route of a template (`has_avatar` on the card; the `Avatar` shows the initial when it fails). */
+export function templateAvatarUrl(wsId: string, templateId: string): string {
+  return `/v1/workspaces/${encodeURIComponent(wsId)}/agent-templates/${encodeURIComponent(templateId)}/avatar`;
+}
+
+/** The templates this workspace may use (C-1110), ordered by name; 404 `templates_disabled` reads as none. */
+export function useWorkspaceTemplates(wsId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: workspaceTemplateKeys.list(wsId ?? ""),
+    queryFn: () => unwrap(api.GET("/v1/workspaces/{ws}/agent-templates", { params: { path: { ws: wsId! } } })),
+    enabled: !!wsId && enabled,
+    retry: false,
+  });
+}
+
+/** The full plan of one template (C-1110): the card's fields, the content and the per-entry choices. */
+export function useTemplatePlan(wsId: string | undefined, templateId: string | undefined) {
+  return useQuery({
+    queryKey: workspaceTemplateKeys.plan(wsId ?? "", templateId ?? ""),
+    queryFn: () =>
+      unwrap(api.GET("/v1/workspaces/{ws}/agent-templates/{template_id}", { params: { path: { ws: wsId!, template_id: templateId! } } })),
+    enabled: !!wsId && !!templateId,
+    retry: false,
+  });
+}
+
+/** Create an agent from a template (C-1111); the caller refetches what it needs from the answer. */
+export function useCreateAgentFromTemplate(wsId: string) {
+  return useMutation({
+    mutationFn: (body: CreateFromTemplateRequest) =>
+      unwrap(api.POST("/v1/workspaces/{ws}/agents/from-template", { params: { path: { ws: wsId } }, body })),
+  });
+}
+
 export const templateKeys = {
   sources: () => ["admin", "agent-template-sources"] as const,
   templates: () => ["admin", "agent-templates"] as const,

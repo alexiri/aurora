@@ -29,6 +29,10 @@ describe("route helper (C-960)", () => {
     expect(accountRoutes.profile).toBe("/account");
   });
 
+  it("routes the four-step New agent from a template page (C-1116)", () => {
+    expect(wsRoutes("acme", "main").newAgent("schedule-manager")).toBe("/o/acme/w/main/agents/new/schedule-manager");
+  });
+
   it("opens the Connect dialog on Apps and the Reconnect dialog on Accounts (C-842)", () => {
     expect(wsRoutes("a", "b").connect("github")).toBe("/o/a/w/b/apps?tab=apps&connect=github");
     expect(wsRoutes("a", "b").connect("github", "c1")).toBe("/o/a/w/b/apps?tab=accounts&reconnect=c1");
