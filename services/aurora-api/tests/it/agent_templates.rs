@@ -4184,6 +4184,141 @@ async fn an_apply_refuses_a_library_commit_the_offer_did_not_resolve() {
     assert_eq!(skills_of(&w, agent).await.len(), 1);
 }
 
+// ---- a failed commit cleans up (SEC-146 D) -----------------------------------------------------
+
+/// A 4×4 PNG (the avatar part of the SEC-146 D fixture).
+fn avatar_png() -> Vec<u8> {
+    let img =
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(4, 4, image::Rgb([10, 20, 30])));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::write_to(&img, &mut buf, image::ImageFormat::Png).unwrap();
+    buf.into_inner()
+}
+
+/// The SEC-146 D fixture: a webhook (its secret is sealed), an avatar (its blob is put) and a
+/// required library skill (the critical audit commit) — no apps.
+fn d_files(dir: &str, version: &str) -> Vec<(String, Vec<u8>)> {
+    vec![
+        (
+            format!("{dir}/template.yaml"),
+            format!(
+                "format: 1\nid: {dir}\nversion: {version}\nname: D\nsummary: Commit failure.\n\
+                 inputs:\n  - id: zone\n    label: Zone\n    pattern: \"^[a-z]+$\"\n\
+                 skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: alpha\n    why: Does the work.\n"
+            )
+            .into_bytes(),
+        ),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            INSTRUCTIONS.as_bytes().to_vec(),
+        ),
+        (format!("{dir}/README.md"), format!("# {dir}\nD.\n").into_bytes()),
+        (
+            format!("{dir}/automations/hook.yaml"),
+            b"kind: webhook\nname: Escalate\ninstructions: Page for {input.zone}.\nverification: signed\n"
+                .to_vec(),
+        ),
+        (format!("{dir}/avatar.png"), avatar_png()),
+    ]
+}
+
+/// [`world`] over a memory-secret-store vault (the handle comes back for the seal assertions).
+async fn d_world() -> (W, std::sync::Arc<aurora_secrets::MemoryStore>) {
+    let mut h = Harness::new().await;
+    let git = GitServer::start().await;
+    let state = h
+        .state
+        .clone()
+        .with_connect_override(&git.base())
+        .with_library_fetch_timeout(std::time::Duration::from_secs(5));
+    let mem = std::sync::Arc::new(aurora_secrets::MemoryStore::new("memory"));
+    let keyring = std::sync::Arc::new(
+        aurora_crypto::Keyring::parse(
+            &format!(
+                "k1:{}",
+                base64::engine::general_purpose::STANDARD.encode([b'a'; 32])
+            ),
+            "k1",
+        )
+        .unwrap(),
+    );
+    let mut sr =
+        aurora_secrets::StoreRegistry::from_config(&state.config.secrets, keyring).unwrap();
+    sr.register(mem.clone());
+    sr.set_default("memory").unwrap();
+    let state = state.with_vault(std::sync::Arc::new(aurora_secrets::SecretVault::new(sr)));
+    h.state = state.clone();
+    h.app = test_router(state);
+    let root = h.user("root@x.io", true).await;
+    let root_cookie = cookie(&h.good_session(root).await.1);
+    (
+        W {
+            h,
+            git,
+            root: root_cookie,
+        },
+        mem,
+    )
+}
+
+#[tokio::test]
+async fn a_failed_commit_cleans_up_the_avatar_blob_and_the_sealed_secret() {
+    let (w, mem) = d_world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    seed_library(&w, org, &owner).await;
+    seed_fs(&w, "acme/tpl", "d", "1.0.0", &d_files("d", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "d").await;
+
+    // The commit is made to fail: a deferred constraint trigger raises when the transaction
+    // commits (the agent's insert fires it) — after the blob put and the vault seals.
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION aurora_tpl_fail_commit() RETURNS trigger AS $$
+         BEGIN RAISE EXCEPTION 'test: refused commit'; END;
+         $$ LANGUAGE plpgsql",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE CONSTRAINT TRIGGER aurora_tpl_fail_trg AFTER INSERT ON agents
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION aurora_tpl_fail_commit()",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "d", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "inputs": {"zone": "eu"},
+                "skill_refs": [{
+                    "index": 0,
+                    "library_id": plan["skill_refs"][0]["library"]["id"],
+                    "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"],
+                }],
+            }),
+        )
+        .await;
+    assert!(s >= 500, "the commit refusal is an internal error: {s} {v}");
+
+    // Nothing was created, nothing was left outside the rolled-back transaction: no agent, no
+    // agent-create audit rows (the seeding's own template events remain), no orphan avatar
+    // blob, and the sealed webhook secret was discarded.
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+    assert_eq!(
+        w.count("SELECT count(*) FROM audit_log WHERE action LIKE 'agent.%'")
+            .await,
+        0
+    );
+    assert_eq!(w.count("SELECT count(*) FROM blobs").await, 0);
+    assert_eq!(mem.managed_count(), 0);
+}
+
 // ---- the creation (C-1111, C-1119's create list) ------------------------------------------------
 
 /// The user id of a test user (by email).

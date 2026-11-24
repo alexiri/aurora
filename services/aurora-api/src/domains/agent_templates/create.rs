@@ -442,17 +442,29 @@ pub async fn create_from_template(
         return Err(version_changed(&plan));
     }
     let result = create_in_tx(&mut tx, state, caller, &auth, ws, &p, &notes).await;
-    match result {
+    // Either commit path can fail (SEC-146 D): a failure after the avatar blob put and the
+    // vault seals must still clean up what was created outside the transaction, so both the
+    // in-transaction errors and the commit errors fall through to the same cleanup.
+    let outcome = match result {
         Ok((created, events)) => {
             // The critical events (the grants, the library adds) commit with the transaction;
             // without any, a plain commit (C-1111: all or nothing).
             if events.is_empty() {
-                tx.commit().await.map_err(aurora_db::DbError::from)?;
+                tx.commit()
+                    .await
+                    .map_err(aurora_db::DbError::from)
+                    .map_err(ApiError::from)
+                    .map(|_| created)
             } else {
-                audit::commit_critical_many(tx, &events).await?;
+                audit::commit_critical_many(tx, &events)
+                    .await
+                    .map(|_| created)
             }
-            Ok(created)
         }
+        Err(e) => Err(e),
+    };
+    match outcome {
+        Ok(created) => Ok(created),
         Err(e) => {
             // Roll back (tx drops) and clean up what was created outside it.
             for (hook, verification) in &prepared_hooks {
