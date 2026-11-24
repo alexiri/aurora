@@ -3886,17 +3886,23 @@ async fn a_full_creation_writes_every_kind_with_its_provenance() {
     .await
     .unwrap();
 
-    seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    seed_fs(
+        &w,
+        "acme/tpl",
+        "full",
+        "1.0.0",
+        &full_files("full", "1.0.0"),
+    )
+    .await;
     let plan = w.plan(ws, &owner, "full").await;
     let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
     let before = guard_counts(&w).await;
-    let (governance_before, byo_before): (Value, Option<String>) = sqlx::query_as(
-        "SELECT governance, app_posture FROM organizations WHERE id = $1",
-    )
-    .bind(org)
-    .fetch_one(w.h.pool())
-    .await
-    .unwrap();
+    let (governance_before, byo_before): (Value, Option<String>) =
+        sqlx::query_as("SELECT governance, app_posture FROM organizations WHERE id = $1")
+            .bind(org)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
 
     // A hostile input value: it becomes the value, it is never read as a placeholder.
     let (s, v) = w
@@ -3951,7 +3957,10 @@ async fn a_full_creation_writes_every_kind_with_its_provenance() {
     .fetch_one(w.h.pool())
     .await
     .unwrap();
-    assert!(notes_content.starts_with("Template notes."), "{notes_content}");
+    assert!(
+        notes_content.starts_with("Template notes."),
+        "{notes_content}"
+    );
     assert_eq!(prov["source"], "template", "{prov}");
     assert_eq!(prov["template"], "Monitor", "{prov}");
     assert_eq!(prov["template_version"], "1.0.0", "{prov}");
@@ -3984,9 +3993,13 @@ async fn a_full_creation_writes_every_kind_with_its_provenance() {
         .unwrap()
         .parse()
         .unwrap();
-    let (ps, pv) = w
-        .h
-        .call(&owner, Method::PATCH, &format!("/v1/skills/{alpha}"), Some(json!({"body": "x"})))
+    let (ps, pv) =
+        w.h.call(
+            &owner,
+            Method::PATCH,
+            &format!("/v1/skills/{alpha}"),
+            Some(json!({"body": "x"})),
+        )
         .await;
     assert_eq!((ps, code(&pv)), (409, "library_skill_readonly"), "{pv}");
 
@@ -4062,7 +4075,10 @@ async fn a_full_creation_writes_every_kind_with_its_provenance() {
         vec![
             ("helpers".to_owned(), String::new()),
             ("instructions".to_owned(), String::new()),
-            ("library_skill".to_owned(), "library|https://git.example/acme/skills|||alpha".to_owned()),
+            (
+                "library_skill".to_owned(),
+                "library|https://git.example/acme/skills|||alpha".to_owned()
+            ),
             ("skill".to_owned(), "backup".to_owned()),
             ("skill".to_owned(), "watch".to_owned()),
         ]
@@ -4094,14 +4110,16 @@ async fn a_full_creation_writes_every_kind_with_its_provenance() {
     .unwrap();
     assert_eq!(stray_rules, 0);
     assert!(rule_kinds > 0);
-    let (governance_after, byo_after): (Value, Option<String>) = sqlx::query_as(
-        "SELECT governance, app_posture FROM organizations WHERE id = $1",
-    )
-    .bind(org)
-    .fetch_one(w.h.pool())
-    .await
-    .unwrap();
-    assert_eq!((governance_before, byo_before), (governance_after, byo_after));
+    let (governance_after, byo_after): (Value, Option<String>) =
+        sqlx::query_as("SELECT governance, app_posture FROM organizations WHERE id = $1")
+            .bind(org)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (governance_before, byo_before),
+        (governance_after, byo_after)
+    );
 }
 
 #[tokio::test]
@@ -4116,7 +4134,8 @@ async fn a_custom_choice_is_cut_to_the_catalogue_and_an_empty_one_gives_no_acces
         "\n    tools:\n      allow: [look, gone]\n      ask: [change, peek]\n",
     );
     seed_yaml(&w, "acme/tpl", "t6n", yaml.clone());
-    w.git.serve_file("pkg/t6n-1.0.0.zip", pack_yaml("t6n", yaml));
+    w.git
+        .serve_file("pkg/t6n-1.0.0.zip", pack_yaml("t6n", yaml));
     let src = w.add_source("acme/tpl", json!({})).await;
     let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
     w.check(id).await;
@@ -4222,16 +4241,8 @@ async fn the_create_accepts_what_the_plan_showed() {
     assert_eq!(choice["level"], "ask", "{plan}");
     assert_eq!(choice["level_note"], "custom_only", "{plan}");
     assert_eq!(choice["custom"]["allow_tools"], json!(["look"]), "{plan}");
-    assert_eq!(
-        choice["custom"]["ask_tools"],
-        json!(["change"]),
-        "{plan}"
-    );
-    assert_eq!(
-        choice["custom"]["dropped_tools"],
-        json!(["peek"]),
-        "{plan}"
-    );
+    assert_eq!(choice["custom"]["ask_tools"], json!(["change"]), "{plan}");
+    assert_eq!(choice["custom"]["dropped_tools"], json!(["peek"]), "{plan}");
     let accounts = choice["accounts"].as_array().unwrap();
     assert_eq!(accounts.len(), 2, "{plan}");
 
@@ -4258,20 +4269,28 @@ async fn the_create_accepts_what_the_plan_showed() {
     assert_eq!(s, 201, "{v}");
     assert_eq!(v["notes"], json!([]), "{v}");
     let agent: Uuid = v["agent"]["id"].as_str().unwrap().parse().unwrap();
-    let (mode, allow, ask): (String, Vec<String>, Vec<String>) = sqlx::query_as(
-        "SELECT mode, allow_tools, ask_tools FROM grants WHERE agent_id = $1",
-    )
-    .bind(agent)
-    .fetch_one(w.h.pool())
-    .await
-    .unwrap();
+    let (mode, allow, ask): (String, Vec<String>, Vec<String>) =
+        sqlx::query_as("SELECT mode, allow_tools, ask_tools FROM grants WHERE agent_id = $1")
+            .bind(agent)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
     assert_eq!(
         (mode.as_str(), allow, ask),
         ("custom", vec!["look".to_owned()], vec!["change".to_owned()])
     );
     assert_eq!(
         skills_of(&w, agent).await,
-        vec![("alpha".to_owned(), Some(plan["skill_refs"][0]["library"]["id"].as_str().unwrap().parse().unwrap()))]
+        vec![(
+            "alpha".to_owned(),
+            Some(
+                plan["skill_refs"][0]["library"]["id"]
+                    .as_str()
+                    .unwrap()
+                    .parse()
+                    .unwrap()
+            )
+        )]
     );
 }
 
@@ -4284,7 +4303,14 @@ async fn a_stale_plan_is_a_409_with_the_fresh_plan() {
     let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
     admin.install(APP_PKG_YAML).await;
     seed_library(&w, org, &owner).await;
-    let id = seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "full",
+        "1.0.0",
+        &full_files("full", "1.0.0"),
+    )
+    .await;
     let plan = w.plan(ws, &owner, "full").await;
     let stale = plan["content_sha256"].clone();
 
@@ -4348,7 +4374,14 @@ async fn a_create_refuses_bad_account_choices() {
     let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
     admin.install(APP_PKG_YAML).await;
     seed_library(&w, org, &owner).await;
-    seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    seed_fs(
+        &w,
+        "acme/tpl",
+        "full",
+        "1.0.0",
+        &full_files("full", "1.0.0"),
+    )
+    .await;
     let plan = w.plan(ws, &owner, "full").await;
     let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
     let other = conn(&w, org, "com-example-other", Some(ws), "write").await;
@@ -4378,7 +4411,8 @@ async fn a_create_refuses_bad_account_choices() {
         .create_body(
             ws,
             &owner,
-            base.clone().merge(json!({"accounts": [acct.clone(), acct]})),
+            base.clone()
+                .merge(json!({"accounts": [acct.clone(), acct]})),
         )
         .await;
     assert_eq!((s, code(&v)), (422, "template_account_invalid"), "{v}");
@@ -4416,8 +4450,10 @@ async fn a_create_refuses_bad_account_choices() {
         .create_body(
             ws,
             &member_cookie,
-            base.merge(json!({"accounts": [{"entry": 0, "app_id": "com-example-thing",
-                                            "connection_id": mine}]})),
+            base.merge(
+                json!({"accounts": [{"entry": 0, "app_id": "com-example-thing",
+                                            "connection_id": mine}]}),
+            ),
         )
         .await;
     assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
@@ -4437,7 +4473,14 @@ async fn a_create_refuses_levels_above_the_caps() {
     let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
     admin.install(APP_PKG_YAML).await;
     seed_library(&w, org, &owner).await;
-    seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    seed_fs(
+        &w,
+        "acme/tpl",
+        "full",
+        "1.0.0",
+        &full_files("full", "1.0.0"),
+    )
+    .await;
     let plan = w.plan(ws, &owner, "full").await;
     let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
     let base = json!({
@@ -4478,10 +4521,7 @@ async fn a_create_refuses_levels_above_the_caps() {
         .await;
     assert_eq!((s, code(&v)), (422, "above_account_limit"), "{v}");
     assert_eq!(v["error"]["details"]["limit"], "read", "{v}");
-    assert_eq!(
-        v["error"]["details"]["who_can"]["role"], "org_admin",
-        "{v}"
-    );
+    assert_eq!(v["error"]["details"]["who_can"]["role"], "org_admin", "{v}");
 
     // Nothing was created by either refusal.
     assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
@@ -4494,7 +4534,14 @@ async fn a_create_enforces_the_agent_rules() {
     let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
     admin.install(APP_PKG_YAML).await;
     seed_library(&w, org, &owner).await;
-    let id = seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "full",
+        "1.0.0",
+        &full_files("full", "1.0.0"),
+    )
+    .await;
     let plan = w.plan(ws, &owner, "full").await;
     let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
     let acct = json!({"entry": 0, "app_id": "com-example-thing", "connection_id": mine});
@@ -4505,8 +4552,15 @@ async fn a_create_enforces_the_agent_rules() {
     // once, C-1104). The pattern comes from the reference fixture's `zone` (the full fixture
     // has no pattern on purpose). A second source for the same repo would be 409, so the
     // template rides on the same source.
-    add_template_to_source(&w, id, "acme/tpl", "refin", "1.0.0", &ref_files("refin", "1.0.0", ""))
-        .await;
+    add_template_to_source(
+        &w,
+        id,
+        "acme/tpl",
+        "refin",
+        "1.0.0",
+        &ref_files("refin", "1.0.0", ""),
+    )
+    .await;
     let (s, v) = w
         .create_body(
             ws,
@@ -4520,7 +4574,10 @@ async fn a_create_enforces_the_agent_rules() {
         )
         .await;
     assert_eq!((s, code(&v)), (422, "template_inputs_invalid"), "{v}");
-    assert_eq!(v["error"]["details"]["fields"][0]["path"], "/inputs/zone", "{v}");
+    assert_eq!(
+        v["error"]["details"]["fields"][0]["path"], "/inputs/zone",
+        "{v}"
+    );
 
     // A handle that is not `[a-z][a-z0-9-]{0,39}`.
     let (s, v) = w
@@ -4596,7 +4653,8 @@ async fn a_create_enforces_the_agent_rules() {
     ];
     let changes: Vec<Change> = fs.iter().map(|(p, b)| put(p.clone(), b.clone())).collect();
     w.bump("acme/tpl", &changes);
-    w.git.serve_file("pkg/tbig-1.0.0.zip", pack_tree("tbig", &fs));
+    w.git
+        .serve_file("pkg/tbig-1.0.0.zip", pack_tree("tbig", &fs));
     w.check(id).await;
     let (s, v) = w
         .call(
@@ -4611,4 +4669,358 @@ async fn a_create_enforces_the_agent_rules() {
     // No offered version: the plan (and so the create) cannot reach it at all.
     let (s, _) = ws_get(&w, ws, &owner, "/tbig").await;
     assert_eq!(s, 404);
+}
+
+#[tokio::test]
+async fn a_create_refuses_bad_library_and_organization_references() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let lib = seed_library(&w, org, &owner).await;
+
+    // A template whose only reference is the required library skill `alpha`.
+    let refs = format!(
+        "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: alpha\n    why: Does the work.\n"
+    );
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "libref",
+        "1.0.0",
+        &ref_files("libref", "1.0.0", &refs),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "libref").await;
+    let base = json!({
+        "template_id": "libref", "version": "1.0.0",
+        "content_sha256": plan["content_sha256"],
+        "name": "Monitor", "inputs": {"zone": "eu"},
+    });
+
+    // The required reference without a skill_refs item.
+    let (s, v) = w
+        .create_body(ws, &owner, base.clone().merge(json!({"skill_refs": []})))
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_skill_missing"), "{v}");
+    assert_eq!(
+        v["error"]["details"]["fields"],
+        json!([{"path": "/skill_refs", "message": "entry 0"}]),
+        "{v}"
+    );
+
+    // A library that is not the one the plan resolved.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.clone().merge(json!({"skill_refs": [{"index": 0,
+                "library_id": Uuid::now_v7(),
+                "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]}]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_skill_unavailable"), "{v}");
+
+    // A commit where the skill is gone: the plan was made at head1, the person quotes head2
+    // (where `alpha` was deleted) — the add path's own refusal, nothing written.
+    let head1 = plan["skill_refs"][0]["library"]["commit_sha"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let head2 = w
+        .git
+        .commit("acme/skills", "main", &[Change::DeleteDir("alpha".into())]);
+    assert_ne!(head1, head2);
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.merge(json!({"skill_refs": [{"index": 0, "library_id": lib,
+                                              "commit_sha": head2}]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "library_skill_invalid"), "{v}");
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+
+    // A required organization skill the workspace does not have (nothing is ever written
+    // for one, but a required one must still be there).
+    let org_refs = "skills:\n  - organization: notes\n    why: Org knowledge.\n".to_owned();
+    add_template_to_source(
+        &w,
+        id,
+        "acme/tpl",
+        "orgref",
+        "1.0.0",
+        &ref_files("orgref", "1.0.0", &org_refs),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "orgref").await;
+    assert_eq!(plan["skill_refs"][0]["available"], false, "{plan}");
+    assert_eq!(
+        plan["skill_refs"][0]["unavailable_reason"], "not_in_organization",
+        "{plan}"
+    );
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "orgref", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "inputs": {"zone": "eu"},
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_skill_missing"), "{v}");
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+}
+
+#[tokio::test]
+async fn two_library_skills_above_the_agent_budget_roll_back_together() {
+    let w = world_with(|c| c.skills_library.bytes_per_agent = 300).await;
+    let (org, ws, owner) = w.ws_owner().await;
+
+    // A library whose two skills each fit the 300-byte budget alone, together not.
+    w.git.add_repo("acme/skills");
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("alpha/SKILL.md".into(), big_skill_md(200)),
+            put("beta/SKILL.md".into(), big_skill_md(200)),
+        ],
+    );
+    let (s, lib) =
+        w.h.call(
+            &owner,
+            Method::POST,
+            &format!("/v1/orgs/{org}/skill-libraries"),
+            Some(json!({"label": "lib", "url": format!("{GIT_ORIGIN}/acme/skills")})),
+        )
+        .await;
+    assert_eq!(s, 201, "{lib}");
+    let lib: Uuid = lib["id"].as_str().unwrap().parse().unwrap();
+
+    let refs = format!(
+        "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: alpha\n    why: One.\n  \
+         - library: {GIT_ORIGIN}/acme/skills\n    skill: beta\n    why: Two.\n"
+    );
+    seed_fs(
+        &w,
+        "acme/tpl",
+        "twobig",
+        "1.0.0",
+        &ref_files("twobig", "1.0.0", &refs),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "twobig").await;
+    assert_eq!(plan["skill_refs"][0]["available"], true, "{plan}");
+    assert_eq!(plan["skill_refs"][1]["available"], true, "{plan}");
+
+    // The first skill is written inside the transaction, the second passes the budget: the
+    // whole creation rolls back, the written one included.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "twobig", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "inputs": {"zone": "eu"},
+                "skill_refs": [
+                    {"index": 0, "library_id": lib,
+                     "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]},
+                    {"index": 1, "library_id": lib,
+                     "commit_sha": plan["skill_refs"][1]["library"]["commit_sha"]},
+                ],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "library_budget_exceeded"), "{v}");
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+    assert_eq!(w.count("SELECT count(*) FROM skills").await, 0);
+}
+
+#[tokio::test]
+async fn a_create_that_fails_late_leaves_nothing_behind() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    seed_library(&w, org, &owner).await;
+    seed_fs(
+        &w,
+        "acme/tpl",
+        "full",
+        "1.0.0",
+        &full_files("full", "1.0.0"),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "full").await;
+
+    // An organization account whose limit refuses the template's `ask` level: the failure
+    // happens in the grant writer, after the skills, helpers, memories, schedules and the
+    // webhook were written in the same transaction.
+    let org_acct = conn(&w, org, "com-example-thing", None, "write").await;
+    sqlx::query("UPDATE app_connections SET limit_level = 'read' WHERE id = $1")
+        .bind(org_acct)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+
+    let tables = [
+        "agents",
+        "skills",
+        "agent_helper_files",
+        "memories",
+        "memory_revisions",
+        "schedules",
+        "webhooks",
+        "grants",
+        "agent_template_parts",
+        "audit_log",
+        "secrets",
+    ];
+    let mut before = Vec::new();
+    for t in tables {
+        before.push(w.count(&format!("SELECT count(*) FROM {t}")).await);
+    }
+
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "full", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "handle": "monitor",
+                "inputs": {"zone": "eu"},
+                "accounts": [{"entry": 0, "app_id": "com-example-thing",
+                              "connection_id": org_acct}],
+                "skill_refs": [{"index": 0, "library_id": plan["skill_refs"][0]["library"]["id"],
+                                "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]}],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "above_account_limit"), "{v}");
+
+    // All-or-nothing: not one row of any kind remains, the library skill and the helpers
+    // included, and no audit row either.
+    for (t, b) in tables.iter().zip(before) {
+        let after = w.count(&format!("SELECT count(*) FROM {t}")).await;
+        assert_eq!((t, after), (t, b), "{t} changed");
+    }
+}
+
+#[tokio::test]
+async fn admin_actions_never_change_a_created_agent() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    seed_library(&w, org, &owner).await;
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "full",
+        "1.0.0",
+        &full_files("full", "1.0.0"),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "full").await;
+    let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
+    let created = w
+        .create_agent(
+            ws,
+            &owner,
+            "full",
+            "1.0.0",
+            json!({
+                "accounts": [{"entry": 0, "app_id": "com-example-thing", "connection_id": mine}],
+                "skill_refs": [{"index": 0, "library_id": plan["skill_refs"][0]["library"]["id"],
+                                "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]}],
+            }),
+        )
+        .await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+
+    let snapshot = async |w: &W, agent: Uuid| -> Vec<i64> {
+        let mut out = Vec::new();
+        for sql in [
+            format!("SELECT count(*) FROM agent_template_parts WHERE agent_id = '{agent}'"),
+            format!("SELECT count(*) FROM skills WHERE agent_id = '{agent}'"),
+            format!("SELECT count(*) FROM schedules WHERE agent_id = '{agent}'"),
+            format!("SELECT count(*) FROM webhooks WHERE agent_id = '{agent}'"),
+            format!("SELECT count(*) FROM grants WHERE agent_id = '{agent}'"),
+            format!("SELECT count(*) FROM memories WHERE agent_id = '{agent}'"),
+        ] {
+            out.push(w.count(&sql).await);
+        }
+        out
+    };
+    let (brief_before, status_before) = (
+        brief_of(&w, agent).await,
+        w.tpl_status(&owner, agent).await.1,
+    );
+    let parts_before = snapshot(&w, agent).await;
+
+    // The reviewing admin withdraws the template, rejects the next pending version and
+    // deletes the source: none of it touches the created agent.
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/full",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // A pending 2.0.0 (checked, not approved), which the admin then rejects. The 1.0.0 files
+    // that the reference fixture does not have are deleted from the tree, or the source
+    // comparison would fail.
+    let refs = format!(
+        "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: beta\n    why: New work.\n"
+    );
+    let fs = ref_files("full", "2.0.0", &refs);
+    let mut changes: Vec<Change> = fs.iter().map(|(p, b)| put(p.clone(), b.clone())).collect();
+    for d in [
+        "full/skills",
+        "full/helpers",
+        "full/memory",
+        "full/automations",
+    ] {
+        changes.push(Change::DeleteDir(d.into()));
+    }
+    w.bump("acme/tpl", &changes);
+    w.git
+        .serve_file("pkg/full-2.0.0.zip", pack_tree("full", &fs));
+    let r = w.check(id).await;
+    assert_eq!(r["status"], "updated", "{r}");
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &format!("/v1/admin/agent-templates/full/versions/2.0.0/reject"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(
+            Method::DELETE,
+            &format!("/v1/admin/agent-template-sources/{id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+
+    // The agent: exactly what it was, and its status still answers with the version it took.
+    assert_eq!(brief_of(&w, agent).await, brief_before);
+    assert_eq!(snapshot(&w, agent).await, parts_before);
+    let (s, status_after) = w.tpl_status(&owner, agent).await;
+    assert_eq!(s, 200, "{status_after}");
+    assert_eq!(
+        status_after["version"], status_before["version"],
+        "{status_after}"
+    );
+    assert_eq!(
+        status_after["update"], status_before["update"],
+        "{status_after}"
+    );
 }
