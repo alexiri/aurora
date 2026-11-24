@@ -5,6 +5,7 @@ use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -1151,4 +1152,143 @@ pub struct TemplatePlan {
     pub content: TemplateContentView,
     pub entries: Vec<PlanEntry>,
     pub skill_refs: Vec<SkillRefPlan>,
+}
+
+// ---- updates (C-1112, P6-TPL-3) ---------------------------------------------------------------
+
+/// (C-1112) Answer of `GET /v1/agents/{agent}/template`: the provenance, whether the template
+/// is still available, and the update offer when a newer version is offered.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentTemplateStatus {
+    pub template: Option<AgentTemplateRefView>,
+    pub available: bool,
+    pub update: Option<TemplateUpdateOffer>,
+    /// (C-1112) What the apply left alone: `skill_kept` when a `removed_upstream` library
+    /// skill was not deleted (it is no longer sourced from the matching library, or it is an
+    /// ordinary skill of the same name). Empty on the GET.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<ApplyNote>,
+}
+
+/// (C-1112) One note of an apply.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ApplyNote {
+    /// `skill_kept`.
+    pub code: String,
+    pub detail: String,
+}
+
+/// (C-1112) The provenance shown on the agent's Template section: plain text — deleting the
+/// source or the template changes no agent.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AgentTemplateRefView {
+    pub template_id: String,
+    pub name: String,
+    pub version: String,
+}
+
+/// (C-1112) The update offer: what the offered (semver-newer) version would change. Until the
+/// person applies it, the agent does not change.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TemplateUpdateOffer {
+    pub version: String,
+    pub content_sha256: String,
+    /// The new version's `README.md`: shown, never applied, not a part.
+    pub readme: String,
+    /// Format 1 keeps `CHANGELOG.md` out of the content: always null.
+    pub changelog: Option<String>,
+    /// The inputs the stored inputs do not cover (the apply supplies them).
+    pub inputs_needed: Vec<InputNeededView>,
+    /// The offered version's app entries the agent has no access for yet.
+    pub apps_added: Vec<UpdateAppEntry>,
+    /// Only the parts that differ, each with its state.
+    pub parts: Vec<OfferPart>,
+}
+
+/// (C-1112) An input the agent's stored inputs do not cover.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct InputNeededView {
+    pub id: String,
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+    /// `text` | `choice`.
+    pub kind: String,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
+/// (C-1112) One app entry of the offered version the agent has no access for yet: given on the
+/// Access tab as usual, never by the apply.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UpdateAppEntry {
+    /// The entry's app ids (`app`, or every id of `any_of`).
+    pub app_ids: Vec<String>,
+    pub required: bool,
+    pub why: String,
+    /// The template's level, capped to `ask` on a `custom_only` app (as the plan's).
+    pub level: Option<String>,
+}
+
+/// (C-1112) One part of the offer. Only parts that differ are listed. `current` and
+/// `proposed` are the full texts, rendered with the stored inputs (a needed input renders as
+/// `{input.<id>}`). A library skill's content is never a part.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct OfferPart {
+    /// `instructions` | `skill` | `helpers` | `library_skill`.
+    pub kind: String,
+    /// Empty for `instructions` and `helpers`; the skill name; the C-1104 `skill_ref_key`.
+    pub key: String,
+    /// `unchanged_here` | `edited_here` | `removed_here` | `new` | `removed_upstream`.
+    pub state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<String>,
+    /// For a `library_skill`: the reference, resolved as C-1142.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_ref: Option<SkillRefPlan>,
+}
+
+/// (C-1112) Body of `POST /v1/agents/{agent}/template/apply`: which offered version, which
+/// parts of it. An empty `parts` is "skip this version" (the provenance still moves).
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyTemplateRequest {
+    pub version: String,
+    /// The offered version's content hash the offer showed.
+    pub content_sha256: String,
+    /// Supplies `inputs_needed`; stored inputs that still pass are kept.
+    #[serde(default)]
+    pub inputs: BTreeMap<String, String>,
+    /// Required for every `new` `library_skill` part taken.
+    #[serde(default)]
+    pub skill_refs: Vec<ApplySkillRef>,
+    pub parts: Vec<ApplyPart>,
+}
+
+/// (C-1112) One library skill reference of an apply (the create's shape).
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplySkillRef {
+    /// The `skill_refs:` entry's index.
+    pub index: usize,
+    pub library_id: Uuid,
+    /// The commit the person reviewed (the fetch pins to it).
+    pub commit_sha: String,
+}
+
+/// (C-1112) One part to take.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyPart {
+    pub kind: String,
+    pub key: String,
 }

@@ -43,7 +43,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 /// Everything the catalogue reads once per request: the workspace's organization, the active
 /// packages, the organization's app availability and the organization's template switches.
-struct Ctx {
+pub(crate) struct Ctx {
     org: Uuid,
     ws: Uuid,
     snap: Option<Snapshot>,
@@ -108,24 +108,25 @@ impl Ctx {
     }
 }
 
-/// A template's stored content, with the parsed parts the catalogue reads.
-struct Parsed<'a> {
-    content: &'a Value,
-    readme: String,
-    apps: Vec<EntryJson>,
-    refs: Vec<RefJson>,
-    has_helpers: bool,
-    automations: Vec<AutomationBrief>,
+/// A template's stored content, with the parsed parts the catalogue reads (shared with the
+/// C-1112 update offer).
+pub(crate) struct Parsed<'a> {
+    pub(crate) content: &'a Value,
+    pub(crate) readme: String,
+    pub(crate) apps: Vec<EntryJson>,
+    pub(crate) refs: Vec<RefJson>,
+    pub(crate) has_helpers: bool,
+    pub(crate) automations: Vec<AutomationBrief>,
 }
 
 /// One `apps:` entry of the stored content, as the catalogue reads it.
-struct EntryJson {
-    app_ids: Vec<String>,
-    required: bool,
-    why: String,
-    level: Option<String>,
+pub(crate) struct EntryJson {
+    pub(crate) app_ids: Vec<String>,
+    pub(crate) required: bool,
+    pub(crate) why: String,
+    pub(crate) level: Option<String>,
     /// The template's `tools:` split, when the entry has one.
-    tools: Option<(Vec<String>, Vec<String>)>,
+    pub(crate) tools: Option<(Vec<String>, Vec<String>)>,
 }
 
 impl EntryJson {
@@ -168,16 +169,16 @@ impl EntryJson {
 }
 
 /// One skill reference of the stored content, as the resolver reads it (C-1142).
-struct RefJson {
-    kind: &'static str,
-    name: String,
-    required: bool,
-    why: String,
+pub(crate) struct RefJson {
+    pub(crate) kind: &'static str,
+    pub(crate) name: String,
+    pub(crate) required: bool,
+    pub(crate) why: String,
     /// The normalized address of a `library` reference.
-    url: Option<String>,
-    reference: Option<String>,
+    pub(crate) url: Option<String>,
+    pub(crate) reference: Option<String>,
     /// The folder in the repository (the root is `""`).
-    path: String,
+    pub(crate) path: String,
 }
 
 impl RefJson {
@@ -216,7 +217,7 @@ impl RefJson {
 }
 
 impl Parsed<'_> {
-    fn parse(content: &Value) -> Option<Parsed<'_>> {
+    pub(crate) fn parse(content: &Value) -> Option<Parsed<'_>> {
         let meta = content.get("meta")?;
         let apps = meta
             .get("apps")
@@ -256,19 +257,19 @@ impl Parsed<'_> {
 }
 
 /// The C-1142 resolution of one reference.
-struct Resolved {
-    available: bool,
-    unavailable_reason: Option<&'static str>,
+pub(crate) struct Resolved {
+    pub(crate) available: bool,
+    pub(crate) unavailable_reason: Option<&'static str>,
     /// The matched library and the listing commit the content comes from.
-    matched: Option<(LibraryRow, String)>,
+    pub(crate) matched: Option<(LibraryRow, String)>,
     /// The matched skill's directory in the library (the `skill_content` dir).
-    dir: Option<String>,
+    pub(crate) dir: Option<String>,
 }
 
 /// The C-1142 resolver: the candidate libraries of the organization (its own, then the
 /// instance ones, by label), the listing cache's single read per library and the
 /// organization-tier names, queried once per name.
-struct Resolver<'a> {
+pub(crate) struct Resolver<'a> {
     state: &'a AppState,
     org: Uuid,
     ws: Uuid,
@@ -283,7 +284,7 @@ impl<'a> Resolver<'a> {
     /// The candidates (C-1142): the organization's own libraries, then the instance ones,
     /// each group by label. The `active` filter happens at match time (a paused or failed
     /// library is `library_unreadable`, not `library_not_added`).
-    async fn new(state: &'a AppState, org: Uuid, ws: Uuid) -> Result<Self, ApiError> {
+    pub(crate) async fn new(state: &'a AppState, org: Uuid, ws: Uuid) -> Result<Self, ApiError> {
         let rows = skill_libraries::service::list_for_org(state, org).await?;
         let mut own: Vec<LibraryRow> = Vec::new();
         let mut instance: Vec<LibraryRow> = Vec::new();
@@ -342,7 +343,7 @@ impl<'a> Resolver<'a> {
         Ok(y)
     }
 
-    async fn resolve(&mut self, r: &RefJson) -> Result<Resolved, ApiError> {
+    pub(crate) async fn resolve(&mut self, r: &RefJson) -> Result<Resolved, ApiError> {
         if r.kind == "organization" {
             let ok = self.org_name(&r.name).await?;
             return Ok(Resolved {
@@ -566,7 +567,7 @@ async fn choices(
 }
 
 /// The offered version row of an available template, or 404 `not_found` (C-1110).
-async fn offered(
+pub(crate) async fn offered(
     state: &AppState,
     ctx: &Ctx,
     template_id: &str,
@@ -582,6 +583,75 @@ async fn offered(
         .ok_or_else(not_found)?;
     let v = v.content.is_some().then_some(v).ok_or_else(not_found)?;
     Ok((t, v))
+}
+
+/// (C-1142) The resolved library view of one matched library at one commit (shared by the plan
+/// and the C-1112 offer).
+pub(crate) fn resolved_view(row: &LibraryRow, commit: &str) -> ResolvedLibraryView {
+    ResolvedLibraryView {
+        id: row.id,
+        label: row.label.clone(),
+        scope: if row.org_id.is_some() {
+            "organization"
+        } else {
+            "instance"
+        }
+        .to_owned(),
+        repo: row.repo.clone().unwrap_or_default(),
+        reference: row.reference.clone(),
+        path: row.path.clone(),
+        commit_sha: commit.to_owned(),
+    }
+}
+
+/// (C-1142) The resolved skill references of a stored content, shared by the plan (C-1110)
+/// and the update offer (C-1112).
+pub(crate) async fn skill_ref_plans(
+    state: &AppState,
+    resolver: &mut Resolver<'_>,
+    refs: &[RefJson],
+) -> Result<Vec<SkillRefPlan>, ApiError> {
+    let mut out = Vec::with_capacity(refs.len());
+    for (index, r) in refs.iter().enumerate() {
+        let mut x = resolver.resolve(r).await?;
+        let (library, content_brief) = match (&x.matched, x.available) {
+            (Some((row, commit)), true) => {
+                let dir = x.dir.clone().unwrap_or_default();
+                let c =
+                    skill_libraries::service::skill_content(state, row, &dir, Some(commit)).await?;
+                if !c.valid {
+                    (None, None)
+                } else if !skills::library::agent_tier_fits(state, c.size) {
+                    // The loaded content's exact budget unit does not fit the agent tier
+                    // (C-1142's `over_budget`); the listing's estimate had let it through.
+                    x.available = false;
+                    x.unavailable_reason = Some("over_budget");
+                    (None, None)
+                } else {
+                    let view = resolved_view(row, commit);
+                    let brief = SkillContentBrief {
+                        use_it_when: c.description.unwrap_or_default(),
+                        body: c.body.unwrap_or_default(),
+                        files: c.files.iter().map(file_view).collect(),
+                    };
+                    (Some(view), Some(brief))
+                }
+            }
+            _ => (None, None),
+        };
+        out.push(SkillRefPlan {
+            index,
+            kind: r.kind.to_owned(),
+            name: r.name.clone(),
+            required: r.required,
+            why: r.why.clone(),
+            available: x.available,
+            unavailable_reason: x.unavailable_reason.map(str::to_owned),
+            library,
+            content: content_brief,
+        });
+    }
+    Ok(out)
 }
 
 /// `GET /v1/workspaces/{ws}/agent-templates` (C-1110): the available templates, by name.
@@ -646,59 +716,7 @@ pub async fn plan(
         return Err(not_found());
     };
     let mut resolver = Resolver::new(state, ctx.org, ctx.ws).await?;
-    let mut refs = Vec::with_capacity(parsed.refs.len());
-    for (index, r) in parsed.refs.iter().enumerate() {
-        let mut x = resolver.resolve(r).await?;
-        let (library, content_brief) = match (&x.matched, x.available) {
-            (Some((row, commit)), true) => {
-                let dir = x.dir.clone().unwrap_or_default();
-                let c =
-                    skill_libraries::service::skill_content(state, row, &dir, Some(commit)).await?;
-                if !c.valid {
-                    (None, None)
-                } else if !skills::library::agent_tier_fits(state, c.size) {
-                    // The loaded content's exact budget unit does not fit the agent tier
-                    // (C-1142's `over_budget`); the listing's estimate had let it through.
-                    x.available = false;
-                    x.unavailable_reason = Some("over_budget");
-                    (None, None)
-                } else {
-                    let view = ResolvedLibraryView {
-                        id: row.id,
-                        label: row.label.clone(),
-                        scope: if row.org_id.is_some() {
-                            "organization"
-                        } else {
-                            "instance"
-                        }
-                        .to_owned(),
-                        repo: row.repo.clone().unwrap_or_default(),
-                        reference: row.reference.clone(),
-                        path: row.path.clone(),
-                        commit_sha: commit.clone(),
-                    };
-                    let brief = SkillContentBrief {
-                        use_it_when: c.description.unwrap_or_default(),
-                        body: c.body.unwrap_or_default(),
-                        files: c.files.iter().map(file_view).collect(),
-                    };
-                    (Some(view), Some(brief))
-                }
-            }
-            _ => (None, None),
-        };
-        refs.push(SkillRefPlan {
-            index,
-            kind: r.kind.to_owned(),
-            name: r.name.clone(),
-            required: r.required,
-            why: r.why.clone(),
-            available: x.available,
-            unavailable_reason: x.unavailable_reason.map(str::to_owned),
-            library,
-            content: content_brief,
-        });
-    }
+    let refs = skill_ref_plans(state, &mut resolver, &parsed.refs).await?;
     let card = build_card(&ctx, &t, v.version.clone(), &parsed, &refs).await;
     // One accounts read for the whole plan (C-504's `give_access` flags included); the
     // choices filter it per app.

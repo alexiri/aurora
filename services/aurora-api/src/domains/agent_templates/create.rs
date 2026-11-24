@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use aurora_template::{helpers_hash, skill_hash, skill_ref_key};
+use aurora_template::{helpers_hash, instructions_hash, skill_hash, skill_ref_key};
 
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
@@ -421,7 +421,8 @@ pub async fn create_from_template(
 }
 
 /// The library directory of the referenced skill (the fetch pins to it), from the listing.
-async fn skill_dir(
+/// Shared with the C-1112 apply (the same resolution the create used).
+pub(crate) async fn skill_dir(
     state: &AppState,
     library_id: Uuid,
     skill: &str,
@@ -680,6 +681,15 @@ async fn create_in_tx(
     let mut skills_out: Vec<Skill> = Vec::new();
     let mut parts: Vec<trepo::PartRow> = Vec::new();
 
+    // The instructions part (C-1112): the rendered brief's hash is what an update offer diffs
+    // against (the brief itself was written by `insert_in_tx` above).
+    parts.push(trepo::PartRow {
+        agent_id: agent.id,
+        kind: "instructions".into(),
+        key: String::new(),
+        content_sha256: instructions_hash(&rendered.instructions),
+    });
+
     // The agent's own skills from the template: ordinary editable skills (C-1111).
     for s in &rendered.skills {
         let view = skills_domain::service::create_in_tx(
@@ -900,7 +910,8 @@ async fn create_in_tx(
     ))
 }
 
-fn helpers_part(agent: Uuid, files: &[aurora_template::TemplateFile]) -> trepo::PartRow {
+/// The helpers part row of a rendered template's files (shared with the C-1112 apply).
+pub(crate) fn helpers_part(agent: Uuid, files: &[aurora_template::TemplateFile]) -> trepo::PartRow {
     trepo::PartRow {
         agent_id: agent,
         kind: "helpers".into(),

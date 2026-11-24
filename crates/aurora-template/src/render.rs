@@ -66,6 +66,14 @@ impl CheckedInputs {
         self.values.get(id).map(String::as_str)
     }
 
+    /// (P6-TPL-3, C-1112) The stored input values of an agent, for rendering a new version's
+    /// parts in an update offer: only the values the agent still has (a needed input renders
+    /// as `{input.<id>}`).
+    #[must_use]
+    pub fn from_values(values: BTreeMap<String, String>) -> Self {
+        Self { values }
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.values.len()

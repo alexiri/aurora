@@ -423,6 +423,31 @@ pub async fn set_template<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
+/// (P6-TPL-3, C-1112) Forget the template provenance (the detach): all four columns go null;
+/// the `agent_template_parts` rows are deleted by [`crate::repo::agent_templates::delete_parts`].
+pub async fn clear_template<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE agents SET template_id = NULL, template_name = NULL, template_version = NULL,
+            template_inputs = NULL, updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+/// (P6-TPL-3, C-1112) The agent's creator: the offer and the apply render with the creator's
+/// display name so the recorded part hashes stay comparable (see `updates.rs`).
+pub async fn created_by<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<Uuid>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT created_by FROM agents WHERE id = $1")
+            .bind(id)
+            .fetch_optional(exec)
+            .await?,
+    )
+}
+
 /// (RFE-025) Replaces a BYO agent's source list and require-context flag; `false` when the agent
 /// does not exist or is not BYO.
 pub async fn set_byo_settings<'e, E: PgExecutor<'e>>(
