@@ -33,7 +33,7 @@ use aurora_db::repo::agent_templates as trepo;
 use aurora_db::repo::skills::Owner;
 use aurora_db::repo::{
     agent_helpers as helpers_repo, agents as agents_repo, grants as grants_repo,
-    skills as skills_repo,
+    memory as memory_repo, skills as skills_repo,
 };
 
 /// The agent row behind these routes, with `can_use` of its workspace (404/403 as for any
@@ -107,26 +107,41 @@ async fn offer_ctx(
     state: &AppState,
     agent: &agents_repo::AgentRow,
 ) -> Result<Option<OfferCtx>, ApiError> {
+    let mut conn = state
+        .pool
+        .acquire()
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    offer_ctx_on(state, &mut conn, agent).await
+}
+
+/// [`offer_ctx`] on an existing connection (SEC-146 A): the apply's transaction re-runs it
+/// under the per-agent lock, so the offer it verifies against is the one it writes with.
+async fn offer_ctx_on(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    agent: &agents_repo::AgentRow,
+) -> Result<Option<OfferCtx>, ApiError> {
     if !state.ops().agents.templates.enabled {
         return Ok(None);
     }
     let Some(template_id) = &agent.template_id else {
         return Ok(None);
     };
-    let Some(t) = trepo::template_by_template_id(&state.pool, template_id).await? else {
+    let Some(t) = trepo::template_by_template_id(&mut *conn, template_id).await? else {
         return Ok(None);
     };
     if !t.offered {
         return Ok(None);
     }
-    if trepo::org_disabled(&state.pool, agent.org_id)
+    if trepo::org_disabled(&mut *conn, agent.org_id)
         .await?
         .iter()
         .any(|x| x == template_id)
     {
         return Ok(None);
     }
-    let Some(v) = admin::offered_version(&state.pool, t.id).await? else {
+    let Some(v) = admin::offered_version(&mut *conn, t.id).await? else {
         return Ok(None);
     };
     let Some(content_v) = v.content.as_ref() else {
@@ -138,7 +153,7 @@ async fn offer_ctx(
     // Older approved versions stay stored (C-1108): the agent's own version's content is the
     // base the removed references are resolved against.
     let old_content = match agent.template_version.as_deref() {
-        Some(ver) => trepo::get_version(&state.pool, t.id, ver)
+        Some(ver) => trepo::get_version(&mut *conn, t.id, ver)
             .await?
             .and_then(|ov| ov.content)
             .and_then(|c| dto::content_from_json(&c)),
@@ -358,15 +373,28 @@ async fn build_diff(
     person: &str,
     render_inputs: BTreeMap<String, String>,
 ) -> Result<Diff, ApiError> {
-    let stored = stored_inputs(agent);
-    let checked = aurora_template::CheckedInputs::from_values(render_inputs);
-    let rendered = aurora_template::render(&ctx.new_content, &checked, &agent.name, person);
-
     let mut conn = state
         .pool
         .acquire()
         .await
         .map_err(aurora_db::DbError::from)?;
+    build_diff_on(state, &mut conn, agent, ctx, person, render_inputs).await
+}
+
+/// [`build_diff`] on an existing connection (SEC-146 A): the apply's transaction recomputes
+/// the diff under the per-agent lock, so the states it refuses on are the transaction's own.
+async fn build_diff_on(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    agent: &agents_repo::AgentRow,
+    ctx: &OfferCtx,
+    person: &str,
+    render_inputs: BTreeMap<String, String>,
+) -> Result<Diff, ApiError> {
+    let stored = stored_inputs(agent);
+    let checked = aurora_template::CheckedInputs::from_values(render_inputs);
+    let rendered = aurora_template::render(&ctx.new_content, &checked, &agent.name, person);
+
     let recorded: BTreeMap<(String, String), String> = trepo::parts_of(&mut *conn, agent.id)
         .await?
         .into_iter()
@@ -398,19 +426,18 @@ async fn build_diff(
     for name in &names {
         live.insert(
             name.clone(),
-            skills_repo::get_agent_named(&mut conn, agent.id, name).await?,
+            skills_repo::get_agent_named(conn, agent.id, name).await?,
         );
     }
     // The live files of every skill the agent still has (one read; the hash needs them).
     let skill_ids: Vec<Uuid> = live.values().flatten().map(|r| r.id).collect();
     let mut live_files: BTreeMap<Uuid, Vec<skills_repo::FileRow>> = BTreeMap::new();
     if !skill_ids.is_empty() {
-        for f in skills_repo::files(&mut conn, &skill_ids).await? {
+        for f in skills_repo::files(conn, &skill_ids).await? {
             live_files.entry(f.skill_id).or_default().push(f);
         }
     }
     let live_helpers = helpers_repo::list(&mut *conn, agent.id).await?;
-    drop(conn);
 
     let mut parts_out: Vec<OfferPart> = Vec::new();
     let mut states: BTreeMap<(String, String), &'static str> = BTreeMap::new();
@@ -887,6 +914,27 @@ fn merged_inputs(
     out
 }
 
+/// The stored provenance of a version: the merged values over the version's declared inputs
+/// (C-1112).
+fn provenance_inputs(ctx: &OfferCtx, merged: &BTreeMap<String, String>) -> serde_json::Value {
+    json!(
+        ctx.new_content
+            .meta
+            .inputs
+            .iter()
+            .map(|i| {
+                (
+                    i.id.clone(),
+                    aurora_template::CheckedInputs::from_values(merged.clone())
+                        .get(&i.id)
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>()
+    )
+}
+
 /// `POST /v1/agents/{agent}/template/apply` (C-1112): take the listed parts of the offered
 /// version. Only the listed parts change; `template_version` moves even when none was taken
 /// ("skip this version"). The library fetches happen before the transaction (as C-1111);
@@ -931,27 +979,9 @@ pub async fn apply(
             },
         )?;
     }
-    // The stored provenance of the applied version: the merged values over the new version's
-    // declared inputs (C-1112).
-    let inputs_json = json!(
-        ctx.new_content
-            .meta
-            .inputs
-            .iter()
-            .map(|i| {
-                (
-                    i.id.clone(),
-                    aurora_template::CheckedInputs::from_values(merged.clone())
-                        .get(&i.id)
-                        .unwrap_or_default()
-                        .to_owned(),
-                )
-            })
-            .collect::<BTreeMap<_, _>>()
-    );
     // The diff, rendered with the merged inputs: the proposed texts are exactly what an apply
     // writes, with the recorded-hash rendering (the creator's name, the agent's name).
-    let diff = build_diff(state, &agent, &ctx, &person, merged).await?;
+    let diff = build_diff(state, &agent, &ctx, &person, merged.clone()).await?;
 
     // The taken parts, validated against the offer's states (C-1112): a part that is not in
     // the offer is 422, whatever its kind or key. A repeated part is one part.
@@ -1025,8 +1055,46 @@ pub async fn apply(
         adds.push((key.clone(), prepared));
     }
 
-    // ---- the one transaction -------------------------------------------------------------------
+    // ---- the one transaction (serialized per agent, SEC-146 A) ---------------------------------
     let mut tx = audit::begin(state).await?;
+    // The per-agent writer lock: concurrent applies and detaches of this agent serialize here,
+    // so the re-reads and the writes below see one consistent state.
+    memory_repo::lock_agent(&mut tx, agent.id).await?;
+    // Re-verify under the lock (SEC-146 A): the agent, the offer and the part states may all
+    // have moved between the pre-check above and this transaction.
+    let agent = agents_repo::get(&mut *tx, agent_id)
+        .await?
+        .ok_or_else(not_found)?;
+    let Some(ctx) = offer_ctx_on(state, &mut tx, &agent).await? else {
+        return Err(version_changed());
+    };
+    if req.version != ctx.offered.version
+        || ctx.offered.content_sha256.as_deref() != Some(req.content_sha256.as_str())
+    {
+        return Err(version_changed());
+    }
+    let stored = stored_inputs(&agent);
+    let merged = merged_inputs(&ctx, &stored, &req.inputs);
+    let inputs_json = provenance_inputs(&ctx, &merged);
+    let diff = build_diff_on(state, &mut tx, &agent, &ctx, &person, merged).await?;
+    // The listed parts' states must still be the ones the person answered to (SEC-146 A): a
+    // part edited (or applied, or removed) while the offer was open is refused with the same
+    // 409, never silently overwritten.
+    for (k, st) in &taken {
+        if diff.states.get(k) != Some(st) {
+            return Err(version_changed());
+        }
+    }
+    // The rendered instructions follow the brief rules (as C-1111's create) — re-checked on
+    // the fresh render, which the states alone do not pin down.
+    if taken.iter().any(|((kind, _), _)| kind == "instructions")
+        && diff.rendered.instructions.chars().count() > agents::service::BRIEF_MAX
+    {
+        return Err(ApiError::unprocessable(
+            "template_too_large",
+            "The rendered instructions are too large for an agent brief.",
+        ));
+    }
     let result = apply_in_tx(
         &mut tx,
         state,
@@ -1319,6 +1387,17 @@ pub async fn detach(
         return Err(not_found());
     }
     let mut tx = audit::begin(state).await?;
+    // The same per-agent writer lock as the apply (SEC-146 A): the re-read below and the
+    // writes serialize against a concurrent apply or detach.
+    memory_repo::lock_agent(&mut tx, agent.id).await?;
+    // Re-read under the lock (SEC-146 A): a concurrent apply or detach may have moved the
+    // provenance; a second detach finds it gone and answers 404.
+    let agent = agents_repo::get(&mut *tx, agent_id)
+        .await?
+        .ok_or_else(not_found)?;
+    if agent.template_id.is_none() {
+        return Err(not_found());
+    }
     agents_repo::clear_template(&mut *tx, agent.id).await?;
     trepo::delete_parts(&mut tx, agent.id).await?;
     // Audit `agent.template_detach` (ordinary; inside the transaction, C-1113).

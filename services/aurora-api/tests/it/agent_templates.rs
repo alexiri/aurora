@@ -3424,6 +3424,258 @@ async fn detach_forgets_the_provenance_and_stops_the_offers() {
     assert_eq!(n, 1);
 }
 
+// ---- the per-agent writer lock (SEC-146 A) -----------------------------------------------------
+
+/// The request of a spawned task: a clone of the app router and the cookie (`Harness::call`
+/// for a task the harness itself cannot move into).
+async fn app_call(
+    app: axum::Router,
+    cookie: String,
+    m: Method,
+    uri: String,
+    body: Option<Value>,
+) -> (u16, Value) {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt as _;
+    let mut b = http::Request::builder().method(m).uri(uri);
+    b = b.header("cookie", cookie).header("origin", ORIGIN);
+    let req = match body {
+        Some(v) => b
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(v.to_string())),
+        None => b.body(axum::body::Body::empty()),
+    }
+    .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    let (parts, body) = res.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    (
+        parts.status.as_u16(),
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+/// Hold the agent's advisory writer lock (`repo::memory::lock_agent`) inside an explicit
+/// transaction: the tests below hold it, spawn the request, move the state under it and
+/// release, so the interleaving of two writers is deterministic.
+async fn hold_agent_lock(
+    pool: &sqlx::PgPool,
+    agent: Uuid,
+) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut tx = pool.begin().await.unwrap();
+    aurora_db::repo::memory::lock_agent(&mut tx, agent)
+        .await
+        .unwrap();
+    tx
+}
+
+/// Wait until a session waits for the agent's advisory lock: the spawned request is blocked
+/// at the per-agent writer lock inside its transaction (`SEC-146 A`).
+async fn wait_blocked(pool: &sqlx::PgPool) {
+    for _ in 0..250 {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks
+             WHERE NOT granted AND locktype = 'advisory'
+               AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if n > 0 {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("the request was never blocked on the agent lock");
+}
+
+/// The apply request body for the instructions part of the fixture's offer.
+fn apply_instructions(sha: &str) -> Value {
+    json!({
+        "version": "2.0.0",
+        "content_sha256": sha,
+        "parts": [{"kind": "instructions", "key": ""}],
+    })
+}
+
+#[tokio::test]
+async fn an_apply_rechecks_the_offer_under_the_agent_lock_after_a_withdrawal() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let brief_before = brief_of(&u.w, u.agent).await;
+    let agent = u.agent;
+    let pool = u.w.h.pool().clone();
+    let app = u.w.h.app.clone();
+
+    let lock = hold_agent_lock(&pool, agent).await;
+    let task = tokio::spawn(app_call(
+        app,
+        u.owner.clone(),
+        Method::POST,
+        format!("/v1/agents/{agent}/template/apply"),
+        Some(apply_instructions(&sha)),
+    ));
+    wait_blocked(&pool).await;
+
+    // The offer is withdrawn while the apply waits behind the lock.
+    sqlx::query("UPDATE agent_templates SET offered = false")
+        .execute(&pool)
+        .await
+        .unwrap();
+    lock.rollback().await.unwrap();
+
+    let (s, v) = task.await.unwrap();
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    // Nothing was applied: the brief, the version and the recorded parts are as they were.
+    assert_eq!(brief_of(&u.w, u.agent).await, brief_before);
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(v["template"]["version"], "1.0.0", "{v}");
+    assert_eq!(
+        parts_of(&u.w, agent).await.len(),
+        4,
+        "no part row was written"
+    );
+}
+
+#[tokio::test]
+async fn an_apply_refuses_when_a_listed_part_changed_under_the_lock() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let agent = u.agent;
+    let pool = u.w.h.pool().clone();
+    let app = u.w.h.app.clone();
+
+    let lock = hold_agent_lock(&pool, agent).await;
+    let task = tokio::spawn(app_call(
+        app,
+        u.owner.clone(),
+        Method::POST,
+        format!("/v1/agents/{agent}/template/apply"),
+        Some(apply_instructions(&sha)),
+    ));
+    wait_blocked(&pool).await;
+
+    // The brief (the listed `unchanged_here` part) is edited while the apply waits: the
+    // recomputed state under the lock is `edited_here`, not what the person answered to.
+    sqlx::query("UPDATE agents SET brief = 'Watch eu: raced.' WHERE id = $1")
+        .bind(agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    lock.rollback().await.unwrap();
+
+    let (s, v) = task.await.unwrap();
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    // The edit was not overwritten with the template's text.
+    assert_eq!(brief_of(&u.w, u.agent).await, "Watch eu: raced.");
+}
+
+#[tokio::test]
+async fn a_second_apply_of_the_same_version_does_not_duplicate_the_parts() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let proposed = "Watch eu closely.\n";
+    let agent = u.agent;
+    let pool = u.w.h.pool().clone();
+    let app = u.w.h.app.clone();
+
+    let lock = hold_agent_lock(&pool, agent).await;
+    let task = tokio::spawn(app_call(
+        app,
+        u.owner.clone(),
+        Method::POST,
+        format!("/v1/agents/{agent}/template/apply"),
+        Some(apply_instructions(&sha)),
+    ));
+    wait_blocked(&pool).await;
+
+    // The first apply commits while this one waits behind the lock: the part is written and
+    // the version moves. The second apply must refuse, not write the part again.
+    sqlx::query("UPDATE agents SET brief = $2, template_version = '2.0.0' WHERE id = $1")
+        .bind(agent)
+        .bind(proposed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agent_template_parts SET content_sha256 = $2
+         WHERE agent_id = $1 AND kind = 'instructions'",
+    )
+    .bind(agent)
+    .bind(aurora_template::instructions_hash(proposed))
+    .execute(&pool)
+    .await
+    .unwrap();
+    lock.rollback().await.unwrap();
+
+    let (s, v) = task.await.unwrap();
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    // One part row, and the applied text is the first apply's.
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM agent_template_parts
+         WHERE agent_id = $1 AND kind = 'instructions'",
+    )
+    .bind(agent)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(brief_of(&u.w, agent).await, proposed);
+}
+
+#[tokio::test]
+async fn concurrent_detaches_serialize_and_the_second_is_a_404() {
+    let u = upd_world().await;
+    let agent = u.agent;
+    let pool = u.w.h.pool().clone();
+    let app = u.w.h.app.clone();
+
+    let lock = hold_agent_lock(&pool, agent).await;
+    let uri = format!("/v1/agents/{agent}/template");
+    let t1 = tokio::spawn(app_call(
+        app.clone(),
+        u.owner.clone(),
+        Method::DELETE,
+        uri.clone(),
+        None,
+    ));
+    let t2 = tokio::spawn(app_call(app, u.owner.clone(), Method::DELETE, uri, None));
+    wait_blocked(&pool).await;
+    lock.rollback().await.unwrap();
+
+    // The lock serializes them: exactly one detach succeeds, the other finds the provenance
+    // gone (either in its pre-check or in its re-read under the lock).
+    let (s1, v1) = t1.await.unwrap();
+    let (s2, v2) = t2.await.unwrap();
+    assert!(
+        (s1 == 204 && s2 == 404) || (s1 == 404 && s2 == 204),
+        "{s1} {v1} / {s2} {v2}"
+    );
+    // One audit row, and the provenance is gone either way.
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'agent.template_detach'
+         AND NOT critical AND target_id = $1",
+    )
+    .bind(agent.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+    let (tid, ver): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT template_id, template_version FROM agents WHERE id = $1")
+            .bind(agent)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((tid, ver), (None, None));
+}
+
 #[tokio::test]
 async fn the_agent_is_unchanged_while_an_update_waits() {
     let u = upd_world().await;
