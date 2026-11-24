@@ -1733,7 +1733,10 @@ async fn the_plan_resolves_apps_and_skill_references() {
     assert_eq!(item["apps"][0]["available"], false, "{v}");
     assert_eq!(item["apps"][0]["skills"], json!([]), "{v}");
     assert_eq!(item["skill_refs"][0]["available"], true, "{v}");
-    assert_eq!(item["skill_refs"][0]["repo"], "git.example/acme/skills", "{v}");
+    assert_eq!(
+        item["skill_refs"][0]["repo"], "git.example/acme/skills",
+        "{v}"
+    );
     assert_eq!(item["skill_refs"][1]["available"], false, "{v}");
     assert_eq!(item["skill_refs"][1]["repo"], json!(null), "{v}");
     assert_eq!(item["source_name"], "Acme templates", "{v}");
@@ -1819,8 +1822,7 @@ async fn the_plan_names_why_an_app_or_a_skill_is_not_available() {
     let (_, v) = ws_get(&w, ws, &owner, "").await;
     assert_eq!(v["items"][0]["skill_refs"][0]["available"], false, "{v}");
     assert_eq!(
-        v["items"][0]["skill_refs"][0]["repo"],
-        "git.example/acme/skills",
+        v["items"][0]["skill_refs"][0]["repo"], "git.example/acme/skills",
         "{v}"
     );
 
