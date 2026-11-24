@@ -124,10 +124,11 @@ interface"); stored in the database, audited):
 - Under `open`, mode `none` admits only users with an invitation, a mapped role claim or a
   `jit` org; others get `signup_closed`. Starter grants whose credential has gone away are
   skipped and audited; they never fail a sign-in (D-151, `API_CONTRACTS` C-524..C-527).
-- A personal workspace is an ordinary workspace of the default org afterwards: org
-  owners/admins have their usual implicit access, the user can add others to it (phase 5:
-  by e-mail, `§Workspace access by e-mail`; before P5-UX-5 only org admins could),
-  and leaving the org follows `§Deletion semantics` and the offboarding views (RFE-021).
+- A personal workspace is an ordinary workspace of the default org afterwards: its
+  person always owns it (FIX-234, D-480 — the placement `personal_role` is retired), and
+  only the person adds people to it (C-1161); org owners/admins administer it
+  (freeze, delete, suspend) but have no access in it. Leaving the org follows
+  `§Deletion semantics` and the offboarding views (RFE-021).
 - Defaults: until an instance admin saves a placement, an instance behaves as today
   (`personal_org` under `open`, so nothing changes on upgrade), and the admin page
   shows a warning while that holds. The **instance setup wizard** (`14 §Onboarding`)
@@ -534,16 +535,26 @@ values are stored only as keyed hashes.
 |-------|--------|-------|
 | Org role | `owner` > `admin` > `member` | Always enforced. |
 | Membership status | `active`, `suspended`, `pending` (phase 4, D-175) | Suspended = non-member for **every** check including API keys, channel clicks, schedules. `pending` (SCIM prepared it for an existing account; becomes `active` only in that person's next verified sign-in) is the same: a non-member for every check, but it counts against the seat cap and may sit in SCIM groups. An admin can neither set nor leave `pending` (409 `member_pending`), only remove the member. (Phase 5, FIX-185, D-401) Suspending a member (`PATCH /v1/orgs/{org}/members/{user}`) ends their queued and live speaker turns in every workspace of the org in the same transaction: `aborted`, `error_code = user_suspended`, notice "This turn was stopped: the person was suspended in this organization." Restoring starts nothing. |
-| Workspace access | `owner`, `member` — phase 0/1. **From phase 2 (RFE-012): `owner` > `approver` > `member`** | Org owners and admins are implicit workspace owners of every workspace in their org. `approver` is one deliberate notch between chatting and owning: it adds the authority to decide approvals. |
+| Workspace access | `owner`, `member` — phase 0/1. **From phase 2 (RFE-012): `owner` > `approver` > `member`** | An organization role grants **no** workspace right (FIX-234, D-477): org owners and admins *administer* every workspace of their org (`can_administer` below), they do not *use* it. `approver` is one deliberate notch between chatting and owning: it adds the authority to decide approvals. |
 | Group (phase 4, P4-GRP-1) | member of zero or more org groups | A group can hold workspace roles (`owner`, `approver`, `member`) and map to an org role (`admin`, `member`; never `owner`). The **effective** role is the strongest of the direct and group-derived ones, see *Groups* below. A group never creates membership. |
 | Freeze state (phase 2, RFE-006) | not frozen / `frozen` — per **agent**, **workspace** and **organization** | A reversible, audited emergency switch, see *Freeze* below. |
 
 ### The access law
 
 `can_use(user, workspace)` is true iff: the workspace exists **and** the user
-has an `active` membership in its org **and** (the user's org role is `owner` or
-`admin` **or** a `workspace_access` row exists). `can_own(user, workspace)` is
-the same with workspace role `owner` (or org owner/admin).
+has an `active` membership in its org **and** an access row exists in their own
+right — an active direct `workspace_access` row or an active group binding (the
+`own_workspace_access` view). An org role is not a row (FIX-234, D-477).
+`can_own(user, workspace)` is the same with the binding's role `owner`.
+
+`can_administer(user, workspace)` (FIX-234, D-477) is the narrow right an
+organization role keeps: true with own-right `owner` on the workspace, or as an
+active effective org owner or admin of its org. It covers managing the
+workspace's people (personal workspaces excepted, see *Workspace access by
+e-mail*), freezing, deleting the workspace, reassigning its automations, reading
+its metadata, and the organization's own accounts. On every other workspace
+route an administrator without own access gets 403 `workspace_access_required` —
+an org role never substitutes for a binding.
 
 **Suspended in one workspace** (phase 5, P5-APIGAP-4, D-399, C-1051, SEC-138). A
 workspace owner can suspend a person's direct binding in that workspace
@@ -551,10 +562,11 @@ workspace owner can suspend a person's direct binding in that workspace
 organization-wide suspension (*Roles*), scoped to one workspace: the person is a
 non-member of **that** workspace for every check, so "a `workspace_access` row exists"
 above means an **active** row, and a suspended person also derives nothing from their
-groups' bindings on that workspace. An effective org owner or admin keeps the implicit
-owner role (the org role outranks a workspace owner) and cannot be suspended in a
-workspace (409 `implicit_access`); nobody can suspend themselves, an IdP-claimed binding
-or the last active owner. The suspension ends at once: the person's queued and live
+groups' bindings on that workspace. An org role is no protection (FIX-234, D-477): an
+administrator's *real* binding suspends like anyone's, and there is no `implicit_access`
+refusal any more; nobody can suspend themselves, an IdP-claimed binding
+or the last active owner. A personal workspace's person is never suspended there
+(409 `personal_workspace_person`). The suspension ends at once: the person's queued and live
 speaker turns in the workspace end `aborted` (`user_suspended`), gateways drop their
 identities (`user` scope) and their open streams re-authorize; terminal, SSH, Files and
 preview sessions end at their next access re-check. It keeps the binding and role, their
@@ -565,18 +577,18 @@ and everything they own. Restoring sets the row `active` again. Audit:
 source-scan guard (`aurora-db` `membership_queries`) lists every other raw reader of the
 binding tables.
 
-**Access in one's own right** (FIX-230, D-473, C-1157). The view `own_workspace_access
-(workspace_id, org_id, user_id, role)` is the single definition of the access a person holds
-themselves: an active direct binding (manual or IdP-claimed) or an active group binding (the
-strongest role), while an active org member and not suspended in the workspace. It lacks the
-implicit owner role of effective org owners and admins; `effective_workspace_access` is that
-implicit branch `UNION ALL` this view, with the same output as before (pinned by an IT against
-the old definition). `authz::own_access(user, ws)` reads it. It decides what **chat offers or
+**Access in one's own right** (FIX-230, D-473, C-1157; the whole law since FIX-234). The view
+`own_workspace_access (workspace_id, org_id, user_id, role)` is the single definition of the
+access a person holds themselves: an active direct binding (manual or IdP-claimed) or an active
+group binding (the strongest role), while an active org member and not suspended in the
+workspace. Since FIX-234 (D-477) `effective_workspace_access` is exactly this view — one
+migration replaced its definition; both names stay, and an IT pins them equal. An org role or
+an `admin` group mapping is not a workspace-access source anywhere.
+`authz::own_access(user, ws)` reads it. It decides what **chat offers or
 picks by itself** (the DM agent, the `agents`/`use` commands, the link and account pages' lists
-and their server rule, the binding picker): "your agents". It never authorizes: `can_use`,
-`can_own` and every access check keep reading `effective_workspace_access`, so an admin's
-existing thread links, space bindings, `bind <handle>`, Attach and the dashboard are unchanged.
-The view joins people tables: only API code reads it, never a shared function the gateway runs.
+and their server rule, the binding picker): "your agents" — and, since FIX-234, every
+authorization check (`can_use`, `can_own`) with it. The view joins people tables: only API code
+reads it, never a shared function the gateway runs (the gateway's `can_use` restates it).
 
 **The turn's person** (phase 5, P5-PERSON, D-402, C-1052, SEC-139). The person a turn runs
 for is its person speaker (doors `web`, `api`, `thread`), or on a schedule turn the
@@ -807,14 +819,14 @@ Names are unique per org, case-insensitively, 1–80 characters, sanitized.
 - *Effective org role* = the strongest of `org_members.role` and the `org_role` of every
   group the user belongs to in that org, **only while the membership is `active`**
   (a user without an active membership has none, whatever groups say).
-- *Effective workspace role* = the strongest of the direct `workspace_access` row, the
-  role of every `group_workspace_access` row whose group contains the user, and
-  implicit `owner` when the effective org role is `owner` or `admin`. Strongest, never a
+- *Effective workspace role* = the strongest of the direct `workspace_access` row and
+  the role of every `group_workspace_access` row whose group contains the user
+  (FIX-234, D-477: an org role contributes nothing). Strongest, never a
   sum or an intersection: a group can raise a person above their direct binding and can
   never lower it, and removing a direct binding leaves what groups give.
 - `can_use`, `can_own` and `can_approve` are the phase 2 predicates evaluated on those
   effective values (*The access law*). The effective result carries its **sources**
-  (`direct`, `group <id>`, `org_role via group <id>`, `org role`) so the dashboard can
+  (`direct`, `group <id>`; only own-right sources, FIX-234) so the dashboard can
   explain it; sources are informational and never an input to a decision.
 
 Consequences that need no special case: API keys act with the owner's *current* effective
@@ -1250,9 +1262,9 @@ agent, regenerate a token, restart, hand-edit policy) are destructive or partial
 or its organization is frozen. The flags are independent: unfreezing an agent does
 not unfreeze its frozen workspace.
 
-**Who.** Freezing an agent or a workspace needs `can_own` (a workspace owner,
-or an org owner/admin, who are implicit owners): the person closest to the agent
-decides to pull the plug, and freezing is safe to do fast. Freezing an
+**Who.** Freezing an agent or a workspace needs `can_administer` (FIX-234, D-477: a
+workspace owner in their own right, or an org owner/admin — the person closest to the agent
+decides to pull the plug, and freezing is safe to do fast). Freezing an
 **organization** needs org `owner` or an instance admin (an instance admin
 receives no org data access by this: the switch is an operator kill-switch for
 an incident such as a compromised org account, and lifts only as described

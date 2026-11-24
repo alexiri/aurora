@@ -161,7 +161,7 @@ owner cannot be demoted or removed).
 | default_org_role | text CHECK in (`member`,`admin`) default `member` | |
 | shared_workspaces | jsonb not null default `[]` | `[{ workspace_id, role: member|approver }]`, workspaces of the default org |
 | personal_enabled | boolean not null default false | |
-| personal_role | text CHECK in (`owner`,`approver`,`member`) default `owner` | the user's role in their personal workspace |
+| personal_role | text CHECK in (`owner`,`approver`,`member`) default `owner` | retired (phase 5, FIX-234, D-480, C-1161; the column stays for one release, a later cleanup drops it): the person is always `owner` of their personal workspace; the API reports `owner` and ignores a written value |
 | name_template | text not null | `{variable}` text; `\|` separates the fallback chain (`04 §New-user placement`) |
 | starter_grants | jsonb not null default `[]` | `[{ kind: secret|connection, id }]`, org-scope credentials of the default org |
 | updated_by | uuid null FK→users (set null) | `updated_at` is implicit (`§Conventions`) |
@@ -193,7 +193,7 @@ owner cannot be demoted or removed).
 | idp_role | text null CHECK in (`owner`,`approver`,`member`) | (phase 4, P4-IDP-1, D-139) the role the IdP claims give; `null` = manual binding. `role` is the effective role |
 | idp_source | text null | `idp:<provider>:<value>`; `null` exactly when `idp_role` is `null` |
 | base_role | text null CHECK in (`owner`,`approver`,`member`) | the manual role under a claim-raised one; `null` when the claim created the row |
-| status | text not null default `active` CHECK in (`active`,`suspended`) | (phase 5, P5-APIGAP-4, D-399, C-1051, SEC-138; migration `20261201000258_workspace_access_status.sql`) a workspace owner's suspension of this person **in this workspace only**. A `suspended` row grants nothing: the `effective_workspace_access` view drops the direct row **and** the person's group-derived rows for this workspace (an org owner/admin's implicit access is not affected; such a person cannot be suspended here). The binding, its role and the person's data are kept; `PUT` and the sign-in syncs change the role and never the status. `created_at` is the person's **Joined** date (C-1050) |
+| status | text not null default `active` CHECK in (`active`,`suspended`) | (phase 5, P5-APIGAP-4, D-399, C-1051, SEC-138; migration `20261201000258_workspace_access_status.sql`) a workspace owner's suspension of this person **in this workspace only**. A `suspended` row grants nothing: the `effective_workspace_access` view drops the direct row **and** the person's group-derived rows for this workspace (FIX-234, D-477, migration `20261201000282_org_role_administers.sql`: an org owner/admin's real binding can be suspended like anyone's, and grants nothing while suspended). The binding, its role and the person's data are kept; `PUT` and the sign-in syncs change the role and never the status. `created_at` is the person's **Joined** date (C-1050) |
 
 ### `workspace_pending_access`
 (phase 5, P5-UX-5, D-325, SEC-128, C-919, C-920; migration `20261201000249_workspace_pending_access.sql`) Access a workspace owner gave to an e-mail address that is not yet an active member of the organization (`04 §Workspace access by e-mail`). Applied at a sign-in and deleted; it never makes anyone an organization member. The gateway role gets nothing on this table.
