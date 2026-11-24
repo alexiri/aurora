@@ -294,7 +294,17 @@ async fn lifting_needs_at_least_the_authority_that_froze() {
         )
         .await;
     assert_eq!(s, 404);
-    // Owners keep the management plane while frozen.
+    // (FIX-234) People keep using their workspace while frozen; the org owner without a
+    // binding is not one of them (403) but still reads the org (administering).
+    let (s, _) = w
+        .call(
+            w.ws_owner,
+            Method::GET,
+            &format!("/v1/workspaces/{}/agents", w.r.ws),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200);
     let (s, _) = w
         .call(
             w.org_owner,
@@ -303,7 +313,7 @@ async fn lifting_needs_at_least_the_authority_that_froze() {
             None,
         )
         .await;
-    assert_eq!(s, 200);
+    assert_eq!(s, 403);
     let (s, v) = w.call(w.org_owner, Method::GET, &org_uri, None).await;
     assert_eq!((s, v["frozen"]["level"].as_str()), (200, Some("org")));
     // Operator listing shows it; unknown ids are 404; non-admins are refused.
@@ -548,9 +558,11 @@ async fn running_turn_aborts_sandbox_is_parked_with_home_kept_and_nothing_dispat
 #[tokio::test]
 async fn byo_agent_token_endpoints_answer_423_while_frozen() {
     let w = world().await;
+    // (FIX-234) Creating an agent is a use act: the workspace's own owner does it, the org
+    // owner without a binding could not.
     let (s, v) = w
         .post(
-            w.org_owner,
+            w.ws_owner,
             &format!("/v1/workspaces/{}/agents", w.r.ws),
             json!({"name": "Byo", "kind": "byo"}),
         )

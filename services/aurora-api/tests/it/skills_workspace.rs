@@ -230,8 +230,9 @@ async fn names_tier_local_reserved_and_check_constraint() {
                     Some(json!({"name": bad, "description": "d", "body": "b"})),
                 )
                 .await;
-            let (s2, v2) = if s == 404 {
-                // the org admin has no workspace role: use the owner for workspace/agent URIs
+            let (s2, v2) = if s == 404 || s == 403 {
+                // (FIX-234, D-477) the org admin has no workspace right: use the owner for
+                // workspace/agent URIs
                 r.user(
                     Method::POST,
                     &uri,
@@ -270,7 +271,6 @@ async fn names_tier_local_reserved_and_check_constraint() {
 #[tokio::test]
 async fn workspace_skill_file_read_follows_the_item_route() {
     let r = rig().await;
-    let org_admin = actor(&r, "adm@x.io", "admin", None).await;
     let member = actor(&r, "m@x.io", "member", Some("member")).await;
     let outsider = {
         let org2 = r.h.org().await;
@@ -281,7 +281,7 @@ async fn workspace_skill_file_read_follows_the_item_route() {
     };
     let (s, v) = r
         .call(
-            &org_admin,
+            &r.cookie,
             Method::POST,
             &format!("/v1/workspaces/{}/skills", r.ws),
             Some(json!({"name": "ws-skill", "description": "d", "body": "b"})),
@@ -290,8 +290,8 @@ async fn workspace_skill_file_read_follows_the_item_route() {
     assert_eq!(s, 201, "{v}");
     let id = v["id"].as_str().unwrap().to_owned();
     let uri = format!("/v1/skills/{id}/files/ref/a.txt");
-    assert_eq!(r.raw_put(&org_admin, &uri, b"ws bytes").await.0, 200);
-    for who in [&member, &org_admin, &r.cookie] {
+    assert_eq!(r.raw_put(&r.cookie, &uri, b"ws bytes").await.0, 200);
+    for who in [&member, &r.cookie] {
         let (s, _, b) = r.raw_get(who, &uri).await;
         assert_eq!((s, b.as_slice()), (200, &b"ws bytes"[..]));
     }
@@ -329,21 +329,29 @@ async fn workspace_skill_authorization_matrix() {
         .await;
     assert_eq!((s, code(&v)), (403, Some("forbidden")), "{v}");
     assert_eq!(r.call(&member, Method::GET, &base, None).await.0, 200);
-    // Org owner/admin write as `can_own`; the ws owner too.
+    // Writing is own `can_own` (FIX-234, D-477): the ws owner writes; the org owner/admin
+    // without a binding are refused like any outsider to the workspace's law.
     let (s, v) = r
-        .call(&org_admin, Method::POST, &base, Some(body.clone()))
+        .call(&owner, Method::POST, &base, Some(body.clone()))
         .await;
     assert_eq!(s, 201, "{v}");
     let id = v["id"].as_str().unwrap().to_owned();
-    let (s, _) = r
-        .call(
-            &org_owner,
-            Method::POST,
-            &base,
-            Some(json!({"name": "second", "description": "d", "body": "b"})),
-        )
+    let (s, v) = r
+        .call(&org_admin, Method::POST, &base, Some(body.clone()))
         .await;
-    assert_eq!(s, 201);
+    assert_eq!(
+        (s, code(&v)),
+        (403, Some("workspace_access_required")),
+        "{v}"
+    );
+    let (s, v) = r
+        .call(&org_owner, Method::POST, &base, Some(body.clone()))
+        .await;
+    assert_eq!(
+        (s, code(&v)),
+        (403, Some("workspace_access_required")),
+        "{v}"
+    );
     // Item routes.
     let item = format!("/v1/skills/{id}");
     assert_eq!(r.call(&member, Method::GET, &item, None).await.0, 200);
@@ -382,7 +390,7 @@ async fn workspace_skill_authorization_matrix() {
             .0,
         404
     );
-    // Owner and org admin edit, upload files, delete.
+    // The ws owner edits, uploads files, deletes (own `can_own`).
     let (s, v) = r
         .call(
             &owner,
@@ -394,12 +402,12 @@ async fn workspace_skill_authorization_matrix() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["enabled"], false);
     let (s, _) = r
-        .raw_put(&org_admin, &format!("{item}/files/run.sh"), b"#!/bin/sh")
+        .raw_put(&owner, &format!("{item}/files/run.sh"), b"#!/bin/sh")
         .await;
     assert_eq!(s, 200);
     assert_eq!(
         r.call(
-            &org_admin,
+            &owner,
             Method::DELETE,
             &format!("{item}/files/run.sh"),
             None
@@ -408,7 +416,7 @@ async fn workspace_skill_authorization_matrix() {
         .0,
         204
     );
-    assert_eq!(r.call(&org_admin, Method::DELETE, &item, None).await.0, 204);
+    assert_eq!(r.call(&owner, Method::DELETE, &item, None).await.0, 204);
     assert_eq!(r.call(&owner, Method::GET, &item, None).await.0, 404);
 
     // Audit rows carry the skill's workspace id and the tier (best-effort class: written by a

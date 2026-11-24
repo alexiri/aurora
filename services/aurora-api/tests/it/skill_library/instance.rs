@@ -21,6 +21,9 @@ async fn second_org(w: &W) -> B {
     let ws = w.h.workspace(org).await;
     let admin_u = w.h.user("b-admin@x.io", false).await;
     w.h.member(org, admin_u, "admin", "active").await;
+    // (FIX-234, D-477) Writing workspace-tier skills needs own `can_own`; the fixture binds
+    // the admin where its tests add skills.
+    w.h.bind_ws(ws, admin_u, "owner").await;
     let member_u = w.h.user("b-member@x.io", false).await;
     w.h.member(org, member_u, "member", "active").await;
     w.h.bind_ws(ws, member_u, "member").await;
@@ -911,6 +914,13 @@ async fn added_chips_leave_out_workspaces_the_caller_cannot_use() {
     let sha = w.seed();
     let lib = w.library().await;
     let ws2 = w.h.workspace(w.org).await;
+    // (FIX-234, D-477) The add needs own `can_own`: bind the admin owner of ws2 in their own
+    // right; the subject here is the browse list's `added` visibility.
+    let admin_user: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'admin@x.io'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    w.h.bind_ws(ws2, admin_user, "owner").await;
     let (s, v) = w
         .call(
             &w.admin,

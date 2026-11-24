@@ -1008,7 +1008,8 @@ async fn add_follows_each_tiers_write_authority_and_refuses_agent_credentials() 
     }
     let (s, v) = w.add_org(lib, "alpha", &sha).await;
     assert_eq!(s, 201, "{v}");
-    // workspace tier: can_own (a plain member cannot, an org admin can)
+    // workspace tier: can_own in their own right (FIX-234, D-477: a plain member cannot, and
+    // an org admin without own access cannot either)
     let (s, v) = w
         .call(
             &w.member,
@@ -1020,7 +1021,7 @@ async fn add_follows_each_tiers_write_authority_and_refuses_agent_credentials() 
     assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
     let (s, v) = w.add_ws(lib, "alpha", &sha).await;
     assert_eq!((s, v["tier"].as_str()), (201, Some("workspace")), "{v}");
-    let (s, _) = w
+    let (s, v) = w
         .call(
             &w.admin,
             Method::POST,
@@ -1028,7 +1029,20 @@ async fn add_follows_each_tiers_write_authority_and_refuses_agent_credentials() 
             Some(W::from_library(lib, "beta", &sha)),
         )
         .await;
-    assert_eq!(s, 201);
+    assert_eq!(
+        (s, code(&v)),
+        (403, "workspace_access_required"),
+        "the org role is no workspace right: {v}"
+    );
+    let (s, v) = w
+        .call(
+            &w.wsowner,
+            Method::POST,
+            &format!("/v1/workspaces/{}/skills", w.ws),
+            Some(W::from_library(lib, "beta", &sha)),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
     // agent tier: can_use
     let (s, v) = w.add_agent(lib, "alpha", &sha).await;
     assert_eq!((s, v["tier"].as_str()), (201, Some("agent")), "{v}");

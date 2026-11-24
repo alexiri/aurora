@@ -596,7 +596,9 @@ async fn sec79_starter_grants_must_be_org_credentials_of_the_default_org() {
     let adm = e.user(ADMIN).await;
     e.h.member(other_org, adm, "owner", "active").await;
     let foreign = e.org_secret(other_org, "foreign", "generic").await;
-    let ws = e.h.workspace(org).await;
+    // (FIX-234, D-477) The admin binds owner in their own right before creating the
+    // workspace-scoped secret; the subject here is the starter-grant admission rule.
+    let ws = e.h.workspace_owned_by(org, adm).await;
     let (_, v) = e
         .call(
             &e.admin,
@@ -694,7 +696,9 @@ async fn personal_workspaces_turned_on_later_reach_existing_members_only() {
     e.who("s1", "bob@example.com", Some("bobj"));
     e.sign_in().await.unwrap();
     let (slug, _, role) = e.personal("bob@example.com").await.unwrap();
-    assert_eq!((slug.as_str(), role.as_deref()), ("bobj", Some("approver")));
+    // (FIX-234, C-1161) `personal_role` is retired (D-480): the person always owns their
+    // personal workspace, so an `approver` choice is accepted and ignored.
+    assert_eq!((slug.as_str(), role.as_deref()), ("bobj", Some("owner")));
     e.who("s9", "old@example.com", Some("oldie"));
     e.sign_in().await.unwrap();
     assert!(e.personal("old@example.com").await.is_none());
@@ -1872,10 +1876,12 @@ async fn refine5_the_starter_key_reaches_existing_agents_once_and_every_new_host
     assert_eq!(s, 201, "{v}");
     assert_eq!(e.grants_of(key).await, 5);
 
-    // An agent of another organization gets none.
+    // An agent of another organization gets none. The admin binds owner in their own right
+    // there first: (FIX-234, D-477) an org role grants no workspace right, and the subject
+    // here is the grant outcome, not the admin's access.
     let other = e.h.org().await;
-    let ows = e.h.workspace(other).await;
     let admin_id = e.user(ADMIN).await;
+    let ows = e.h.workspace_owned_by(other, admin_id).await;
     e.h.member(other, admin_id, "owner", "active").await;
     let (s, v) = e.new_agent(ows, "Elsewhere", None).await;
     assert_eq!(s, 201, "{v}");

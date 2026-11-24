@@ -416,7 +416,9 @@ async fn only_owners_of_that_workspace_manage_its_pending_rows() {
     .unwrap();
     assert_eq!(e.add(&bob, ws, "kim@example.com", "member").await.0, 200);
     let (s, _) = e.add(&carol, ws, "lee@example.com", "member").await;
-    assert_eq!(s, 403, "a plain member of the workspace cannot add people");
+    // (FIX-234) The people routes are administer routes: a plain member without
+    // `can_administer` finds nothing there (404).
+    assert_eq!(s, 404, "a plain member of the workspace cannot add people");
     let (s, _) = e
         .call(
             &carol,
@@ -425,7 +427,7 @@ async fn only_owners_of_that_workspace_manage_its_pending_rows() {
             None,
         )
         .await;
-    assert_eq!(s, 403);
+    assert_eq!(s, 404);
     // Carol owns her own workspace: the other workspace's rows are not hers.
     let carols_ws = e.personal("carol@example.com").await;
     let (s, v) = e
@@ -460,7 +462,7 @@ async fn only_owners_of_that_workspace_manage_its_pending_rows() {
             None,
         )
         .await;
-    assert_eq!(s, 403);
+    assert_eq!(s, 404, "a plain member finds nothing to delete there");
     assert_eq!(
         e.n("SELECT count(*) FROM workspace_pending_access").await,
         1

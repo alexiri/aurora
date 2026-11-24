@@ -997,7 +997,8 @@ async fn export_format_authorization_and_redacted_markers() {
         .0,
         400
     );
-    // an org admin can export a user's direct conversation (subject-access), audited
+    // a direct conversation: outsiders to it find nothing (bob), its person exports it, and
+    // the org admin without a binding is an outsider too (FIX-234, D-477)
     let d = f.conv("direct", Some(f.alice.0)).await;
     f.turn(d, Some(f.alice.0), "private").await;
     assert_eq!(
@@ -1031,7 +1032,9 @@ async fn export_format_authorization_and_redacted_markers() {
         )
         .await
         .0,
-        200
+        // (FIX-234, D-477) The org admin has no workspace right: the caller's law answers
+        // 403 `workspace_access_required` before the conversation's visibility is even asked.
+        403
     );
     // The export audit rows are best-effort, written after each answer: wait for them (bounded) rather
     // than a fixed 300 ms (CI run 44619448618 read fewer than 3).

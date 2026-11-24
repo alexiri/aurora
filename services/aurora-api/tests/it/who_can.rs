@@ -93,7 +93,9 @@ async fn a_workspace_refusal_names_the_role_and_up_to_three_owners() {
     // org owner/admin without a binding are not named), then by name; at most three; no e-mail;
     // never the instance admin.
     let n = names(who);
-    assert_eq!(n.len(), 1, "{v}");
+    // (FIX-234) The five explicit workspace owners hold the effective role; the org owner and
+    // admin without a binding are not named. At most three, by name: Abe, Bob, Cy.
+    assert_eq!(n, ["Abe", "Bob", "Cy"], "{v}");
     assert!(
         !n.iter().any(|x| x.contains("Root") || x.contains('@')),
         "{n:?}"
@@ -154,8 +156,16 @@ async fn contacts_are_readable_by_a_member_and_hold_at_most_three_names() {
         .await;
     assert_eq!(s, 200, "{v}");
     let owners = v["contacts"]["owners"].as_array().unwrap();
-    // (FIX-234) Contacts are the workspace's own-right owners only.
-    assert_eq!(owners.len(), 1, "{v}");
+    // (FIX-234) Contacts are the workspace's own-right owners only — five are bound; at most
+    // three are listed, by name.
+    assert_eq!(
+        owners
+            .iter()
+            .map(|o| o["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["Abe", "Bob", "Cy"],
+        "{v}"
+    );
     assert!(v["contacts"].get("admins").is_none());
     let (s, v) = w
         .call(&w.member, Method::GET, &format!("/v1/orgs/{}", w.org), None)

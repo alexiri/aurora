@@ -13,7 +13,8 @@ struct W {
     org: Uuid,
     ws1: Uuid,
     ws2: Uuid,
-    /// Org admin: owns every workspace.
+    /// Org admin: own-right owner of every workspace (FIX-234, D-477: an org role grants no
+    /// workspace right, so the fixture binds it).
     admin: String,
     /// Owner of `ws1` only.
     owner1: String,
@@ -36,6 +37,10 @@ async fn world() -> W {
     let ws2 = h.workspace(org).await;
     let adm = h.user("adm@x.io", false).await;
     h.member(org, adm, "admin", "active").await;
+    // (FIX-234, D-477) The admin's workspace reach is an own-right owner binding, as the
+    // fixture's contract always assumed.
+    h.bind_ws(ws1, adm, "owner").await;
+    h.bind_ws(ws2, adm, "owner").await;
     let o1 = h.user("o1@x.io", false).await;
     h.member(org, o1, "member", "active").await;
     h.bind_ws(ws1, o1, "owner").await;

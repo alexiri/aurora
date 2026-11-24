@@ -352,6 +352,8 @@ async fn workspace_visibility_and_ownership() {
     );
     let (s, _) = call(&h, &mt, Method::PATCH, &wsu, Some(json!({"name": "Nope"}))).await;
     assert_eq!(s, 403);
+    // (FIX-234) The people routes are administer routes: a plain member without
+    // `can_administer` finds nothing there (404), like any non-administerer.
     let (s, _) = call(
         &h,
         &mt,
@@ -360,7 +362,7 @@ async fn workspace_visibility_and_ownership() {
         Some(json!({"role": "owner"})),
     )
     .await;
-    assert_eq!(s, 403);
+    assert_eq!(s, 404);
     // a member may create workspaces by default; once disabled, not
     let (s, _) = call(
         &h,

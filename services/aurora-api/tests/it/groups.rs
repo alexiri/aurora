@@ -604,7 +604,8 @@ async fn group_access_is_effective_on_the_next_request_and_for_keys() {
         s, 200,
         "the key owner's group change reaches the key's next request"
     );
-    // a member (not an owner) of the workspace through the group cannot manage it
+    // a member (not an owner) of the workspace through the group cannot manage it — the people
+    // routes are administer routes (FIX-234, C-1160), so a plain member finds nothing there
     let (s, v) = f
         .call(
             &f.plain,
@@ -613,7 +614,7 @@ async fn group_access_is_effective_on_the_next_request_and_for_keys() {
             None,
         )
         .await;
-    assert_eq!((s, code(&v)), (403, "forbidden"));
+    assert_eq!((s, code(&v)), (404, "not_found"));
     // raise the group to owner: can_own through the group
     assert_eq!(f.bind(g, "owner").await.0, 200);
     let (s, _) = f
@@ -740,12 +741,18 @@ async fn workspace_access_expand_groups_and_derived_members() {
         kinds.contains(&"direct".to_owned()) && kinds.contains(&"group".to_owned()),
         "{kinds:?}"
     );
-    assert!(by(f.owner.id).is_some_and(|d| d["sources"][0]["kind"] == "org_role"));
+    // (FIX-234, D-477) The org owner without a binding is not a derived member: an org role
+    // grants no workspace right and there are no `org_role` sources any more.
+    assert!(
+        by(f.owner.id).is_none(),
+        "the org role is no membership source"
+    );
     assert!(
         by(f.wsowner.id).is_none(),
         "direct-only people are not derived members"
     );
-    // a plain member of the workspace cannot read it
+    // a plain member of the workspace cannot read it — the people routes are administer routes
+    // (FIX-234, C-1160), so a plain member finds nothing there
     let (s, _) = f
         .call(
             &f.member,
@@ -754,7 +761,7 @@ async fn workspace_access_expand_groups_and_derived_members() {
             None,
         )
         .await;
-    assert_eq!(s, 403);
+    assert_eq!(s, 404);
     // unbind is idempotent
     let (s, _) = f
         .call(

@@ -35,8 +35,9 @@ async fn world() -> World {
     let member = h.user("m@x.io", false).await;
     h.member(org, owner, "owner", "active").await;
     h.member(org, member, "member", "active").await;
-    let ws = h.workspace(org).await;
-    let ws2 = h.workspace(org).await;
+    // (FIX-234) Key management is a workspace act in the owner's own right.
+    let ws = h.workspace_owned_by(org, owner).await;
+    let ws2 = h.workspace_owned_by(org, owner).await;
     h.bind_ws(ws, member, "member").await;
     let (_, owner_tok) = h.good_session(owner).await;
     let (_, member_tok) = h.good_session(member).await;

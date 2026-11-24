@@ -244,9 +244,9 @@ async fn access_law_matrix() {
     let p = h.pool();
     use aurora_db::authz;
     let q = |u| authz::workspace_access(p, u, ws);
-    let a = q(owner).await.unwrap().unwrap();
-    assert!(a.can_own() && a.org_id == org);
-    assert!(q(admin).await.unwrap().unwrap().can_own());
+    // (FIX-234, D-477) The org owner and admin hold no workspace access by their role.
+    assert!(q(owner).await.unwrap().is_none());
+    assert!(q(admin).await.unwrap().is_none());
     let m = q(bound_m).await.unwrap().unwrap();
     assert!(!m.can_own());
     assert!(q(bound_o).await.unwrap().unwrap().can_own());
@@ -258,7 +258,7 @@ async fn access_law_matrix() {
             .await
             .unwrap()
     );
-    assert!(authz::can_own(p, admin, ws).await.unwrap());
+    assert!(authz::can_own(p, bound_o, ws).await.unwrap());
     let mem = authz::org_membership(p, susp_admin, org)
         .await
         .unwrap()
@@ -309,8 +309,12 @@ async fn key_confinement() {
     let u = h.user("a@x.io", false).await;
     h.member(org, u, "owner", "active").await;
     h.member(org2, u, "owner", "active").await;
+    // (FIX-234, D-477) Keys act with the owner's own access: bind it in its own right on the
+    // workspaces the test opens.
     let (_, wk) = h.api_key(u, org, Some(ws1), false).await;
     let (_, ok) = h.api_key(u, org, None, false).await;
+    h.bind_ws(ws1, u, "owner").await;
+    h.bind_ws(ws2, u, "owner").await;
     let b = bearer(&wk);
     let (s, v) = h
         .get(&format!("/t/ws/{ws2}"), &[("authorization", &b)])

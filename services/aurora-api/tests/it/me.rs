@@ -146,15 +146,20 @@ async fn me_shape_and_suspended_membership() {
             assert!(m["workspaces"].as_array().unwrap().is_empty());
         }
     }
-    // (FIX-234) The org admin sees every workspace of the org; `my_role` is null without own
-    // access (D-477).
+    // (FIX-234) `/v1/me` lists only workspaces with own access (the view's law): the org
+    // admin without a binding sees none here — they manage the org's workspaces from the org
+    // pages (D-477).
     let a = h.user("a@x.io", false).await;
     let (_, at) = h.good_session(a).await;
     h.member(o1, a, "admin", "active").await;
     let (_, v) = call(&h, &at, Method::GET, "/v1/me", None).await;
-    let ws = v["memberships"][0]["workspaces"].as_array().unwrap();
-    assert_eq!(ws.len(), 2);
-    assert!(ws.iter().all(|w| w["my_role"].is_null()));
+    let m = v["memberships"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["org"]["id"] == json!(o1))
+        .unwrap();
+    assert!(m["workspaces"].as_array().unwrap().is_empty(), "{m}");
 }
 
 #[tokio::test]
