@@ -135,6 +135,12 @@ conversation where results of schedules, webhooks and peer tasks are reported.
 - An archived conversation is never "the person's chat": `…/conversations/direct` skips it
   (a person message still unarchives, RFE-010).
 
+- (FIX-235, D-479) The dashboard shows the conversation's **visibility line**
+  on every chat (thread header and empty state), built from
+  `Workspace.audience`: who can use the agent, and who can read this
+  conversation. The same function builds the emergency-access line later
+  (FIX-236), so the line is one row of a small table, never prose.
+
 ### Visibility of direct conversations (phase 1, RFE-009)
 
 Phase 0: every workspace member could read every direct conversation. **From

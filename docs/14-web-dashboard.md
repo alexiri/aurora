@@ -326,7 +326,11 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   conveyed by order and caption, not indentation), the **Workspace** select for
   the active organization's workspaces with a pinned **"All workspaces…"**
   entry, rendered only where an organization is active (never on `/admin/*` or
-  `/account/*`).
+  `/account/*`). (FIX-235, D-477) The workspace list shows only the workspaces
+  the person is in in their own right (`my_role` set); an administrator who is
+  not one of a workspace's people reaches it through the organization's
+  Overview or agents list, not the switcher. "All N in <Org>" counts the
+  listed workspaces.
   On `/admin/*` the organization trigger reads "All organizations"; on
   `/account/*` it shows the "Select organization" placeholder. The selectors
   are the only path to the admin area: the account menu has no Admin item and
@@ -774,11 +778,14 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       none.
   - **Thread header**:
     - The conversation title (16/600) and one muted meta line. The meta line
-      joins the visibility note (lock icon and "Only you and workspace owners
-      can see this conversation", on direct conversations), the kind (on
-      other conversations), the archived date, and the org retention window
-      ("Deleted after N days without activity") when one is set. This line
-      replaces the separate retention and visibility banners.
+      joins the **visibility line** (FIX-235, D-479: the same one sentence on
+      every conversation — who can use the agent and who can read this chat,
+      from `Workspace.audience`; a lock icon on direct conversations, a people
+      icon on the others), the kind, the archived date, and the org retention
+      window ("Deleted after N days without activity") when one is set. This
+      line replaces the separate retention and visibility banners; the empty
+      state shows the same sentence under the greeting, so a chat with no
+      messages says who sees it before anything is written.
     - On the right: a connection pill and a "Conversation actions" icon
       button. The pill reads `Live` (`accent-soft`) or `Reconnecting…`
       (`pending-soft`); connection state is never a loose line of text.
@@ -1576,6 +1583,23 @@ every other topic is owners/admins and is not listed for a member.)
   follow as an uncounted line; a **History** fold lists what closed in 30 days), **People** (count, invitations waiting, **Invite**), **Workspaces** (team first, personal
   below, **New workspace**), **Agents** (the five most recently changed, **All agents**) and the two rules that apply
   (AI models, Internet access). Members see Workspaces and the two rules only.
+  (FIX-235, D-477) In Workspaces and Agents, a workspace the viewer is in in
+  their own right (`my_role` set) links as before; the others link to the
+  workspace's **manage page** with a quiet "Manage" label, and in Agents the
+  agent's name is not a link — the row carries the Pause/Resume action and the
+  workspace name links to the manage page.
+- **Workspace manage page** (`/o/<org>/workspaces/<ws>`, FIX-235): for an
+  administrator who is not one of the workspace's people. The same tab
+  structure as the workspace, reduced to what administering needs: **People**
+  (the shared access table; "Add people", and **Add yourself** as a danger
+  action with a role choice — member or owner, `PUT /v1/workspaces/{ws}/access/{me}`
+  (C-1161); a personal workspace refuses with `personal_workspace_owner_only`
+  (D-480), said in words), **Agents** (name, handle, state, Pause/Resume; no
+  link into the agent), **Pause workspace** and **Delete workspace** (the
+  existing controls). Any `/o/<org>/w/<ws>/…` address whose `Workspace` says
+  `my_role: null` with `administers: true` redirects here, and a
+  403 `workspace_access_required` from any workspace call shows the same
+  notice with a link to it.
 - **Chat platforms** (`/o/<org>/chat-platforms`, P5-REFINE-17 org-1): "Let people talk to agents from the chat tools <org>
   already uses." One row per connectable platform (icon, name, "Ready · connector running", the **Ready** status line
   and **Connect**: the same readiness as Administration, a running host that serves the type means connectable). Under
@@ -1749,8 +1773,9 @@ every other topic is owners/admins and is not listed for a member.)
     (JSON / zip), and per-message **Redact** (reason, "also reset the agent's
     session" checkbox, irreversible warning); archived conversations behind an
     "Archived" filter; a banner shows the org retention window when set.
-    Direct conversation (phase 1, RFE-009: banner "Only you and
-    workspace owners can see this conversation"; owners also get a "Direct
+    Direct conversation (phase 1, RFE-009: the visibility line of
+    `§Thread header` (FIX-235, D-479) says who sees the chat, in the header
+    and in the empty state; owners in their own right also get a "Direct
     conversations of other members" sidebar group, read-only with an audit
     notice, no composer); other conversations (schedules, webhooks,
     groups) in a sidebar; SSE transcript with delta rendering, tool cards,
@@ -2334,8 +2359,9 @@ seen" warning, and a warning when live replicas present **different** host keys 
 host-key rotation: clients will see a host-key mismatch).
 (phase 4, P4-ONB-1, D-140) **Sign-up & placement** (`04 §New-user placement`): sign-up
 mode shown read-only (config); placement mode; default org (pick or create); shared
-workspaces with roles; personal workspace on/off, role, name template with a live
-preview for the admin's own token and for a typed sample ("bobj" → workspace `bobj`);
+workspaces with roles; personal workspace on/off and name template with a live
+preview for the admin's own token and for a typed sample ("bobj" → workspace `bobj`;
+FIX-235, D-480: no role choice — people own their personal workspace);
 starter grants (org LLM keys, secrets, connections); the list of personal orgs from
 before. One form built from the shared field, segmented and notice primitives; a warning
 while per-user organizations are active; the shared-workspace and credential pickers list
