@@ -251,9 +251,10 @@ async fn ensure_personal_workspace(
     )
     .await?;
     repo::set_personal_owner(&mut **tx, ws.id, user.id).await?;
-    if row.personal_role != "owner" {
-        workspaces::bind_user(&mut **tx, ws.id, user.id, &row.personal_role).await?;
-    }
+    // (FIX-234, D-480) The person is always the owner of their personal workspace: the placement
+    // setting's `personal_role` no longer picks the binding, the creation path's `owner` binding
+    // stands. The setting is retired (`GET` says `owner`, `PUT` ignores it) and a later cleanup
+    // drops the column.
     audit_tx(
         tx,
         AuditEvent::new(actor(), "workspace.create", Outcome::Success)
@@ -262,7 +263,7 @@ async fn ensure_personal_workspace(
             .target("workspace", ws.id)
             .metadata(json!({
                 "slug": ws.slug, "via": "placement", "personal_owner_user_id": user.id,
-                "role": row.personal_role
+                "role": "owner"
             })),
     )
     .await?;
@@ -413,14 +414,6 @@ fn default_org_role(s: &str) -> DefaultOrgRole {
     }
 }
 
-fn personal_role(s: &str) -> PersonalRole {
-    match s {
-        "approver" => PersonalRole::Approver,
-        "member" => PersonalRole::Member,
-        _ => PersonalRole::Owner,
-    }
-}
-
 pub async fn view(state: &AppState) -> Result<PlacementView, ApiError> {
     let row = repo::get(&state.pool).await?;
     let saved = row.is_some();
@@ -469,7 +462,10 @@ pub async fn view(state: &AppState) -> Result<PlacementView, ApiError> {
         v.default_org_role = default_org_role(&r.default_org_role);
         v.personal_workspace = PersonalWorkspaceView {
             enabled: r.personal_enabled,
-            role: personal_role(&r.personal_role),
+            // (FIX-234, D-480) The person is always the owner of their personal workspace: the
+            // retired `personal_role` setting reads back `owner` for one release, then the field
+            // goes.
+            role: PersonalRole::Owner,
             name_template: r.name_template.clone(),
         };
         v.updated_at = Some(r.updated_at);
@@ -688,6 +684,8 @@ pub async fn put(
             .to_owned(),
         shared_workspaces: serde_json::to_value(&shared).unwrap_or_else(|_| json!([])),
         personal_enabled,
+        // (FIX-234, D-480) `personal_role` is retired: the field is accepted and stored for one
+        // release but nothing reads it — the person is always their personal workspace's owner.
         personal_role: personal
             .as_ref()
             .and_then(|p| p.role)

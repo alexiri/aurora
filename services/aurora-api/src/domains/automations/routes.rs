@@ -2,7 +2,7 @@ use super::dto::*;
 use super::service::{self, Acting, To};
 use crate::app::AppState;
 use crate::audit::AuditActor;
-use crate::http::auth::{Caller, require_own};
+use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
 use aurora_core::ApiError;
@@ -43,9 +43,9 @@ async fn org_offboarding(
     ))
 }
 
-/// What removing a person's binding on this workspace would disable (`can_own`). Org
-/// owners/admins have implicit access that a binding removal cannot take away, so their list
-/// is empty.
+/// What removing a person's binding on this workspace would disable (`can_administer`, FIX-234
+/// C-1160). Since an org role grants no workspace right, an admin's binding is removed like
+/// anyone's and their list is computed the same way.
 #[utoipa::path(get, path = "/workspaces/{ws}/members/{user}/offboarding", operation_id = "workspaceMemberOffboarding",
     tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), ("user" = Uuid, Path, description = "User id")),
@@ -57,20 +57,10 @@ async fn workspace_offboarding(
     State(s): State<AppState>,
     Path((ws, user)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Offboarding>, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    require_own(&a)?;
-    let target = authz::workspace_access(&s.pool, user, ws)
+    let a = c.administer(&s, ws).await?;
+    authz::workspace_access(&s.pool, user, ws)
         .await?
         .ok_or_else(|| ApiError::not_found("Member not found."))?;
-    if target.org_role.is_admin() {
-        return Ok(Json(Offboarding {
-            schedules: vec![],
-            webhooks: vec![],
-            peer_tasks: vec![],
-            api_keys: 0,
-            byo_agents_created: 0,
-        }));
-    }
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
     Ok(Json(
         service::offboarding(&mut conn, a.org_id, Some(ws), user).await?,
@@ -78,7 +68,8 @@ async fn workspace_offboarding(
 }
 
 /// Reassign every schedule/webhook of one creator in the workspace (or just `ids`) to another
-/// member or to the workspace, in one transaction with one audit row per item (`can_own`).
+/// member or to the workspace, in one transaction with one audit row per item
+/// (`can_administer`, FIX-234 C-1160; `"workspace"` needs an own-right active owner).
 #[utoipa::path(post, path = "/workspaces/{ws}/automations/reassign", operation_id = "bulkReassignAutomations",
     tag = "workspaces", params(("ws" = Uuid, Path, description = "Workspace id")),
     request_body = BulkReassignRequest,
@@ -92,8 +83,7 @@ async fn bulk_reassign(
     Path(ws): Path<Uuid>,
     Json(req): Json<BulkReassignRequest>,
 ) -> Result<Json<BulkReassignResponse>, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    require_own(&a)?;
+    let a = c.administer(&s, ws).await?;
     let to = To::parse("/to", &req.to)?;
     let (mut sch, mut hook) = (req.kinds.is_none(), req.kinds.is_none());
     for k in req.kinds.iter().flatten() {

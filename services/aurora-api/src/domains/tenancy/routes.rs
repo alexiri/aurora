@@ -37,6 +37,17 @@ fn ws_role(a: &WorkspaceAuth) -> WorkspaceRole {
     parse_ws_role(a.effective_ws_role.as_str())
 }
 
+/// (FIX-234, C-1161) The rank of a workspace role (`member` < `approver` < `owner`); `None`
+/// when the person holds no binding. "Raising" is moving up this scale.
+fn rank_of(role: Option<&str>) -> Option<u8> {
+    match role {
+        Some("member") => Some(1),
+        Some("approver") => Some(2),
+        Some("owner") => Some(3),
+        _ => None,
+    }
+}
+
 fn event(c: &Caller, action: &str) -> AuditEvent {
     AuditEvent::by(c, action)
 }
@@ -124,7 +135,7 @@ async fn create_org(
         StatusCode::CREATED,
         Json(CreateOrgResponse {
             org: created.org.into(),
-            workspace: Workspace::new(created.workspace, WorkspaceRole::Owner),
+            workspace: Workspace::new(created.workspace, Some(WorkspaceRole::Owner), true),
             default_agent: Agent::from(created.default_agent),
         }),
     ))
@@ -422,27 +433,21 @@ async fn list_workspaces(
     let all = auth.role.is_admin();
     let rows = workspaces::list_visible(&s.pool, org, c.user_id, all, after(&p), p.fetch()).await?;
     let ids: Vec<Uuid> = rows.iter().map(|w| w.id).collect();
-    let roles: std::collections::HashMap<Uuid, String> = if all {
-        Default::default()
-    } else {
+    // (FIX-234, C-1160) Every row's `my_role` is the caller's own access; an administrator
+    // without own access sees the workspace with `my_role: null`.
+    let roles: std::collections::HashMap<Uuid, String> =
         workspaces::effective_roles_of(&s.pool, c.user_id, &ids)
             .await?
             .into_iter()
-            .collect()
-    };
+            .collect();
     let mut page = page_of(
         rows,
         &p,
         |r| (r.created_at, r.id),
         |w| {
-            let role = if all {
-                WorkspaceRole::Owner
-            } else {
-                roles
-                    .get(&w.id)
-                    .map_or(WorkspaceRole::Member, |r| parse_ws_role(r))
-            };
-            Workspace::new(w, role)
+            let role = roles.get(&w.id).map(|r| parse_ws_role(r));
+            let administers = all || role == Some(WorkspaceRole::Owner);
+            Workspace::new(w, role, administers)
         },
     );
     let ids: Vec<Uuid> = page.items.iter().map(|w| w.id).collect();
@@ -511,30 +516,36 @@ async fn create_workspace(
     Ok((
         StatusCode::CREATED,
         Json(CreateWorkspaceResponse {
-            workspace: Workspace::new(ws, WorkspaceRole::Owner),
+            workspace: Workspace::new(ws, Some(WorkspaceRole::Owner), true),
             default_agent: agent.into(),
         }),
     ))
 }
 
-async fn load_ws(s: &AppState, ws: Uuid, a: &WorkspaceAuth) -> Result<Workspace, ApiError> {
+async fn load_ws(
+    s: &AppState,
+    ws: Uuid,
+    my_role: Option<WorkspaceRole>,
+    administers: bool,
+) -> Result<Workspace, ApiError> {
     let row = workspaces::get(&s.pool, ws)
         .await?
         .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
-    with_effective_byo(s, row, ws_role(a)).await
+    with_effective_byo(s, row, my_role, administers).await
 }
 
 /// The workspace DTO with its effective BYO posture (RFE-025).
 async fn with_effective_byo(
     s: &AppState,
     row: workspaces::WorkspaceRow,
-    role: WorkspaceRole,
+    my_role: Option<WorkspaceRole>,
+    administers: bool,
 ) -> Result<Workspace, ApiError> {
     let view =
         crate::domains::agents::byo::workspace_view(s, row.org_id, row.byo_posture.as_deref())
             .await?;
     let id = row.id;
-    let mut w = Workspace::new(row, role);
+    let mut w = Workspace::new(row, my_role, administers);
     w.effective_byo_posture = Some(view);
     w.frozen = crate::domains::freeze::service::workspace_frozen(s, &[id])
         .await?
@@ -542,7 +553,50 @@ async fn with_effective_byo(
     Ok(w)
 }
 
-/// Get a workspace.
+/// (FIX-234, C-1162) The workspace's people in their own right and its own-right owners, for
+/// `Workspace.audience`. Reads the `own_workspace_access` view and people tables: API code only.
+async fn workspace_audience(
+    s: &AppState,
+    ws: Uuid,
+    caller: Uuid,
+) -> Result<crate::domains::tenancy::dto::WorkspaceAudience, ApiError> {
+    use crate::domains::tenancy::dto::{WorkspaceAudience, WorkspaceAudienceOwner};
+    let people: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM own_workspace_access WHERE workspace_id = $1")
+            .bind(ws)
+            .fetch_one(&s.pool)
+            .await
+            .map_err(DbError::from)?;
+    let owners: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT o.user_id, u.display_name FROM own_workspace_access o \
+         JOIN users u ON u.id = o.user_id \
+         WHERE o.workspace_id = $1 AND o.role = 'owner' \
+         ORDER BY u.display_name, o.user_id",
+    )
+    .bind(ws)
+    .fetch_all(&s.pool)
+    .await
+    .map_err(DbError::from)?;
+    let owners_total = owners.len() as i64;
+    // The caller first if an owner, then by display name; at most five names.
+    let mut owners: Vec<WorkspaceAudienceOwner> = owners
+        .into_iter()
+        .map(|(id, display_name)| WorkspaceAudienceOwner { id, display_name })
+        .collect();
+    if let Some(pos) = owners.iter().position(|o| o.id == caller) {
+        let me = owners.remove(pos);
+        owners.insert(0, me);
+    }
+    owners.truncate(5);
+    Ok(WorkspaceAudience {
+        people,
+        owners,
+        owners_total,
+    })
+}
+
+/// Get a workspace: the caller's own access answers in full; an administrator without own
+/// access gets the metadata, `contacts` and `audience` (C-1160, C-1162).
 #[utoipa::path(get, path = "/workspaces/{ws}", operation_id = "getWorkspace", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, body = Workspace), (status = 404, body = ErrorEnvelope)),
@@ -552,10 +606,26 @@ async fn get_workspace(
     State(s): State<AppState>,
     Path(ws): Path<Uuid>,
 ) -> Result<Json<Workspace>, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    let mut w = load_ws(&s, ws, &a).await?;
-    w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
-    Ok(Json(w))
+    match c.workspace(&s, ws).await {
+        Ok(a) => {
+            let mut w = load_ws(&s, ws, Some(ws_role(&a)), true).await?;
+            w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
+            w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
+            Ok(Json(w))
+        }
+        Err(e) if e.code() == "workspace_access_required" => {
+            let a = c.administer(&s, ws).await?;
+            debug_assert!(a.own.is_none());
+            let row = workspaces::get(&s.pool, ws)
+                .await?
+                .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+            let mut w = with_effective_byo(&s, row, None, true).await?;
+            w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
+            w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
+            Ok(Json(w))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Update workspace name, timezone or memory language (`can_own`).
@@ -601,10 +671,12 @@ async fn patch_workspace(
     if let Some(p) = &req.byo_posture {
         row = service::set_byo_posture(&s, &c, &a, ws, row, p.as_deref()).await?;
     }
-    Ok(Json(with_effective_byo(&s, row, ws_role(&a)).await?))
+    Ok(Json(
+        with_effective_byo(&s, row, Some(ws_role(&a)), true).await?,
+    ))
 }
 
-/// Delete a workspace (`can_own`, typed confirmation).
+/// Delete a workspace (own `can_own` or `can_administer`, C-1160; typed confirmation).
 #[utoipa::path(delete, path = "/workspaces/{ws}", operation_id = "deleteWorkspace", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     request_body = ConfirmRequest,
@@ -617,9 +689,10 @@ async fn delete_workspace(
     Path(ws): Path<Uuid>,
     Json(req): Json<ConfirmRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    require_own(&a)?;
-    let w = load_ws(&s, ws, &a).await?;
+    let a = c.administer(&s, ws).await?;
+    let w = workspaces::get(&s.pool, ws)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
     if req.confirm != w.slug {
         return Err(service::confirmation_mismatch());
     }
@@ -634,7 +707,8 @@ async fn delete_workspace(
 
 // ---- access ----
 
-/// List workspace access bindings, including implicit org owners/admins (`can_own`; I-27).
+/// List the workspace's access bindings (`can_administer`, C-1160; the rows are the bindings in
+/// one's own right — since FIX-234 there are no implicit rows).
 #[utoipa::path(get, path = "/workspaces/{ws}/access", operation_id = "listAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), crate::domains::groups::dto::AccessQuery),
     responses((status = 200, body = crate::domains::groups::dto::AccessList),
@@ -647,7 +721,7 @@ async fn list_access(
     Query(q): Query<crate::domains::groups::dto::AccessQuery>,
 ) -> Result<Json<crate::domains::groups::dto::AccessList>, ApiError> {
     use crate::domains::groups::dto as g;
-    require_own(&c.workspace(&s, ws).await?)?;
+    c.administer(&s, ws).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = workspaces::list_access(&s.pool, ws, after(&p), p.fetch()).await?;
     let page = page_of(rows, &p, |r| (r.created_at, r.user_id), AccessBinding::from);
@@ -690,12 +764,16 @@ async fn list_access(
     }))
 }
 
-/// Bind an org member to the workspace (`can_own`).
+/// Bind an org member to the workspace (`can_administer`, C-1160). In a personal workspace only
+/// its person adds people or raises a role, and the person themselves can never be lowered
+/// there (C-1161). An administrator giving *themselves* access is a self-grant: session only,
+/// audited critical, the other owners are told.
 #[utoipa::path(put, path = "/workspaces/{ws}/access/{user}", operation_id = "putAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), ("user" = Uuid, Path, description = "User id")),
     request_body = PutAccessRequest,
     responses((status = 200, body = AccessBinding), (status = 403, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn put_access(
     c: Caller,
@@ -703,8 +781,7 @@ async fn put_access(
     Path((ws, user)): Path<(Uuid, Uuid)>,
     Json(req): Json<PutAccessRequest>,
 ) -> Result<Json<AccessBinding>, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    require_own(&a)?;
+    let a = c.administer(&s, ws).await?;
     let active = authz::org_membership(&s.pool, user, a.org_id)
         .await?
         .is_some_and(|m| m.is_active());
@@ -714,15 +791,39 @@ async fn put_access(
             "The user is not an active member of this organization.",
         ));
     }
+    // (FIX-234, C-1161) In a personal workspace the person is always the owner (D-480): any
+    // change that is not re-putting `owner` on them is a lower — refused, the person included.
+    if let Some(person) = a.personal_of {
+        if user == person && req.role != WorkspaceRole::Owner {
+            return Err(service::personal_workspace_person());
+        }
+        let own_can_own = a.own.as_ref().is_some_and(|o| o.can_own());
+        let raising = match (
+            rank_of(
+                workspaces::get_access(&s.pool, ws, user)
+                    .await?
+                    .as_ref()
+                    .map(|r| r.role.as_str()),
+            ),
+            rank_of(Some(req.role.as_str())),
+        ) {
+            (None, _) => true,
+            (Some(p), Some(r)) => r > p,
+            (Some(_), None) => false,
+        };
+        if raising && (c.user_id != person || !own_can_own) {
+            return Err(service::personal_workspace_owner_only(
+                &service::person_first_name(&s, person).await?,
+            ));
+        }
+    }
     let mut tx = audit::begin(&s).await?;
     if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {
         return Err(crate::domains::admin::service::managed_by_idp());
     }
     // (P5-REFINE-20 batch 6) A role that changes nothing writes nothing (no "changed Carol to Member" for a Member who is
     // already a Member); a person with no direct binding yet is being added, which the audit says with a null `previous_role`.
-    let prev = workspaces::get_access(&mut *tx, ws, user)
-        .await?
-        .filter(|r| !r.implicit);
+    let prev = workspaces::get_access(&mut *tx, ws, user).await?;
     if prev
         .as_ref()
         .is_some_and(|r| r.role == req.role.as_str() && r.status == "active")
@@ -733,21 +834,70 @@ async fn put_access(
             .ok_or_else(|| ApiError::internal("Internal error."))?;
         return Ok(Json(row.into()));
     }
+    // (FIX-234, C-1161) An administrator without own `can_own` who raises *themselves* is a
+    // self-grant: a session (never an API key), the critical `workspace_access.self_grant` row
+    // and a notice to the other owners.
+    let self_grant = user == c.user_id
+        && !a.own.as_ref().is_some_and(|o| o.can_own())
+        && rank_of(Some(req.role.as_str())) > rank_of(prev.as_ref().map(|r| r.role.as_str()));
+    if self_grant && !c.is_session() {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "session_required",
+            "Adding yourself to a workspace needs a signed-in session, not an API key.",
+        ));
+    }
     workspaces::bind_user(&mut *tx, ws, user, req.role.as_str()).await?;
     let ev = event(&c, "workspace_access.set")
         .org(a.org_id)
         .workspace(ws)
         .target("user", user)
         .metadata(json!({"role": req.role.as_str(), "previous_role": prev.as_ref().map(|r| r.role.clone())}));
+    if self_grant {
+        let ev2 = event(&c, "workspace_access.self_grant")
+            .org(a.org_id)
+            .workspace(ws)
+            .target("user", user)
+            .metadata(json!({"role": req.role.as_str(), "via": "user"}));
+        audit::insert_tx(&mut tx, &ev2).await?;
+    }
     audit::commit_critical(tx, &ev).await?;
+    if self_grant {
+        let org_role = authz::effective_org_role(&s.pool, c.user_id, a.org_id)
+            .await?
+            .map(|r| r.as_str())
+            .unwrap_or("admin")
+            .to_owned();
+        // The caller is an org admin, so `orgs::get` (member view) finds the org.
+        let org_row = aurora_db::repo::orgs::get(&s.pool, a.org_id, c.user_id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Organization not found."))?;
+        let ws_row = workspaces::get(&s.pool, ws)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+        crate::domains::tenancy::self_grant::notify(
+            &s,
+            a.org_id,
+            ws,
+            &org_row.slug,
+            &ws_row.slug,
+            &ws_row.name,
+            c.user_id,
+            &c.email,
+            &org_role,
+            req.role.as_str(),
+        )
+        .await?;
+    }
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?
         .ok_or_else(|| ApiError::internal("Internal error."))?;
     Ok(Json(row.into()))
 }
 
-/// Suspend or restore a person's direct binding in this workspace only (`can_own`; P5-APIGAP-4,
-/// C-1051, SEC-138). A suspended binding grants nothing here, direct or through a group.
+/// Suspend or restore a person's direct binding in this workspace only (`can_administer`,
+/// C-1160; P5-APIGAP-4, C-1051, SEC-138). A suspended binding grants nothing here, direct or
+/// through a group. A personal workspace's person is never suspended there (C-1161).
 #[utoipa::path(patch, path = "/workspaces/{ws}/access/{user}", operation_id = "patchAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), ("user" = Uuid, Path, description = "User id")),
     request_body = PatchAccessRequest,
@@ -761,8 +911,7 @@ async fn patch_access(
     Path((ws, user)): Path<(Uuid, Uuid)>,
     Json(req): Json<PatchAccessRequest>,
 ) -> Result<Json<AccessBinding>, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    require_own(&a)?;
+    let a = c.administer(&s, ws).await?;
     let action = match req.status {
         AccessStatus::Suspended => "workspace_access.suspend",
         AccessStatus::Active => "workspace_access.restore",
@@ -772,18 +921,30 @@ async fn patch_access(
         .workspace(ws)
         .target("user", user)
         .metadata(json!({}));
-    service::set_access_status(&s, &a, c.user_id, user, req.status, ev).await?;
+    service::set_access_status(
+        &s,
+        a.org_id,
+        ws,
+        a.personal_of,
+        c.user_id,
+        user,
+        req.status,
+        ev,
+    )
+    .await?;
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?
         .ok_or_else(|| ApiError::not_found("Binding not found."))?;
     Ok(Json(row.into()))
 }
 
-/// Remove a user's workspace binding (`can_own`).
+/// Remove a user's workspace binding (`can_administer`, C-1160; a personal workspace's person
+/// is never removed there, C-1161).
 #[utoipa::path(delete, path = "/workspaces/{ws}/access/{user}", operation_id = "deleteAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), ("user" = Uuid, Path, description = "User id"), ReassignQuery),
     responses((status = 204, description = "Removed"), (status = 403, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope)),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope),
+        (status = 422, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn delete_access(
     c: Caller,
@@ -791,21 +952,17 @@ async fn delete_access(
     Path((ws, user)): Path<(Uuid, Uuid)>,
     Query(q): Query<ReassignQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    require_own(&a)?;
+    let a = c.administer(&s, ws).await?;
+    if a.personal_of == Some(user) {
+        return Err(service::personal_workspace_person());
+    }
     let reassign = q
         .reassign_to
         .as_deref()
         .map(|v| To::parse("/reassign_to", v))
         .transpose()?;
-    if let Some(m) = authz::org_membership(&s.pool, user, a.org_id).await?
-        && m.role.is_admin()
-    {
-        return Err(ApiError::unprocessable(
-            "implicit_access",
-            "Organization owners and admins have implicit access.",
-        ));
-    }
+    // (FIX-234, C-1160) An org role grants no workspace right, so an admin's real binding is
+    // removed like anyone's; only a personal workspace's person is protected (above).
     // RFE-021: reassignment and the unbind commit or roll back together.
     let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
     if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {

@@ -744,6 +744,7 @@ impl Ctx<'_> {
                 connection_id,
                 req.clone(),
                 grants_service::Origin::ConnectJourney,
+                false,
             )
             .await
             {

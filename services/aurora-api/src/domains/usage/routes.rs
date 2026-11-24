@@ -54,7 +54,8 @@ pub struct OrgUsageQuery {
 }
 
 /// Usage of a workspace: turns, turn time, awake time and tokens per day, agent and model (aggregates
-/// only: invisible direct conversations are counted). No cost.
+/// only: invisible direct conversations are counted). No cost. Aggregates are metadata, so
+/// `can_administer` is enough (FIX-234, C-1160) — never a conversation's content.
 #[utoipa::path(get, path = "/workspaces/{ws}/usage", operation_id = "getWorkspaceUsage", tag = "usage",
     params(("ws" = Uuid, Path, description = "Workspace id"), WorkspaceUsageQuery),
     responses((status = 200, body = WorkspaceUsage), (status = 400, body = ErrorEnvelope),
@@ -66,7 +67,7 @@ async fn workspace_usage(
     Path(ws): Path<Uuid>,
     Query(q): Query<WorkspaceUsageQuery>,
 ) -> Result<Json<WorkspaceUsage>, ApiError> {
-    c.workspace(&s, ws).await?;
+    c.administer(&s, ws).await?;
     let (from, to) =
         service::parse_range(q.from.as_deref(), q.to.as_deref(), Utc::now().date_naive())?;
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;

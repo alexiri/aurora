@@ -240,9 +240,9 @@ impl From<WorkspaceGroupBinding> for GroupAccessBinding {
 /// Why a person has access: informational only (`04 §Groups`).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AccessSourceView {
-    /// `direct` | `idp_claim` | `group` | `org_role` | `org_role_via_group`.
+    /// `direct` | `idp_claim` | `group` (only own-right sources appear: D-477).
     pub kind: String,
-    /// The group, for `group` and `org_role_via_group`.
+    /// The group, for `group`.
     pub group: Option<GroupName>,
     /// The `idp:<provider>:<value>` source, for `idp_claim`.
     pub value: Option<String>,

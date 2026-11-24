@@ -465,8 +465,7 @@ pub async fn put_binding(
     group: Uuid,
     role: WorkspaceRoleStr,
 ) -> Result<(), ApiError> {
-    let a = c.workspace(s, ws).await?;
-    crate::http::auth::require_own(&a)?;
+    let a = c.administer(s, ws).await?;
     let g = repo::get(&s.pool, group)
         .await?
         .ok_or_else(group_not_found)?;
@@ -484,6 +483,50 @@ pub async fn put_binding(
             "This group is bound to the maximum number of workspaces.",
         ));
     }
+    // (FIX-234, C-1161) In a personal workspace an add or a raise of a group binding is only
+    // its person's, while they hold own `can_own`; a lower or an unbind stays with
+    // `can_administer`.
+    let rank = |r: Option<&str>| match r {
+        Some("member") => Some(1u8),
+        Some("approver") => Some(2),
+        Some("owner") => Some(3),
+        _ => None,
+    };
+    let raising = match rank(prev.as_deref()) {
+        None => true,
+        Some(p) => rank(Some(role.0)).unwrap_or(0) > p,
+    };
+    if raising && let Some(person) = a.personal_of {
+        let own_can_own = a.own.as_ref().is_some_and(|o| o.can_own());
+        if c.user_id != person || !own_can_own {
+            return Err(
+                crate::domains::tenancy::service::personal_workspace_owner_only(
+                    &crate::domains::tenancy::service::person_first_name(s, person).await?,
+                ),
+            );
+        }
+    }
+    // (FIX-234, C-1161) An administrator without own `can_own` who binds a group they belong to
+    // (or raises such a binding) gives themselves access: a self-grant.
+    let self_grant = raising
+        && !a.own.as_ref().is_some_and(|o| o.can_own())
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM group_members \
+             WHERE group_id = $1 AND org_id = $2 AND user_id = $3)",
+        )
+        .bind(group)
+        .bind(a.org_id)
+        .bind(c.user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(DbError::from)?;
+    if self_grant && !c.is_session() {
+        return Err(ApiError::new(
+            http::StatusCode::FORBIDDEN,
+            "session_required",
+            "Adding yourself to a workspace needs a signed-in session, not an API key.",
+        ));
+    }
     repo::bind(&mut tx, group, ws, a.org_id, role.0, Some(c.user_id)).await?;
     repo::notify_workspaces_changed(&mut tx, a.org_id, &[ws]).await?;
     let ev = event(c, "group_access.set")
@@ -491,7 +534,18 @@ pub async fn put_binding(
         .workspace(ws)
         .target("group", group)
         .metadata(json!({"role": role.0, "previous": prev, "group": g.name}));
+    if self_grant {
+        let ev2 = event(c, "workspace_access.self_grant")
+            .org(a.org_id)
+            .workspace(ws)
+            .target("group", group)
+            .metadata(json!({"role": role.0, "via": "group"}));
+        audit::insert_tx(&mut tx, &ev2).await?;
+    }
     audit::commit_critical(tx, &ev).await?;
+    if self_grant {
+        crate::domains::tenancy::self_grant::notify_for_user(s, a.org_id, ws, c, role.0).await?;
+    }
     Ok(())
 }
 

@@ -103,9 +103,19 @@ impl Caller {
                 }
             }
         }
-        authz::workspace_access(&state.pool, self.user_id, ws)
-            .await?
-            .ok_or_else(not_found_ws)
+        match authz::workspace_access(&state.pool, self.user_id, ws).await? {
+            Some(a) => Ok(a),
+            // (FIX-234, C-1160) An administrator without own access names the fact instead of
+            // the 404, so the dashboard can point at the manage page; they still get no content.
+            None if authz::can_administer(&state.pool, self.user_id, ws).await? => {
+                Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "workspace_access_required",
+                    "You manage this workspace but you are not one of its people.",
+                ))
+            }
+            None => Err(not_found_ws()),
+        }
     }
 
     /// Resolve the caller's active membership in `org`. Suspended/non-member => 404.
@@ -159,6 +169,61 @@ impl Caller {
             ))
         }
     }
+
+    /// (FIX-234, D-477(b), C-1160) Resolve the narrow administer right on a workspace: the
+    /// caller holds own-right `owner` there or is an active effective org owner/admin of its
+    /// organization. Key confinement as in [`Caller::workspace`]. A person with neither right
+    /// gets today's 404. It carries what the administer routes need to answer (the org, the
+    /// workspace's personal person, and the caller's own access, if any).
+    pub async fn administer(&self, state: &AppState, ws: Uuid) -> Result<AdminAuth, ApiError> {
+        if let Principal::ApiKey {
+            org_id,
+            workspace_id,
+            ..
+        } = &self.principal
+        {
+            match workspace_id {
+                Some(k) if *k != ws => {
+                    return Err(ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "workspace_mismatch",
+                        "This API key is confined to a different workspace.",
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    if authz::workspace_org(&state.pool, ws).await? != Some(*org_id) {
+                        return Err(not_found_ws());
+                    }
+                }
+            }
+        }
+        let org_id = authz::workspace_org(&state.pool, ws)
+            .await?
+            .ok_or_else(not_found_ws)?;
+        if !authz::can_administer(&state.pool, self.user_id, ws).await? {
+            return Err(not_found_ws());
+        }
+        Ok(AdminAuth {
+            org_id,
+            workspace_id: ws,
+            personal_of: aurora_db::repo::placement::personal_owner_of(&state.pool, ws).await?,
+            own: authz::workspace_access(&state.pool, self.user_id, ws).await?,
+        })
+    }
+}
+
+/// The narrow administer right on one workspace (FIX-234, D-477(b), C-1160): metadata, people,
+/// freeze, delete, offboarding, organization accounts. Never content, agent work, approvals, or
+/// the workspace's own credentials, grants or policy.
+#[derive(Debug, Clone)]
+pub struct AdminAuth {
+    pub org_id: Uuid,
+    pub workspace_id: Uuid,
+    /// The workspace's personal person (D-480), when it is a personal workspace.
+    pub personal_of: Option<Uuid>,
+    /// The caller's own workspace access, when they hold any.
+    pub own: Option<WorkspaceAuth>,
 }
 
 fn not_found_ws() -> ApiError {

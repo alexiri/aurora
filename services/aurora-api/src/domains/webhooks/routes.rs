@@ -286,8 +286,8 @@ async fn list_deliveries(
 }
 
 /// Reassign the webhook's creator (fire-time authority) to an active member who can use the
-/// workspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited
-/// `automation.reassign`.
+/// workspace (`can_administer`, FIX-234 C-1160; the new creator still needs own `can_use`);
+/// `re_enable` re-enables an item disabled for `authorization`. Audited `automation.reassign`.
 #[utoipa::path(put, path = "/webhooks/{id}/creator", operation_id = "reassignWebhookCreator",
     tag = "webhooks", params(("id" = Uuid, Path, description = "Webhook id")),
     request_body = ReassignCreatorRequest,
@@ -301,7 +301,7 @@ async fn reassign_creator(
     Json(req): Json<ReassignCreatorRequest>,
 ) -> Result<Json<Webhook>, ApiError> {
     let (row, a) = authorized(&c, &s, id).await?;
-    require_own(&c.workspace(&s, a.workspace_id).await?)?;
+    c.administer(&s, a.workspace_id).await?;
     let actor = AuditActor::from_caller(&c);
     let acting = Acting {
         actor: &actor,

@@ -304,6 +304,13 @@ pub async fn list_connection_grants(
     caller: &Caller,
     connection_id: Uuid,
 ) -> Result<Vec<ConnectionGrantView>, ApiError> {
+    // (FIX-234, C-1160) An organization's account is administered by its org owners and admins:
+    // they see all of its grants. Everyone else sees only the agents of workspaces they can own
+    // in their own right (FIX-020).
+    let all = match connections::get(&state.pool, connection_id).await? {
+        Some(c) if c.workspace_id.is_none() => caller.org(state, c.org_id).await?.role.is_admin(),
+        _ => false,
+    };
     let rows = grants::list_views_for_connection(&state.pool, connection_id).await?;
     let ids = rows.iter().map(|r| r.workspace_id).collect();
     let own = owned_workspaces(state, caller, ids).await?;
@@ -313,7 +320,7 @@ pub async fn list_connection_grants(
         .unwrap_or_default();
     Ok(rows
         .into_iter()
-        .filter(|r| own.contains(&r.workspace_id))
+        .filter(|r| all || own.contains(&r.workspace_id))
         .map(|r| ConnectionGrantView {
             grant: ConnectionGrant::from(grants::ConnectionGrantRow {
                 id: r.id,
@@ -427,6 +434,14 @@ pub async fn bulk_grant_connection(
     req: BulkConnectionGrantRequest,
 ) -> Result<Vec<BulkConnectionGrantItem>, ApiError> {
     bulk_check(&req.agent_ids)?;
+    // (FIX-234, C-1160) An organization's account is administered by its org owners and admins:
+    // they grant it to agents of workspaces they have no own binding in. A workspace's
+    // connection needs own `can_own` on each agent's workspace, as before.
+    let conn = connections::get(&state.pool, connection_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Connection not found."))?;
+    let administer =
+        conn.workspace_id.is_none() && caller.org(state, conn.org_id).await?.role.is_admin();
     let one = PutConnectionGrant {
         mode: req.mode,
         allow_tools: req.allow_tools,
@@ -445,6 +460,7 @@ pub async fn bulk_grant_connection(
             connection_id,
             one.clone(),
             Origin::Credential,
+            administer,
         )
         .await
         .map_err(|e| at_agent(e, agent_id))?;
@@ -579,6 +595,7 @@ pub async fn grant_connection_access(
         connection_id,
         req,
         Origin::Agent,
+        false,
     )
     .await?;
     if let Some(ev) = &w.event {
@@ -731,10 +748,21 @@ pub async fn grant_connection_in_tx(
     connection_id: Uuid,
     req: PutConnectionGrant,
     origin: Origin,
+    administer: bool,
 ) -> Result<Written<ConnectionGrant>, ApiError> {
     let (agent, auth) = visible_agent(caller, state, agent_id).await?;
-    grant_connection_in_tx_for_agent(tx, state, &agent, &auth, caller, connection_id, req, origin)
-        .await
+    grant_connection_in_tx_for_agent(
+        tx,
+        state,
+        &agent,
+        &auth,
+        caller,
+        connection_id,
+        req,
+        origin,
+        administer,
+    )
+    .await
 }
 
 /// [`grant_connection_in_tx`] for an agent the caller has already loaded and authorized for
@@ -751,8 +779,13 @@ pub async fn grant_connection_in_tx_for_agent(
     connection_id: Uuid,
     req: PutConnectionGrant,
     origin: Origin,
+    administer: bool,
 ) -> Result<Written<ConnectionGrant>, ApiError> {
-    crate::http::auth::require_own(auth)?;
+    // (FIX-234, C-1160) `administer` is passed only for an org-scope connection granted by its
+    // org owners/admins (the credential-side bulk route); every other path needs own `can_own`.
+    if !administer {
+        crate::http::auth::require_own(auth)?;
+    }
     write_connection_grant(
         tx,
         state,

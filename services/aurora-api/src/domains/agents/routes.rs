@@ -737,7 +737,8 @@ async fn agent_token_page(
     Ok(Json(page.map(AgentTokenEntry::from)))
 }
 
-/// Live BYO agent tokens of a workspace with expiry and use (workspace owner).
+/// Live BYO agent tokens of a workspace with expiry and use (`can_administer`, FIX-234 C-1160:
+/// metadata, not content).
 #[utoipa::path(
     get,
     path = "/workspaces/{ws}/agent-tokens",
@@ -758,8 +759,7 @@ async fn list_workspace_agent_tokens(
     Path(ws): Path<Uuid>,
     Query(q): Query<AgentTokenQuery>,
 ) -> Result<Json<Page<AgentTokenEntry>>, ApiError> {
-    let a = caller.workspace(&state, ws).await?;
-    crate::http::auth::require_own(&a)?;
+    caller.administer(&state, ws).await?;
     agent_token_page(&state, Some(ws), None, q).await
 }
 

@@ -1,6 +1,7 @@
 //! aurora-api library: HTTP foundation (BE-010) plus domain modules.
 #![forbid(unsafe_code)]
 
+pub mod access_report;
 pub mod app;
 pub mod audit;
 pub mod domains;

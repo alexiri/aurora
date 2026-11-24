@@ -61,6 +61,14 @@ enum Command {
         #[command(subcommand)]
         command: SettingsCommand,
     },
+    /// (FIX-234, C-1163) The read-only access report: what stops working when the implicit
+    /// org-role access goes away. Run it before upgrading; whatever it lists stops working
+    /// after the upgrade, and the people listed can be added to their workspaces first.
+    AccessReport {
+        /// Print text instead of JSON.
+        #[arg(long)]
+        text: bool,
+    },
     /// Web Push keys (C-833): rotate the generated VAPID key, show the key and device counts.
     /// `rotate-vapid` exits 3 when the key is operator-managed.
     Push {
@@ -210,6 +218,9 @@ async fn main() -> ExitCode {
     if let Command::Settings { command } = &cli.command {
         return settings_command(cfg, source, command).await;
     }
+    if let Command::AccessReport { text } = &cli.command {
+        return access_report_command(cfg, *text).await;
+    }
     if let Command::Push { command } = &cli.command {
         return push_command(cfg, source, command).await;
     }
@@ -242,7 +253,8 @@ async fn main() -> ExitCode {
         Command::Openapi { .. }
         | Command::Keys { .. }
         | Command::Settings { .. }
-        | Command::Push { .. } => Ok(()),
+        | Command::Push { .. }
+        | Command::AccessReport { .. } => Ok(()),
     };
     service::telemetry_shutdown();
     match result {
@@ -383,6 +395,39 @@ async fn revoke_admin(cfg: ApiConfig, email: &str) -> Result<(), Box<dyn std::er
     }
     println!("instance-admin flag cleared for {email}");
     Ok(())
+}
+
+/// `aurora-api access-report` (C-1163): read-only JSON (or `--text`) report over the API's
+/// configuration from any pod. Prints ids and names only, never content.
+async fn access_report_command(cfg: ApiConfig, as_text: bool) -> ExitCode {
+    let pool = match aurora_db::connect(cfg.database_url.expose(), 4).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: database unreachable: {e}");
+            return ExitCode::from(4);
+        }
+    };
+    let state = match aurora_api::app::AppState::try_new(pool, cfg) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(2);
+        }
+    };
+    match aurora_api::access_report::run(&state).await {
+        Ok(r) => {
+            if as_text {
+                print!("{}", aurora_api::access_report::text(&r));
+            } else {
+                print!("{}", serde_json::to_string_pretty(&r).unwrap_or_default());
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {}", e.message());
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// `aurora-api settings …` (C-784): through the settings service with source `cli`. It never

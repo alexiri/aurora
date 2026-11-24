@@ -12,7 +12,7 @@ use aurora_db::repo::members::{self, MemberRow};
 use aurora_db::repo::orgs::{self, OrgRow};
 use aurora_db::repo::workspaces::{self, WorkspaceRow};
 use aurora_db::repo::{notify_auth_revoked, policy, scim};
-use aurora_db::{PgPool, conflict_code};
+use aurora_db::{DbError, PgPool, conflict_code};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -580,6 +580,39 @@ fn last_owner() -> ApiError {
     )
 }
 
+/// (FIX-234, C-1161) The person's first name for the `personal_workspace_owner_only` sentence
+/// ("<First> can add people to their personal workspace").
+pub async fn person_first_name(s: &AppState, user: Uuid) -> Result<String, ApiError> {
+    let (display_name,): (String,) = sqlx::query_as("SELECT display_name FROM users WHERE id = $1")
+        .bind(user)
+        .fetch_one(&s.pool)
+        .await
+        .map_err(DbError::from)?;
+    Ok(display_name
+        .split_whitespace()
+        .next()
+        .unwrap_or("the workspace's person")
+        .to_owned())
+}
+
+/// (FIX-234, D-480, C-1161) Nobody — the person included — lowers, suspends or removes a
+/// personal workspace's person there; they leave by deleting the workspace.
+pub fn personal_workspace_person() -> ApiError {
+    ApiError::conflict(
+        "personal_workspace_person",
+        "A personal workspace's person cannot be lowered, suspended or removed there; they leave by deleting the workspace.",
+    )
+}
+
+/// (FIX-234, C-1161) In a personal workspace only its person adds people or raises roles.
+pub fn personal_workspace_owner_only(first: &str) -> ApiError {
+    ApiError::new(
+        http::StatusCode::FORBIDDEN,
+        "personal_workspace_owner_only",
+        format!("Only {first} can add people to their personal workspace."),
+    )
+}
+
 /// The turn end of a workspace suspension (P5-APIGAP-4, C-1051).
 const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
     crate::domains::scim::deprovision::TurnEnd {
@@ -588,21 +621,23 @@ const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
         message: "The speaker was suspended in this workspace.",
     };
 
-/// (P5-APIGAP-4, D-399, C-1051, SEC-138) Suspend or restore `target`'s direct binding in `ws`.
-/// The caller holds `can_own` (checked by the route). One transaction: the refusals, the status,
-/// on suspension the person's speaker turns in this workspace, the invalidations (gateway
-/// identities of the person, open streams) and the critical audit row. The same status again
-/// is a no-op without audit.
+/// (P5-APIGAP-4, D-399, C-1051, SEC-138; FIX-234 C-1161) Suspend or restore `target`'s direct
+/// binding in `ws`. The caller holds `can_administer` (checked by the route). One transaction:
+/// the refusals, the status, on suspension the person's speaker turns in this workspace, the
+/// invalidations (gateway identities of the person, open streams) and the critical audit row.
+/// The same status again is a no-op without audit. A personal workspace's person can never be
+/// suspended there — the person included (D-480).
 pub async fn set_access_status(
     state: &AppState,
-    auth: &aurora_db::authz::WorkspaceAuth,
+    org: Uuid,
+    ws: Uuid,
+    personal_of: Option<Uuid>,
     caller: Uuid,
     target: Uuid,
     status: super::dto::AccessStatus,
     mut ev: crate::audit::AuditEvent,
 ) -> Result<(), ApiError> {
     use super::dto::AccessStatus;
-    let ws = auth.workspace_id;
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
     let Some((_role, cur, idp_role)) = workspaces::lock_binding(&mut tx, ws, target).await? else {
         return Err(ApiError::not_found("Binding not found."));
@@ -617,14 +652,10 @@ pub async fn set_access_status(
                 "You cannot suspend yourself.",
             ));
         }
-        if aurora_db::authz::effective_org_role(&mut *tx, target, auth.org_id)
-            .await?
-            .is_some_and(aurora_db::authz::OrgRole::is_admin)
-        {
-            return Err(ApiError::conflict(
-                "implicit_access",
-                "Organization owners and admins have access to every workspace; change their organization role instead.",
-            ));
+        // (FIX-234, D-480, C-1161) A person's own workspace never suspends them. An org role is
+        // no longer a refusal: an admin's real binding is suspended like anyone's.
+        if personal_of == Some(target) {
+            return Err(personal_workspace_person());
         }
         if idp_role.is_some() {
             return Err(crate::domains::admin::service::managed_by_idp());
@@ -633,17 +664,14 @@ pub async fn set_access_status(
             .await?
             .is_some_and(|a| a.can_own());
         if target_owns && workspaces::other_active_owners(&mut tx, ws, target).await? == 0 {
-            return Err(ApiError::conflict(
-                "last_owner",
-                "A workspace needs at least one active owner.",
-            ));
+            return Err(last_owner());
         }
     }
     workspaces::set_binding_status(&mut tx, ws, target, status.as_str()).await?;
     let flush = if status == AccessStatus::Suspended {
         crate::domains::scim::deprovision::abort_speaker_turns(
             &mut tx,
-            auth.org_id,
+            org,
             Some(ws),
             target,
             &SUSPENDED_IN_WORKSPACE,
@@ -655,7 +683,7 @@ pub async fn set_access_status(
     // Both directions change effective access: gateways drop the person's cached identities
     // (their speaker binding, RFE-005), the API's auth cache drops their rows, and open streams
     // of the person re-authorize (`aurora_auth_revoked { kind: "access" }`).
-    aurora_db::repo::groups::notify_member_changed(&mut tx, auth.org_id, target).await?;
+    aurora_db::repo::groups::notify_member_changed(&mut tx, org, target).await?;
     notify_auth_revoked(&mut *tx, "user", target).await?;
     ev.metadata["change"] = serde_json::json!({"status": format!("{cur} → {}", status.as_str())});
     crate::audit::commit_critical(tx, &ev).await?;

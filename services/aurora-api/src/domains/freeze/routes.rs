@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::audit::{AuditActor, AuditEvent, Outcome};
 use crate::domains::tenancy::dto::ConfirmRequest;
 use crate::domains::tenancy::service as tenancy;
-use crate::http::auth::{Caller, InstanceAdmin, Principal, require_own};
+use crate::http::auth::{Caller, InstanceAdmin, Principal};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
@@ -34,13 +34,15 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(admin_delete_workspace))
 }
 
-/// The agent and the caller's authority on it: `can_own` on its workspace.
+/// The agent and the caller's authority on it: `can_administer` (FIX-234, C-1160) — an
+/// organization role keeps `frozen_authority: org_admin`, an own-right owner (a plain org
+/// member) acts with `workspace_owner`.
 async fn agent_target(c: &Caller, s: &AppState, id: Uuid) -> Result<(Target, Freezer), ApiError> {
     let a = agents::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    let auth = c.workspace(s, a.workspace_id).await?;
-    require_own(&auth)?;
+    let admin = c.administer(s, a.workspace_id).await?;
+    let authority = authority_of(s, c, admin.org_id).await?;
     Ok((
         Target {
             scope: Scope::Agent,
@@ -48,8 +50,16 @@ async fn agent_target(c: &Caller, s: &AppState, id: Uuid) -> Result<(Target, Fre
             org_id: a.org_id,
             workspace_id: Some(a.workspace_id),
         },
-        freezer(c, workspace_authority(auth.org_role.is_admin())),
+        freezer(c, authority),
     ))
+}
+
+/// `org_admin` for an effective org owner/admin, `workspace_owner` for an own-right owner.
+async fn authority_of(s: &AppState, c: &Caller, org: Uuid) -> Result<&'static str, ApiError> {
+    let org_admin = aurora_db::authz::effective_org_role(&s.pool, c.user_id, org)
+        .await?
+        .is_some_and(|r| r.is_admin());
+    Ok(workspace_authority(org_admin))
 }
 
 async fn workspace_target(
@@ -57,11 +67,11 @@ async fn workspace_target(
     s: &AppState,
     id: Uuid,
 ) -> Result<(Target, Freezer), ApiError> {
-    let auth = c.workspace(s, id).await?;
-    require_own(&auth)?;
+    let admin = c.administer(s, id).await?;
     let w = workspaces::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+    let authority = authority_of(s, c, admin.org_id).await?;
     Ok((
         Target {
             scope: Scope::Workspace,
@@ -69,7 +79,7 @@ async fn workspace_target(
             org_id: w.org_id,
             workspace_id: Some(id),
         },
-        freezer(c, workspace_authority(auth.org_role.is_admin())),
+        freezer(c, authority),
     ))
 }
 

@@ -234,8 +234,16 @@ pub struct Workspace {
     /// (phase 2, RFE-025) The effective BYO posture and the layer that decided it; `null` in
     /// list and create responses.
     pub effective_byo_posture: Option<crate::domains::agents::byo::ByoPostureView>,
-    /// Org owner/admin => `owner`.
-    pub my_role: WorkspaceRole,
+    /// (FIX-234, C-1160) The caller's own workspace role; `null` when they hold none — an
+    /// organization role grants no workspace right (D-477). An administrator without own
+    /// access has `administers: true` instead.
+    pub my_role: Option<WorkspaceRole>,
+    /// (FIX-234, C-1160) The caller manages this workspace through their organization role
+    /// (own-right `owner` there or an active org owner/admin) but may hold no own access.
+    pub administers: bool,
+    /// (FIX-234, C-1162) Who the workspace's people are; present on `GET /v1/workspaces/{ws}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audience: Option<WorkspaceAudience>,
     /// (phase 2, RFE-006) The freeze that stops this workspace's agents (its own or its
     /// organization's; the broadest wins), `level` = where it is set; `null` when not frozen.
     pub frozen: Option<crate::domains::freeze::dto::Frozen>,
@@ -252,7 +260,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(w: WorkspaceRow, my_role: WorkspaceRole) -> Self {
+    pub fn new(w: WorkspaceRow, my_role: Option<WorkspaceRole>, administers: bool) -> Self {
         Self {
             id: w.id,
             org_id: w.org_id,
@@ -263,6 +271,8 @@ impl Workspace {
             byo_posture: w.byo_posture,
             effective_byo_posture: None,
             my_role,
+            administers,
+            audience: None,
             frozen: None,
             contacts: None,
             personal_of: None,
@@ -270,6 +280,24 @@ impl Workspace {
             updated_at: w.updated_at,
         }
     }
+}
+
+/// (FIX-234, C-1162) `Workspace.audience`: the workspace's people in their own right and its
+/// own-right owners. Names only; never content.
+#[derive(Serialize, ToSchema)]
+pub struct WorkspaceAudience {
+    /// Distinct active people with access in their own right.
+    pub people: i64,
+    /// The own-right owners: at most 5, the caller first if an owner, then by display name.
+    pub owners: Vec<WorkspaceAudienceOwner>,
+    /// How many own-right owners the workspace has.
+    pub owners_total: i64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct WorkspaceAudienceOwner {
+    pub id: Uuid,
+    pub display_name: String,
 }
 
 /// (P4-GRP-2) The SCIM projection of the Members page: `directory` is present only with a
@@ -303,16 +331,16 @@ pub struct AccessBinding {
     pub email: String,
     pub display_name: String,
     pub role: WorkspaceRole,
-    /// True for org owners/admins (no row).
+    /// Always `false` since FIX-234 (D-477): an organization role grants no workspace right, so
+    /// no implicit rows are returned. Kept one release for older dashboards (FIX-235 stops
+    /// reading it).
     pub implicit: bool,
     /// (phase 4, P4-IDP-1, C-514) The IdP role value behind this binding; `null` when manual.
     pub idp_value: Option<String>,
-    /// (phase 5, P5-APIGAP-4, C-1050) When the direct binding was created; `null` for an implicit
-    /// row without one (the org role's start is not recorded).
+    /// (phase 5, P5-APIGAP-4, C-1050) When the direct binding was created.
     pub joined_at: Option<DateTime<Utc>>,
     /// (phase 5, P5-APIGAP-4, C-1051) `suspended`: the person has no access to this workspace
-    /// (direct or through a group) until restored. An `implicit` row's access comes from the org
-    /// role and is not affected.
+    /// (direct or through a group) until restored.
     pub status: AccessStatus,
     /// (P5-REFINE-6, C-1086) The person has signed in at least once ("Not signed in yet").
     pub signed_in: bool,

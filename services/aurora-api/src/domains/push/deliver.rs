@@ -76,6 +76,8 @@ pub enum Kind {
     AppSetupDeclined,
     /// (P5-SCHED-ONCE, C-1095) A one-time schedule's answer is ready in its creator's chat.
     ScheduleAnswer,
+    /// (FIX-234, C-1161) An administrator gave themselves workspace access; the owners are told.
+    SelfGrant,
 }
 
 impl Kind {
@@ -90,6 +92,7 @@ impl Kind {
             Self::Test => "test",
             Self::AdminAttention => "admin_attention",
             Self::ScheduleAnswer => "schedule_answer",
+            Self::SelfGrant => "self_grant",
         }
     }
 }
@@ -212,6 +215,34 @@ pub fn schedule_answer_message(
         "normal",
         topic(sub.id, format!("schedule_answer\n{run}").as_bytes()),
     )
+}
+
+/// (FIX-234, C-1161) The push of a self-grant notice to a workspace's owners: the workspace's
+/// People page and, only on a device that turned names on, the fixed sentence (names and the
+/// role, never content).
+pub fn self_grant_message(sub: &SubRow, title: &str, href: &str) -> Result<Message, String> {
+    let mut v = json!({ "v": 1, "type": Kind::SelfGrant.type_str(), "url": href });
+    if sub.show_details {
+        v["title"] = json!(sanitize::one_line(title, 2 * NAME_MAX));
+    }
+    finish_message(
+        v,
+        PUSH_TTL_MAX.as_secs(),
+        "normal",
+        topic(sub.id, href.as_bytes()),
+    )
+}
+
+/// (FIX-234, C-1161) One push per device of `user` for a self-grant notice. Returns the pushes
+/// attempted; does nothing with push off.
+pub async fn notify_self_grant(state: &AppState, user: Uuid, title: &str, href: &str) -> usize {
+    if !state.push.enabled {
+        return 0;
+    }
+    let Ok(devices) = deliverable(state, user).await else {
+        return 0;
+    };
+    send_all(state, &devices, |s| self_grant_message(s, title, href)).await
 }
 
 /// The dashboard path of a conversation: the agent page with `?c=` (D-102).

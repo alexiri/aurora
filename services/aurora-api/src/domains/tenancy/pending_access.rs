@@ -9,7 +9,7 @@ use super::dto::{WorkspaceRole, parse_ws_role};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::http::apilimit::{Charge, Spec};
-use crate::http::auth::{Caller, require_own};
+use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
 use crate::http::pagination::Page;
@@ -117,13 +117,16 @@ async fn org_entry(state: &AppState, org: Uuid) -> Result<OrgEntry, ApiError> {
     })
 }
 
-/// Add one person to the workspace by e-mail (`can_own`; C-919).
+/// Add one person to the workspace by e-mail (`can_administer`, FIX-234 C-1160; C-919). In a
+/// personal workspace only its person adds people or raises roles, and its person is never
+/// lowered there (C-1161). Giving *oneself* access is a self-grant (C-1161).
 #[utoipa::path(post, path = "/workspaces/{ws}/access/by-email", operation_id = "addAccessByEmail", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     request_body = AddByEmailRequest,
     responses((status = 200, body = AddByEmailResponse), (status = 400, body = ErrorEnvelope),
         (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
-        (status = 422, body = ErrorEnvelope), (status = 429, body = ErrorEnvelope)),
+        (status = 409, body = ErrorEnvelope), (status = 422, body = ErrorEnvelope),
+        (status = 429, body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn add_by_email(
     c: Caller,
@@ -131,8 +134,7 @@ async fn add_by_email(
     Path(ws): Path<Uuid>,
     Json(req): Json<AddByEmailRequest>,
 ) -> Result<Json<AddByEmailResponse>, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    require_own(&a)?;
+    let a = c.administer(&s, ws).await?;
     s.api_limiter
         .take(&[Charge {
             key: format!("invite:workspace:{ws}"),
@@ -166,7 +168,28 @@ async fn add_by_email(
         let kept = current
             .as_ref()
             .is_some_and(|row| rank(row.role.as_str()) >= rank(role));
+        // (FIX-234, C-1161) A change in a personal workspace: its person is never lowered there
+        // (D-480), and an add or a raise is only the person's, while they hold own `can_own`.
+        let self_grant = user == c.user_id && !kept && !a.own.as_ref().is_some_and(|o| o.can_own());
         if !kept {
+            if let Some(person) = a.personal_of {
+                if user == person && role != "owner" {
+                    return Err(super::service::personal_workspace_person());
+                }
+                let own_can_own = a.own.as_ref().is_some_and(|o| o.can_own());
+                if c.user_id != person || !own_can_own {
+                    return Err(super::service::personal_workspace_owner_only(
+                        &super::service::person_first_name(&s, person).await?,
+                    ));
+                }
+            }
+            if self_grant && !c.is_session() {
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "session_required",
+                    "Adding yourself to a workspace needs a signed-in session, not an API key.",
+                ));
+            }
             workspaces::bind_user(&mut *tx, ws, user, role).await?;
         }
         let ev = event(&c, "workspace.access.grant")
@@ -174,7 +197,18 @@ async fn add_by_email(
             .workspace(ws)
             .target("user", user)
             .metadata(json!({"role": role, "email": email, "via": "by_email"}));
+        if self_grant {
+            let ev2 = event(&c, "workspace_access.self_grant")
+                .org(a.org_id)
+                .workspace(ws)
+                .target("user", user)
+                .metadata(json!({"role": role, "via": "user"}));
+            audit::insert_tx(&mut tx, &ev2).await?;
+        }
         audit::commit_critical(tx, &ev).await?;
+        if self_grant {
+            super::self_grant::notify_for_user(&s, a.org_id, ws, &c, role).await?;
+        }
         return Ok(Json(AddByEmailResponse {
             result: AddResult::Added,
             org_entry: OrgEntry::Member,
@@ -187,6 +221,16 @@ async fn add_by_email(
             "owner_requires_member",
             "Only someone who is already a member of the organization can be made an owner.",
         ));
+    }
+    // (FIX-234, C-1161) In a personal workspace only its person adds people, while they hold
+    // own `can_own`.
+    if let Some(person) = a.personal_of {
+        let own_can_own = a.own.as_ref().is_some_and(|o| o.can_own());
+        if c.user_id != person || !own_can_own {
+            return Err(super::service::personal_workspace_owner_only(
+                &super::service::person_first_name(&s, person).await?,
+            ));
+        }
     }
     let mut tx = audit::begin(&s).await?;
     let added = repo::add(
@@ -222,7 +266,8 @@ async fn add_by_email(
     }))
 }
 
-/// The workspace's people waiting for their first sign-in (`can_own`; C-920).
+/// The workspace's people waiting for their first sign-in (`can_administer`, FIX-234 C-1160;
+/// C-920).
 #[utoipa::path(get, path = "/workspaces/{ws}/access/pending", operation_id = "listPendingAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, body = Page<PendingAccess>), (status = 403, body = ErrorEnvelope),
@@ -233,7 +278,7 @@ async fn list_pending(
     State(s): State<AppState>,
     Path(ws): Path<Uuid>,
 ) -> Result<Json<Page<PendingAccess>>, ApiError> {
-    require_own(&c.workspace(&s, ws).await?)?;
+    c.administer(&s, ws).await?;
     // At most `PENDING_ACCESS_MAX` rows: one page.
     let rows = repo::list(&s.pool, ws).await?;
     Ok(Json(Page {
@@ -242,7 +287,8 @@ async fn list_pending(
     }))
 }
 
-/// Remove one waiting person (`can_own`; C-920). A row of another workspace is a 404.
+/// Remove one waiting person (`can_administer`, FIX-234 C-1160; C-920). A row of another
+/// workspace is a 404.
 #[utoipa::path(delete, path = "/workspaces/{ws}/access/pending/{id}", operation_id = "deletePendingAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), ("id" = Uuid, Path, description = "Pending access id")),
     responses((status = 204, description = "Removed"), (status = 403, body = ErrorEnvelope),
@@ -253,8 +299,7 @@ async fn delete_pending(
     State(s): State<AppState>,
     Path((ws, id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    let a = c.workspace(&s, ws).await?;
-    require_own(&a)?;
+    let a = c.administer(&s, ws).await?;
     let mut tx = audit::begin(&s).await?;
     let row = repo::delete(&mut tx, ws, id)
         .await?

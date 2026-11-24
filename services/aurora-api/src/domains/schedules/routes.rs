@@ -389,8 +389,8 @@ async fn run_now(
 }
 
 /// Reassign the schedule's creator (fire-time authority) to an active member who can use the
-/// workspace (`can_own`); `re_enable` re-enables an item disabled for `authorization`. Audited
-/// `automation.reassign`.
+/// workspace (`can_administer`, FIX-234 C-1160; the new creator still needs own `can_use`);
+/// `re_enable` re-enables an item disabled for `authorization`. Audited `automation.reassign`.
 #[utoipa::path(put, path = "/schedules/{id}/creator", operation_id = "reassignScheduleCreator",
     tag = "schedules", params(("id" = Uuid, Path, description = "Schedule id")),
     request_body = ReassignCreatorRequest,
@@ -404,7 +404,7 @@ async fn reassign_creator(
     Json(req): Json<ReassignCreatorRequest>,
 ) -> Result<Json<Schedule>, ApiError> {
     let (row, a) = authorized(&c, &s, id).await?;
-    require_own(&c.workspace(&s, a.workspace_id).await?)?;
+    c.administer(&s, a.workspace_id).await?;
     let actor = AuditActor::from_caller(&c);
     let acting = Acting {
         actor: &actor,

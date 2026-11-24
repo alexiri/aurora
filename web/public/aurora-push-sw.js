@@ -16,6 +16,7 @@ const TYPES = [
   "app_setup_resolved",
   "app_setup_declined",
   "schedule_answer",
+  "self_grant",
 ];
 const URL_PATTERN = /^\/o\/[A-Za-z0-9._~%/-]+(\?[A-Za-z0-9._~%=&-]*)?$/;
 
@@ -52,6 +53,17 @@ function build(raw) {
       body: "Open Administration to review it.",
       tag: "aurora-admin",
       url: "/admin",
+    };
+  }
+  if (data.type === "self_grant") {
+    // (FIX-234, C-1161) Fixed text; the sentence only when the device turned names on. Never the
+    // workspace's content.
+    const item = text(data.title, 80);
+    return {
+      title: item ? "Aurora — " + item : "Aurora — someone gave themselves workspace access",
+      body: "Open the workspace's People page to review it.",
+      tag: "aurora-self-grant",
+      url: URL_PATTERN.test(url) ? url : "/",
     };
   }
   if (data.type === "app_setup_request" || data.type === "app_setup_resolved" || data.type === "app_setup_declined") {

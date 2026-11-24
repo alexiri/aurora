@@ -6,7 +6,7 @@ use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use aurora_core::ApiError;
-use aurora_db::repo::{gateway, grants};
+use aurora_db::repo::{connections, gateway, grants};
 use axum::extract::State;
 use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -219,7 +219,8 @@ async fn put_app_grant(
     ))
 }
 
-/// Revoke a connection grant (`can_own`).
+/// Revoke a connection grant (`can_own`; for an organization's account also its org owners and
+/// admins — FIX-234, C-1160).
 #[utoipa::path(
     delete, path = "/agents/{agent}/grants/connections/{conn}", operation_id = "revokeConnectionGrant", tag = "grants",
     params(("agent" = Uuid, Path, description = "Agent id"), ("conn" = Uuid, Path, description = "Connection id")),
@@ -234,7 +235,17 @@ async fn delete_connection_grant(
     Path((agent, conn)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
     let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
-    require_own(&auth)?;
+    // (FIX-234, C-1160) An organization's account is administered by its org owners and admins;
+    // they remove a grant without own access to the agent's workspace. A workspace's connection
+    // needs own `can_own`.
+    let org_scope = connections::get(&state.pool, conn)
+        .await?
+        .is_some_and(|c| c.org_id == a.org_id && c.workspace_id.is_none());
+    if !org_scope {
+        require_own(&auth)?;
+    } else if !auth.can_own() {
+        caller.org(&state, a.org_id).await?.require_admin()?;
+    }
     service::revoke_connection(&state, &caller, &a, conn).await?;
     Ok(StatusCode::NO_CONTENT)
 }
