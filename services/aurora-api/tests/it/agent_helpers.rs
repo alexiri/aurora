@@ -511,8 +511,9 @@ async fn helpers_part_entries_manifest_and_render_inputs() {
 }
 
 /// Parts split under `HOME_SYNC_PART_MAX` as the other kinds do, every entry still delivered,
-/// and a non-UTF-8 helper is skipped with a warning (content travels as UTF-8 text exactly as
-/// skills carry it) — it stays listed and readable through the API.
+/// and a non-UTF-8 helper (seeded raw, as the writer refuses it today) is skipped with a
+/// warning (content travels as UTF-8 text exactly as skills carry it) — it stays listed and
+/// readable through the API.
 #[tokio::test]
 async fn helpers_split_across_parts_and_non_utf8_is_skipped() {
     let w = world().await;
@@ -551,4 +552,32 @@ async fn helpers_split_across_parts_and_non_utf8_is_skipped() {
         json!(4),
         "the count is the projected one"
     );
+}
+
+/// Owner decision 2026-11-24 (option A): every helper file is UTF-8 text without NUL — the home
+/// sync carries text only — so the writer refuses non-text content (422
+/// `template_helper_invalid`, naming the path) and stores nothing, whatever the caller.
+#[tokio::test]
+async fn replace_all_refuses_non_utf8_content() {
+    let w = world().await;
+    let a = w.agent("h1").await;
+    // Not valid UTF-8, and valid UTF-8 with a NUL byte: both refused, nothing stored.
+    for (path, content) in [
+        ("blob.bin", vec![0xff_u8, 0x00, 0xfe]),
+        ("nul.sh", b"#!/bin/sh\necho \0x\n".to_vec()),
+    ] {
+        let mut tx = w.h.pool().begin().await.unwrap();
+        let err = service::replace_all(&mut tx, a, &[f(path, &content, false)]).await;
+        tx.rollback().await.unwrap();
+        let err = err.unwrap_err();
+        assert_eq!(err.status(), StatusCode::UNPROCESSABLE_ENTITY, "{err}");
+        assert_eq!(err.code(), "template_helper_invalid", "{err}");
+        assert!(err.message().contains(path), "{err}");
+        assert!(err.message().contains("UTF-8"), "{err}");
+        assert_eq!(w.helper_count(a).await, 0, "{path} must not be stored");
+    }
+    // Text content, executable or not, is still accepted.
+    w.seed(a, &[f("run.sh", b"#!/bin/sh\necho ok\n", true)])
+        .await;
+    assert_eq!(w.helper_count(a).await, 1);
 }
