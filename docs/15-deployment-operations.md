@@ -635,6 +635,15 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 - Migrations are forward-only and run before any new API replica serves;
   every migration MUST be compatible with the previous API and gateway version
   still running (expand → migrate → contract across two releases).
+- (FIX-234, C-1163) **Run the access report before upgrading to a release with
+  C-1160.** `aurora-api access-report` (JSON, or `--text`) lists, per
+  organization, the workspaces with no active own-right owner, the schedules
+  and webhooks whose fire-time authority will fail, the channel ties of
+  people without own access, the `auo_` keys whose creator lacks own access,
+  and the open approvals with no own-right decider. Whatever it lists stops
+  working after the upgrade (an organization role no longer grants workspace
+  access); the people listed can be added to their workspaces first. The
+  report is read-only and writes nothing.
 - Wire contracts: API supports runner/connector/supervisor protocol versions N
   and N−1; plugin manifest contracts N and N−1; registry snapshots
   "newest contract wins" (`09 §9`).

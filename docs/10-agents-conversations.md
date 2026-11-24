@@ -139,13 +139,16 @@ conversation where results of schedules, webhooks and peer tasks are reported.
 
 Phase 0: every workspace member could read every direct conversation. **From
 phase 1 a `direct` conversation is visible only to its user and to workspace
-owners** (`can_own`, including org owners/admins), per `can_see_conversation`
-(`04 §The access law`); other kinds keep `can_use` visibility. Consequences,
+owners in their own right** (`can_own` from `own_workspace_access`; **since
+FIX-234 (D-477) an organization role is no longer an owner**, per
+`can_see_conversation` (`04 §The access law`)); other kinds keep `can_use`
+visibility. Consequences,
 specified once here and enforced by the same predicate everywhere:
 
 - API/SSE/attachments: `05 §Conversation visibility`; the dashboard lists only
-  visible conversations and shows owners a separate "Direct conversations of
-  other members" group, each marked "visible to workspace owners".
+  visible conversations and shows owners in their own right a separate "Direct
+  conversations of other members" group, each marked "visible to workspace
+  owners".
 - **Everything that names a conversation follows**: approval cards and the
   approvals feed (visible/decidable only by those who can see the conversation,
   `07`), activity/request-log rows (omitted for invisible direct conversations),

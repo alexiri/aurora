@@ -245,8 +245,9 @@ runs), configured external secret stores.
 - **Direct conversations are private to people, not to the agent's memory**
   (phase 1, RFE-009): an agent may write what it learned in a direct conversation
   into memory or a skill, which every workspace member can read. The preamble
-  asks it not to; nothing enforces it. Owners can always read direct
-  conversations (audited), and org owners/admins are implicit owners.
+  asks it not to; nothing enforces it. Owners in their own right can always
+  read direct conversations (audited); an organization role is no owner
+  (FIX-234, D-477), so a workspace whose only owners were implicit has none.
 - **Speaker binding is attribution, not isolation** (phase 2, RFE-005): conversations
   of one agent share a sandbox, so a compromised agent process can use another
   concurrent turn's loopback session port and inherit that turn's speaker.

@@ -541,7 +541,9 @@ status='pending'`); a losing decider gets 409 `already_decided`.
 
 **Who may decide**: any user with `can_use` on the approval's workspace
 (phase 0/1; **from phase 2 (RFE-012): `can_approve`**, i.e. workspace `owner` or
-`approver`, or org owner/admin — a plain `member` cannot decide), through the dashboard, the API (session or key of such a user), or a channel
+`approver` — a plain `member` cannot decide; **since FIX-234 (C-1160) in their
+own right only: an organization role is no longer a decider and there is no
+org fallback**), through the dashboard, the API (session or key of such a user), or a channel
 card (clicker resolved through the user link; `13 §Clicker authorization`).
 The chat platform never authorizes. (phase 1, RFE-009) The decider set is further
 intersected with **conversation visibility**: an approval whose `conversation_id`
@@ -570,10 +572,12 @@ nor receive their cards/notifications (SSE, long-poll, batch).
   `APPROVAL_WATCHER_TTL` (45 s; replicas record `approval_watchers`). If neither
   exists it sends **one e-mail per decider** (the decider set of this section:
   `can_approve` users with an explicit workspace `owner`/`approver` binding,
+  in their own right (FIX-234, D-477: no fallback to the org's owners/admins;
+  a workspace with no own-right decider leaves its approvals unnotified — they
+  expire undecided),
   intersected with conversation visibility, `04`; (phase 5, P5-APIGAP-4, SEC-138) a person
   suspended in the workspace is not a decider, through a direct or a group binding, and
-  their decisions are refused like any non-member's; if the workspace has no explicit
-  binding the org owners/admins) through the SMTP mailer (`04 §Email`). The e-mail
+  their decisions are refused like any non-member's) through the SMTP mailer (`04 §Email`). The e-mail
   is platform voice, sanitized, and carries only: agent and workspace names, the
   approval's title (no summary fields, no body), the rule name, the expiry and a
   link to the dashboard approvals page (`<external>/o/<org>/w/<ws>/approvals?focus=<id>`)

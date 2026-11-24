@@ -478,8 +478,12 @@ With OIDC-only there must be a way to sign in without a corporate IdP:
 
 - `auk_` workspace key: confined to its workspace; workspace routes infer the
   workspace from the key.
-- `auo_` org key: org-wide authority of its owner's role; workspace routes
-  require `X-Workspace-Id` (or the workspace in the path).
+- `auo_` org key: acts with its owner's rights (FIX-234, C-1160: the owner's
+  **own** workspace access — an organization role grants the key nothing);
+  workspace routes require `X-Workspace-Id` (or the workspace in the path)
+  and answer 403 `workspace_access_required` when the owner has no own
+  access. The administer routes work with an org key of an org owner/admin,
+  except a self-grant (C-1161 needs a session).
 - `Authorization: Bearer <key>`. A request that presents an Aurora bearer
   prefix commits to key auth: failure is 401, never a fall-through to cookies.
 - Liveness: a key is dead when revoked, expired, or its owner is no longer an
@@ -616,7 +620,8 @@ to `"me"` and calendar invitations (SEC-108). Three rules follow from it:
   Every other `to` form keeps reach and approval.
 
 **`can_approve`** (phase 2, RFE-012, D-55): `can_approve(user, workspace)` is the
-same with workspace role `owner` **or** `approver` (or org owner/admin). The
+same with workspace role `owner` **or** `approver` — in their own right since
+FIX-234 (D-477): an organization role no longer decides. The
 hierarchy is `can_own ⊂ can_approve ⊂ can_use`. A plain `member` chats with the
 agents, reads what `can_see_conversation` allows and operates agents (memory,
 skills, schedules, …) but **cannot decide gateway approvals, action approvals or
@@ -651,7 +656,8 @@ conversation — is true iff:
 - the kind is `direct` and **either** `user = conversation.direct_user_id` **and**
   `can_use(user, workspace)` (a person who lost access to the workspace stops
   seeing even their own direct conversation), **or** `can_own(user, workspace)`
-  (workspace owners and org owners/admins, who need repair access).
+  (workspace owners in their own right, who need repair access; FIX-234, D-477:
+  an organization role is no longer an owner).
 
 Writing into a `direct` conversation (posting messages, uploading attachments for
 it) is the direct user's alone: a workspace owner who is not that user can
@@ -679,29 +685,30 @@ the frozen payload.
 | Read effective governance | any active org member |
 | Org audit log | org `owner`/`admin` |
 | Create workspace | org `owner`/`admin`, or any member if `organizations.settings.members_can_create_workspaces` (default `true`) |
-| Workspace settings (name, timezone, memory language), access bindings (phase 2, RFE-012: including granting `approver`), delete workspace | `can_own` |
-| Workspace secrets, connections, grants, workspace policy (incl. the workspace uncredentialed default), workspace API keys | `can_own` |
-| Add a person to the workspace by e-mail, list and remove the people waiting for their first sign-in (`POST …/access/by-email`, `GET …/access/pending`, `DELETE …/access/pending/{id}`; P5-UX-5, C-919, C-920, SEC-128): never lists or searches the organization's people, never creates an invitation or a membership | `can_own` |
+| Workspace settings (name, timezone, memory language) | own `can_own`; `GET /v1/workspaces/{ws}` answers for `can_administer` too (`my_role` null, `administers: true`, `audience`); **delete workspace** `can_administer` (FIX-234, C-1160; the typed slug confirms) |
+| Workspace secrets, connections, grants, workspace policy (incl. the workspace uncredentialed default), workspace API keys | own `can_own` (FIX-234: an organization role grants none; org-scope connections' grants and limit-preview are the org's owners/admins) |
+| Add a person to the workspace by e-mail, list and remove the people waiting for their first sign-in (`POST …/access/by-email`, `GET …/access/pending`, `DELETE …/access/pending/{id}`; P5-UX-5, C-919, C-920, SEC-128): never lists or searches the organization's people, never creates an invitation or a membership | `can_administer` (FIX-234, C-1160); **personal workspace:** only its person adds, while they hold own `can_own` — anyone else gets 403 `personal_workspace_owner_only` (C-1161). **Self-grant (C-1161):** an administrator giving *themselves* access or a raise needs a session (403 `session_required` with a key), writes the critical `workspace_access.self_grant` row and notifies the other owners |
+| Workspace access bindings: list, bind, change a binding, suspend/restore, remove (phase 2, RFE-012: including granting `approver`) | `can_administer` (FIX-234, C-1160); a personal workspace's adds and raises are its person's alone and the person is never lowered, suspended or removed there (409 `personal_workspace_person`) |
 | Read the **published** Internet access of the workspace (rules and defaults of the active generation; `GET /v1/workspaces/{ws}/internet-access`, FIX-164, D-365; read-only, an exception to the row above) | `can_use` |
 | Workspace LLM keys | `can_own`, **and** org governance permits `workspace`-scoped keys for that endpoint, **and** the key's origin complies (`08 §11`) |
 | Space bindings for an agent of the workspace | `can_own` |
 | Create/edit/delete agents, brief, model, avatar; memory; agent-tier skills; helper files of an agent (list, read, remove — P6-TPL-6, C-1143); schedules; webhooks; restart sandbox | `can_use` |
 | Create an agent **from a template** (`POST /v1/workspaces/{ws}/agents/from-template`); read its template provenance (`GET /v1/agents/{agent}/template`), apply an offered update (`POST …/template/apply`), detach (`DELETE …/template`) (phase 6, P6-TPL-3, C-1111/C-1112) | `can_use` of the workspace; the create's account choices additionally pass the C-504 give check (only connections the caller may give, and `active`) |
-| Create/edit/delete **workspace-tier skills** (phase 3, RFE-020); read them | `can_own` to write (org owners/admins included); read: `can_use` |
+| Create/edit/delete **workspace-tier skills** (phase 3, RFE-020); read them | `can_own` to write (own right, FIX-234); read: `can_use` |
 | Create a **BYO** agent; regenerate a BYO agent's token (phase 2, RFE-025) | phase 0/1: `can_use`. **From phase 2: by the effective BYO posture** (`08 §11.9`): `enabled` → `can_use`; `owners_only` (default) → `can_own`; `disabled` → nobody |
 | Edit a BYO agent's source CIDR list and "require context credentials" setting (phase 2, RFE-025) | `can_own` |
 | Workspace BYO posture (phase 2, RFE-025) | `can_own` (tighten-only) |
 | Org BYO posture, org default source CIDRs, org require-context default (phase 2, RFE-025) | org `owner`/`admin` (through governance, `governance.update`) |
-| List BYO agent tokens (expiry, last use, stale) of a workspace / of an org (phase 3, RFE-013) | `can_own` / org `owner`/`admin`; org maximum age of agent tokens: org `owner`/`admin` through governance (`governance.update`, which records the retrofit) |
+| List BYO agent tokens (expiry, last use, stale) of a workspace / of an org (phase 3, RFE-013) | workspace: `can_administer` (FIX-234, C-1160) / org: org `owner`/`admin`; org maximum age of agent tokens: org `owner`/`admin` through governance (`governance.update`, which records the retrofit) |
 | Chat with agents, read transcripts, upload attachments | `can_use`; (phase 1, RFE-009) for `direct` conversations: the direct user (read + write) and `can_own` (read, abort/send-now only) — `can_see_conversation` |
 | Decide gateway approvals, action approvals and agent-link requests for agents of the workspace; read the approvals feed (pending, history, long-poll, SSE) | phase 0/1: `can_use`. **From phase 2 (RFE-012): `can_approve`** (a plain member sees an approval waiting inline in their own visible conversation, read-only, but not the feed and cannot decide); (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
 | Archive/unarchive a conversation (phase 2, RFE-010) | `can_see_conversation` and, for non-direct kinds, `can_use` |
 | Delete a conversation; redact transcript events; export a conversation (phase 2, RFE-010) | `direct`: its user or `can_own`; other kinds: `can_own` (redaction also: the event's turn author; export: not the turn author); always subject to `can_see_conversation` |
 | Org retention settings (phase 2, RFE-010/015) | org `owner`/`admin` (`retention.update`, security-critical) |
 | Read activity (request log) of the workspace | `can_use`; (phase 1, RFE-009) rows whose conversation is a `direct` conversation the caller cannot see are **omitted** (owners see all) |
-| Reassign a schedule/webhook creator, set its anchor, bulk reassign; read the offboarding view of a workspace binding (phase 2, RFE-021) | `can_own` (the offboarding view of an **org** member: org `owner`/`admin`) |
-| Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_own`; lifting a freeze imposed by a higher authority needs that authority (below) |
-| Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_own` (org owners/admins included); same lifting rule |
+| Reassign a schedule/webhook creator, set its anchor, bulk reassign; read the offboarding view of a workspace binding (phase 2, RFE-021) | `can_administer` (FIX-234, D-477; the offboarding view of an **org** member: org `owner`/`admin`) |
+| Freeze / unfreeze an **agent** (phase 2, RFE-006) | `can_administer` (FIX-234, D-477); lifting a freeze imposed by a higher authority needs that authority (below) |
+| Freeze / unfreeze a **workspace** (phase 2, RFE-006) | `can_administer` (FIX-234, D-477: own-right owner or org owner/admin); same lifting rule |
 | Freeze / unfreeze an **organization** (phase 2, RFE-006) | org `owner`, or instance admin |
 | Delete any **organization** or **workspace**; list organizations with their counts and an organization's workspaces (phase 5, P5-ADMDEL, D-234, C-733) | instance admin (session only; the typed slug confirms the deletes; (phase 5, FIX-157, D-317) no re-authentication) |
 | Create, rename, delete a group; add/remove members of a `manual` group; set or clear a group's org-role mapping (phase 4, P4-GRP-1) | org `owner`/`admin` (a mapping to `admin` is as powerful as granting `admin` by role change, which admins may already do; `owner` can never be mapped) |
@@ -742,7 +749,8 @@ the only warning and no way to re-anchor an item except recreating it. From
 phase 2, for **schedules and webhooks** (peer tasks are 24 h-bounded and reach
 decisions are not automations; both are unchanged):
 
-- **(a) Reassignment.** A `can_own` user of the agent's workspace may change an
+- **(a) Reassignment.** A `can_administer` user of the agent's workspace (FIX-234,
+  D-477: an own-right workspace owner or an org owner/admin) may change an
   item's `creator_user_id` to any **active org member who `can_use` the
   workspace** (422 `new_creator_unauthorized` otherwise); the new creator is the
   fire-time authority from then on. Reassigning an item disabled for
@@ -753,7 +761,8 @@ decisions are not automations; both are unchanged):
 - **(b) Offboarding view.** Before removing or suspending a person, an owner can
   ask *what would break*: `GET /v1/orgs/{org}/members/{user}/offboarding` (org
   `owner`/`admin`; every workspace of the org) and
-  `GET /v1/workspaces/{ws}/members/{user}/offboarding` (`can_own`; for removing the
+  `GET /v1/workspaces/{ws}/members/{user}/offboarding` (`can_administer`, FIX-234;
+  for removing the
   person's workspace binding). It lists the enabled schedules and webhooks whose
   fire-time authority is that user (`would_disable`), plus open peer tasks and a
   count of API keys that would die. The removal routes accept `reassign_to`
@@ -763,12 +772,13 @@ decisions are not automations; both are unchanged):
   webhooks — reassign?"*).
 - **(c) Workspace-anchored automations.** A schedule or webhook has an `anchor`:
   `creator` (default; the rule above) or **`workspace`**, whose authority is
-  **"an active owner exists"**: at every fire/delivery the check is that the
-  workspace has at least one active user with `can_own` (workspace `owner`, or org
-  owner/admin — an org always has an active owner while it is active, so an
-  anchored item survives any individual offboarding and dies only with the org's
-  or workspace's existence, a suspension of every owner, or a freeze). Only a
-  `can_own` user may create an anchored automation or switch an item's anchor; **an
+  **"an active own-right owner exists"**: at every fire/delivery the check is that the
+  workspace has at least one active user with `can_own` in their own right
+  (FIX-234, D-477: an organization role is not an owner — a workspace whose only
+  owners were implicit loses its anchored automations at their next fire). An
+  anchored item still survives any individual offboarding and dies only with the
+  org's or workspace's existence, a suspension of every owner, or a freeze. Only a
+  `can_administer` user may create an anchored automation or switch an item's anchor; **an
   agent can never create or anchor one through its tools** (a prompt-injected agent
   must not be able to mint immortal automations) — tool-created items are always
   `creator`-anchored to the turn's speaker. `creator_user_id` stays on anchored
