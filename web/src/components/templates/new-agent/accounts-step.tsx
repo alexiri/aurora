@@ -4,6 +4,7 @@ import { AccessChoice } from "@/components/accounts/access-choice";
 import { Button } from "@/components/ui/button";
 import { ChoiceCards } from "@/components/ui/choice-cards";
 import { Notice } from "@/components/ui/notice";
+import type { PlanChoice } from "@/lib/api/agent-templates";
 import type { Level } from "@/lib/api/accounts";
 import type { PlanEntry } from "@/lib/api/agent-templates";
 
@@ -30,6 +31,47 @@ const ToolList = ({ label, tools }: { label: string; tools: string[] }) =>
     </p>
   );
 
+/** What one entry stands for after its state: the chosen app, the account (or new/skip) and the effective access. */
+export interface EntryResolution {
+  /** The entry's chosen app (the first available choice by default). */
+  chosen?: PlanChoice;
+  isNew: boolean;
+  skipped: boolean;
+  /** The account the entry stands for: a connection id, `new` (the journey), `skip`, or undefined (the default). */
+  accountId?: string;
+  /** The chosen existing account, when the entry uses one. */
+  target?: PlanChoice["accounts"][number];
+  /** The access the entry asks for: the person's change, else the plan's level capped to the account (C-980). */
+  level: Level | null;
+  /** True when the person changed the access; the create request then carries the level. */
+  levelChanged: boolean;
+}
+
+export function resolveEntry(entry: PlanEntry, pick: AccountEntryState | undefined): EntryResolution {
+  const chosen =
+    (pick?.appId ? entry.choices.find((c) => c.app_id === pick.appId) : undefined) ??
+    entry.choices.find((c) => c.available) ??
+    entry.choices[0];
+  const existing = chosen?.accounts ?? [];
+  const explicit = pick?.accountId;
+  const isNew = explicit === "new";
+  const skipped = explicit === "skip";
+  const accountId = !isNew && !skipped && explicit ? explicit : existing[0]?.ref.id;
+  const target = existing.find((a) => a.ref.id === accountId);
+  const planLevel = (chosen?.level ?? "read") as Level;
+  const levels = target?.levels ?? [];
+  const level: Level | null = pick?.level ?? (levels.includes(planLevel) ? planLevel : (levels[0] ?? null));
+  return {
+    chosen,
+    isNew,
+    skipped,
+    accountId,
+    target,
+    level,
+    levelChanged: pick?.level != null,
+  };
+}
+
 export function AccountsStep({
   entries,
   state,
@@ -51,17 +93,15 @@ export function AccountsStep({
       {entries.length === 0 ? <p className="text-sm text-ink-2">The template needs no accounts. You can give the agent apps later.</p> : null}
       {entries.map((entry) => {
         const pick = state[entry.index] ?? {};
-        const chosen = entry.choices.find((c) => c.app_id === pick.appId) ?? entry.choices.find((c) => c.available) ?? entry.choices[0];
+        const r = resolveEntry(entry, pick);
+        const chosen = r.chosen;
         const existing = chosen?.accounts ?? [];
-        const explicit = pick.accountId;
-        const isNew = explicit === "new";
-        const skipped = explicit === "skip";
-        const chosenAccount = !isNew && !skipped && explicit ? explicit : existing[0]?.ref.id;
-        const target = existing.find((a) => a.ref.id === chosenAccount);
+        const isNew = r.isNew;
+        const skipped = r.skipped;
+        const target = r.target;
         const customOnly = chosen?.level_note === "custom_only";
-        const planLevel = (chosen?.level ?? "read") as Level;
         const levels = target?.levels ?? [];
-        const value: Level | null = pick.level ?? (levels.includes(planLevel) ? planLevel : (levels[0] ?? null));
+        const value: Level | null = r.level;
         return (
           <section key={entry.index} className="space-y-3" aria-label={entry.why}>
             <p className="text-sm font-medium text-ink">
@@ -84,7 +124,7 @@ export function AccountsStep({
                 ) : null}
                 <ChoiceCards<string>
                   legend={`Which ${chosen.app_name} account?`}
-                  value={isNew ? "new" : skipped ? "skip" : (chosenAccount ?? "new")}
+                  value={isNew ? "new" : skipped ? "skip" : (r.accountId ?? "new")}
                   onChange={(v) => {
                     if (v === "new") {
                       set(entry.index, { accountId: "new", level: undefined });
@@ -95,7 +135,7 @@ export function AccountsStep({
                     ...existing.map((a, i) => ({
                       value: a.ref.id,
                       label: `Use ${a.name}`,
-                      badge: i === 0 && explicit == null ? "Recommended" : undefined,
+                      badge: i === 0 && pick.accountId == null ? "Recommended" : undefined,
                     })),
                     { value: "new", label: `Connect a new ${chosen.app_name} account` },
                     ...(entry.required ? [] : [{ value: "skip", label: `Skip ${chosen.app_name}` }]),
