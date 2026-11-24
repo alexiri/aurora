@@ -19,7 +19,14 @@ fn web_saved_template_parses() {
     assert_eq!(c.meta.name, "Daneel");
     assert_eq!(c.meta.summary, "Triage the team's pull requests.");
     assert_eq!(c.meta.apps.len(), 2);
-    let AppEntry::App { app, required, level, tools, why } = &c.meta.apps[0] else {
+    let AppEntry::App {
+        app,
+        required,
+        level,
+        tools,
+        why,
+    } = &c.meta.apps[0]
+    else {
         panic!("the first app entry is a single app");
     };
     assert_eq!(app, "github");
@@ -37,7 +44,15 @@ fn web_saved_template_parses() {
 
     // The library skill is a reference (C-1142), never a copy.
     assert_eq!(c.meta.skill_refs.len(), 1);
-    let SkillRef::Library { address, ref_, path, skill, required, why } = &c.meta.skill_refs[0] else {
+    let SkillRef::Library {
+        address,
+        ref_,
+        path,
+        skill,
+        required,
+        why,
+    } = &c.meta.skill_refs[0]
+    else {
         panic!("the skill reference is a library");
     };
     assert_eq!(address.url, "https://gitlab.example.org/agents/skills.git");
@@ -55,7 +70,10 @@ fn web_saved_template_parses() {
 
     // The rest of the agent came through the export part of the file.
     assert_eq!(c.agent_name, "Daneel");
-    assert!(c.readme.contains("Made with Save as template on 2026-11-24"));
+    assert!(
+        c.readme
+            .contains("Made with Save as template on 2026-11-24")
+    );
     assert_eq!(c.memories.len(), 1);
     assert!(c.memories[0].locked);
     assert_eq!(c.skills.len(), 1);
