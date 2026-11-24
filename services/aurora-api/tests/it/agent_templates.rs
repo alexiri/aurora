@@ -5768,3 +5768,110 @@ async fn admin_actions_never_change_a_created_agent() {
         "{status_after}"
     );
 }
+
+// ---- the copied skill rules (C-1130 → C-1141) ---------------------------------------------------
+
+/// `crates/aurora-template/src/skill_rules.rs` repeats the platform's skill rules (the one
+/// validator, `aurora-registry/src/skill_format.rs`) because the template crate may depend
+/// only on `aurora-core`. This drift test feeds both the same table of names and paths —
+/// accepted and refused, hostile shapes included — and fails when the copy and the source of
+/// truth ever disagree. No behaviour lives here.
+#[test]
+fn the_copied_skill_rules_match_the_platform_validator() {
+    use aurora_core::limits;
+    use aurora_registry::skill_format as validator;
+    use aurora_template as copy;
+
+    // The numbers the copy repeats.
+    assert_eq!(copy::FILES_PER_SKILL_MAX, validator::FILES_PER_SKILL_MAX);
+    assert_eq!(copy::PATH_MAX_DEPTH, validator::PATH_MAX_DEPTH);
+    assert_eq!(copy::PATH_MAX_LEN, validator::PATH_MAX_LEN);
+
+    // Verdicts as words, so the two crates' identical-but-distinct `NameError` types compare.
+    fn verdict<R, E: std::fmt::Debug>(r: Result<R, E>) -> String {
+        match r {
+            Ok(_) => "ok".to_owned(),
+            Err(e) => format!("{e:?}"),
+        }
+    }
+
+    // Accepted names: the grammar's corners (one part, digits only, 64 characters) included.
+    let accepted = [
+        "a",
+        "0",
+        "0-0",
+        "a-b2",
+        "skills-1",
+        "auroral",
+        "a0-9z",
+        "aurora9",
+        &"a".repeat(limits::SKILL_NAME_MAX),
+    ];
+    // Refused names, with the reason both must give: the grammar's refusals, the reserved
+    // prefix, and hostile shapes (a separator, a space, a dot, non-ASCII, over the limit).
+    let refused: &[(&str, &str)] = &[
+        ("", "Grammar"),
+        ("A", "Grammar"),
+        ("a--b", "Grammar"),
+        ("-a", "Grammar"),
+        ("a-", "Grammar"),
+        ("a/b", "Grammar"),
+        ("a b", "Grammar"),
+        ("a..b", "Grammar"),
+        ("café", "Grammar"),
+        (&"a".repeat(limits::SKILL_NAME_MAX + 1), "Grammar"),
+        ("aurora", "Reserved"),
+        ("aurora-x", "Reserved"),
+        ("Aurora-x", "Grammar"),
+    ];
+    for n in accepted {
+        let (v, c) = (
+            verdict(validator::check_name(n)),
+            verdict(copy::check_name(n)),
+        );
+        assert_eq!((v.as_str(), c.as_str()), ("ok", "ok"), "{n}");
+    }
+    for (n, want) in refused {
+        let (v, c) = (
+            verdict(validator::check_name(n)),
+            verdict(copy::check_name(n)),
+        );
+        assert_eq!((v.as_str(), c.as_str()), (*want, *want), "{n}");
+    }
+
+    // Accepted paths: the depth cap (4 segments) and the character set's corners.
+    let accepted = [
+        "run.sh",
+        "scripts/run.sh",
+        "a.b_c-d/e.txt",
+        "x/y/z/w.txt",
+        "SKILLX.md",
+        "x/y/z/0.txt",
+    ];
+    // Refused paths: traversal, empty and dot segments, one too deep, the reserved `SKILL.md`
+    // in any case, spaces, a backslash, non-ASCII, and one over the 200-character cap.
+    let refused = [
+        "",
+        "../x",
+        "./x",
+        "a//b",
+        "a/",
+        "/a",
+        "a/b/c/d/e",
+        "Skill.md",
+        "skill.MD/x",
+        "x/SKILL.md/y",
+        "a b",
+        "a\\b",
+        "café/x",
+        &"a".repeat(201),
+    ];
+    for p in accepted {
+        assert!(validator::path_ok(p), "{p}");
+        assert!(copy::path_ok(p), "{p}");
+    }
+    for p in refused {
+        assert!(!validator::path_ok(p), "{p}");
+        assert!(!copy::path_ok(p), "{p}");
+    }
+}
