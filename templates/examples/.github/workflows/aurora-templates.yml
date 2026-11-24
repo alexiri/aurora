@@ -25,7 +25,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
       # Install the aurora CLI at a pinned version. Either download the release
       # binary (below) or build it:
       #   cargo install --locked aurora-cli --version AURORA_CLI_VERSION
@@ -54,7 +54,7 @@ jobs:
       group: aurora-templates-publish
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
       - name: Install the aurora CLI
         run: |
           cd /usr/local/bin
