@@ -10,14 +10,7 @@ import { Fold } from "@/components/ui/fold";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { formatCount } from "@/lib/format-date";
-import {
-  agentTemplateKeys,
-  useAgentHelperText,
-  useAgentHelpers,
-  useAgentTemplate,
-  useDeleteAgentHelpers,
-  type HelperFile,
-} from "@/lib/api/agent-templates";
+import { agentTemplateKeys, useAgentHelperText, useAgentHelpers, useAgentTemplate, useDeleteAgentHelpers, useDetachAgentTemplate, type HelperFile } from "@/lib/api/agent-templates";
 import type { Agent } from "@/lib/api/queries";
 
 import { ReviewChangesDialog } from "./review-changes-dialog";
@@ -42,7 +35,9 @@ export function AgentTemplateSection({ agent, agentBase }: { agent: Pick<Agent, 
   const [reviewing, setReviewing] = useState(false);
   const [stale, setStale] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [detaching, setDetaching] = useState(false);
   const remove = useDeleteAgentHelpers(agent.id);
+  const detach = useDetachAgentTemplate(agent.id);
   // A 409 `template_version_changed` (C-1112): the status is read again and the section says the
   // template moved on while the person was reviewing.
   const onStale = () => {
@@ -60,6 +55,13 @@ export function AgentTemplateSection({ agent, agentBase }: { agent: Pick<Agent, 
           <p data-testid="template-made-from">
             Made from <span className="font-semibold text-ink">{template.name}</span> {template.version}
           </p>
+        ) : null}
+        {status.data && status.data.notes.length > 0 ? (
+          <Notice tone="accent" role="status" data-testid="template-notes">
+            {status.data.notes.map((n, i) => (
+              <p key={i}>{n.detail}</p>
+            ))}
+          </Notice>
         ) : null}
         {status.data && template && !status.data.available ? (
           <p data-testid="template-unavailable">The template is no longer offered here. {agent.name} keeps working as it is.</p>
@@ -100,6 +102,14 @@ export function AgentTemplateSection({ agent, agentBase }: { agent: Pick<Agent, 
           </div>
         ) : null}
         {remove.isError ? <ErrorNotice error={remove.error} /> : null}
+        {detach.isError ? <ErrorNotice error={detach.error} /> : null}
+        {template ? (
+          <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+            <Button type="button" variant="outline" size="sm" onClick={() => setDetaching(true)}>
+              Stop following this template
+            </Button>
+          </div>
+        ) : null}
         {stale ? (
           <Notice tone="pending">
             <p data-testid="template-stale">This template was updated. Check the changes, then apply.</p>
@@ -129,6 +139,18 @@ export function AgentTemplateSection({ agent, agentBase }: { agent: Pick<Agent, 
         onConfirm={() => {
           remove.mutate(null);
           setRemoving(false);
+        }}
+      />
+      <ConfirmDialog
+        open={detaching}
+        onOpenChange={(o) => !o && setDetaching(false)}
+        title="Stop following this template?"
+        description={`${agent.name} keeps its helper files and its skills from libraries. ${template?.name ?? "The template"} is no longer mentioned on ${agent.name}, and its updates are no longer offered.`}
+        confirmLabel="Stop following"
+        busy={detach.isPending}
+        onConfirm={() => {
+          detach.mutate();
+          setDetaching(false);
         }}
       />
     </Section>

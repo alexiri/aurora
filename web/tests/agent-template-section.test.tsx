@@ -80,8 +80,7 @@ describe("the agent's Template section (C-1117)", () => {
     await waitFor(() => expect(screen.getByTestId("template-unavailable")).toHaveTextContent("The template is no longer offered here. Daneel keeps working as it is."));
   });
 
-  it("says a newer version is available and that the agent keeps working until it is applied", async () => {
-    serve({
+  it("says a newer version is available and that the agent keeps working until it is applied", async () => {    serve({
       "GET /v1/agents/a1/template": () =>
         json(200, {
           template: { template_id: "schedule-manager", name: "Schedule manager", version: "1.0.0" },
@@ -94,6 +93,39 @@ describe("the agent's Template section (C-1117)", () => {
     await waitFor(() =>
       expect(screen.getByTestId("template-update")).toHaveTextContent("Version 1.1.0 is available. Daneel keeps working as it is until you apply it."),
     );
+  });
+
+  it("says what the apply left alone (C-1112's notes)", async () => {
+    serve({
+      "GET /v1/agents/a1/template": () =>
+        json(200, {
+          template: { template_id: "schedule-manager", name: "Schedule manager", version: "1.0.0" },
+          available: true,
+          notes: [{ code: "skill_kept", detail: "The library skill Formatter is not the template's part any more; it stays." }],
+        }),
+    });
+    mount(withTemplate);
+    await waitFor(() =>
+      expect(screen.getByTestId("template-notes")).toHaveTextContent("The library skill Formatter is not the template's part any more; it stays."),
+    );
+  });
+
+  it("stops following the template after its confirm (C-1112 detach)", async () => {
+    let detached = 0;
+    serve({
+      "DELETE /v1/agents/a1/template": () => {
+        detached += 1;
+        return json(204, null);
+      },
+    });
+    mount(withTemplate);
+    await screen.findByTestId("template-made-from");
+    fireEvent.click(screen.getByRole("button", { name: "Stop following this template" }));
+    const dlg = screen.getByRole("dialog", { name: "Stop following this template?" });
+    expect(dlg).toHaveTextContent("Daneel keeps its helper files and its skills from libraries.");
+    expect(dlg).toHaveTextContent("its updates are no longer offered");
+    fireEvent.click(within(dlg).getByRole("button", { name: "Stop following" }));
+    await waitFor(() => expect(detached).toBe(1));
   });
 
   it("views the helper files: path, size, Executable, and the text as plain text", async () => {
