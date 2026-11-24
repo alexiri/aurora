@@ -2,6 +2,7 @@
 
 import { AgentExportImport } from "@/components/agents/export-import";
 import { AgentFreeze } from "@/components/freeze/freeze-sections";
+import { AgentTemplateSection } from "@/components/templates/template-section";
 import { Button } from "@/components/ui/button";
 import { DangerZone, Section } from "@/components/ui/section";
 import { authorityRank, useFreezeAgent, useFreezeAuthority, type Frozen } from "@/lib/api/freeze";
@@ -20,7 +21,8 @@ function ResumeButton({ agentId, name, orgId, frozen }: { agentId: string; name:
 }
 
 /**
- * (D-447, FIX-213) The last Settings page, for workspace owners: **Pause** (or the paused state with **Resume**), **Export and
+ * (D-447, FIX-213) The last Settings page, for workspace owners: **Pause** (or the paused state with **Resume**), the
+ * agent's **Template** section (C-1117, shown only for agents made from a template or with helper files), **Export and
  * import** (Expert, hosted agents only) and **Delete** in the danger style. These sat under every Settings page before.
  */
 export function ManagePage({
@@ -48,6 +50,8 @@ export function ManagePage({
           )}
         </div>
       </Section>
+      {/* (C-1117) Made from a template, or holding helper files: the section sits above Export and import. */}
+      <AgentTemplateSection agent={agent} />
       {byo ? null : <AgentExportImport agent={agent} />}
       <DangerZone id="agent-danger" title="Delete">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">

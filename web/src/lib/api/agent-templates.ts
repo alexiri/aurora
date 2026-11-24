@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "./client";
+import { api, ApiError } from "./client";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
@@ -215,6 +215,97 @@ export function useSetOrgTemplate(org: string) {
     mutationFn: ({ templateId, enabled }: { templateId: string; enabled: boolean }) =>
       unwrap(api.PUT("/v1/orgs/{org}/agent-templates/{template_id}", { params: { path: { org, template_id: templateId } }, body: { enabled } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: templateKeys.org(org) }),
+  });
+}
+
+// ---- The agent's provenance, update offer and helper files (C-1112, C-1143, C-1117) -----------
+
+export type AgentTemplateStatus = components["schemas"]["AgentTemplateStatus"];
+export type AgentTemplateRefView = components["schemas"]["AgentTemplateRefView"];
+export type TemplateUpdateOffer = components["schemas"]["TemplateUpdateOffer"];
+export type OfferPart = components["schemas"]["OfferPart"];
+export type ApplyTemplateRequest = components["schemas"]["ApplyTemplateRequest"];
+export type InputNeededView = components["schemas"]["InputNeededView"];
+export type UpdateAppEntry = components["schemas"]["UpdateAppEntry"];
+export type HelperFile = components["schemas"]["HelperFile"];
+
+export const agentTemplateKeys = {
+  status: (agentId: string) => ["agents", agentId, "template"] as const,
+  helpers: (agentId: string) => ["agents", agentId, "helpers"] as const,
+  helper: (agentId: string, path: string) => ["agents", agentId, "helpers", "content", path] as const,
+};
+
+/** The provenance and the update offer of one agent (C-1112). */
+export function useAgentTemplate(agentId: string | undefined) {
+  return useQuery({
+    queryKey: agentTemplateKeys.status(agentId ?? ""),
+    queryFn: () => unwrap(api.GET("/v1/agents/{agent}/template", { params: { path: { agent: agentId! } } })),
+    enabled: !!agentId,
+    retry: false,
+  });
+}
+
+/** Apply (or skip) an offered version (C-1112): only the listed parts change; the answer is the new status. */
+export function useApplyAgentTemplate(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ApplyTemplateRequest) =>
+      unwrap(api.POST("/v1/agents/{agent}/template/apply", { params: { path: { agent: agentId } }, body })),
+    onSuccess: (data) => {
+      qc.setQueryData(agentTemplateKeys.status(agentId), data);
+      void qc.invalidateQueries({ queryKey: agentTemplateKeys.helpers(agentId) });
+    },
+  });
+}
+
+/** Stop following this template (C-1112): the helper files and library skills stay. */
+export function useDetachAgentTemplate(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(api.DELETE("/v1/agents/{agent}/template", { params: { path: { agent: agentId } } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: agentTemplateKeys.status(agentId) }),
+  });
+}
+
+/** The agent's helper files (C-1143): path, size, executable — the content comes from `useAgentHelper`. */
+export function useAgentHelpers(agentId: string | undefined) {
+  return useQuery({
+    queryKey: agentTemplateKeys.helpers(agentId ?? ""),
+    queryFn: () => unwrap(api.GET("/v1/agents/{agent}/helpers", { params: { path: { agent: agentId! } } })),
+    enabled: !!agentId,
+    retry: false,
+  });
+}
+
+/** One helper file's bytes. Every helper file is UTF-8 text (owner decision 2026-11-24), so it reads as text. */
+export async function getAgentHelperText(agentId: string, path: string): Promise<string> {
+  const { data, error, response } = await api.GET("/v1/agents/{agent}/helpers/content", {
+    params: { path: { agent: agentId }, query: { path } },
+    parseAs: "text",
+  });
+  if (error !== undefined || !response.ok) {
+    throw ApiError.fromBody(error, response.status);
+  }
+  return typeof data === "string" ? data : "";
+}
+
+/** The text of one helper file (C-1143). Every helper file is UTF-8 text (owner decision 2026-11-24), so it reads as text. */
+export function useAgentHelperText(agentId: string, path: string) {
+  return useQuery({
+    queryKey: agentTemplateKeys.helper(agentId, path),
+    queryFn: () => getAgentHelperText(agentId, path),
+    retry: false,
+    staleTime: Infinity,
+  });
+}
+
+/** Remove one helper file (with `path`) or all of them (C-1143). */
+export function useDeleteAgentHelpers(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string | null) =>
+      unwrap(api.DELETE("/v1/agents/{agent}/helpers", { params: { path: { agent: agentId }, query: path ? { path } : {} } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: agentTemplateKeys.helpers(agentId) }),
   });
 }
 
