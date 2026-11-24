@@ -757,7 +757,12 @@ sync. Order:
 1. **Platform preamble** (platform voice): identity (name, handle, workspace),
  the boundary map (what is the agent's, the platform's and the gateway's),
  how credentials work (never ask people for secrets; the gateway injects),
- how to read gateway refusals. (phase 5 (D-138, moved from phase 4), RFE-011b, only when parking is enabled) The
+ how to read gateway refusals. (Phase 5, FIX-239, D-483) An **Approvals** section, for every app:
+ writes may be held until a person allows or blocks them; agree on a write's details first; a held
+ request waits (usually up to 5 minutes; `aurora-agent call` waits up to 15): do not end it early
+ or send it again; `manual_approval_denied` = blocked, do not retry; `manual_approval_expired` = no
+ answer, send again only if the person asks; after an error or timeout on a write, check whether it
+ took effect before trying again. Apps' skills refer to it instead of repeating it. (phase 5 (D-138, moved from phase 4), RFE-011b, only when parking is enabled) The
  preamble includes the paragraph: *"If a request is refused with `approval_parked`, it was not
  sent: a person must approve it and that may take hours. Do not retry it and do not look for another
  route. Finish what you can, tell the user what you are waiting for, and end your turn. When you

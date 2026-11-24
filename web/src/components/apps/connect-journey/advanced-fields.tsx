@@ -94,16 +94,24 @@ export function RequestedScopes({
   selected,
   onChange,
   disabled,
+  error,
 }: {
   method: ConnectMethod;
   selected: string[];
   onChange: (s: string[]) => void;
   disabled?: boolean;
+  /** (C-1166) Said when none is on: a sign-in asks for at least one scope. */
+  error?: string;
 }) {
   return (
-    <fieldset className="min-w-0 space-y-3">
+    <fieldset className="min-w-0 space-y-3" aria-describedby={error ? "requested-scopes-error" : undefined}>
       <legend className="mb-1 text-sm font-medium text-ink">Requested scopes</legend>
       <ScopeGroups scopes={method.scopes} selected={selected} onChange={onChange} disabled={disabled} />
+      {error ? (
+        <p id="requested-scopes-error" role="alert" className="text-xs text-danger-ink">
+          {error}
+        </p>
+      ) : null}
     </fieldset>
   );
 }

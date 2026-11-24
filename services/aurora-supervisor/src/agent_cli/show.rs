@@ -273,8 +273,37 @@ fn scalar(v: &serde_json::Value) -> String {
     }
 }
 
+/// The method writes (a body is expected).
+fn writes(method: &str) -> bool {
+    matches!(
+        method.to_ascii_uppercase().as_str(),
+        "POST" | "PUT" | "PATCH"
+    )
+}
+
+/// (FIX-239) The command that calls a catalogue entry: it has no name `call` accepts, so the
+/// example gives its method and path (`*` shown as `<id>`), and `--body @<file>` for a write.
+pub(crate) fn catalogue_example(app: &str, op: &Operation) -> String {
+    let mut o = format!(
+        "aurora-agent call {app} --method {} --path {}",
+        oneline(&op.method, 8).to_ascii_uppercase(),
+        oneline(&op.path, 160).replace('*', "<id>")
+    );
+    if writes(&op.method) {
+        o.push_str(" --body @<file.json>");
+    }
+    o
+}
+
 fn example(app: &str, op: &Operation) -> String {
+    if op.is_catalogue() {
+        return catalogue_example(app, op);
+    }
     let mut o = format!("aurora-agent call {app} {}", oneline(&op.id, 64));
+    // (FIX-239) A body no field describes (nested JSON) is passed whole.
+    if writes(&op.method) && op.body.as_ref().is_some_and(|b| b.fields.is_empty()) {
+        o.push_str(" --body @<file.json>");
+    }
     for p in op
         .params
         .iter()
@@ -513,10 +542,16 @@ mod tests {
             describe(d, "search_rooms").unwrap()
         );
         insta::assert_snapshot!("describe_book_room", describe(d, "book_room").unwrap());
+        let ev = describe(d, "list_events").unwrap();
+        assert!(ev.contains("explicit --path"), "{ev}");
+        // (FIX-239) A catalogue entry's example is a command `call` accepts, not its bare name.
         assert!(
-            describe(d, "list_events")
-                .unwrap()
-                .contains("explicit --path")
+            ev.contains("example: aurora-agent call ") && ev.contains(" --path "),
+            "{ev}"
+        );
+        assert!(
+            !ev.contains("example: aurora-agent call indico list_events"),
+            "{ev}"
         );
         assert!(
             describe(d, "indico-book-free-room")

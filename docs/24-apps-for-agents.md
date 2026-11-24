@@ -715,7 +715,11 @@ aurora-agent call <app> --path <path> [--method M] [--account …] [name=value �
   type, required, enum, default, description), body fields, pagination, access per account, the
   catalogue tool it maps to; for a platform tool, its description and its input schema as a
   parameter table. Both end with one example `aurora-agent call` line built from the required
-  parameters, and stay under `AGENT_CLI_PREVIEW_MAX`, truncating descriptions first.
+  parameters, and stay under `AGENT_CLI_PREVIEW_MAX`, truncating descriptions first. (FIX-239,
+  D-483) The example is always a command `call` accepts: a **catalogue entry** (no name `call`
+  takes) shows `aurora-agent call <app> --method <M> --path <path>` with each `*` as `<id>`, and
+  a write whose body no field describes adds `--body @<file.json>`. Calling a catalogue entry by
+  name is refused (exit 2) with that same command.
 - **Options that do not apply** to the target (`--account`, `--all`, `--max-pages`, `--path`,
   `--method` with `aurora`) are refused with exit 2 before anything is sent.
 - **Exit codes** (both kinds): 0 success; 1 upstream HTTP error or a tool's error result; 2 usage,
@@ -770,6 +774,10 @@ through the proxy environment it inherits, exactly like `curl`.
     or expired, `egress` posture) is printed in full with its reason and exits 3; an upstream
     HTTP error prints the status and the first lines of the body and exits 1. A request held for
     approval waits as `curl` would (`07 §Approvals`), printing one line that it is waiting.
+    (FIX-239, D-483) The line says what a hold is and refers to the instruction file's
+    **Approvals** section (`10 §Agent instructions`). Nothing an agent reads (output of this
+    command, the instruction file, rendered app files, built-in skills, files written into the
+    sandbox) cites a document, section or task id the agent cannot open.
 - **Account-bound operations (P5-WEBHOOK-3, C-911)**: an operation with `account` (an outgoing
   webhook) is called on that account without `--account`; `--account` naming another is refused
   (exit 2) and other accounts of the app are no ambiguity. A `json` field takes only
