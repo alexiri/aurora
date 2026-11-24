@@ -1,3 +1,5 @@
+import { useApps } from "@/lib/api/apps";
+import { appDisplayName } from "@/lib/api/app-name";
 import { label, TEMPLATE_FOUND_STATE, TEMPLATE_VERSION_STATUS } from "@/lib/labels";
 
 /** One refusal the repository's files caused (C-1141): `{ code, path, message }`; a check names a `dir` instead. */
@@ -23,4 +25,14 @@ export function foundStateWords(state: string | null | undefined): string {
 /** The words for a stored version's state (`awaiting_package`, `pending_approval`, …). */
 export function versionStatusWords(status: string | null | undefined): string {
   return label(TEMPLATE_VERSION_STATUS, status);
+}
+
+/** The name of an app in the catalogue; an app Aurora does not know keeps its id (it may not be installed here). */
+export function useAppName() {
+  const { data } = useApps(undefined);
+  const items = data?.items ?? [];
+  return (appId: string) => {
+    const a = items.find((x) => x.app_id === appId);
+    return a ? appDisplayName(a) : appId;
+  };
 }

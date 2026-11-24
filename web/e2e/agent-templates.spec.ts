@@ -62,6 +62,24 @@ for (const width of [1280, 390]) {
       expect(mock.writes[1].body).toEqual({ url: "https://github.com/acme/agent-templates.git", ref: "main", path: "templates" });
     });
 
+    test("review: the README renders as inert data, and Approve sends the hash that was shown", async ({ page }) => {
+      const mock = await openTemplateScreen(page, "review", "light");
+      await expect(page.getByLabel("README.md source text")).toContainText("# Schedule manager");
+      await page.getByRole("button", { name: "Preview" }).click();
+      const readme = page.getByTestId("template-readme");
+      await expect(readme.getByText("<img src=x onerror=alert(1)>")).toBeVisible();
+      expect(await readme.locator("img").count()).toBe(0);
+      expect(await readme.locator("a[href^='javascript:']").count()).toBe(0);
+      await expect(readme.getByText("remote picture")).toBeVisible();
+      await expect(readme.getByText("docs")).toBeVisible();
+      await expect(readme.getByRole("heading", { level: 3, name: "Schedule manager" })).toBeVisible();
+      // the diff against the offered version, then the decision bound to the shown hash
+      await expect(page.getByRole("region", { name: "Changes against 1.0.0" })).toContainText("+ Triage carefully.");
+      await page.getByRole("button", { name: "Approve" }).click();
+      await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
+      await expect.poll(() => mock.writes.at(-1)).toEqual({ key: "POST /v1/admin/agent-templates/schedule-manager/versions/1.1.0/approve", body: { content_sha256: "c".repeat(64) } });
+    });
+
     test("check now, edit the schedule, remove the repository", async ({ page }) => {
       const mock = await openTemplateScreen(page, "tab", "light");
       // Check now: one read, the row keeps its words

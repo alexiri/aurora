@@ -11,22 +11,10 @@ import {
   useUpdateTemplate,
   type AdminTemplateView,
 } from "@/lib/api/agent-templates";
-import { useApps } from "@/lib/api/apps";
-import { appDisplayName } from "@/lib/api/app-name";
 import { adminRoutes } from "@/lib/routes";
 import { fmtDate } from "@/lib/utils";
 
-import { problemWords } from "./words";
-
-/** The name of an app in the catalogue; an app Aurora does not know keeps its id (it may not be installed here). */
-function useAppName() {
-  const { data } = useApps(undefined);
-  const items = data?.items ?? [];
-  return (appId: string) => {
-    const a = items.find((x) => x.app_id === appId);
-    return a ? appDisplayName(a) : appId;
-  };
-}
+import { problemWords, useAppName } from "./words";
 
 /** The apps the template needs (C-1108): the catalogue name, and "Not installed here" when this instance lacks it. */
 function NeedsApps({ t, nameOf }: { t: AdminTemplateView; nameOf: (id: string) => string }) {

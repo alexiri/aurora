@@ -15,7 +15,6 @@ import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
 import {
   LIBRARY_BUDGET,
-  diffLines,
   shortSha,
   useApproveLibraryUpdate,
   useDetachLibrarySkill,
@@ -32,6 +31,8 @@ import {
   type SkillLibrary,
 } from "@/lib/api/skill-libraries";
 import { TIER_LABEL, useCreateSkill, type Skill, type SkillScope, type SkillTier } from "@/lib/api/skills";
+
+import { Lines } from "@/components/ui/lines";
 
 type Source = NonNullable<Skill["source"]>;
 
@@ -78,24 +79,6 @@ const AUTHORITY: Record<BudgetTier, string> = {
 };
 
 // ---- the whole diff ---------------------------------------------------------------------------
-
-function Lines({ old, next, label }: { old: string; next: string; label: string }) {
-  const lines = diffLines(old, next);
-  return (
-    <pre tabIndex={0} aria-label={label} className="max-w-full overflow-x-auto rounded-control border border-line bg-canvas p-2 font-mono text-xs leading-5 text-ink">
-      {lines.map((l, i) => (
-        <span
-          key={i}
-          data-diff={l.kind}
-          className={`block whitespace-pre ${l.kind === "add" ? "bg-accent-soft text-accent-ink" : l.kind === "del" ? "bg-danger-soft text-danger-ink" : ""}`}
-        >
-          {l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  "}
-          {l.text}
-        </span>
-      ))}
-    </pre>
-  );
-}
 
 /** The whole stored-versus-proposed content: every line, nothing summarized or truncated. */
 export function DiffView({ diff }: { diff: LibraryDiff }) {

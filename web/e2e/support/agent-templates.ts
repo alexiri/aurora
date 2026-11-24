@@ -7,7 +7,7 @@ import type { Scheme } from "./open";
 // with the mocked API. The data uses the real built-in GitHub package for the apps a template needs; every
 // address and commit is plain text, as the server stores it.
 
-export const TEMPLATE_SCREENS = ["tab", "add"] as const;
+export const TEMPLATE_SCREENS = ["tab", "add", "review"] as const;
 export type TemplateScreen = (typeof TEMPLATE_SCREENS)[number];
 
 const SHA_A = "0123456789abcdef0123456789abcdef01234567";
@@ -17,17 +17,18 @@ type Source = Record<string, unknown>;
 type Template = Record<string, unknown>;
 
 // (C-1107) A source is a git address with a schedule; `token_set` says whether a token is saved, never the token.
-const source: Source = {
+// Factories: every test gets fresh state, so decisions made in one journey never leak into the next.
+const makeSource = (): Source => ({
   id: id(800), name: "Team templates", url: "https://github.com/acme/agent-templates.git", repo: "github.com/acme/agent-templates",
   ref: null, path: "templates", packages_url: "https://github.com/acme/agent-templates/releases/download/{version}/{id}-{version}.zip",
   status: "ok", check_failed_at: null, check_failed_reason: null, token_set: false, token_updated_at: null,
   last_checked_at: now, last_head_sha: SHA_A, update_interval: "1d", contact: null, homepage: null,
   templates: [{ template_id: "schedule-manager", dir: "templates/schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work", state: "ingested", head_state: "ok", head_version: "1.1.0" }],
   created_at: now, updated_at: now,
-};
+});
 
 // (C-1108) The template of that source: an approved version offered, a newer one waiting for review.
-const template: Template = {
+const makeTemplate = (): Template => ({
   template_id: "schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work",
   source: { id: id(800), name: "Team templates" }, current_version: "1.0.0", offered: true,
   head_state: "ok", head_version: "1.1.0", head_problems: null, removed_upstream: false,
@@ -36,7 +37,7 @@ const template: Template = {
     { version: "1.1.0", status: "pending_approval", commit_sha: SHA_B, created_at: now, decided_at: null, decided_by: null, last_attempt_at: null, size_bytes: 4096, status_reason: null },
     { version: "1.0.0", status: "approved", commit_sha: SHA_A, created_at: now, decided_at: now, decided_by: { kind: "person", name: "Ada Lovelace" }, last_attempt_at: null, size_bytes: 3800, status_reason: null },
   ],
-};
+});
 
 /** What a check of a GitHub page address finds; the branch and the folder come from the address. */
 const preview = () => ({
@@ -52,6 +53,21 @@ const checkResult = (sourceId: string) => ({
   source_id: sourceId, status: "updated", commit_sha: SHA_B, check_failed_reason: null, problems: [], ingested: [], waiting: [],
 });
 
+// The review of a version (C-1114): the whole content as data. The README is deliberately hostile
+// (markup, a javascript: link, a remote image, a relative link) to prove it renders as inert data.
+const versionDetail = (version: string, sha: string, status: string, sha256: string, instructions: string) => ({
+  template_id: "schedule-manager", version, status, status_reason: null, commit_sha: sha, content_sha256: sha256,
+  archive_sha256: null, size_bytes: 4096,
+  source: { id: id(800), name: "Team templates", repo: "github.com/acme/agent-templates", ref: null, path: "templates" },
+  content: {
+    name: "Schedule manager", summary: "Triage and schedule the team's work",
+    readme: "# Schedule manager\n\nWhat it does.\n\n<img src=x onerror=alert(1)>\n\n[click](javascript:alert(1))\n\n![remote picture](https://evil.test/picture.png)\n\n[docs](./other.md)\n",
+    effort: null, min_core: null, agent: { name: "Daneel", may_message_first: false },
+    instructions, inputs: [], apps: [{ app: "github", required: true, level: "ask", tools: null, why: "Reads the pull requests" }],
+    skills: [], skill_refs: [], helpers: [], memories: [], automations: [], has_avatar: false,
+  },
+});
+
 /** What the specs can see of the mocked API after a journey. */
 export interface TemplateMock {
   /** The bodies of the writes, by "METHOD path". */
@@ -65,8 +81,25 @@ export interface TemplateMock {
 export async function mockAgentTemplates(page: Page): Promise<TemplateMock> {
   await mockApi(page);
   const mock: TemplateMock = { writes: [] };
-  let sources: Source[] = [source];
-  let templates: Template[] = [template];
+  let sources: Source[] = [makeSource()];
+  let templates: Template[] = [makeTemplate()];
+  // The version status lives with the template's versions, so a decision survives the review page's refetch.
+  const versionStatus = (v: string) =>
+    String((templates[0].versions as { version: string; status: string }[]).find((x) => x.version === v)?.status ?? "pending_approval");
+  const setVersionStatus = (v: string, status: string) => {
+    templates = templates.map((t) =>
+      t.template_id === "schedule-manager"
+        ? {
+            ...t,
+            versions: (t.versions as { version: string; status: string; decided_at: string | null; decided_by: unknown }[]).map((row) =>
+              row.version === v
+                ? { ...row, status, decided_at: status === "approved" ? now : null, decided_by: status === "approved" ? { kind: "person", name: "Ada Lovelace" } : null }
+                : row,
+            ),
+          }
+        : t,
+    );
+  };
   await page.route("**/v1/**", async (route) => {
     const req = route.request();
     const p = new URL(req.url()).pathname;
@@ -81,7 +114,7 @@ export async function mockAgentTemplates(page: Page): Promise<TemplateMock> {
         note();
         const b = req.postDataJSON() as Record<string, unknown>;
         const added: Source = {
-          ...source, id: id(801), name: "acme/agent-templates", url: String(b.url), repo: "github.com/acme/agent-templates",
+          ...makeSource(), id: id(801), name: "acme/agent-templates", url: String(b.url), repo: "github.com/acme/agent-templates",
           ref: (b.ref as string) ?? null, path: (b.path as string) ?? "", last_checked_at: now, last_head_sha: SHA_B,
         };
         sources = [...sources, added];
@@ -109,6 +142,23 @@ export async function mockAgentTemplates(page: Page): Promise<TemplateMock> {
     if (p === "/v1/admin/agent-templates") {
       return json({ items: templates });
     }
+    if (p === "/v1/admin/agent-templates/schedule-manager/versions/1.1.0") {
+      return json(versionDetail("1.1.0", SHA_B, versionStatus("1.1.0"), "c".repeat(64), "Triage carefully."));
+    }
+    if (p === "/v1/admin/agent-templates/schedule-manager/versions/1.0.0") {
+      return json(versionDetail("1.0.0", SHA_A, versionStatus("1.0.0"), "b".repeat(64), "Triage the queue."));
+    }
+    if (p === "/v1/admin/agent-templates/schedule-manager/versions/1.1.0/approve") {
+      note();
+      setVersionStatus("1.1.0", "approved");
+      templates = templates.map((t) => ({ ...t, current_version: "1.1.0" }));
+      return json(versionDetail("1.1.0", SHA_B, "approved", "c".repeat(64), "Triage carefully."));
+    }
+    if (p === "/v1/admin/agent-templates/schedule-manager/versions/1.1.0/reject") {
+      note();
+      setVersionStatus("1.1.0", "rejected");
+      return json(versionDetail("1.1.0", SHA_B, "rejected", "c".repeat(64), "Triage carefully."));
+    }
     if (req.method() === "PATCH" && p === `/v1/admin/agent-templates/schedule-manager`) {
       note();
       const b = req.postDataJSON() as { offered: boolean };
@@ -134,6 +184,11 @@ export async function openTemplateScreen(page: Page, screen: TemplateScreen, sch
   if (screen === "add") {
     await page.getByRole("button", { name: "Add a repository" }).click();
     await page.getByRole("dialog", { name: "Add a template repository" }).waitFor();
+  }
+  if (screen === "review") {
+    await page.getByRole("link", { name: "1 version of Schedule manager waiting for review, review it" }).click();
+    await page.getByRole("heading", { name: "Schedule manager 1.1.0" }).waitFor();
+    await page.waitForLoadState("networkidle");
   }
   return mock;
 }
