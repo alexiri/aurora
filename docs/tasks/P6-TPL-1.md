@@ -147,7 +147,8 @@ Reading repositories, downloads, storage, routes, approval and the poll job (P6-
   - a zip bomb (high ratio, and declared sizes that lie) is refused without allocating the unpacked size;
   - absolute, `..`, hidden, backslash, symlink, submodule and too-deep names are refused, in both forms;
   - a second top-level directory, or a root that is not the id, is refused;
-  - an executable binary is refused, and a non-executable binary is accepted;
+  - an executable binary is refused, and a non-executable binary skill file is accepted (a non-text
+    helper file is refused at every layer: every helper file must be UTF-8 text);
   - a zip written by the web export (`exportZip`, store-only), rooted at `<id>/` with a `template.yaml`, is read;
   - a deflated zip (as `zip -r` writes) is read;
   - `read_tree` and `read_archive` agree.
