@@ -191,9 +191,10 @@ pub struct Decider {
 }
 
 /// The e-mail recipients of an approval: users with an explicit workspace `owner`/`approver`
-/// binding (active org members); when the workspace has none, the org owners/admins. Disabled
-/// users, users who turned approval e-mails off, and users who cannot see a `direct` conversation
-/// the approval names are excluded.
+/// binding (active org members), in their own right (FIX-234, D-477: no fallback to the org's
+/// owners/admins; a workspace with no own-right decider leaves its approvals unnotified — they
+/// expire undecided). Disabled users, users who turned approval e-mails off, and users who
+/// cannot see a `direct` conversation the approval names are excluded.
 pub async fn deciders(
     pool: &PgPool,
     org: Uuid,
@@ -227,11 +228,7 @@ pub async fn deciders_with(
                AND NOT EXISTS (SELECT 1 FROM workspace_access s WHERE s.workspace_id = $2 \
                                  AND s.user_id = gm.user_id AND s.status = 'suspended')), \
          recipients AS ( \
-             SELECT user_id FROM explicit \
-             UNION \
-             SELECT m.user_id FROM effective_org_members m \
-             WHERE m.org_id = $1 AND m.role IN ('owner', 'admin') \
-               AND NOT EXISTS (SELECT 1 FROM explicit)) \
+             SELECT user_id FROM explicit) \
          SELECT u.id AS user_id, u.email::text AS email, u.display_name \
          FROM recipients r JOIN users u ON u.id = r.user_id \
          WHERE u.disabled_at IS NULL AND (NOT $4 OR u.approval_email_enabled) \

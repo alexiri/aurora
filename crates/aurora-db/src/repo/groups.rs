@@ -764,15 +764,14 @@ pub struct DerivedMember {
     pub role: String,
     pub created_at: DateTime<Utc>,
     /// (P5-APIGAP-4, C-1050) The earliest start of a current direct or group source (a group
-    /// source starts at the later of the membership and the binding); `None` when the only
-    /// source is an org role, whose start is not recorded.
+    /// source starts at the later of the membership and the binding).
     pub joined_at: Option<DateTime<Utc>>,
     pub sources: Vec<crate::authz::AccessSource>,
 }
 
-/// Everyone whose access to the workspace comes (at least partly) from a group or an org role:
-/// the effective role and its sources, once per person. Ordered `(created_at desc, user_id desc)`
-/// by the member's org membership time.
+/// Everyone whose access to the workspace comes through a group (FIX-234, D-477: an
+/// `admin` org-role mapping reaches no workspace): the effective role and its sources, once
+/// per person. Ordered `(created_at desc, user_id desc)` by the member's org membership time.
 pub async fn derived_members<'e, E: PgExecutor<'e>>(
     exec: E,
     ws: Uuid,
@@ -786,7 +785,6 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
         String,
         String,
         DateTime<Utc>,
-        String,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -794,7 +792,7 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
         Option<DateTime<Utc>>,
     );
     let rows: Vec<Row> = sqlx::query_as(
-        "SELECT ew.user_id, u.email::text, u.display_name, ew.role, om.created_at, om.role, \
+        "SELECT ew.user_id, u.email::text, u.display_name, ew.role, om.created_at, \
                 wa.role, wa.idp_source, wa.base_role, \
                 COALESCE((SELECT jsonb_agg(jsonb_build_object( \
                               'group', g.id, 'org_role', g.org_role, 'ws_role', b.role)) \
@@ -816,13 +814,11 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
            LEFT JOIN workspace_access wa \
                   ON wa.workspace_id = ew.workspace_id AND wa.user_id = ew.user_id \
           WHERE ew.workspace_id = $1 \
-            AND (om.role IN ('owner', 'admin') \
-                 OR EXISTS (SELECT 1 FROM group_members gm \
-                              JOIN groups g ON g.id = gm.group_id \
-                              LEFT JOIN group_workspace_access b \
-                                     ON b.group_id = g.id AND b.workspace_id = ew.workspace_id \
-                             WHERE gm.org_id = ew.org_id AND gm.user_id = ew.user_id \
-                               AND (g.org_role = 'admin' OR b.role IS NOT NULL))) \
+            AND EXISTS (SELECT 1 FROM group_members gm \
+                         JOIN group_workspace_access b \
+                                ON b.group_id = gm.group_id \
+                               AND b.workspace_id = ew.workspace_id \
+                        WHERE gm.org_id = ew.org_id AND gm.user_id = ew.user_id) \
             AND ($2::timestamptz IS NULL OR (om.created_at, ew.user_id) < ($2, $3)) \
           ORDER BY om.created_at DESC, ew.user_id DESC LIMIT $4",
     )
@@ -835,19 +831,7 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
     Ok(rows
         .into_iter()
         .map(
-            |(
-                user_id,
-                email,
-                display_name,
-                role,
-                created_at,
-                org_role,
-                wa,
-                idp,
-                base,
-                groups,
-                joined_at,
-            )| {
+            |(user_id, email, display_name, role, created_at, wa, idp, base, groups, joined_at)| {
                 DerivedMember {
                     user_id,
                     email,
@@ -856,7 +840,6 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
                     created_at,
                     joined_at,
                     sources: crate::authz::build_sources(
-                        &org_role,
                         wa.as_deref(),
                         idp,
                         base.as_deref(),
@@ -871,7 +854,8 @@ pub async fn derived_members<'e, E: PgExecutor<'e>>(
 // ---- offboarding: which groups give a person access ----
 
 /// For each workspace in `workspaces`, the groups (id, name) that currently give `user` access:
-/// a binding on that workspace, or an `admin` org-role mapping (every workspace of the org).
+/// a binding on that workspace (FIX-234, D-477: an `admin` org-role mapping reaches no
+/// workspace).
 pub async fn via_groups<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
@@ -888,12 +872,11 @@ pub async fn via_groups<'e, E: PgExecutor<'e>>(
            JOIN groups g ON g.id = gm.group_id \
            JOIN org_members om ON om.org_id = gm.org_id AND om.user_id = gm.user_id \
                 AND om.status = 'active' \
-          WHERE g.org_role = 'admin' \
-             OR (EXISTS (SELECT 1 FROM group_workspace_access b \
-                          WHERE b.group_id = g.id AND b.workspace_id = w.id) \
-                 AND NOT EXISTS (SELECT 1 FROM workspace_access s \
-                                  WHERE s.workspace_id = w.id AND s.user_id = $2 \
-                                    AND s.status = 'suspended')) \
+          WHERE EXISTS (SELECT 1 FROM group_workspace_access b \
+                         WHERE b.group_id = g.id AND b.workspace_id = w.id) \
+            AND NOT EXISTS (SELECT 1 FROM workspace_access s \
+                             WHERE s.workspace_id = w.id AND s.user_id = $2 \
+                               AND s.status = 'suspended') \
           ORDER BY g.name, g.id",
     )
     .bind(org)
@@ -918,14 +901,13 @@ pub struct ImpactWorkspace {
 }
 
 /// What deleting `group` (or, with `remove_member`, removing that one member) would take away.
-/// Per workspace the group reaches (its bindings, or every workspace of the org when it maps to
-/// `admin`): the users who would lose **all** access (after counting direct bindings, their org
-/// role and every *other* group), the enabled creator-anchored schedules and webhooks that
+/// Per workspace the group reaches (its bindings; FIX-234, D-477: an `admin` org-role mapping
+/// reaches no workspace): the users who would lose **all** access (after counting direct
+/// bindings and every *other* group), the enabled creator-anchored schedules and webhooks that
 /// would stop firing, and the live personal API keys confined to the workspace.
 ///
 /// With `unbind_workspace`, only that workspace is considered and only its binding is taken
-/// away: a group that maps to `admin` keeps reaching it (nothing is lost), and a workspace the
-/// group is not bound to is omitted.
+/// away: a workspace the group is not bound to is omitted.
 pub async fn impact(
     conn: &mut PgConnection,
     group: &GroupRow,
@@ -934,14 +916,13 @@ pub async fn impact(
 ) -> Result<Vec<ImpactWorkspace>, DbError> {
     let workspaces: Vec<(Uuid, String, String)> = sqlx::query_as(
         "SELECT w.id, w.name, w.slug FROM workspaces w \
-          WHERE w.org_id = $1 AND ($2::text = 'admin' OR EXISTS (\
+          WHERE w.org_id = $1 AND EXISTS (\
                 SELECT 1 FROM group_workspace_access b \
-                 WHERE b.group_id = $3 AND b.workspace_id = w.id)) \
-            AND ($4::uuid IS NULL OR (w.id = $4 AND $2::text <> 'admin')) \
+                 WHERE b.group_id = $2 AND b.workspace_id = w.id) \
+            AND ($3::uuid IS NULL OR w.id = $3) \
           ORDER BY w.name, w.id",
     )
     .bind(group.org_id)
-    .bind(group.org_role.as_deref().unwrap_or(""))
     .bind(group.id)
     .bind(unbind_workspace)
     .fetch_all(&mut *conn)
@@ -957,16 +938,15 @@ pub async fn impact(
                     AND om.status = 'active' \
                JOIN users u ON u.id = gm.user_id \
               WHERE gm.group_id = $1 AND ($3::uuid IS NULL OR gm.user_id = $3) \
-                AND om.role NOT IN ('owner', 'admin') \
                 AND NOT EXISTS (SELECT 1 FROM workspace_access x \
                                  WHERE x.workspace_id = $2 AND x.user_id = gm.user_id) \
                 AND NOT EXISTS (SELECT 1 FROM group_members g2 \
                                   JOIN groups o ON o.id = g2.group_id \
                                  WHERE g2.org_id = gm.org_id AND g2.user_id = gm.user_id \
                                    AND g2.group_id <> $1 \
-                                   AND (o.org_role = 'admin' OR EXISTS ( \
+                                   AND EXISTS ( \
                                         SELECT 1 FROM group_workspace_access b2 \
-                                         WHERE b2.group_id = o.id AND b2.workspace_id = $2))) \
+                                         WHERE b2.group_id = o.id AND b2.workspace_id = $2)) \
               ORDER BY u.display_name, u.id",
         )
         .bind(group.id)

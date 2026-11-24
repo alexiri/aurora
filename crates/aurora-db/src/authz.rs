@@ -1,8 +1,9 @@
 //! The access law (docs/04 §The access law), implemented once.
 //!
-//! `can_use(user, ws)`: workspace exists AND user is an *active* org member AND
-//! (org owner/admin OR a `workspace_access` row exists). `can_own` additionally
-//! needs workspace role `owner` (implicit for org owner/admin). Suspended = none.
+//! `can_use(user, ws)`: workspace exists AND user is an *active* org member AND holds access
+//! **in their own right** (an active direct or group binding; D-473, D-477). `can_own`
+//! additionally needs workspace role `owner`. An organization role (owner/admin) grants no
+//! workspace right; it gives `can_administer` (C-1160) instead. Suspended = none.
 
 use crate::DbError;
 use sqlx::PgExecutor;
@@ -31,7 +32,8 @@ impl OrgRole {
             Self::Member => "member",
         }
     }
-    /// Org owners and admins are implicit workspace owners.
+    /// Runs the organization: org-level routes (D-477). The org role grants **no** workspace
+    /// right; for the narrow workspace right see [`can_administer`].
     pub fn is_admin(self) -> bool {
         self >= Self::Admin
     }
@@ -97,20 +99,17 @@ impl WorkspaceAuth {
     pub fn can_own(&self) -> bool {
         self.effective_ws_role == WorkspaceRole::Owner
     }
-    /// Phase 2, RFE-012 (D-55): workspace `owner` or `approver` (org owner/admin are implicit
-    /// owners). `can_own ⊂ can_approve ⊂ can_use`.
+    /// Phase 2, RFE-012 (D-55): workspace `owner` or `approver` in their own right (D-477: the
+    /// org role is not an implicit owner). `can_own ⊂ can_approve ⊂ can_use`.
     pub fn can_approve(&self) -> bool {
         self.effective_ws_role >= WorkspaceRole::Approver
     }
 }
 
-/// Pure core of the law for an *active* member: effective workspace role.
-pub fn effective_role(org_role: OrgRole, binding: Option<WorkspaceRole>) -> Option<WorkspaceRole> {
-    if org_role.is_admin() {
-        Some(WorkspaceRole::Owner)
-    } else {
-        binding
-    }
+/// Pure core of the law for an *active* member: the effective workspace role is the person's own
+/// binding (D-477: the org role grants no workspace right).
+pub fn effective_role(binding: Option<WorkspaceRole>) -> Option<WorkspaceRole> {
+    binding
 }
 
 fn parse_status(s: &str) -> MemberStatus {
@@ -151,10 +150,6 @@ pub enum AccessSourceKind {
     IdpClaim,
     /// A workspace binding of a group the user belongs to.
     Group,
-    /// The user's own org role (`admin`/`owner`): implicit workspace owner.
-    OrgRole,
-    /// An `admin` org-role mapping of a group the user belongs to: implicit workspace owner.
-    OrgRoleViaGroup,
 }
 
 impl AccessSourceKind {
@@ -163,8 +158,6 @@ impl AccessSourceKind {
             Self::Direct => "direct",
             Self::IdpClaim => "idp_claim",
             Self::Group => "group",
-            Self::OrgRole => "org_role",
-            Self::OrgRoleViaGroup => "org_role_via_group",
         }
     }
 }
@@ -172,7 +165,7 @@ impl AccessSourceKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessSource {
     pub kind: AccessSourceKind,
-    /// The group, for `Group` and `OrgRoleViaGroup`.
+    /// The group, for `Group`.
     pub group: Option<Uuid>,
     /// The claim source (`idp:<provider>:<value>`), for `IdpClaim`.
     pub value: Option<String>,
@@ -227,7 +220,7 @@ pub async fn effective_access<'e, E: PgExecutor<'e>>(
     .fetch_optional(exec)
     .await?;
     Ok(row.and_then(
-        |(org_id, org_role, ws_role, direct_org, direct_ws, idp_source, base_role, groups)| {
+        |(org_id, org_role, ws_role, _direct_org, direct_ws, idp_source, base_role, groups)| {
             let auth = WorkspaceAuth {
                 org_id,
                 workspace_id: ws,
@@ -235,7 +228,6 @@ pub async fn effective_access<'e, E: PgExecutor<'e>>(
                 effective_ws_role: WorkspaceRole::parse(&ws_role)?,
             };
             let sources = build_sources(
-                &direct_org,
                 direct_ws.as_deref(),
                 idp_source,
                 base_role.as_deref(),
@@ -248,21 +240,15 @@ pub async fn effective_access<'e, E: PgExecutor<'e>>(
 
 /// The explanation of an effective role (informational; never an input to a decision).
 /// `groups` is the jsonb array `[{group, org_role, ws_role}]` of the user's contributing groups.
+/// Only sources that hold **in the person's own right** appear (D-477): an org role or an
+/// `admin` group mapping is not a workspace-access source.
 pub fn build_sources(
-    direct_org: &str,
     direct_ws: Option<&str>,
     idp_source: Option<String>,
     base_role: Option<&str>,
     groups: &serde_json::Value,
 ) -> Vec<AccessSource> {
     let mut sources = Vec::new();
-    if OrgRole::parse(direct_org).is_some_and(OrgRole::is_admin) {
-        sources.push(AccessSource {
-            kind: AccessSourceKind::OrgRole,
-            group: None,
-            value: None,
-        });
-    }
     if direct_ws.is_some() {
         let claim = idp_source.is_some();
         if let Some(v) = idp_source {
@@ -285,13 +271,6 @@ pub fn build_sources(
             .get("group")
             .and_then(|v| v.as_str())
             .and_then(|s| Uuid::parse_str(s).ok());
-        if g.get("org_role").and_then(|v| v.as_str()) == Some("admin") {
-            sources.push(AccessSource {
-                kind: AccessSourceKind::OrgRoleViaGroup,
-                group: id,
-                value: None,
-            });
-        }
         if g.get("ws_role").is_some_and(|v| !v.is_null()) {
             sources.push(AccessSource {
                 kind: AccessSourceKind::Group,
@@ -330,8 +309,8 @@ pub async fn effective_org_role<'e, E: PgExecutor<'e>>(
 }
 
 /// Pure statement of the effective-role rule for tests and documentation: the strongest of the
-/// direct and group-derived values, never a sum, never lower than the direct one; org owners and
-/// admins (effective) are implicit workspace owners.
+/// direct and group-derived values, never a sum, never lower than the direct one. The org role
+/// grants no workspace right (D-477): the workspace role is the strongest own binding only.
 pub fn combine_roles(
     direct_org: OrgRole,
     group_org_roles: &[OrgRole],
@@ -342,11 +321,7 @@ pub fn combine_roles(
         .iter()
         .copied()
         .fold(direct_org, OrgRole::max);
-    let ws = if org.is_admin() {
-        Some(WorkspaceRole::Owner)
-    } else {
-        group_ws_roles.iter().copied().chain(direct_ws).max()
-    };
+    let ws = group_ws_roles.iter().copied().chain(direct_ws).max();
     (org, ws)
 }
 
@@ -457,23 +432,18 @@ pub async fn can_approve<'e, E: PgExecutor<'e>>(
         .is_some_and(|a| a.can_approve()))
 }
 
-/// Does `user` hold `can_own` on at least one workspace of `org`? Org owners/admins qualify
-/// (they own every workspace implicitly); other active members need a `workspace_access` row
-/// with role `owner` on some workspace of the org. Suspended or non-members: `false`.
-/// Used for org-scope credential *discovery* (I-27 amendment): a workspace owner may list org
-/// secrets/connections to grant them to agents of their workspace.
+/// Does `user` hold `can_own` on at least one workspace of `org` **in their own right**?
+/// (D-477: an org role grants no workspace right, so org owners/admins no longer qualify
+/// by their role.) Used for org-scope credential *discovery* (I-27 amendment): a workspace
+/// owner may list org secrets/connections to grant them to agents of their workspace.
 pub async fn owns_any_workspace<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,
     org: Uuid,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS (
-             SELECT 1 FROM effective_org_members m
-             WHERE m.org_id = $1 AND m.user_id = $2
-               AND (m.role IN ('owner','admin')
-                    OR EXISTS (SELECT 1 FROM effective_workspace_access a
-                               WHERE a.org_id = $1 AND a.user_id = $2 AND a.role = 'owner')))",
+        "SELECT EXISTS (SELECT 1 FROM effective_workspace_access a
+                        WHERE a.org_id = $1 AND a.user_id = $2 AND a.role = 'owner')",
     )
     .bind(org)
     .bind(user)
@@ -481,23 +451,45 @@ pub async fn owns_any_workspace<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// (P4-GSL) `can_use` on at least one workspace of the org: an active org owner/admin, or an
-/// active member with workspace access in the org, direct or through a group (the effective
-/// views, C-469). Suspended or non-members: `false`.
+/// (P4-GSL) `can_use` on at least one workspace of the org: an active member with workspace
+/// access in the org **in their own right**, direct or through a group (the
+/// `effective_workspace_access` view, C-469, D-477). Suspended or non-members: `false`.
 pub async fn uses_any_workspace<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,
     org: Uuid,
 ) -> Result<bool, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS (
-             SELECT 1 FROM effective_org_members m
-             WHERE m.org_id = $1 AND m.user_id = $2
-               AND (m.role IN ('owner','admin')
-                    OR EXISTS (SELECT 1 FROM effective_workspace_access a
-                               WHERE a.org_id = $1 AND a.user_id = $2)))",
+        "SELECT EXISTS (SELECT 1 FROM effective_workspace_access a
+                        WHERE a.org_id = $1 AND a.user_id = $2)",
     )
     .bind(org)
+    .bind(user)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// (FIX-234, D-477(b), C-1160) The narrow right an organization role keeps on a workspace:
+/// true when the user holds own-right `owner` there, or is an active effective org owner or
+/// admin of its organization. It covers seeing the workspace's metadata, managing its people,
+/// freezing and deleting it, offboarding/reassignment, and the organization's own accounts —
+/// it never reads content, starts agent work, decides an approval or touches the workspace's
+/// own credentials, grants or policy.
+pub async fn can_administer<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    ws: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM workspaces w
+             JOIN effective_org_members m ON m.org_id = w.org_id AND m.user_id = $2
+              AND m.role IN ('owner', 'admin')
+             WHERE w.id = $1)
+          OR EXISTS (SELECT 1 FROM own_workspace_access a
+                     WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.role = 'owner')",
+    )
+    .bind(ws)
     .bind(user)
     .fetch_one(exec)
     .await?)
@@ -635,22 +627,18 @@ mod tests {
 
     #[test]
     fn law() {
+        assert_eq!(effective_role(None), None);
         assert_eq!(
-            effective_role(OrgRole::Owner, None),
-            Some(WorkspaceRole::Owner)
-        );
-        assert_eq!(
-            effective_role(OrgRole::Admin, Some(WorkspaceRole::Member)),
-            Some(WorkspaceRole::Owner)
-        );
-        assert_eq!(effective_role(OrgRole::Member, None), None);
-        assert_eq!(
-            effective_role(OrgRole::Member, Some(WorkspaceRole::Approver)),
+            effective_role(Some(WorkspaceRole::Approver)),
             Some(WorkspaceRole::Approver)
         );
         assert_eq!(
-            effective_role(OrgRole::Member, Some(WorkspaceRole::Member)),
+            effective_role(Some(WorkspaceRole::Member)),
             Some(WorkspaceRole::Member)
+        );
+        assert_eq!(
+            effective_role(Some(WorkspaceRole::Owner)),
+            Some(WorkspaceRole::Owner)
         );
     }
 

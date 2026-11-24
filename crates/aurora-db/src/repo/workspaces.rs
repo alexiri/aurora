@@ -206,10 +206,9 @@ pub async fn roles_of<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// **Effective** workspace roles of `user` among `ids` (FIX-083, D-130(b)): the strongest of the
-/// direct binding and the user's groups' — and the implicit owner of an org owner/admin — from
-/// the `effective_workspace_access` view, so a workspace's `my_role` agrees with `/v1/me` and
-/// the access law.
+/// **Effective** workspace roles of `user` among `ids` (FIX-083, D-130(b); FIX-234, D-477): from
+/// the `effective_workspace_access` view — since migration `20261201000282` exactly the access
+/// in one's own right — so a workspace's `my_role` agrees with `/v1/me` and the access law.
 pub async fn effective_roles_of<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,
@@ -280,7 +279,8 @@ pub async fn set_binding_status(
 }
 
 /// (P5-APIGAP-4, C-1051) Users other than `except` with an effective `owner` role in `ws`
-/// (the access law's view: active, not suspended, implicit org owners/admins included).
+/// (the access law's view: active, not suspended; FIX-234, D-477 — owners in their own right
+/// only).
 pub async fn other_active_owners(
     conn: &mut sqlx::PgConnection,
     ws: Uuid,
@@ -306,34 +306,33 @@ pub struct AccessRow {
     pub created_at: DateTime<Utc>,
     /// (P4-IDP-1) The IdP role value behind this binding; `None` for manual bindings.
     pub idp_value: Option<String>,
-    /// (P5-APIGAP-4, C-1050) The direct row's creation time; `None` for an implicit row without
-    /// a direct row (the org role's start is not recorded).
+    /// (P5-APIGAP-4, C-1050) The direct row's creation time. Since FIX-234 (D-477) every row is
+    /// a direct row, so this is always set (the field stays an `Option` one release).
     pub joined_at: Option<DateTime<Utc>>,
-    /// (P5-APIGAP-4, C-1051) The direct row's `status` (`active` | `suspended`); `active` for an
-    /// implicit row without a direct row.
+    /// (P5-APIGAP-4, C-1051) The direct row's `status` (`active` | `suspended`).
     pub status: String,
     /// (P5-REFINE-6, C-1086) The person has signed in at least once (`users.last_login_at`).
     pub signed_in: bool,
 }
 
-// The implicit rows follow the **effective** org role (FIX-083, D-130(b)): a member whose group
-// maps to `admin` is an implicit workspace owner like a direct admin.
+// FIX-234 (D-477, C-1160): direct rows of active members only — an organization role grants no
+// workspace right, so the implicit org owner/admin rows are gone. `implicit` stays `false` for
+// one release (the web still reads the field; FIX-235 removes that).
 const ACCESS_SEL: &str = "SELECT u.id AS user_id, u.email::text AS email, u.display_name,
-    CASE WHEN e.role IN ('owner','admin') THEN 'owner' ELSE a.role END AS role,
-    (e.role IN ('owner','admin')) AS implicit,
+    a.role AS role,
+    false AS implicit,
     COALESCE(a.created_at, m.created_at) AS created_at,
     substring(a.idp_source from '^idp:[^:]*:(.*)$') AS idp_value,
     a.created_at AS joined_at,
-    COALESCE(a.status, 'active') AS status,
+    a.status AS status,
     (u.last_login_at IS NOT NULL) AS signed_in
   FROM workspaces w
   JOIN org_members m ON m.org_id = w.org_id AND m.status = 'active'
-  JOIN effective_org_members e ON e.org_id = m.org_id AND e.user_id = m.user_id
   JOIN users u ON u.id = m.user_id
-  LEFT JOIN workspace_access a ON a.workspace_id = w.id AND a.user_id = m.user_id
-  WHERE w.id = $1 AND (e.role IN ('owner','admin') OR a.user_id IS NOT NULL)";
+  JOIN workspace_access a ON a.workspace_id = w.id AND a.user_id = m.user_id
+  WHERE w.id = $1";
 
-/// Effective bindings (explicit rows of active members + implicit org owners/admins).
+/// The direct access bindings of a workspace's active members (no implicit rows).
 pub async fn list_access<'e, E: PgExecutor<'e>>(
     exec: E,
     ws: Uuid,
