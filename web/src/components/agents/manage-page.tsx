@@ -29,11 +29,14 @@ export function ManagePage({
   agent,
   orgId,
   byo,
+  agentBase,
   onDelete,
 }: {
   agent: Agent;
   orgId: string;
   byo: boolean;
+  /** The agent's own page, for the template update's **Give access** links (C-1117). */
+  agentBase: string;
   onDelete: () => void;
 }) {
   const frozen = agent.frozen;
@@ -51,7 +54,7 @@ export function ManagePage({
         </div>
       </Section>
       {/* (C-1117) Made from a template, or holding helper files: the section sits above Export and import. */}
-      <AgentTemplateSection agent={agent} />
+      <AgentTemplateSection agent={agent} agentBase={agentBase} />
       {byo ? null : <AgentExportImport agent={agent} />}
       <DangerZone id="agent-danger" title="Delete">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">

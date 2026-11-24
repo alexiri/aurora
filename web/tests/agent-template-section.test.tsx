@@ -41,7 +41,7 @@ function mount(a = agent) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <AgentTemplateSection agent={a} />
+      <AgentTemplateSection agent={a} agentBase="/o/o1/w/w1/agents/daneel" />
     </QueryClientProvider>,
   );
 }

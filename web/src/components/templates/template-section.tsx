@@ -1,15 +1,17 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Fold } from "@/components/ui/fold";
-import { ErrorNotice } from "@/components/ui/notice";
+import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { formatCount } from "@/lib/format-date";
 import {
+  agentTemplateKeys,
   useAgentHelperText,
   useAgentHelpers,
   useAgentTemplate,
@@ -18,6 +20,8 @@ import {
 } from "@/lib/api/agent-templates";
 import type { Agent } from "@/lib/api/queries";
 
+import { ReviewChangesDialog } from "./review-changes-dialog";
+
 /**
  * (C-1117) The agent's Template section on Settings › Manage, above Export and import: "Made from
  * <template> <version>", the helper files with **View** and **Remove** (C-1143), and, when a newer
@@ -25,17 +29,27 @@ import type { Agent } from "@/lib/api/queries";
  * version** and **Stop following this template**. It is shown only for agents with a `template` or
  * with helper files. Everything the template brought is shown as inert text (SEC-146).
  */
-export function AgentTemplateSection({ agent }: { agent: Pick<Agent, "id" | "name" | "handle" | "template"> }) {
+export function AgentTemplateSection({ agent, agentBase }: { agent: Pick<Agent, "id" | "name" | "handle" | "template">; agentBase: string }) {
   const status = useAgentTemplate(agent.id);
   const helpers = useAgentHelpers(agent.id);
+  const qc = useQueryClient();
   const template = status.data?.template ?? agent.template ?? null;
   const helperFiles = helpers.data?.items ?? [];
   // Only for agents with a template or with helper files (C-1117). The agent's own `template`
   // shows the section at once; the helper list decides when the agent has helpers but no template.
   const shown = !!template || helperFiles.length > 0;
   const [viewing, setViewing] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [stale, setStale] = useState(false);
   const [removing, setRemoving] = useState(false);
   const remove = useDeleteAgentHelpers(agent.id);
+  // A 409 `template_version_changed` (C-1112): the status is read again and the section says the
+  // template moved on while the person was reviewing.
+  const onStale = () => {
+    void qc.invalidateQueries({ queryKey: agentTemplateKeys.status(agent.id) });
+    setReviewing(false);
+    setStale(true);
+  };
 
   if (!shown) return null;
   const update = status.data?.update ?? null;
@@ -51,10 +65,17 @@ export function AgentTemplateSection({ agent }: { agent: Pick<Agent, "id" | "nam
           <p data-testid="template-unavailable">The template is no longer offered here. {agent.name} keeps working as it is.</p>
         ) : null}
         {update ? (
-          <p data-testid="template-update">
-            Version <span className="font-semibold text-ink">{update.version}</span> is available. {agent.name} keeps working as it is until you
-            apply it.
-          </p>
+          <>
+            <p data-testid="template-update">
+              Version <span className="font-semibold text-ink">{update.version}</span> is available. {agent.name} keeps working as it is until you
+              apply it.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => setReviewing(true)}>
+                Review changes
+              </Button>
+            </div>
+          </>
         ) : null}
         {helpers.isError && template ? <ErrorNotice error={helpers.error} /> : null}
         {status.isError && template ? <ErrorNotice error={status.error} /> : null}
@@ -79,8 +100,24 @@ export function AgentTemplateSection({ agent }: { agent: Pick<Agent, "id" | "nam
           </div>
         ) : null}
         {remove.isError ? <ErrorNotice error={remove.error} /> : null}
+        {stale ? (
+          <Notice tone="pending">
+            <p data-testid="template-stale">This template was updated. Check the changes, then apply.</p>
+          </Notice>
+        ) : null}
       </div>
       {viewing ? <HelperFilesDialog agent={agent} files={helperFiles} onClose={() => setViewing(false)} /> : null}
+      {reviewing && update ? (
+        <ReviewChangesDialog
+          agentId={agent.id}
+          agentName={agent.name}
+          templateName={template?.name ?? ""}
+          offer={update}
+          agentBase={agentBase}
+          onStale={onStale}
+          onClose={() => setReviewing(false)}
+        />
+      ) : null}
       <ConfirmDialog
         open={removing}
         onOpenChange={(o) => !o && setRemoving(false)}

@@ -337,7 +337,7 @@ export function AgentPage() {
             <AccessTab agentId={agent.id} agentName={agent.name} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} agentBase={`${base}/agents/${agent.handle}`} />
           ) : null}
           {tab === "access" && workspace.isPending ? <Loading /> : null}
-          {tab === "manage" && workspace.data ? <ManagePage agent={agent} orgId={workspace.data.org_id} byo={byo} onDelete={() => setDeleteOpen(true)} /> : null}
+          {tab === "manage" && workspace.data ? <ManagePage agent={agent} orgId={workspace.data.org_id} byo={byo} agentBase={`${base}/agents/${agent.handle}`} onDelete={() => setDeleteOpen(true)} /> : null}
           {tab === "connect" && byo ?<ConnectTab agent={agent} wsId={wsId} canOwn={canOwn} /> : null}
         </div>
         </SettingsFrame>
