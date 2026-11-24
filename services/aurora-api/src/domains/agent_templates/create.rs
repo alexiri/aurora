@@ -705,7 +705,7 @@ async fn create_in_tx(
                 body: &s.body,
                 enabled: true,
             },
-            &caller.email,
+            "user",
         )
         .await?;
         for f in &s.files {

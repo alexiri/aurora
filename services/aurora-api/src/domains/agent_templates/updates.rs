@@ -1154,7 +1154,7 @@ async fn apply_in_tx(
                                 body: &s.body,
                                 enabled: true,
                             },
-                            &caller.email,
+                            "user",
                         )
                         .await?
                         .row

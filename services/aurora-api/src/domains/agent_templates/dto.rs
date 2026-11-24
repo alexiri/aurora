@@ -1166,7 +1166,6 @@ pub struct AgentTemplateStatus {
     /// (C-1112) What the apply left alone: `skill_kept` when a `removed_upstream` library
     /// skill was not deleted (it is no longer sourced from the matching library, or it is an
     /// ordinary skill of the same name). Empty on the GET.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<ApplyNote>,
 }
 

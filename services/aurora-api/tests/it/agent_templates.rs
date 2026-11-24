@@ -269,7 +269,10 @@ impl W {
             )
             .await;
         assert_eq!(s, 200, "{v}");
-        let sha = v["content_sha256"].as_str().unwrap().to_owned();
+        let sha = v["content_sha256"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no content_sha256 for {template}@{version}: {v}"))
+            .to_owned();
         let (s, v) = self
             .call(
                 Method::POST,
@@ -2561,4 +2564,1157 @@ async fn custom_only_caps_the_level_and_drops_unknown_tools() {
     let (_, v) = ws_get(&w, ws, &owner, "").await;
     assert_eq!(v["items"][0]["apps"][0]["available"], true, "{v}");
     assert_eq!(v["items"][0]["ready"], true, "{v}");
+}
+
+// ---- the updates (C-1112, P6-TPL-3) -------------------------------------------------------------
+
+fn skill_md(description: &str, body: &str) -> Vec<u8> {
+    format!("---\ndescription: {description}\n---\n\n{body}\n").into_bytes()
+}
+
+/// A template's own skill (C-1110): `name` must equal the directory, `use-it-when` one line.
+fn tpl_skill_md(name: &str, use_it_when: &str, body: &str) -> Vec<u8> {
+    format!("---\nname: {name}\nuse-it-when: {use_it_when}\n---\n\n{body}\n").into_bytes()
+}
+
+/// The updates fixture: instructions, the own skills `watch` and `backup`, the helper file
+/// `report.sh` and the memory `notes.md`. `2.0.0` changes the instructions and `watch`, adds
+/// `extra` and rewrites the helper; `3.0.0` adds a required input and drops the helper files.
+fn upd_files(dir: &str, version: &str) -> Vec<(String, Vec<u8>)> {
+    let mut inputs = "  - id: zone\n    label: Zone\n    pattern: \"^[a-z]+$\"\n".to_owned();
+    if version == "3.0.0" {
+        inputs.push_str("  - id: region\n    label: Region\n    pattern: \"^[a-z]{2}$\"\n");
+    }
+    let instructions = match version {
+        "1.0.0" => "Watch {input.zone}.\n",
+        "2.0.0" => "Watch {input.zone} closely.\n",
+        _ => "Watch {input.zone} in {input.region}.\n",
+    };
+    let watch = match version {
+        "1.0.0" => ("Something is off.", "Watch body v1."),
+        "2.0.0" => ("Something is off.", "Watch body v2."),
+        _ => ("Something is off.", "Watch body v3."),
+    };
+    let mut fs = vec![
+        (
+            format!("{dir}/template.yaml"),
+            format!(
+                "format: 1\nid: {dir}\nversion: {version}\nname: T\nsummary: Updates fixture.\n\
+                 inputs:\n{inputs}"
+            )
+            .into_bytes(),
+        ),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            instructions.as_bytes().to_vec(),
+        ),
+        (
+            format!("{dir}/README.md"),
+            format!("# {dir}\nUpdates.\n").into_bytes(),
+        ),
+        (
+            format!("{dir}/skills/watch/SKILL.md"),
+            tpl_skill_md("watch", watch.0, watch.1),
+        ),
+        (
+            format!("{dir}/skills/backup/SKILL.md"),
+            tpl_skill_md("backup", "Backing up.", "Backup body."),
+        ),
+        (
+            format!("{dir}/memory/notes.md"),
+            b"---\nkey: notes\nupdated: 2026-11-20\n---\nTemplate notes.\n".to_vec(),
+        ),
+    ];
+    match version {
+        "1.0.0" => fs.push((
+            format!("{dir}/helpers/report.sh"),
+            b"#!/bin/sh\necho v1\n".to_vec(),
+        )),
+        "2.0.0" => fs.push((
+            format!("{dir}/helpers/report.sh"),
+            b"#!/bin/sh\necho v2\n".to_vec(),
+        )),
+        _ => {}
+    }
+    if version != "1.0.0" {
+        fs.push((
+            format!("{dir}/skills/extra/SKILL.md"),
+            tpl_skill_md("extra", "Extra work.", "Extra body."),
+        ));
+    }
+    fs
+}
+
+/// A template with `refs` as its `skills:` section (the reference fixtures).
+fn ref_files(dir: &str, version: &str, refs: &str) -> Vec<(String, Vec<u8>)> {
+    vec![
+        (
+            format!("{dir}/template.yaml"),
+            format!(
+                "format: 1\nid: {dir}\nversion: {version}\nname: R\nsummary: Refs.\n\
+                 inputs:\n  - id: zone\n    label: Zone\n    pattern: \"^[a-z]+$\"\n{refs}"
+            )
+            .into_bytes(),
+        ),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            INSTRUCTIONS.as_bytes().to_vec(),
+        ),
+        (
+            format!("{dir}/README.md"),
+            format!("# {dir}\nRefs.\n").into_bytes(),
+        ),
+    ]
+}
+
+fn pack_tree(dir: &str, fs: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let tree: Vec<TreeFile> = fs
+        .iter()
+        .map(|(p, b)| TreeFile {
+            path: p.clone(),
+            bytes: b.clone(),
+            mode: 0o100644,
+        })
+        .collect();
+    aurora_template::pack(dir, &tree)
+}
+
+/// Seed `repo` with the manifest and `fs`, serve the package, check and approve; returns the
+/// source id.
+async fn seed_fs(w: &W, repo: &str, dir: &str, version: &str, fs: &[(String, Vec<u8>)]) -> Uuid {
+    w.git.add_repo(repo);
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        manifest_yaml().into_bytes(),
+    )];
+    for (p, b) in fs {
+        changes.push(put(p.clone(), b.clone()));
+    }
+    w.git.commit(repo, "main", &changes);
+    w.git
+        .serve_file(&format!("pkg/{dir}-{version}.zip"), pack_tree(dir, fs));
+    let src = w.add_source(repo, json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    let r = w.check(id).await;
+    assert_eq!(r["status"], "updated", "{r}");
+    w.approve(dir, version).await;
+    id
+}
+
+/// Move `repo`'s head to `version` of `fs` (with `deletions` applied), check and approve it.
+async fn advance_fs(
+    w: &W,
+    id: Uuid,
+    repo: &str,
+    dir: &str,
+    version: &str,
+    fs: &[(String, Vec<u8>)],
+    deletions: &[String],
+) {
+    let mut changes: Vec<Change> = fs.iter().map(|(p, b)| put(p.clone(), b.clone())).collect();
+    for d in deletions {
+        changes.push(Change::DeleteDir(d.clone()));
+    }
+    w.bump(repo, &changes);
+    w.git
+        .serve_file(&format!("pkg/{dir}-{version}.zip"), pack_tree(dir, fs));
+    let r = w.check(id).await;
+    assert_eq!(r["status"], "updated", "{r}");
+    w.approve(dir, version).await;
+}
+
+impl W {
+    /// The plan of `template` in `ws` (its content hash included).
+    async fn plan(&self, ws: Uuid, who: &str, template: &str) -> Value {
+        let (s, v) = ws_get(self, ws, who, &format!("/{template}")).await;
+        assert_eq!(s, 200, "{v}");
+        v
+    }
+
+    /// Create an agent from `template@version` (the happy path; `extra` carries accounts,
+    /// skill_refs and the like).
+    async fn create_agent(
+        &self,
+        ws: Uuid,
+        who: &str,
+        template: &str,
+        version: &str,
+        extra: Value,
+    ) -> Value {
+        let plan = self.plan(ws, who, template).await;
+        let body = json!({
+            "template_id": template,
+            "version": version,
+            "content_sha256": plan["content_sha256"],
+            "name": "Monitor",
+            "inputs": {"zone": "eu"},
+        })
+        .merge(extra);
+        let (s, v) = self
+            .h
+            .call(
+                who,
+                Method::POST,
+                &format!("/v1/workspaces/{ws}/agents/from-template"),
+                Some(body),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+        v
+    }
+
+    async fn tpl_status(&self, who: &str, agent: Uuid) -> (u16, Value) {
+        self.h
+            .call(
+                who,
+                Method::GET,
+                &format!("/v1/agents/{agent}/template"),
+                None,
+            )
+            .await
+    }
+
+    async fn apply(&self, who: &str, agent: Uuid, body: Value) -> (u16, Value) {
+        self.h
+            .call(
+                who,
+                Method::POST,
+                &format!("/v1/agents/{agent}/template/apply"),
+                Some(body),
+            )
+            .await
+    }
+}
+
+/// The agent's brief.
+async fn brief_of(w: &W, agent: Uuid) -> String {
+    sqlx::query_scalar("SELECT brief FROM agents WHERE id = $1")
+        .bind(agent)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+}
+
+/// The agent's stored input values.
+async fn inputs_of(w: &W, agent: Uuid) -> Value {
+    sqlx::query_scalar("SELECT template_inputs FROM agents WHERE id = $1")
+        .bind(agent)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+}
+
+/// The agent's own (agent-tier) skills as `(name, library_id)`, ordered by name.
+async fn skills_of(w: &W, agent: Uuid) -> Vec<(String, Option<Uuid>)> {
+    sqlx::query_as(
+        "SELECT name, library_id FROM skills WHERE agent_id = $1
+         ORDER BY name",
+    )
+    .bind(agent)
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap()
+}
+
+/// The agent's recorded template parts as `(kind, key)`, ordered.
+async fn parts_of(w: &W, agent: Uuid) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT kind, key FROM agent_template_parts WHERE agent_id = $1 ORDER BY kind, key",
+    )
+    .bind(agent)
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap()
+}
+
+/// The agent's helper file paths.
+async fn helpers_of(w: &W, agent: Uuid) -> Vec<String> {
+    sqlx::query_scalar("SELECT path FROM agent_helper_files WHERE agent_id = $1 ORDER BY path")
+        .bind(agent)
+        .fetch_all(w.h.pool())
+        .await
+        .unwrap()
+}
+
+/// The state of one part of an update offer.
+fn part_state<'a>(v: &'a Value, kind: &str, key: &str) -> Option<&'a str> {
+    v["update"]["parts"]
+        .as_array()?
+        .iter()
+        .find(|p| p["kind"] == kind && p["key"] == key)
+        .and_then(|p| p["state"].as_str())
+}
+
+/// The world of the update tests: the fixture `t` approved at 1.0.0 and one agent created
+/// from it whose own skill `watch` was edited and whose own skill `backup` was deleted.
+struct Upd {
+    w: W,
+    id: Uuid,
+    repo: &'static str,
+    ws: Uuid,
+    owner: String,
+    agent: Uuid,
+    watch: Uuid,
+}
+
+async fn upd_world() -> Upd {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    let id = seed_fs(&w, "acme/tpl", "t", "1.0.0", &upd_files("t", "1.0.0")).await;
+    let created = w.create_agent(ws, &owner, "t", "1.0.0", json!({})).await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+    let watch: Uuid = created["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "watch")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let backup: Uuid = created["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "backup")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    // The agent's own edits: `watch` rewritten, `backup` deleted. Helpers and the brief stay
+    // as the template wrote them.
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::PATCH,
+            &format!("/v1/skills/{watch}"),
+            Some(json!({"body": "Watch body: mine."})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::DELETE,
+            &format!("/v1/skills/{backup}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    Upd {
+        w,
+        id,
+        repo: "acme/tpl",
+        ws,
+        owner,
+        agent,
+        watch,
+    }
+}
+
+/// Move the fixture to `version`, check and approve it.
+async fn upd_advance(u: &Upd, version: &str) {
+    let deletions: Vec<String> = if version == "3.0.0" {
+        // `3.0.0` drops the helper files from the repository.
+        vec!["t/helpers".to_owned()]
+    } else {
+        Vec::new()
+    };
+    advance_fs(
+        &u.w,
+        u.id,
+        u.repo,
+        "t",
+        version,
+        &upd_files("t", version),
+        &deletions,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn the_offer_lists_every_part_state_for_every_kind() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+
+    let (s, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["available"], true, "{v}");
+    assert_eq!(v["template"]["template_id"], "t", "{v}");
+    assert_eq!(v["template"]["version"], "1.0.0", "{v}");
+    let upd = &v["update"];
+    assert_eq!(upd["version"], "2.0.0", "{v}");
+    assert!(upd["content_sha256"].is_string(), "{v}");
+    assert!(upd["readme"].as_str().unwrap().contains("Updates."), "{v}");
+    assert_eq!(upd["changelog"], json!(null), "{v}");
+    // Every state, one per kind where possible: the brief is untouched (the template changed
+    // it), `watch` was edited here, `backup` deleted here, `extra` is new, the helpers are
+    // untouched (the template rewrote them).
+    assert_eq!(part_state(&v, "instructions", ""), Some("unchanged_here"));
+    assert_eq!(part_state(&v, "skill", "watch"), Some("edited_here"));
+    assert_eq!(part_state(&v, "skill", "backup"), Some("removed_here"));
+    assert_eq!(part_state(&v, "skill", "extra"), Some("new"));
+    assert_eq!(part_state(&v, "helpers", ""), Some("unchanged_here"));
+    // Memories and automations are never offered again.
+    assert!(
+        upd["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["kind"] != "memory" && p["kind"] != "automation")
+    );
+    // The full texts: the proposed ones are rendered with the stored inputs.
+    let instructions = upd["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "instructions")
+        .unwrap();
+    assert_eq!(instructions["current"], "Watch eu.\n", "{v}");
+    assert_eq!(instructions["proposed"], "Watch eu closely.\n", "{v}");
+    let watch = upd["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["key"] == "watch")
+        .unwrap();
+    assert!(
+        watch["current"]
+            .as_str()
+            .unwrap()
+            .contains("Watch body: mine."),
+        "{v}"
+    );
+    assert!(
+        watch["proposed"]
+            .as_str()
+            .unwrap()
+            .contains("Watch body v2."),
+        "{v}"
+    );
+    assert_eq!(watch["skill_ref"], json!(null), "{v}");
+    // Nothing changed yet: the brief, the skills, the helpers and the parts are as they were.
+    assert_eq!(brief_of(&u.w, u.agent).await, "Watch eu.\n");
+    assert_eq!(
+        u.w.count("SELECT count(*) FROM agent_template_parts WHERE agent_id IS NOT NULL")
+            .await,
+        4
+    );
+}
+
+#[tokio::test]
+async fn applying_a_subset_changes_only_those_parts() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    // Take the instructions, the new skill and the helpers — leave `watch` and `backup` out.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [
+                    {"kind": "instructions", "key": ""},
+                    {"kind": "skill", "key": "extra"},
+                    {"kind": "helpers", "key": ""},
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["update"], json!(null), "{v}");
+    assert_eq!(v["template"]["version"], "2.0.0", "{v}");
+    assert_eq!(v["notes"], json!([]), "{v}");
+
+    // The brief and the helper file were replaced; `extra` was created.
+    assert_eq!(brief_of(&u.w, u.agent).await, "Watch eu closely.\n");
+    let helpers = helpers_of(&u.w, u.agent).await;
+    assert_eq!(helpers, vec!["report.sh"], "{helpers:?}");
+    let content: Vec<u8> = sqlx::query_scalar(
+        "SELECT content FROM agent_helper_files WHERE agent_id = $1 AND path = 'report.sh'",
+    )
+    .bind(u.agent)
+    .fetch_one(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(content, b"#!/bin/sh\necho v2\n");
+    // The edited `watch` was untouched, `backup` stayed deleted.
+    let body: String = sqlx::query_scalar("SELECT body FROM skills WHERE id = $1")
+        .bind(u.watch)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(body, "Watch body: mine.");
+    assert_eq!(
+        skills_of(&u.w, u.agent).await,
+        vec![("extra".to_owned(), None), ("watch".to_owned(), None),]
+    );
+    // The parts: `extra` recorded, the others re-recorded or untouched, `backup`'s row still
+    // there (it was not taken).
+    assert_eq!(
+        parts_of(&u.w, u.agent).await,
+        vec![
+            ("helpers".to_owned(), String::new()),
+            ("instructions".to_owned(), String::new()),
+            ("skill".to_owned(), "backup".to_owned()),
+            ("skill".to_owned(), "extra".to_owned()),
+            ("skill".to_owned(), "watch".to_owned()),
+        ]
+    );
+    // The applied hash is the rendered brief's (the diff base of the next offer).
+    let rec: String = sqlx::query_scalar(
+        "SELECT content_sha256 FROM agent_template_parts
+         WHERE agent_id = $1 AND kind = 'instructions'",
+    )
+    .bind(u.agent)
+    .fetch_one(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rec,
+        aurora_template::instructions_hash("Watch eu closely.\n")
+    );
+    // The apply is audited (ordinary).
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'agent.template_apply'
+         AND NOT critical AND target_id = $1",
+    )
+    .bind(u.agent.to_string())
+    .fetch_one(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn a_needed_input_blocks_the_apply_until_given() {
+    let u = upd_world().await;
+    upd_advance(&u, "3.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    // The stored inputs do not cover the new required `region`.
+    let needed = v["update"]["inputs_needed"].as_array().unwrap();
+    assert_eq!(needed.len(), 1, "{v}");
+    assert_eq!(needed[0]["id"], "region", "{v}");
+    assert_eq!(needed[0]["required"], true, "{v}");
+    // The proposed instructions render the needed input as its placeholder.
+    let instructions = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "instructions")
+        .unwrap();
+    assert_eq!(
+        instructions["proposed"], "Watch eu in {input.region}.\n",
+        "{v}"
+    );
+
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    // Without the input the apply is refused, all problems at once.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "3.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "instructions", "key": ""}],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_inputs_invalid"), "{v}");
+    assert!(
+        v["error"]["details"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["path"] == "/inputs/region"),
+        "{v}"
+    );
+    // With it: the brief is rendered with the merged values (the stored `zone` kept) and the
+    // inputs are stored. The dropped helpers are taken too.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "3.0.0",
+                "content_sha256": sha,
+                "inputs": {"region": "eu"},
+                "parts": [
+                    {"kind": "instructions", "key": ""},
+                    {"kind": "helpers", "key": ""},
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(brief_of(&u.w, u.agent).await, "Watch eu in eu.\n");
+    assert_eq!(
+        inputs_of(&u.w, u.agent).await,
+        json!({"zone": "eu", "region": "eu"}),
+        "{v}"
+    );
+    assert_eq!(helpers_of(&u.w, u.agent).await, Vec::<String>::new());
+    // The taken removed_upstream part lost its recorded hash.
+    assert!(
+        !parts_of(&u.w, u.agent)
+            .await
+            .iter()
+            .any(|(k, _)| k == "helpers"),
+        "{v}"
+    );
+}
+
+#[tokio::test]
+async fn an_apply_is_bound_to_the_offered_version_and_hash() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+
+    // A stale hash.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": "0".repeat(64),
+                "parts": [],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    // A stale version.
+    let (_, st) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = st["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "9.9.9",
+                "content_sha256": sha,
+                "parts": [],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    // Nothing moved.
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(v["template"]["version"], "1.0.0", "{v}");
+    assert_eq!(brief_of(&u.w, u.agent).await, "Watch eu.\n");
+}
+
+#[tokio::test]
+async fn a_part_not_in_the_offer_is_refused() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    for parts in [
+        json!([{"kind": "skill", "key": "ghost"}]),
+        // Memories and automations are never parts.
+        json!([{"kind": "memory", "key": "notes.md"}]),
+    ] {
+        let (s, v) =
+            u.w.apply(
+                &u.owner,
+                u.agent,
+                json!({
+                    "version": "2.0.0",
+                    "content_sha256": sha,
+                    "parts": parts,
+                }),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (422, "template_part_unknown"), "{v}");
+    }
+    assert_eq!(brief_of(&u.w, u.agent).await, "Watch eu.\n");
+}
+
+#[tokio::test]
+async fn a_library_skill_of_the_same_name_cannot_be_replaced() {
+    let u = upd_world().await;
+
+    // A library with a skill of the same name, added to the agent after its own `watch` was
+    // deleted (the name would collide the other way round).
+    u.w.git.add_repo("acme/skills");
+    u.w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "watch/SKILL.md".into(),
+            skill_md("The library one.", "Library watch body."),
+        )],
+    );
+    let (s, lib) =
+        u.w.h
+            .call(
+                &u.owner,
+                Method::POST,
+                &format!("/v1/orgs/{}/skill-libraries", {
+                    sqlx::query_scalar::<_, Uuid>("SELECT org_id FROM workspaces WHERE id = $1")
+                        .bind(u.ws)
+                        .fetch_one(u.w.h.pool())
+                        .await
+                        .unwrap()
+                }),
+                Some(json!({"label": "lib", "url": format!("{GIT_ORIGIN}/acme/skills")})),
+            )
+            .await;
+    assert_eq!(s, 201, "{lib}");
+    let lib: Uuid = lib["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) =
+        u.w.h
+            .call(
+                &u.owner,
+                Method::DELETE,
+                &format!("/v1/skills/{}", u.watch),
+                None,
+            )
+            .await;
+    assert_eq!(s, 204, "{v}");
+    let head = u.w.git.head("acme/skills", "main");
+    let (s, v) =
+        u.w.h
+            .call(
+                &u.owner,
+                Method::POST,
+                &format!("/v1/agents/{}/skills", u.agent),
+                Some(json!({
+                    "from_library": {
+                        "library_id": lib, "path": "watch", "commit_sha": head,
+                    }
+                })),
+            )
+            .await;
+    assert_eq!(s, 201, "{v}");
+    // The template's part is now shadowed by a library skill of the same name: the offer
+    // still lists it (the agent has no own skill of the name), the apply refuses.
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(part_state(&v, "skill", "watch"), Some("removed_here"));
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "skill", "key": "watch"}],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "library_skill_readonly"), "{v}");
+    // The library skill is untouched.
+    let body: String =
+        sqlx::query_scalar("SELECT body FROM skills WHERE agent_id = $1 AND name = 'watch'")
+            .bind(u.agent)
+            .fetch_one(u.w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(body, "Library watch body.\n");
+}
+
+#[tokio::test]
+async fn skip_this_version_moves_the_version_and_touches_nothing() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let before_parts = parts_of(&u.w, u.agent).await;
+    let before_skills = skills_of(&u.w, u.agent).await;
+    let before_helpers = helpers_of(&u.w, u.agent).await;
+
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({"version": "2.0.0", "content_sha256": sha, "parts": []}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["template"]["version"], "2.0.0", "{v}");
+    assert_eq!(v["update"], json!(null), "{v}");
+    assert_eq!(v["notes"], json!([]), "{v}");
+    // Nothing but the version moved.
+    assert_eq!(brief_of(&u.w, u.agent).await, "Watch eu.\n");
+    assert_eq!(skills_of(&u.w, u.agent).await, before_skills);
+    assert_eq!(helpers_of(&u.w, u.agent).await, before_helpers);
+    assert_eq!(parts_of(&u.w, u.agent).await, before_parts);
+}
+
+#[tokio::test]
+async fn detach_forgets_the_provenance_and_stops_the_offers() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+
+    let (s, v) =
+        u.w.h
+            .call(
+                &u.owner,
+                Method::DELETE,
+                &format!("/v1/agents/{}/template", u.agent),
+                None,
+            )
+            .await;
+    assert_eq!(s, 204, "{v}");
+    // The provenance is forgotten: the columns are null, the parts are gone.
+    let (tid, ver): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT template_id, template_version FROM agents WHERE id = $1")
+            .bind(u.agent)
+            .fetch_one(u.w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(tid, None);
+    assert_eq!(ver, None);
+    assert_eq!(
+        parts_of(&u.w, u.agent).await,
+        Vec::<(String, String)>::new()
+    );
+    // Helper files and the agent's skills stay.
+    assert_eq!(
+        helpers_of(&u.w, u.agent).await,
+        vec!["report.sh".to_owned()]
+    );
+    assert_eq!(skills_of(&u.w, u.agent).await.len(), 1);
+    // No template section any more, and no offer even though 2.0.0 is offered.
+    let (s, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["template"], json!(null), "{v}");
+    assert_eq!(v["available"], false, "{v}");
+    assert_eq!(v["update"], json!(null), "{v}");
+    // The detach is audited (ordinary).
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'agent.template_detach'
+         AND NOT critical AND target_id = $1",
+    )
+    .bind(u.agent.to_string())
+    .fetch_one(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn the_agent_is_unchanged_while_an_update_waits() {
+    let u = upd_world().await;
+    let brief = brief_of(&u.w, u.agent).await;
+    let skills = skills_of(&u.w, u.agent).await;
+    let helpers = helpers_of(&u.w, u.agent).await;
+    let parts = parts_of(&u.w, u.agent).await;
+
+    // A newer version is approved: the agent runs its own content.
+    upd_advance(&u, "2.0.0").await;
+    let (s, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["update"]["version"], "2.0.0", "{v}");
+    assert_eq!(brief_of(&u.w, u.agent).await, brief);
+    assert_eq!(skills_of(&u.w, u.agent).await, skills);
+    assert_eq!(helpers_of(&u.w, u.agent).await, helpers);
+    assert_eq!(parts_of(&u.w, u.agent).await, parts);
+
+    // The template is withdrawn: still nothing changes; the offer is gone.
+    let (s, v) =
+        u.w.call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(v["available"], false, "{v}");
+    assert_eq!(v["update"], json!(null), "{v}");
+    assert_eq!(brief_of(&u.w, u.agent).await, brief);
+    assert_eq!(parts_of(&u.w, u.agent).await, parts);
+
+    // The source is deleted: the agent keeps its provenance and its content.
+    let (s, v) =
+        u.w.call(
+            Method::DELETE,
+            &format!("/v1/admin/agent-template-sources/{}", u.id),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(v["available"], false, "{v}");
+    assert_eq!(v["template"]["template_id"], "t", "{v}");
+    assert_eq!(brief_of(&u.w, u.agent).await, brief);
+    assert_eq!(skills_of(&u.w, u.agent).await, skills);
+    assert_eq!(helpers_of(&u.w, u.agent).await, helpers);
+    assert_eq!(parts_of(&u.w, u.agent).await, parts);
+}
+
+#[tokio::test]
+async fn a_source_deleted_and_added_again_finds_the_agent_by_template_id() {
+    let mut u = upd_world().await;
+    let (s, v) =
+        u.w.call(
+            Method::DELETE,
+            &format!("/v1/admin/agent-template-sources/{}", u.id),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(v["available"], false, "{v}");
+
+    // The source comes back (a fresh row, the same template id) and offers 2.0.0: the agent
+    // is found by the stored template id text.
+    u.repo = "acme/tpl2";
+    u.id = seed_fs(&u.w, u.repo, "t", "1.0.0", &upd_files("t", "1.0.0")).await;
+    upd_advance(&u, "2.0.0").await;
+    let (s, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["available"], true, "{v}");
+    assert_eq!(v["update"]["version"], "2.0.0", "{v}");
+}
+
+// ---- the reference updates (C-1112's library_skill parts) ---------------------------------------
+
+/// The skill library with `alpha` and `beta`, added to `org`; returns its id.
+async fn seed_library(w: &W, org: Uuid, owner: &str) -> Uuid {
+    w.git.add_repo("acme/skills");
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put(
+                "alpha/SKILL.md".into(),
+                skill_md("Alpha skill", "Alpha body."),
+            ),
+            put("beta/SKILL.md".into(), skill_md("Beta skill", "Beta body.")),
+        ],
+    );
+    let (s, lib) =
+        w.h.call(
+            owner,
+            Method::POST,
+            &format!("/v1/orgs/{org}/skill-libraries"),
+            Some(json!({"label": "lib", "url": format!("{GIT_ORIGIN}/acme/skills")})),
+        )
+        .await;
+    assert_eq!(s, 201, "{lib}");
+    lib["id"].as_str().unwrap().parse().unwrap()
+}
+
+#[tokio::test]
+async fn a_removed_reference_deletes_the_library_skill_only_while_sourced() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let lib = seed_library(&w, org, &owner).await;
+
+    // v1 references `alpha`; two agents take it.
+    let refs = format!(
+        "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: alpha\n    why: Does the work.\n"
+    );
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "ref1",
+        "1.0.0",
+        &ref_files("ref1", "1.0.0", &refs),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "ref1").await;
+    let item = json!([{
+        "index": 0,
+        "library_id": plan["skill_refs"][0]["library"]["id"],
+        "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"],
+    }]);
+    let a = w
+        .create_agent(ws, &owner, "ref1", "1.0.0", json!({"skill_refs": item}))
+        .await;
+    let agent_a: Uuid = a["agent"]["id"].as_str().unwrap().parse().unwrap();
+    let b = w
+        .create_agent(ws, &owner, "ref1", "1.0.0", json!({"skill_refs": item}))
+        .await;
+    let agent_b: Uuid = b["agent"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        skills_of(&w, agent_a).await,
+        vec![("alpha".to_owned(), Some(lib))]
+    );
+
+    // v2 drops the reference: `removed_upstream` for both agents.
+    advance_fs(
+        &w,
+        id,
+        "acme/tpl",
+        "ref1",
+        "2.0.0",
+        &ref_files("ref1", "2.0.0", ""),
+        &[],
+    )
+    .await;
+    let (_, v) = w.tpl_status(&owner, agent_a).await;
+    let key = v["update"]["parts"][0]["key"].as_str().unwrap().to_owned();
+    assert_eq!(v["update"]["parts"][0]["kind"], "library_skill", "{v}");
+    assert_eq!(v["update"]["parts"][0]["state"], "removed_upstream", "{v}");
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    // Agent A takes it: the library skill goes.
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent_a,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "library_skill", "key": key}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["notes"], json!([]), "{v}");
+    assert_eq!(
+        skills_of(&w, agent_a).await,
+        Vec::<(String, Option<Uuid>)>::new()
+    );
+    // The recorded part is gone with it.
+    assert_eq!(parts_of(&w, agent_a).await.len(), 1); // instructions only
+
+    // Agent B first detaches the skill from its library: no longer sourced from the library
+    // the template referenced, it stays (`skill_kept`).
+    let skill_b: Uuid = b["skills"][0]["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::POST,
+            &format!("/v1/skills/{skill_b}/library/detach"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent_b,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "library_skill", "key": key}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let notes = v["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 1, "{v}");
+    assert_eq!(notes[0]["code"], "skill_kept", "{v}");
+    assert_eq!(
+        skills_of(&w, agent_b).await,
+        vec![("alpha".to_owned(), None)]
+    );
+}
+
+#[tokio::test]
+async fn a_new_library_reference_needs_its_skill_refs_item() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let lib = seed_library(&w, org, &owner).await;
+
+    // v1 has no references; v2 adds `beta`.
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "ref2",
+        "1.0.0",
+        &ref_files("ref2", "1.0.0", ""),
+    )
+    .await;
+    let created = w.create_agent(ws, &owner, "ref2", "1.0.0", json!({})).await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+
+    let refs = format!(
+        "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: beta\n    why: Does the other work.\n"
+    );
+    advance_fs(
+        &w,
+        id,
+        "acme/tpl",
+        "ref2",
+        "2.0.0",
+        &ref_files("ref2", "2.0.0", &refs),
+        &[],
+    )
+    .await;
+    let (_, v) = w.tpl_status(&owner, agent).await;
+    let part = &v["update"]["parts"][0];
+    assert_eq!(part["kind"], "library_skill", "{v}");
+    assert_eq!(part["state"], "new", "{v}");
+    assert_eq!(part["skill_ref"]["name"], "beta", "{v}");
+    assert_eq!(part["skill_ref"]["available"], true, "{v}");
+    let key = part["key"].as_str().unwrap().to_owned();
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    // Without the skill_refs item the part cannot be taken.
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "library_skill", "key": key}],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_skill_missing"), "{v}");
+    // With it: the library skill is added pinned and read-only.
+    let plan = w.plan(ws, &owner, "ref2").await;
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "skill_refs": [{
+                    "index": 0,
+                    "library_id": plan["skill_refs"][0]["library"]["id"],
+                    "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"],
+                }],
+                "parts": [{"kind": "library_skill", "key": key}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        skills_of(&w, agent).await,
+        vec![("beta".to_owned(), Some(lib))]
+    );
+    // Pinned to the commit the person's item named, linked to the library.
+    let (pinned, linked): (String, Option<Uuid>) = sqlx::query_as(
+        "SELECT library_commit_sha, library_id FROM skills
+         WHERE agent_id = $1 AND name = 'beta'",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(pinned, plan["skill_refs"][0]["library"]["commit_sha"]);
+    assert_eq!(linked, Some(lib));
+    // The part is recorded with the reference key's hash (the crate's rule).
+    let rec: String = sqlx::query_scalar(
+        "SELECT content_sha256 FROM agent_template_parts
+         WHERE agent_id = $1 AND kind = 'library_skill'",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    use sha2::Digest as _;
+    let mut h = sha2::Sha256::new();
+    h.update(key.as_bytes());
+    assert_eq!(rec, hex::encode(h.finalize()));
 }
