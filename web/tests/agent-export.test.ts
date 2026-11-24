@@ -243,3 +243,60 @@ describe("what never leaves", () => {
     expect(zipText).not.toContain("6f1c2f6a");
   });
 });
+
+describe("the avatar", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+  const withAvatar: AgentExport = { ...sample, avatar: { ext: "png", bytes: png } };
+  const routes = {
+    "GET /v1/agents/a1/memories": () => json(200, { items: [], next_cursor: null }),
+    "GET /v1/agents/a1/skills": () => json(200, { items: [], next_cursor: null }),
+    "GET /v1/agents/a1/schedules": () => json(200, { items: [], next_cursor: null }),
+    "GET /v1/agents/a1/webhooks": () => json(200, { items: [], next_cursor: null }),
+  };
+  const agent = { id: "a1", name: "Daneel", brief: "You are Daneel.", model_id: null, proactive_messaging: "ask" as const };
+
+  it("is written as avatar.<ext> when there is one, and not otherwise", () => {
+    expect(exportFiles(sample, "daneel", NOW).map((f) => f.name)).not.toContain("daneel/avatar.png");
+    const f = exportFiles(withAvatar, "daneel", NOW).find((x) => x.name === "daneel/avatar.png");
+    expect([...f!.data]).toEqual([...png]);
+  });
+
+  it("is read back from the zip, with its extension", async () => {
+    const back = parseExport(await readZip(exportZip(withAvatar, "daneel", NOW).bytes));
+    expect(back.avatar?.ext).toBe("png");
+    expect([...back.avatar!.bytes]).toEqual([...png]);
+    const jpg = parseExport(await readZip(writeZip(exportFiles({ ...sample, avatar: { ext: "jpg", bytes: png } }, "daneel", NOW), NOW)));
+    expect(jpg.avatar?.ext).toBe("jpg");
+  });
+
+  it("refuses two avatars and one over 512 KiB", async () => {
+    const two = [...exportFiles(withAvatar, "daneel", NOW), { name: "daneel/avatar.webp", data: png }];
+    expect(() => parseExport(two)).toThrow(/more than one avatar/);
+    const big = exportFiles({ ...sample, avatar: { ext: "png", bytes: new Uint8Array(512 * 1024 + 1) } }, "daneel", NOW);
+    expect(() => parseExport(big)).toThrow(/larger than 512 KiB/);
+  });
+
+  it("is read from the agent when it has one", async () => {
+    const fn = mockFetch({ ...routes, "GET /v1/agents/a1/avatar": () => new Response(png, { status: 200, headers: { "content-type": "image/png" } }) });
+    const { data, omitted } = await loadAgentExport({ ...agent, avatar_url: "/v1/public/avatars/k1" });
+    expect(data.avatar?.ext).toBe("png");
+    expect([...data.avatar!.bytes]).toEqual([...png]);
+    expect(omitted).toEqual([]);
+    expect(fn).toHaveBeenCalled();
+  });
+
+  it("is not asked for when the agent has none", async () => {
+    const fn = mockFetch(routes);
+    const { data, omitted } = await loadAgentExport({ ...agent, avatar_url: null });
+    expect(data.avatar).toBeUndefined();
+    expect(omitted).toEqual([]);
+    expect(fn.mock.calls.some(([r]) => String((r as Request).url).endsWith("/avatar"))).toBe(false);
+  });
+
+  it("left out, and said, when it cannot be read", async () => {
+    mockFetch({ ...routes, "GET /v1/agents/a1/avatar": () => json(500, { error: { code: "internal", message: "x" } }) });
+    const { data, omitted } = await loadAgentExport({ ...agent, avatar_url: "/v1/public/avatars/k1" });
+    expect(data.avatar).toBeUndefined();
+    expect(omitted).toEqual(["The avatar could not be read, so it is not exported."]);
+  });
+});

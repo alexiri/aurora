@@ -5,7 +5,9 @@ import { unwrap } from "@/lib/api/unwrap";
 import type { Agent } from "@/lib/api/queries";
 import type { components } from "@/lib/api/schema";
 
-import { EXPORT_FORMAT, type AgentExport, type ExportAutomation, type ExportMemory, type ExportSkill } from "./agent-export";
+import { putAvatar } from "@/lib/api/avatar";
+
+import { EXPORT_FORMAT, type AgentExport, type ExportAutomation, type ExportAvatar, type ExportMemory, type ExportSkill } from "./agent-export";
 
 /**
  * (P5-REFINE-19, D-413) Reading an agent out of the existing routes and putting an export back through them. Nothing is
@@ -18,8 +20,16 @@ type S = components["schemas"];
 // ---- export: read the agent ---------------------------------------------------------------------------------------
 
 /** The agent as an export: its own settings, instructions, memories, skills, schedules and webhooks (no ids, no secrets). */
-export async function loadAgentExport(agent: Pick<Agent, "id" | "name" | "brief" | "model_id" | "proactive_messaging">): Promise<{ data: AgentExport; omitted: string[] }> {
+export async function loadAgentExport(agent: Pick<Agent, "id" | "name" | "brief" | "model_id" | "proactive_messaging"> & { avatar_url?: string | null }): Promise<{ data: AgentExport; omitted: string[] }> {
   const path = { params: { path: { agent: agent.id } } };
+  // The avatar is read once with the rest. One that cannot be read is left out and said so: it never fails the export.
+  const readAvatar = async (): Promise<ExportAvatar | null> => {
+    if (!agent.avatar_url) return null;
+    const { data, response } = await api.GET("/v1/agents/{agent}/avatar", { ...path, parseAs: "arrayBuffer" });
+    if (!response.ok) throw new Error(`avatar ${response.status}`);
+    return { ext: "png", bytes: new Uint8Array(data as ArrayBuffer) };
+  };
+  const avatar = await readAvatar().catch(() => undefined);
   const [memories, skills, schedules, webhooks] = await Promise.all([
     unwrap(api.GET("/v1/agents/{agent}/memories", path)),
     unwrap(api.GET("/v1/agents/{agent}/skills", path)),
@@ -27,6 +37,7 @@ export async function loadAgentExport(agent: Pick<Agent, "id" | "name" | "brief"
     unwrap(api.GET("/v1/agents/{agent}/webhooks", path)),
   ]);
   const omitted: string[] = [];
+  if (avatar === undefined) omitted.push("The avatar could not be read, so it is not exported.");
   const automations: ExportAutomation[] = [];
   for (const s of schedules.items) {
     if (s.cron) {
@@ -63,6 +74,7 @@ export async function loadAgentExport(agent: Pick<Agent, "id" | "name" | "brief"
       memories: memories.items.map((m) => ({ key: m.key, updated: m.updated_at, content: m.content, ...(m.locked ? { locked: true } : {}) })),
       skills: skillList,
       automations,
+      ...(avatar ? { avatar } : {}),
     },
   };
 }
@@ -91,13 +103,15 @@ export interface ImportChoices {
   instructions: boolean;
   /** `keep` leaves the agent's own instructions; `replace` writes the export's. */
   instructionsMode: "keep" | "replace";
+  /** The export's avatar replaces the agent's. The dialog ticks it by default only when the agent has none. */
+  avatar: boolean;
   memories: boolean;
   skills: boolean;
   schedules: boolean;
   webhooks: boolean;
 }
 
-export const DEFAULT_CHOICES: ImportChoices = { instructions: true, instructionsMode: "keep", memories: true, skills: true, schedules: true, webhooks: true };
+export const DEFAULT_CHOICES: ImportChoices = { instructions: true, instructionsMode: "keep", avatar: true, memories: true, skills: true, schedules: true, webhooks: true };
 
 /** What the agent has already: items with these names are skipped, never overwritten. */
 export interface ImportExisting {
@@ -111,6 +125,7 @@ export interface ImportExisting {
 /** The routes an import uses, one call each; tests pass a fake. */
 export interface ImportApi {
   setInstructions(text: string): Promise<void>;
+  setAvatar(a: ExportAvatar): Promise<void>;
   createMemory(m: ExportMemory): Promise<void>;
   createSkill(s: ExportSkill): Promise<{ id: string }>;
   putSkillFile(skillId: string, path: string, content: Uint8Array): Promise<void>;
@@ -131,9 +146,10 @@ export interface ImportReport {
 }
 
 /** How many of each group an export holds, for the checklist ("Instructions · 3 memories (1 locked) · 2 skills · 1 schedule · 1 webhook"). */
-export function summarize(e: AgentExport): { instructions: boolean; memories: number; locked: number; skills: number; schedules: number; webhooks: number } {
+export function summarize(e: AgentExport): { instructions: boolean; avatar: boolean; memories: number; locked: number; skills: number; schedules: number; webhooks: number } {
   return {
     instructions: e.instructions.trim() !== "",
+    avatar: e.avatar !== undefined,
     memories: e.memories.length,
     // (P6-MEMLOCK, C-1150) The checklist says how many memories are locked.
     locked: e.memories.filter((m) => m.locked).length,
@@ -149,7 +165,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export function summaryLine(e: AgentExport): string {
   const s = summarize(e);
   const memories = s.memories ? `${plural(s.memories, "memory", "memories")}${s.locked ? ` (${s.locked} locked)` : ""}` : null;
-  return [s.instructions ? "Instructions" : null, memories, s.skills ? plural(s.skills, "skill") : null, s.schedules ? plural(s.schedules, "schedule") : null, s.webhooks ? plural(s.webhooks, "webhook") : null]
+  return [s.instructions ? "Instructions" : null, s.avatar ? "Avatar" : null, memories, s.skills ? plural(s.skills, "skill") : null, s.schedules ? plural(s.schedules, "schedule") : null, s.webhooks ? plural(s.webhooks, "webhook") : null]
     .filter((x): x is string => x !== null)
     .join(" · ");
 }
@@ -166,7 +182,8 @@ export async function runImport(e: AgentExport, choices: ImportChoices, existing
   const schedules = choices.schedules ? e.automations.filter((a): a is Extract<ExportAutomation, { kind: "schedule" }> => a.kind === "schedule") : [];
   const webhooks = choices.webhooks ? e.automations.filter((a): a is Extract<ExportAutomation, { kind: "webhook" }> => a.kind === "webhook") : [];
   const writeInstructions = choices.instructions && choices.instructionsMode === "replace" && e.instructions.trim() !== "";
-  const total = (writeInstructions ? 1 : 0) + memories.length + skills.length + schedules.length + webhooks.length;
+  const writeAvatar = choices.avatar && e.avatar !== undefined;
+  const total = (writeInstructions ? 1 : 0) + (writeAvatar ? 1 : 0) + memories.length + skills.length + schedules.length + webhooks.length;
   let n = 0;
   const step = async (what: string, fn: () => Promise<void>) => {
     try {
@@ -181,6 +198,13 @@ export async function runImport(e: AgentExport, choices: ImportChoices, existing
     await step("Instructions", async () => {
       await io.setInstructions(e.instructions);
       report.done.push("Instructions replaced");
+    });
+  }
+  if (writeAvatar && e.avatar) {
+    const avatar = e.avatar;
+    await step("Avatar", async () => {
+      await io.setAvatar(avatar);
+      report.done.push("Avatar");
     });
   }
   for (const m of memories) {
@@ -242,6 +266,10 @@ export function liveImportApi(agentId: string): ImportApi {
   return {
     async setInstructions(text) {
       await unwrap(api.PATCH("/v1/agents/{agent}", { ...path, body: { brief: text } }));
+    },
+    async setAvatar(a) {
+      // The server sniffs the type and re-encodes to a 256×256 PNG; a file it cannot decode is `avatar_invalid`.
+      await putAvatar(agentId, new Blob([a.bytes as BlobPart]));
     },
     async createMemory(m) {
       // (P6-MEMLOCK, C-1150) A locked memory arrives locked, `locked_by` the importer.
