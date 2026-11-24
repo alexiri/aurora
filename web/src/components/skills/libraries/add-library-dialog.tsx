@@ -132,8 +132,8 @@ function AddLibraryFlow({ orgId, onOpenChange }: { orgId: LibraryOwner; onOpenCh
                 idPrefix="lib"
                 url={url}
                 onUrl={setUrl}
-                ref={ref}
-                onRef={setRef}
+                branch={ref}
+                onBranch={setRef}
                 path={path}
                 onPath={setPath}
                 token={token}

@@ -90,7 +90,7 @@ function EditFlow({ library: l, orgId, onOpenChange }: { library: SkillLibrary; 
                 <p className="text-xs text-muted">To use another repository, add a new library.</p>
               </div>
             )}
-            <RepositoryAddressFields idPrefix="edit" ref={ref} onRef={setRef} path={path} onPath={setPath} pathHint="The folder that holds the skill folders. Default: the repository root" />
+            <RepositoryAddressFields idPrefix="edit" branch={ref} onBranch={setRef} path={path} onPath={setPath} pathHint="The folder that holds the skill folders. Default: the repository root" />
             <div className="space-y-2">
               <p className="text-sm font-medium text-ink">Access token</p>
               {l.token_set ? (

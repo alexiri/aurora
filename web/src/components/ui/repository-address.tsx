@@ -19,8 +19,8 @@ export function RepositoryAddressFields({
   idPrefix,
   url,
   onUrl,
-  ref,
-  onRef,
+  branch,
+  onBranch,
   path,
   onPath,
   token,
@@ -34,8 +34,9 @@ export function RepositoryAddressFields({
   idPrefix: string;
   url?: string;
   onUrl?: (v: string) => void;
-  ref?: string;
-  onRef?: (v: string) => void;
+  /** The branch or tag name (`ref` in the API, but `ref` is a reserved JSX prop name). */
+  branch?: string;
+  onBranch?: (v: string) => void;
   path?: string;
   onPath?: (v: string) => void;
   token?: string;
@@ -67,9 +68,9 @@ export function RepositoryAddressFields({
           />
         </Field>
       ) : null}
-      {onRef ? (
+      {onBranch ? (
         <Field id={`${idPrefix}-ref`} label="Branch or tag" hint="Default: the repository's default branch">
-          <input id={`${idPrefix}-ref`} className={inputClass} value={ref ?? ""} autoComplete="off" spellCheck={false} onChange={(e) => onRef(e.target.value)} />
+          <input id={`${idPrefix}-ref`} className={inputClass} value={branch ?? ""} autoComplete="off" spellCheck={false} onChange={(e) => onBranch(e.target.value)} />
         </Field>
       ) : null}
       {onPath ? (

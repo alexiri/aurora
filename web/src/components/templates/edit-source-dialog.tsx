@@ -85,7 +85,7 @@ function EditFlow({ source: s, onOpenChange }: { source: AgentTemplateSource; on
                 options={INTERVALS.map((i) => ({ value: i, label: INTERVAL_LABELS[i] }))}
               />
             </Field>
-            <RepositoryAddressFields idPrefix="tpl-edit" ref={ref} onRef={setRef} path={path} onPath={setPath} />
+            <RepositoryAddressFields idPrefix="tpl-edit" branch={ref} onBranch={setRef} path={path} onPath={setPath} />
             <div className="space-y-2">
               <p className="text-sm font-medium text-ink">Access token</p>
               {s.token_set ? (

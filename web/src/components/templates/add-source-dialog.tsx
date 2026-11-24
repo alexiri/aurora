@@ -135,7 +135,7 @@ function AddSourceFlow({ onOpenChange }: { onOpenChange: (open: boolean) => void
           {found ? (
             <Found found={found} />
           ) : (
-            <RepositoryAddressFields idPrefix="tpl" url={url} onUrl={setUrl} ref={ref} onRef={setRef} path={path} onPath={setPath} token={token} onToken={setToken} username={username} onUsername={setUsername} urlError={urlProblem || undefined} />
+            <RepositoryAddressFields idPrefix="tpl" url={url} onUrl={setUrl} branch={ref} onBranch={setRef} path={path} onPath={setPath} token={token} onToken={setToken} username={username} onUsername={setUsername} urlError={urlProblem || undefined} />
           )}
         </form>
       </DialogContent>
