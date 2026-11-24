@@ -3991,6 +3991,199 @@ async fn a_new_library_reference_needs_its_skill_refs_item() {
     assert_eq!(rec, hex::encode(h.finalize()));
 }
 
+#[tokio::test]
+async fn a_create_refuses_a_library_commit_the_plan_did_not_resolve() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    seed_library(&w, org, &owner).await;
+    // Move the library's head twice: the plan resolves at the new head, so the intermediate
+    // commit is a valid but wrong pin.
+    let stale = w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "alpha/SKILL.md".into(),
+            skill_md("Alpha skill", "Alpha body v2."),
+        )],
+    );
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "alpha/SKILL.md".into(),
+            skill_md("Alpha skill", "Alpha body v3."),
+        )],
+    );
+    let refs = format!(
+        "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: beta\n    why: Does the other work.\n"
+    );
+    seed_fs(
+        &w,
+        "acme/tpl",
+        "ref1",
+        "1.0.0",
+        &ref_files("ref1", "1.0.0", &refs),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "ref1").await;
+    assert_eq!(plan["skill_refs"][0]["available"], true, "{plan}");
+    assert_ne!(
+        plan["skill_refs"][0]["library"]["commit_sha"], stale,
+        "{plan}"
+    );
+    let lib_id = plan["skill_refs"][0]["library"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // A body-chosen commit — even a valid one — is not what the plan resolved: 422 at the
+    // reference's index, nothing created.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "ref1", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "inputs": {"zone": "eu"},
+                "skill_refs": [{
+                    "index": 0,
+                    "library_id": plan["skill_refs"][0]["library"]["id"],
+                    "commit_sha": stale,
+                }],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_commit_changed"), "{v}");
+    assert_eq!(
+        v["error"]["details"]["fields"][0]["path"], "/skill_refs",
+        "{v}"
+    );
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+
+    // A reference the plan no longer offers (its library is gone) is refused too.
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::DELETE,
+            &format!("/v1/skill-libraries/{lib_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let plan = w.plan(ws, &owner, "ref1").await;
+    assert_eq!(plan["skill_refs"][0]["available"], false, "{plan}");
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "ref1", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "inputs": {"zone": "eu"},
+                "skill_refs": [{"index": 0, "library_id": lib_id, "commit_sha": stale}],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_skill_unavailable"), "{v}");
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+}
+
+#[tokio::test]
+async fn an_apply_refuses_a_library_commit_the_offer_did_not_resolve() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    seed_library(&w, org, &owner).await;
+    let stale = w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "alpha/SKILL.md".into(),
+            skill_md("Alpha skill", "Alpha body v2."),
+        )],
+    );
+    // The offer resolves at the current head, so the intermediate commit is a valid but wrong
+    // pin for it.
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put(
+            "alpha/SKILL.md".into(),
+            skill_md("Alpha skill", "Alpha body v3."),
+        )],
+    );
+
+    // v1 has no references; v2 adds `beta`.
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "ref2",
+        "1.0.0",
+        &ref_files("ref2", "1.0.0", ""),
+    )
+    .await;
+    let created = w.create_agent(ws, &owner, "ref2", "1.0.0", json!({})).await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+    let refs = format!(
+        "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: beta\n    why: Does the other work.\n"
+    );
+    advance_fs(
+        &w,
+        id,
+        "acme/tpl",
+        "ref2",
+        "2.0.0",
+        &ref_files("ref2", "2.0.0", &refs),
+        &[],
+    )
+    .await;
+    let (_, v) = w.tpl_status(&owner, agent).await;
+    let key = v["update"]["parts"][0]["key"].as_str().unwrap().to_owned();
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    // A body-chosen commit — even a valid one — is not what the offer resolved: 422.
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "skill_refs": [{
+                    "index": 0,
+                    "library_id": v["update"]["parts"][0]["skill_ref"]["library"]["id"],
+                    "commit_sha": stale,
+                }],
+                "parts": [{"kind": "library_skill", "key": key}],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_commit_changed"), "{v}");
+    // The skill was not added.
+    assert_eq!(skills_of(&w, agent).await.len(), 0);
+
+    // With the offer's commit the part is taken (the happy path stands).
+    let plan = w.plan(ws, &owner, "ref2").await;
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "skill_refs": [{
+                    "index": 0,
+                    "library_id": plan["skill_refs"][0]["library"]["id"],
+                    "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"],
+                }],
+                "parts": [{"kind": "library_skill", "key": key}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(skills_of(&w, agent).await.len(), 1);
+}
+
 // ---- the creation (C-1111, C-1119's create list) ------------------------------------------------
 
 /// The user id of a test user (by email).
@@ -5073,8 +5266,8 @@ async fn a_create_refuses_bad_library_and_organization_references() {
         .await;
     assert_eq!((s, code(&v)), (422, "template_skill_unavailable"), "{v}");
 
-    // A commit where the skill is gone: the plan was made at head1, the person quotes head2
-    // (where `alpha` was deleted) — the add path's own refusal, nothing written.
+    // A commit the plan did not resolve (head2, where `alpha` was deleted): the plan's-commit
+    // rule refuses before the add path is even reached (SEC-146 C), nothing written.
     let head1 = plan["skill_refs"][0]["library"]["commit_sha"]
         .as_str()
         .unwrap()
@@ -5091,7 +5284,7 @@ async fn a_create_refuses_bad_library_and_organization_references() {
                                               "commit_sha": head2}]})),
         )
         .await;
-    assert_eq!((s, code(&v)), (422, "library_skill_invalid"), "{v}");
+    assert_eq!((s, code(&v)), (422, "template_commit_changed"), "{v}");
     assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
 
     // A required organization skill the workspace does not have (nothing is ever written

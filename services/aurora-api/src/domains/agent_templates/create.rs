@@ -312,6 +312,17 @@ pub async fn create_from_template(
                     });
                     continue;
                 };
+                // The reference must be the one the plan resolved, at the plan's commit
+                // (SEC-146 C): the fetch commits to what the plan showed, never a
+                // body-chosen commit.
+                if !plan_ref.available {
+                    return Err(at(
+                        "template_skill_unavailable",
+                        "This skill reference is not available in this workspace.",
+                        "/skill_refs",
+                        index,
+                    ));
+                }
                 // The library must be the one the C-1142 resolution accepted (C-1111).
                 let Some(lib_view) = &plan_ref.library else {
                     return Err(at(
@@ -325,6 +336,14 @@ pub async fn create_from_template(
                     return Err(at(
                         "template_skill_unavailable",
                         "This library is not the one the plan resolved for this reference.",
+                        "/skill_refs",
+                        index,
+                    ));
+                }
+                if lib_view.commit_sha != item.commit_sha {
+                    return Err(at(
+                        "template_commit_changed",
+                        "This library skill's commit is not the one the plan resolved for this reference.",
                         "/skill_refs",
                         index,
                     ));

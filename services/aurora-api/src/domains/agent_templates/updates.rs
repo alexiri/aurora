@@ -1045,6 +1045,22 @@ pub async fn apply(
                 plan.index,
             ));
         }
+        // The pin must be the offer's resolved commit, and the reference available (SEC-146 C):
+        // the fetch commits to what the offer showed, never a body-chosen commit.
+        if !plan.available {
+            return Err(ref_unprocessable(
+                "template_skill_unavailable",
+                "This skill reference is not available in this workspace.",
+                plan.index,
+            ));
+        }
+        if lib.commit_sha != item.commit_sha {
+            return Err(ref_unprocessable(
+                "template_commit_changed",
+                "This library skill's commit is not the one the offer resolved for this reference.",
+                plan.index,
+            ));
+        }
         let dir = create::skill_dir(state, item.library_id, &plan.name, plan.index).await?;
         let from = FromLibrary {
             library_id: item.library_id,
