@@ -51,6 +51,7 @@ async fn seed_template(pool: &PgPool, source: Uuid, template_id: &str) -> Uuid {
     repo::upsert_template(&mut pool.acquire().await.unwrap(), &t)
         .await
         .unwrap()
+        .expect("the seed source owns the template")
         .id
 }
 

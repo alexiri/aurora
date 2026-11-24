@@ -286,14 +286,16 @@ async fn fail(
 }
 
 /// Creates or updates a template row from a healthy head (`ok` or `needs_newer_aurora`):
-/// the head's description replaces the stored one, the directory is back. Returns the row id.
+/// the head's description replaces the stored one, the directory is back. Returns the row id,
+/// or `None` when the upsert refused to take the template id from another source (the
+/// ownership race — the caller reports `id_taken`, like the pre-check branch).
 async fn store_head(
     state: &AppState,
     source_id: uuid::Uuid,
     m: &aurora_template::TemplateMeta,
     dir: &str,
     head_state: &str,
-) -> Result<uuid::Uuid, ApiError> {
+) -> Result<Option<uuid::Uuid>, ApiError> {
     let mut c = state
         .pool
         .acquire()
@@ -313,7 +315,7 @@ async fn store_head(
         },
     )
     .await?;
-    Ok(row.id)
+    Ok(row.map(|r| r.id))
 }
 
 // ---- the check ---------------------------------------------------------------------------------
@@ -434,7 +436,20 @@ pub async fn check_source(
                 } else {
                     "needs_newer_aurora"
                 };
-                let row = store_head(state, source.id, m, &d.dir, head_state).await?;
+                let row = match store_head(state, source.id, m, &d.dir, head_state).await? {
+                    Some(row) => row,
+                    // The upsert landed after another source took the id (the pre-check
+                    // above read before that): the id stays where it is.
+                    None => {
+                        problems.push(Problem {
+                            template_id: Some(m.id.clone()),
+                            dir: d.dir.clone(),
+                            code: "id_taken".to_owned(),
+                            message: "another source already holds this template id".to_owned(),
+                        });
+                        continue;
+                    }
+                };
                 if head_state == "ok" {
                     healthy.push((row, m.id.clone(), d.dir.clone(), m.clone()));
                 }

@@ -463,18 +463,25 @@ pub struct NewTemplate<'a> {
 /// Store a template the head read found (a new one, or a stored one whose head is `ok` or
 /// `needs_newer_aurora`): the head's description replaces the stored one and the directory
 /// is back (`removed_upstream` cleared).
+///
+/// The upsert never changes the row's owner: another source may have taken the template id
+/// between the caller's unlocked `id_taken_elsewhere` read and this write (the ownership
+/// race), and the `DO UPDATE ... WHERE` refuses to hand the template — with all its stored
+/// versions — over to the newcomer. `None` means the caller must report `id_taken`, exactly
+/// like the pre-check branch.
 pub async fn upsert_template(
     conn: &mut PgConnection,
     t: &NewTemplate<'_>,
-) -> Result<TemplateRow, DbError> {
+) -> Result<Option<TemplateRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(
         "INSERT INTO agent_templates (id, template_id, source_id, dir, name, summary,
             head_version, head_state, removed_upstream)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)
-         ON CONFLICT (template_id) DO UPDATE SET source_id = EXCLUDED.source_id,
-            dir = EXCLUDED.dir, name = EXCLUDED.name, summary = EXCLUDED.summary,
+         ON CONFLICT (template_id) DO UPDATE SET dir = EXCLUDED.dir,
+            name = EXCLUDED.name, summary = EXCLUDED.summary,
             head_version = EXCLUDED.head_version, head_state = EXCLUDED.head_state,
             head_problems = NULL, removed_upstream = false, updated_at = now()
+         WHERE agent_templates.source_id = EXCLUDED.source_id
          RETURNING id, template_id, source_id, dir, name, summary, head_version, head_state,
             head_problems, offered, removed_upstream, created_at, updated_at"
             .to_owned(),
@@ -487,7 +494,7 @@ pub async fn upsert_template(
     .bind(t.summary)
     .bind(t.head_version)
     .bind(t.head_state)
-    .fetch_one(conn)
+    .fetch_optional(conn)
     .await?)
 }
 
