@@ -741,6 +741,23 @@ pub async fn template_by_template_id<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// [`template_by_template_id`] with FOR SHARE on the row (SEC-146 B): the create's transaction
+/// pins the template row (its `offered` flag included) before re-reading the offer, so a
+/// concurrent withdrawal or approval is either seen or waits behind the lock.
+pub async fn template_by_template_id_share<'e, E: PgExecutor<'e>>(
+    exec: E,
+    template_id: &str,
+) -> Result<Option<TemplateRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, template_id, source_id, dir, name, summary, head_version, head_state,
+            head_problems, offered, removed_upstream, created_at, updated_at
+         FROM agent_templates WHERE template_id = $1 FOR SHARE",
+    )
+    .bind(template_id)
+    .fetch_optional(exec)
+    .await?)
+}
+
 /// A version with its decider's display name (the admin list's `decided_by`).
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct VersionWithDeciderRow {
@@ -778,6 +795,26 @@ pub async fn approved_versions<'e, E: PgExecutor<'e>>(
          JOIN agent_templates t ON t.id = v.agent_template_id
          WHERE v.agent_template_id = $1 AND t.offered AND v.status = 'approved'
          ORDER BY v.created_at DESC, v.id DESC"
+    )))
+    .bind(agent_template_id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// [`approved_versions`] with FOR SHARE on the version rows (SEC-146 B): the create's
+/// transaction re-reads the offer under the row lock, so a concurrent approval of a newer
+/// version is either seen by the re-read or waits behind it.
+pub async fn approved_versions_share<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent_template_id: Uuid,
+) -> Result<Vec<VersionRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {VSELQ}
+         FROM agent_template_versions v
+         JOIN agent_templates t ON t.id = v.agent_template_id
+         WHERE v.agent_template_id = $1 AND t.offered AND v.status = 'approved'
+         ORDER BY v.created_at DESC, v.id DESC
+         FOR SHARE OF v"
     )))
     .bind(agent_template_id)
     .fetch_all(exec)

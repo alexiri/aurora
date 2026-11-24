@@ -47,7 +47,26 @@ pub(crate) async fn offered_version<'e, E: sqlx::PgExecutor<'e>>(
     exec: E,
     agent_template_id: Uuid,
 ) -> Result<Option<repo::VersionRow>, ApiError> {
-    let versions = repo::approved_versions(exec, agent_template_id).await?;
+    Ok(newest_approved(
+        repo::approved_versions(exec, agent_template_id).await?,
+    ))
+}
+
+/// [`offered_version`] with FOR SHARE on the version rows (SEC-146 B): the create's
+/// transaction re-reads the offer under the row lock, so what it verifies against is what it
+/// writes with.
+pub(crate) async fn offered_version_share<'e, E: sqlx::PgExecutor<'e>>(
+    exec: E,
+    agent_template_id: Uuid,
+) -> Result<Option<repo::VersionRow>, ApiError> {
+    Ok(newest_approved(
+        repo::approved_versions_share(exec, agent_template_id).await?,
+    ))
+}
+
+/// The offered version of a set read newest-first: the semver-newest (rows come newest-first,
+/// so a tie keeps the newest stored one), one rule for every reader (C-1108).
+fn newest_approved(versions: Vec<repo::VersionRow>) -> Option<repo::VersionRow> {
     let mut best: Option<repo::VersionRow> = None;
     let mut best_key = (0u64, 0u64, 0u64, false);
     for v in versions {
@@ -57,7 +76,7 @@ pub(crate) async fn offered_version<'e, E: sqlx::PgExecutor<'e>>(
             best = Some(v);
         }
     }
-    Ok(best)
+    best
 }
 
 /// The app ids the instance currently serves (the active packages' `apps[].about.id`).

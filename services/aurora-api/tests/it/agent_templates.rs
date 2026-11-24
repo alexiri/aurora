@@ -3469,14 +3469,15 @@ async fn hold_agent_lock(
     tx
 }
 
-/// Wait until a session waits for the agent's advisory lock: the spawned request is blocked
-/// at the per-agent writer lock inside its transaction (`SEC-146 A`).
+/// Wait until a session of this test's database waits for a lock: the spawned request is
+/// blocked at the writer lock inside its transaction (`SEC-146 A/B`). Transaction-level waits
+/// (`transactionid`) carry no database in `pg_locks`, so the waiting session scopes them.
 async fn wait_blocked(pool: &sqlx::PgPool) {
     for _ in 0..250 {
         let n: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_locks
-             WHERE NOT granted AND locktype = 'advisory'
-               AND database = (SELECT oid FROM pg_database WHERE datname = current_database())",
+            "SELECT count(*) FROM pg_locks l
+             JOIN pg_stat_activity a ON a.pid = l.pid
+             WHERE NOT l.granted AND a.datname = current_database()",
         )
         .fetch_one(pool)
         .await
@@ -4620,6 +4621,78 @@ async fn a_stale_plan_is_a_409_with_the_fresh_plan() {
         "{v}"
     );
     assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+}
+
+#[tokio::test]
+async fn a_create_rechecks_the_offered_version_under_the_row_lock() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    let id = seed_fs(&w, "acme/tpl", "t", "1.0.0", &files("t", "1.0.0")).await;
+    // 2.0.0 is approved but held back, so the offer (and the plan) is 1.0.0.
+    advance_fs(&w, id, "acme/tpl", "t", "2.0.0", &files("t", "2.0.0"), &[]).await;
+    let tid: Uuid = sqlx::query_scalar("SELECT id FROM agent_templates WHERE template_id = 't'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE agent_template_versions SET status = 'pending_approval'
+         WHERE agent_template_id = $1 AND version = '2.0.0'",
+    )
+    .bind(tid)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let plan = w.plan(ws, &owner, "t").await;
+    assert_eq!(plan["version"], "1.0.0", "{plan}");
+
+    let app = w.h.app.clone();
+    let pool = w.h.pool().clone();
+    let body = json!({
+        "template_id": "t",
+        "version": plan["version"],
+        "content_sha256": plan["content_sha256"],
+        "name": "Monitor",
+        "inputs": {"zone": "eu"},
+    });
+
+    // Hold the template row: the create's transaction blocks re-reading it FOR SHARE.
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM agent_templates WHERE id = $1 FOR UPDATE")
+        .bind(tid)
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let task = tokio::spawn(app_call(
+        app,
+        owner.clone(),
+        Method::POST,
+        format!("/v1/workspaces/{ws}/agents/from-template"),
+        Some(body),
+    ));
+    wait_blocked(&pool).await;
+
+    // A newer version is approved while the create waits behind the row lock; the re-read in
+    // the transaction must see it and refuse.
+    sqlx::query(
+        "UPDATE agent_template_versions SET status = 'approved', decided_at = now()
+         WHERE agent_template_id = $1 AND version = '2.0.0'",
+    )
+    .bind(tid)
+    .execute(&pool)
+    .await
+    .unwrap();
+    lock.rollback().await.unwrap();
+
+    let (s, v) = task.await.unwrap();
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    assert_eq!(v["error"]["details"]["plan"]["version"], "1.0.0", "{v}");
+    // No agent was created, and none is stamped with the stale version.
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM agents WHERE workspace_id = $1")
+        .bind(ws)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
 }
 
 #[tokio::test]

@@ -162,6 +162,16 @@ struct ChosenAccount {
 }
 
 /// Everything the transaction needs, checked and fetched before it.
+/// The 409 of a create against anything but the offered version the request answered to
+/// (C-1110, SEC-146 B): with the plan as the reload answer.
+fn version_changed(plan: &dto::TemplatePlan) -> ApiError {
+    ApiError::conflict(
+        "template_version_changed",
+        "This template was updated. Check the changes, then create.",
+    )
+    .with_details(json!({ "plan": plan }))
+}
+
 struct Prepared<'a> {
     req: &'a CreateFromTemplateRequest,
     plan: &'a dto::TemplatePlan,
@@ -192,11 +202,7 @@ pub async fn create_from_template(
     if req.version != plan.version
         || plan.content_sha256.as_deref() != Some(req.content_sha256.as_str())
     {
-        return Err(ApiError::conflict(
-            "template_version_changed",
-            "This template was updated. Check the changes, then create.",
-        )
-        .with_details(json!({ "plan": plan })));
+        return Err(version_changed(&plan));
     }
     // The stored version row: the bytes creation copies are exactly the approved content.
     let t = trepo::template_by_template_id(&state.pool, &req.template_id)
@@ -207,6 +213,15 @@ pub async fn create_from_template(
         .ok_or_else(not_found)?;
     let content_v = v.content.as_ref().ok_or_else(not_found)?;
     let content = dto::content_from_json(content_v).ok_or_else(not_found)?;
+    // The stored content itself is what the request answers to (SEC-146 B): the version row is
+    // read separately from the plan, so its version, the content's own version and the
+    // content's own canonical hash are checked against the request here.
+    if v.version != req.version
+        || content.meta.version != v.version
+        || aurora_template::content_sha256(&content) != req.content_sha256
+    {
+        return Err(version_changed(&plan));
+    }
 
     // The inputs (C-1104's rules, all problems at once).
     let checked =
@@ -393,6 +408,20 @@ pub async fn create_from_template(
 
     // ---- the one transaction -------------------------------------------------------------------
     let mut tx = audit::begin(state).await?;
+    // Re-read the offer under the row locks and re-verify (SEC-146 B): the offered version may
+    // have moved between the plan and this transaction. The FOR SHARE holds the template row
+    // and the version rows until the commit (a concurrent approval waits behind it), and the
+    // agent is stamped with the version this transaction read, not the one the plan showed.
+    let t = trepo::template_by_template_id_share(&mut *tx, &req.template_id)
+        .await?
+        .ok_or_else(not_found)?;
+    let v = admin::offered_version_share(&mut *tx, t.id)
+        .await?
+        .ok_or_else(|| version_changed(&plan))?;
+    if v.version != req.version || v.content_sha256.as_deref() != Some(req.content_sha256.as_str())
+    {
+        return Err(version_changed(&plan));
+    }
     let result = create_in_tx(&mut tx, state, caller, &auth, ws, &p, &notes).await;
     match result {
         Ok((created, events)) => {
@@ -681,12 +710,14 @@ async fn create_in_tx(
     }
 
     // The provenance (C-1112): the template's id, name and version as text, the checked inputs.
+    // The version is the request's, which the transaction re-verified against the version row
+    // it read under the row lock (SEC-146 B) — never the plan's possibly older one.
     aurora_db::repo::agents::set_template(
         &mut **tx,
         agent.id,
         &content.meta.id,
         &p.plan.name,
-        &p.plan.version,
+        &p.req.version,
         &p.inputs_json,
     )
     .await?;
