@@ -778,9 +778,9 @@ mod tests {
         assert!(semver_ok("1.2.3-rc.1"));
         assert!(!semver_ok("1.2"));
         assert!(!semver_ok("1.2.3+build"));
-        assert!(input_id_ok("jira_project"));
-        assert!(!input_id_ok("Jira_project"));
-        assert!(!input_id_ok("xjira_project_xxxxxxxxxxxxxxxxxxxxxx"));
+        for (id, ok) in crate::test_fixtures::DESK_INPUT_IDS {
+            assert_eq!(input_id_ok(id), *ok, "{id}");
+        }
     }
 
     #[test]
@@ -816,10 +816,7 @@ mod tests {
 
     #[test]
     fn inputs_and_apps() {
-        let meta = parse_meta(
-            b"format: 1\nid: t\nversion: 1.0.0\nname: N\nsummary: S\ninputs:\n  - id: jira_project\n    label: Jira project key\n    pattern: \"^[A-Z][A-Z0-9]+$\"\n    default: OPS\napps:\n  - app: atlassian\n    level: ask\n    tools:\n      allow: [jira_search]\n      ask: [jira_issue_create]\n    why: Tickets.\n  - any_of: [microsoft-365, caldav]\n    level: ask\n    why: Calendar.\nskills:\n  - organization: deploy-checklist\n    required: false\n    why: Expected.\n",
-        )
-        .unwrap();
+        let meta = parse_meta(crate::test_fixtures::INPUTS_AND_APPS_YAML.as_bytes()).unwrap();
         assert_eq!(meta.inputs.len(), 1);
         assert_eq!(meta.inputs[0].default.as_deref(), Some("OPS"));
         assert_eq!(meta.apps.len(), 2);
@@ -833,36 +830,29 @@ mod tests {
 
     #[test]
     fn app_rules() {
-        let base = "format: 1\nid: t\nversion: 1.0.0\nname: N\nsummary: S\n";
-        let dup = format!(
-            "{base}apps:\n  - app: atlassian\n    why: a\n  - app: atlassian\n    why: b\n"
-        );
+        use crate::test_fixtures::{
+            APP_BOTH_YAML, APP_DUP_YAML, APP_EMPTY_TOOLS_YAML, APP_OVERLAP_YAML,
+        };
         assert!(
-            parse_meta(dup.as_bytes())
+            parse_meta(APP_DUP_YAML.as_bytes())
                 .unwrap_err()
                 .iter()
                 .any(|p| p.message.contains("at most one entry"))
         );
-        let both =
-            format!("{base}apps:\n  - app: atlassian\n    any_of: [caldav, github]\n    why: a\n");
         assert!(
-            parse_meta(both.as_bytes())
+            parse_meta(APP_BOTH_YAML.as_bytes())
                 .unwrap_err()
                 .iter()
                 .any(|p| p.path.ends_with("/apps/0"))
         );
-        let empty_tools = format!("{base}apps:\n  - app: atlassian\n    tools: {{}}\n    why: a\n");
         assert!(
-            parse_meta(empty_tools.as_bytes())
+            parse_meta(APP_EMPTY_TOOLS_YAML.as_bytes())
                 .unwrap_err()
                 .iter()
                 .any(|p| p.path.contains("tools"))
         );
-        let overlap = format!(
-            "{base}apps:\n  - app: atlassian\n    tools:\n      allow: [a]\n      ask: [a]\n    why: x\n"
-        );
         assert!(
-            parse_meta(overlap.as_bytes())
+            parse_meta(APP_OVERLAP_YAML.as_bytes())
                 .unwrap_err()
                 .iter()
                 .any(|p| p.message.contains("both"))
@@ -886,11 +876,8 @@ mod tests {
 
     #[test]
     fn skill_refs() {
-        let base = "format: 1\nid: t\nversion: 1.0.0\nname: N\nsummary: S\n";
-        let page = format!(
-            "{base}skills:\n  - library: https://gitlab.cern.ch/agents/skills/-/tree/main/team\n    skill: incident-writeup\n    why: Writes the summary.\n"
-        );
-        let meta = parse_meta(page.as_bytes()).unwrap();
+        use crate::test_fixtures::{LIBRARY_NORMALIZED, LIBRARY_PAGE_YAML, LIBRARY_SSH_YAML};
+        let meta = parse_meta(LIBRARY_PAGE_YAML.as_bytes()).unwrap();
         match &meta.skill_refs[0] {
             SkillRef::Library {
                 address,
@@ -899,22 +886,20 @@ mod tests {
                 skill,
                 ..
             } => {
-                assert_eq!(address.url, "https://gitlab.cern.ch/agents/skills");
+                assert_eq!(address.url, LIBRARY_NORMALIZED);
                 assert_eq!(ref_.as_deref(), Some("main"));
                 assert_eq!(path.as_deref(), Some("team"));
                 assert_eq!(skill, "incident-writeup");
             }
             _ => panic!("expected a library reference"),
         }
-        let ssh = format!(
-            "{base}skills:\n  - library: git@github.com:a/b.git\n    skill: x\n    why: y\n"
-        );
-        let err = parse_meta(ssh.as_bytes()).unwrap_err();
+        let err = parse_meta(LIBRARY_SSH_YAML.as_bytes()).unwrap_err();
         assert!(
             err.iter().any(
                 |p| p.code == ProblemCode::TemplateSkillRefInvalid && p.message.contains("ssh")
             )
         );
+        let base = "format: 1\nid: t\nversion: 1.0.0\nname: N\nsummary: S\n";
         let core = format!("{base}skills:\n  - core: builtin\n    why: y\n");
         assert!(parse_meta(core.as_bytes()).is_err());
         let reserved = format!("{base}skills:\n  - organization: aurora-something\n    why: y\n");

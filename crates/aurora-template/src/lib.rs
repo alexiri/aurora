@@ -23,6 +23,8 @@ mod model;
 mod problem;
 mod render;
 mod skill_rules;
+#[cfg(test)]
+mod test_fixtures;
 mod validate;
 mod yaml;
 

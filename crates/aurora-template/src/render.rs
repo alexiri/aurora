@@ -367,8 +367,9 @@ mod tests {
 
     #[test]
     fn every_input_problem_code() {
+        use crate::test_fixtures::DESK_INPUT;
         let inputs = vec![
-            decl("jira_project", true),
+            decl(DESK_INPUT, true),
             InputDecl {
                 kind: InputKind::Choice,
                 options: vec!["Low".into(), "High".into()],
@@ -385,7 +386,7 @@ mod tests {
             decl("extra", false),
         ];
         let mut values = BTreeMap::new();
-        values.insert("jira_project".to_owned(), String::new());
+        values.insert(DESK_INPUT.to_owned(), String::new());
         values.insert("level".to_owned(), "Medium".into());
         values.insert("key".to_owned(), "ops1".into());
         values.insert("short".to_owned(), "123456".into());
@@ -402,8 +403,8 @@ mod tests {
         // All at once, each naming its input.
         assert_eq!(err.len(), 6);
         assert!(err.iter().any(|p| p.input == "undeclared"));
-        assert!(err.iter().any(|p| p.input == "jira_project"));
-        let ok = checked(&inputs, &[("jira_project", "OPS"), ("key", "OPS")]);
+        assert!(err.iter().any(|p| p.input == DESK_INPUT));
+        let ok = checked(&inputs, &[(DESK_INPUT, "OPS"), ("key", "OPS")]);
         assert_eq!(ok.get("key"), Some("OPS"));
         // An optional input left out renders as the empty string.
         assert_eq!(ok.get("level"), Some(""));
@@ -440,14 +441,10 @@ mod tests {
 
     #[test]
     fn one_pass_substitution_hostile_values() {
-        let inputs = vec![decl("jira_project", true)];
-        let values = checked(&inputs, &[("jira_project", "{input.key} {agent.name}")]);
-        let out = substitute(
-            "Hello {person.name}, {input.jira_project} and {input.key} stay {agent.name}.",
-            &values,
-            "Monitor",
-            "Ada",
-        );
+        use crate::test_fixtures::{DESK_INPUT, ONE_PASS_TEXT};
+        let inputs = vec![decl(DESK_INPUT, true)];
+        let values = checked(&inputs, &[(DESK_INPUT, "{input.key} {agent.name}")]);
+        let out = substitute(ONE_PASS_TEXT, &values, "Monitor", "Ada");
         // The inserted value is never scanned again (its `{agent.name}` stays as typed), and an
         // undeclared input stays literal.
         assert_eq!(
@@ -482,9 +479,10 @@ mod tests {
 
     #[test]
     fn render_fills_only_the_fillable_places() {
-        let c = crate::validate::tests::sample_content();
-        let inputs = vec![decl("jira_project", true)];
-        let values = checked(&inputs, &[("jira_project", "OPS")]);
+        use crate::test_fixtures::DESK_INPUT;
+        let c = crate::test_fixtures::sample_content();
+        let inputs = vec![decl(DESK_INPUT, true)];
+        let values = checked(&inputs, &[(DESK_INPUT, "OPS")]);
         let r = render(&c, &values, "Monitor", "Ada");
         assert_eq!(r.instructions, "Watch OPS tickets and the morning board.\n");
         assert_eq!(r.readme, "# Service monitor\nFor the service desk.\n");
@@ -502,10 +500,8 @@ mod tests {
 
     #[test]
     fn placeholders_found() {
-        assert_eq!(
-            placeholder_inputs("a {input.x} b {agent.name} {input.jira_project}"),
-            vec!["x", "jira_project"]
-        );
+        use crate::test_fixtures::{DESK_INPUT, PLACEHOLDER_TEXT};
+        assert_eq!(placeholder_inputs(PLACEHOLDER_TEXT), vec!["x", DESK_INPUT]);
         assert!(placeholder_inputs("no tokens {here}").is_empty());
     }
 }
