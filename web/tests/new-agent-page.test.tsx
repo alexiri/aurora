@@ -106,13 +106,13 @@ const DETAIL = {
   first_prompt: null, tools: [], hosts: [], agent_instructions: null, credentials: [], metadata: [], oauth_clients: [], instances: null,
 };
 
-function stubFetch(extra: Record<string, Handler> = {}) {
+function stubFetch(extra: Record<string, Handler> = {}, over: Record<string, unknown> = {}) {
   let planGets = 0;
   const routes: Record<string, Handler> = {
     "GET /v1/resolve": () => json(200, { org: { id: "o1", name: "Acme" }, workspace: { id: "w1", name: "Main" } }),
     "GET /v1/workspaces/w1/agent-templates/schedule-manager": () => {
       planGets += 1;
-      return json(200, plan);
+      return json(200, { ...plan, ...over });
     },
     "GET /v1/orgs/o1": () => json(200, { id: "o1", name: "Acme" }),
     "GET /v1/workspaces/w1": () => json(200, { id: "w1", name: "Main", timezone: "Europe/Zurich" }),
@@ -157,8 +157,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const openPlan = (extra: Record<string, Handler> = {}) => {
-  const stub = stubFetch(extra);
+const openPlan = (extra: Record<string, Handler> = {}, over: Record<string, unknown> = {}) => {
+  const stub = stubFetch(extra, over);
   wrap(<NewAgentFromTemplateView />);
   return stub;
 };
@@ -461,7 +461,7 @@ describe("the four-step page (C-1116)", () => {
         calls += 1;
         return calls === 1
           ? json(422, { error: { code: "template_accounts_invalid", message: "x", details: { fields: [{ path: "/accounts", message: "That account is gone." }] } } })
-          : json(403, { error: { code: "forbidden", message: "You cannot create agents here." } });
+          : json(500, { error: { code: "unavailable", message: "Try again soon." } });
       },
     });
     await gotoReview();
@@ -471,7 +471,30 @@ describe("the four-step page (C-1116)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Create" }));
-    expect(await screen.findByText("You cannot create agents here.")).toBeTruthy(); // a danger Notice on the review step
+    expect(await screen.findByText("Try again soon.")).toBeTruthy(); // a danger Notice on the review step
+  });
+
+  // The 403 from Create is about the chosen account (the plan only lists accounts the caller may give,
+  // C-504): it belongs on the Accounts step like the other field errors, where another account can be
+  // chosen.
+  it("a 403 about the chosen account opens the Accounts step with the message", async () => {
+    openPlan({
+      "POST /v1/workspaces/w1/agents/from-template": () =>
+        json(403, { error: { code: "forbidden", message: "Workspace owner role required." } }),
+    });
+    await gotoReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+    expect(await screen.findByText("Workspace owner role required.")).toBeTruthy();
+    expect(stepItems()[1]).toHaveAttribute("aria-current", "step");
+    // The Accounts step itself is there to choose another account from.
+    expect(screen.getByRole("region", { name: "It triages pull requests." })).toBeTruthy();
+  });
+
+  it("a plan without a content hash hides Create and says so instead of sending an empty hash", async () => {
+    openPlan({}, { content_sha256: null });
+    await gotoReview();
+    expect(screen.queryByRole("button", { name: "Create" })).toBeNull();
+    expect(await screen.findByText("The template's plan has no content hash — open the template again.")).toBeTruthy();
   });
 });
 
