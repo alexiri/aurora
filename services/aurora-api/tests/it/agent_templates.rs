@@ -3718,3 +3718,540 @@ async fn a_new_library_reference_needs_its_skill_refs_item() {
     h.update(key.as_bytes());
     assert_eq!(rec, hex::encode(h.finalize()));
 }
+
+// ---- the creation (C-1111, C-1119's create list) ------------------------------------------------
+
+/// The user id of a test user (by email).
+async fn user_id(w: &W, email: &str) -> Uuid {
+    sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
+        .bind(email)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+}
+
+impl W {
+    /// The create call without status assertions (the refusals read the error).
+    async fn create_body(&self, ws: Uuid, who: &str, body: Value) -> (u16, Value) {
+        self.h
+            .call(
+                who,
+                Method::POST,
+                &format!("/v1/workspaces/{ws}/agents/from-template"),
+                Some(body),
+            )
+            .await
+    }
+}
+
+/// The full-creation fixture (the service-monitor shape): own skills `watch` and `backup`, a
+/// helper file, two memories (the policy one locked), a schedule and a webhook, one required
+/// app, a required and an optional library reference. The input has no pattern, so a hostile
+/// value can be sent (one-pass substitution, C-1111).
+fn full_files(dir: &str, version: &str) -> Vec<(String, Vec<u8>)> {
+    vec![
+        (
+            format!("{dir}/template.yaml"),
+            format!(
+                "format: 1\nid: {dir}\nversion: {version}\nname: Monitor\nsummary: The full fixture.\n\
+                 inputs:\n  - id: zone\n    label: Zone\n\
+                 apps:\n  - app: com-example-thing\n    required: true\n    level: ask\n    why: Needs the thing.\n\
+                 skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: alpha\n    why: Does the work.\n  \
+                 - library: {GIT_ORIGIN}/acme/skills\n    skill: beta\n    required: false\n    why: Optional help.\n"
+            )
+            .into_bytes(),
+        ),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            b"Watch {input.zone}.\n".to_vec(),
+        ),
+        (
+            format!("{dir}/README.md"),
+            format!("# {dir}\nFull.\n").into_bytes(),
+        ),
+        (
+            format!("{dir}/skills/watch/SKILL.md"),
+            tpl_skill_md("watch", "Something is off.", "Watch body."),
+        ),
+        (
+            format!("{dir}/skills/backup/SKILL.md"),
+            tpl_skill_md("backup", "Backing up.", "Backup body."),
+        ),
+        (
+            format!("{dir}/helpers/report.sh"),
+            b"#!/bin/sh\necho v1\n".to_vec(),
+        ),
+        (
+            format!("{dir}/memory/notes.md"),
+            b"---\nkey: notes\nupdated: 2026-11-20\n---\nTemplate notes.\n".to_vec(),
+        ),
+        (
+            format!("{dir}/memory/policy.md"),
+            format!("---\nkey: policy\nupdated: 2026-11-20\nlocked: true\n---\nPolicy {{input.zone}}.\n").into_bytes(),
+        ),
+        (
+            format!("{dir}/automations/daily.yaml"),
+            b"kind: schedule\nname: Daily check\nprompt: Check the {input.zone} dashboards.\ncadence:\n  cron: \"0 8 * * 1-5\"\nenabled: true\n"
+                .to_vec(),
+        ),
+        (
+            format!("{dir}/automations/weekly.yaml"),
+            b"kind: schedule\nname: Weekly report\nprompt: Write the weekly report for {input.zone}.\ncadence:\n  cron: \"0 9 * * 1\"\n"
+                .to_vec(),
+        ),
+        (
+            format!("{dir}/automations/hook.yaml"),
+            b"kind: webhook\nname: Escalate\ninstructions: Page for {input.zone}.\nverification: signed\n"
+                .to_vec(),
+        ),
+    ]
+}
+
+/// SEC-146: the tables the create route must never write. (`derived_rules` is not in the list:
+/// the one grant writer compiles the created grant's rules, which the full test checks is the
+/// only kind present.)
+async fn guard_counts(w: &W) -> Vec<(&'static str, i64)> {
+    let mut out = Vec::new();
+    for table in [
+        "policy_rules",
+        "channel_integrations",
+        "channel_presences",
+        "channel_cards",
+        "action_approvals",
+        "secrets",
+        "skill_libraries",
+        "app_connections",
+    ] {
+        let n = w.count(&format!("SELECT count(*) FROM {table}")).await;
+        out.push((table, n));
+    }
+    out
+}
+
+/// A library skill whose body is `n` characters (a known budget size for the two-skill
+/// refusal).
+fn big_skill_md(n: usize) -> Vec<u8> {
+    format!("---\ndescription: Big skill\n---\n\n{}\n", "b".repeat(n)).into_bytes()
+}
+
+#[tokio::test]
+async fn a_full_creation_writes_every_kind_with_its_provenance() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let owner_id = user_id(&w, "owner@x.io").await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    let lib = seed_library(&w, org, &owner).await;
+
+    // A starter grant on an organization secret (the ordinary new-agent step, D-414).
+    let starter = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, name, kind, host_pattern, injection, value_source, value_ref)
+         VALUES ($1,$2,'starter','generic','x','{}','managed','x')",
+    )
+    .bind(starter)
+    .bind(org)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO instance_placement (singleton, mode, default_org_id, default_org_role,
+            shared_workspaces, personal_enabled, personal_role, name_template, starter_grants, updated_at)
+         VALUES (true, 'shared_org', $1, 'member', '[]'::jsonb, true, 'owner', '{name}', $2, now())
+         ON CONFLICT (singleton) DO UPDATE SET starter_grants = $2",
+    )
+    .bind(org)
+    .bind(json!([{"kind": "secret", "id": starter}]))
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+
+    seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "full").await;
+    let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
+    let before = guard_counts(&w).await;
+    let (governance_before, byo_before): (Value, Option<String>) = sqlx::query_as(
+        "SELECT governance, app_posture FROM organizations WHERE id = $1",
+    )
+    .bind(org)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+
+    // A hostile input value: it becomes the value, it is never read as a placeholder.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "full", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "handle": "monitor",
+                "inputs": {"zone": "{agent.name}"},
+                "accounts": [{"entry": 0, "app_id": "com-example-thing", "connection_id": mine}],
+                "skill_refs": [{"index": 0, "library_id": plan["skill_refs"][0]["library"]["id"],
+                                "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]}],
+                "automations": [{"kind": "schedule", "name": "Daily check", "enabled": false}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let agent: Uuid = v["agent"]["id"].as_str().unwrap().parse().unwrap();
+
+    // The optional reference the person left out is noted, nothing else.
+    let notes = v["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 1, "{v}");
+    assert_eq!(notes[0]["code"], "skill_skipped", "{v}");
+    assert_eq!(notes[0]["index"], 1, "{v}");
+
+    // The agent: hosted, the rendered brief (the value is data, never a placeholder again),
+    // the provenance on the response, the template's proactive and effort.
+    assert_eq!(v["agent"]["kind"], "hosted", "{v}");
+    assert_eq!(v["agent"]["proactive_messaging"], "ask", "{v}");
+    assert_eq!(v["agent"]["template"]["template_id"], "full", "{v}");
+    assert_eq!(v["agent"]["template"]["version"], "1.0.0", "{v}");
+    assert_eq!(brief_of(&w, agent).await, "Watch {agent.name}.\n");
+    let inputs: Value = inputs_of(&w, agent).await;
+    assert_eq!(inputs, json!({"zone": "{agent.name}"}), "{inputs}");
+    let (policy_locked, policy_by): (bool, Option<Uuid>) = sqlx::query_as(
+        "SELECT locked, locked_by FROM memories WHERE agent_id = $1 AND key = 'policy'",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(policy_locked);
+    assert_eq!(policy_by, Some(owner_id));
+    let (notes_content, prov): (String, Value) = sqlx::query_as(
+        "SELECT r.content, r.provenance FROM memory_revisions r
+         JOIN memories m ON m.id = r.memory_id
+         WHERE m.agent_id = $1 AND m.key = 'notes' ORDER BY r.revision DESC LIMIT 1",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(notes_content.starts_with("Template notes."), "{notes_content}");
+    assert_eq!(prov["source"], "template", "{prov}");
+    assert_eq!(prov["template"], "Monitor", "{prov}");
+    assert_eq!(prov["template_version"], "1.0.0", "{prov}");
+
+    // The skills: the two own ones (editable) and the library skill, pinned and read-only.
+    assert_eq!(
+        skills_of(&w, agent).await,
+        vec![
+            ("alpha".to_owned(), Some(lib)),
+            ("backup".to_owned(), None),
+            ("watch".to_owned(), None),
+        ]
+    );
+    let (pinned, linked): (String, Option<Uuid>) = sqlx::query_as(
+        "SELECT library_commit_sha, library_id FROM skills WHERE agent_id = $1 AND name = 'alpha'",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(pinned, plan["skill_refs"][0]["library"]["commit_sha"]);
+    assert_eq!(linked, Some(lib));
+    let alpha: Uuid = v["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "alpha")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let (ps, pv) = w
+        .h
+        .call(&owner, Method::PATCH, &format!("/v1/skills/{alpha}"), Some(json!({"body": "x"})))
+        .await;
+    assert_eq!((ps, code(&pv)), (409, "library_skill_readonly"), "{pv}");
+
+    // The helper file, written through C-1143's writer.
+    assert_eq!(helpers_of(&w, agent).await, vec!["report.sh".to_owned()]);
+    let content: Vec<u8> = sqlx::query_scalar(
+        "SELECT content FROM agent_helper_files WHERE agent_id = $1 AND path = 'report.sh'",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(content, b"#!/bin/sh\necho v1\n");
+
+    // The schedules: the chosen one paused, the other at the template's enabled, both with
+    // the caller as their creator (the fire-time authority, 04 §Fire-time authority).
+    let rows: Vec<(String, bool, Option<Uuid>)> = sqlx::query_as(
+        "SELECT name, enabled, creator_user_id FROM schedules WHERE agent_id = $1 ORDER BY name",
+    )
+    .bind(agent)
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("Daily check".into(), false, Some(owner_id)),
+            ("Weekly report".into(), true, Some(owner_id)),
+        ]
+    );
+
+    // The webhook: created paused, its secret shown once in the answer.
+    let hooks: Vec<(bool,)> = sqlx::query_as("SELECT enabled FROM webhooks WHERE agent_id = $1")
+        .bind(agent)
+        .fetch_all(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(hooks.len(), 1);
+    assert_eq!(hooks[0].0, false);
+    assert!(v["webhooks"][0]["secret"].is_string(), "{v}");
+    assert_eq!(v["webhooks"][0]["webhook"]["enabled"], false, "{v}");
+
+    // The access: the capped level of the plan (custom_only: ask over the read tools, the
+    // write tools ask), through the one grant writer with `via: "template"`.
+    assert_eq!(v["grants"].as_array().unwrap().len(), 1, "{v}");
+    assert_eq!(v["grants"][0]["connection_id"], json!(mine), "{v}");
+    assert_eq!(v["grants"][0]["mode"], "custom", "{v}");
+    assert_eq!(v["grants"][0]["allow_tools"], json!(["look"]), "{v}");
+    assert_eq!(v["grants"][0]["ask_tools"], json!(["change"]), "{v}");
+    // The starter grant of a new hosted agent (D-414) is there too.
+    let starter_row: Option<Uuid> = sqlx::query_scalar(
+        "SELECT secret_id FROM grants WHERE agent_id = $1 AND secret_id IS NOT NULL",
+    )
+    .bind(agent)
+    .fetch_optional(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(starter_row, Some(starter));
+    let vias: Vec<String> = sqlx::query_scalar(
+        "SELECT metadata->>'via' FROM audit_log WHERE action = 'grant.create' AND critical
+         AND target_id = $1 ORDER BY created_at, id",
+    )
+    .bind(agent.to_string())
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(vias, vec!["new_agent".to_owned(), "template".to_owned()]);
+
+    // The provenance rows: all four kinds (instructions, each own skill, the library
+    // reference's key, the helpers).
+    assert_eq!(
+        parts_of(&w, agent).await,
+        vec![
+            ("helpers".to_owned(), String::new()),
+            ("instructions".to_owned(), String::new()),
+            ("library_skill".to_owned(), "library|https://git.example/acme/skills|||alpha".to_owned()),
+            ("skill".to_owned(), "backup".to_owned()),
+            ("skill".to_owned(), "watch".to_owned()),
+        ]
+    );
+
+    // The audit: the ordinary agent.create with the template metadata.
+    let (n, template_meta): (i64, Option<String>) = sqlx::query_as(
+        "SELECT count(*), min(metadata->>'template') FROM audit_log
+         WHERE action = 'agent.create' AND NOT critical AND target_id = $1",
+    )
+    .bind(agent.to_string())
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(template_meta.as_deref(), Some("full@1.0.0"));
+
+    // SEC-146: nothing was written to the tables the route must never touch, no library was
+    // created or changed, and the organization's governance and BYO posture are untouched.
+    assert_eq!(guard_counts(&w).await, before, "the guarded tables changed");
+    // The only derived rules are the ones the grant writer compiled for the created grant
+    // (never `blocklist`, never another source).
+    let (rule_kinds, stray_rules): (i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE source_kind = 'grant'), count(*) FILTER (WHERE source_kind <> 'grant')
+         FROM derived_rules",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(stray_rules, 0);
+    assert!(rule_kinds > 0);
+    let (governance_after, byo_after): (Value, Option<String>) = sqlx::query_as(
+        "SELECT governance, app_posture FROM organizations WHERE id = $1",
+    )
+    .bind(org)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((governance_before, byo_before), (governance_after, byo_after));
+}
+
+#[tokio::test]
+async fn a_custom_choice_is_cut_to_the_catalogue_and_an_empty_one_gives_no_access() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    let yaml = app_yaml(
+        "t6n",
+        "1.0.0",
+        "\n    tools:\n      allow: [look, gone]\n      ask: [change, peek]\n",
+    );
+    seed_yaml(&w, "acme/tpl", "t6n", yaml.clone());
+    w.git.serve_file("pkg/t6n-1.0.0.zip", pack_yaml("t6n", yaml));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("t6n", "1.0.0").await;
+    let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
+    let plan = w.plan(ws, &owner, "t6n").await;
+    let base = json!({
+        "template_id": "t6n", "version": "1.0.0",
+        "content_sha256": plan["content_sha256"],
+        "name": "Monitor", "inputs": {"zone": "eu"},
+        "accounts": [{"entry": 0, "app_id": "com-example-thing", "connection_id": mine}],
+    });
+
+    // The tools not in the catalogue are dropped and named; the rest is the grant.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.clone().merge(json!({
+                "accounts": [{"entry": 0, "app_id": "com-example-thing", "connection_id": mine,
+                              "custom": {"allow_tools": ["look", "gone"], "ask_tools": ["change", "peek"]}}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let notes = v["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 1, "{v}");
+    assert_eq!(notes[0]["code"], "tools_dropped", "{v}");
+    assert_eq!(notes[0]["entry"], 0, "{v}");
+    let agent: Uuid = v["agent"]["id"].as_str().unwrap().parse().unwrap();
+    let (mode, allow, ask): (String, Vec<String>, Vec<String>) = sqlx::query_as(
+        "SELECT mode, allow_tools, ask_tools FROM grants WHERE agent_id = $1 AND connection_id = $2",
+    )
+    .bind(agent)
+    .bind(mine)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        (mode.as_str(), allow, ask),
+        ("custom", vec!["look".to_owned()], vec!["change".to_owned()])
+    );
+
+    // A custom choice left with no tool gives no access at all (SEC-146).
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.merge(json!({
+                "name": "Monitor 2",
+                "accounts": [{"entry": 0, "app_id": "com-example-thing", "connection_id": mine,
+                              "custom": {"allow_tools": ["gone"], "ask_tools": ["peek"]}}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    // Every tool was dropped, so the entry's access is refused entirely: both notes, and
+    // neither a grant row nor a write anywhere.
+    let notes = v["notes"].as_array().unwrap();
+    assert_eq!(notes.len(), 2, "{v}");
+    assert_eq!(notes[0]["code"], "tools_dropped", "{v}");
+    assert_eq!(notes[1]["code"], "access_not_given", "{v}");
+    let agent: Uuid = v["agent"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(v["grants"], json!([]), "{v}");
+    assert_eq!(
+        w.count(&format!(
+            "SELECT count(*) FROM grants WHERE agent_id = '{agent}'"
+        ))
+        .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn the_create_accepts_what_the_plan_showed() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    seed_library(&w, org, &owner).await;
+    let yaml = app_yaml(
+        "tagree",
+        "1.0.0",
+        &format!(
+            "\n    tools:\n      allow: [look]\n      ask: [change, peek]\n\
+             skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: alpha\n    why: Does the work.\n"
+        ),
+    );
+    seed_yaml(&w, "acme/tpl", "tagree", yaml.clone());
+    w.git
+        .serve_file("pkg/tagree-1.0.0.zip", pack_yaml("tagree", yaml));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+    w.approve("tagree", "1.0.0").await;
+    let _ = conn(&w, org, "com-example-thing", Some(ws), "write").await;
+    let org_wide = conn(&w, org, "com-example-thing", None, "write").await;
+
+    // The plan's choice: the level (capped), the custom tool split cut to the catalogue, the
+    // givable accounts, the resolved library.
+    let plan = w.plan(ws, &owner, "tagree").await;
+    let choice = &plan["entries"][0]["choices"][0];
+    assert_eq!(choice["level"], "ask", "{plan}");
+    assert_eq!(choice["level_note"], "custom_only", "{plan}");
+    assert_eq!(choice["custom"]["allow_tools"], json!(["look"]), "{plan}");
+    assert_eq!(
+        choice["custom"]["ask_tools"],
+        json!(["change"]),
+        "{plan}"
+    );
+    assert_eq!(
+        choice["custom"]["dropped_tools"],
+        json!(["peek"]),
+        "{plan}"
+    );
+    let accounts = choice["accounts"].as_array().unwrap();
+    assert_eq!(accounts.len(), 2, "{plan}");
+
+    // Create takes exactly the plan's custom and one of the plan's accounts, and the
+    // plan's resolved library id and commit: all of it accepted, the grant equal to the
+    // plan's custom.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "tagree", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "inputs": {"zone": "eu"},
+                "accounts": [{"entry": 0, "app_id": choice["app_id"],
+                              "connection_id": org_wide,
+                              "custom": {"allow_tools": choice["custom"]["allow_tools"],
+                                         "ask_tools": choice["custom"]["ask_tools"]}}],
+                "skill_refs": [{"index": 0, "library_id": plan["skill_refs"][0]["library"]["id"],
+                                "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["notes"], json!([]), "{v}");
+    let agent: Uuid = v["agent"]["id"].as_str().unwrap().parse().unwrap();
+    let (mode, allow, ask): (String, Vec<String>, Vec<String>) = sqlx::query_as(
+        "SELECT mode, allow_tools, ask_tools FROM grants WHERE agent_id = $1",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        (mode.as_str(), allow, ask),
+        ("custom", vec!["look".to_owned()], vec!["change".to_owned()])
+    );
+    assert_eq!(
+        skills_of(&w, agent).await,
+        vec![("alpha".to_owned(), Some(plan["skill_refs"][0]["library"]["id"].as_str().unwrap().parse().unwrap()))]
+    );
+}
