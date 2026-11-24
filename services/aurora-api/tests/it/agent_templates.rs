@@ -3223,6 +3223,15 @@ async fn helpers_of(w: &W, agent: Uuid) -> Vec<String> {
         .unwrap()
 }
 
+/// The agent's memories as `(key, content, locked)`, ordered by key.
+async fn memories_of(w: &W, agent: Uuid) -> Vec<(String, String, bool)> {
+    sqlx::query_as("SELECT key, content, locked FROM memories WHERE agent_id = $1 ORDER BY key")
+        .bind(agent)
+        .fetch_all(w.h.pool())
+        .await
+        .unwrap()
+}
+
 /// The state of one part of an update offer.
 fn part_state<'a>(v: &'a Value, kind: &str, key: &str) -> Option<&'a str> {
     v["update"]["parts"]
@@ -4030,6 +4039,281 @@ async fn a_second_apply_of_the_same_version_does_not_duplicate_the_parts() {
     .unwrap();
     assert_eq!(n, 1);
     assert_eq!(brief_of(&u.w, agent).await, proposed);
+}
+
+/// Applying after the agent was renamed: the offer renders the proposed texts with the
+/// agent's **current** name (the recorded hashes were made with the name at create time), so
+/// a rename alone puts every part that says `{agent.name}` in the next offer — the diff is
+/// the name swap — and the apply re-records it with the new name. Memories are never
+/// offered: the stored one keeps the name it was created with.
+#[tokio::test]
+async fn an_apply_after_a_rename_renders_with_the_new_name() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    // The instructions (and the memory) carry the agent's name.
+    let mut fs = upd_files("t", "1.0.0");
+    fs[2] = (
+        "t/instructions.md".into(),
+        b"Watch {input.zone} as {agent.name}.\n".to_vec(),
+    );
+    fs[6] = (
+        "t/memory/notes.md".into(),
+        b"---\nkey: notes\nupdated: 2026-11-20\n---\nNotes for {agent.name}.\n".to_vec(),
+    );
+    let id = seed_fs(&w, "acme/tpl", "t", "1.0.0", &fs).await;
+    let created = w.create_agent(ws, &owner, "t", "1.0.0", json!({})).await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(brief_of(&w, agent).await, "Watch eu as Monitor.\n");
+
+    // Rename the agent; nothing else changes.
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::PATCH,
+            &format!("/v1/agents/{agent}"),
+            Some(json!({"name": "Rex"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // 2.0.0 keeps the instructions byte-for-byte: the only difference the offer can show is
+    // the name.
+    let mut fs2 = upd_files("t", "2.0.0");
+    fs2[2] = (
+        "t/instructions.md".into(),
+        b"Watch {input.zone} as {agent.name}.\n".to_vec(),
+    );
+    advance_fs(&w, id, "acme/tpl", "t", "2.0.0", &fs2, &[]).await;
+
+    let (_, v) = w.tpl_status(&owner, agent).await;
+    assert_eq!(
+        part_state(&v, "instructions", ""),
+        Some("unchanged_here"),
+        "{v}"
+    );
+    let instructions = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "instructions")
+        .unwrap();
+    assert_eq!(instructions["current"], "Watch eu as Monitor.\n", "{v}");
+    assert_eq!(instructions["proposed"], "Watch eu as Rex.\n", "{v}");
+
+    // Applying takes the new name; the memory keeps the one it was created with.
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "instructions", "key": ""}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(brief_of(&w, agent).await, "Watch eu as Rex.\n");
+    assert_eq!(
+        memories_of(&w, agent).await,
+        vec![("notes".into(), "Notes for Monitor.\n".into(), false)]
+    );
+}
+
+/// Applying never touches the agent's memories — a locked one keeps its lock and its
+/// content — and the apply succeeds while the agent is at the memory cap: the cap is about
+/// memory writes, and the apply makes none.
+#[tokio::test]
+async fn an_apply_leaves_the_memories_alone_locked_or_at_the_cap() {
+    let u = upd_world().await;
+    // Lock the template's memory (C-1151).
+    let (s, v) =
+        u.w.h
+            .call(
+                &u.owner,
+                Method::PUT,
+                &format!("/v1/agents/{}/memories/notes/locked", u.agent),
+                Some(json!({"locked": true})),
+            )
+            .await;
+    assert_eq!(s, 200, "{v}");
+    // Fill the agent to the memory cap (100 per agent; the SQL write is the cap's own
+    // business — the point is that the apply starts from a full agent).
+    sqlx::query(
+        "INSERT INTO memories (id, agent_id, key, content, revision)
+         SELECT gen_random_uuid(), $1, 'm' || g, 'filler', 0 FROM generate_series(0, 98) g",
+    )
+    .bind(u.agent)
+    .execute(u.w.h.pool())
+    .await
+    .unwrap();
+    let before = memories_of(&u.w, u.agent).await;
+    assert_eq!(before.len(), 100);
+
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [
+                    {"kind": "instructions", "key": ""},
+                    {"kind": "skill", "key": "extra"},
+                    {"kind": "helpers", "key": ""},
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The memories are exactly as they were: same rows, same content, `notes` still locked.
+    assert_eq!(memories_of(&u.w, u.agent).await, before);
+}
+
+/// The helper totals cap is about the set an apply writes (the version's, which the template
+/// validator keeps within it), never about the agent's current one: an agent whose helper
+/// files sit past the cap can still apply, and the apply replaces the whole set.
+#[tokio::test]
+async fn an_apply_at_the_helper_totals_cap() {
+    let u = upd_world().await;
+    // 8 × 256 KiB is exactly the 2 MiB an agent's helper files may total — with the
+    // template's report.sh the agent's set is over it, as a cap-sitting agent's would be.
+    let chunk = vec![b'x'; 256 * 1024];
+    sqlx::query(
+        "INSERT INTO agent_helper_files (agent_id, path, content, executable, sha256, size)
+         SELECT $1, 'big' || g || '.sh', $2, false, '0', $3 FROM generate_series(0, 7) g",
+    )
+    .bind(u.agent)
+    .bind(&chunk)
+    .bind(chunk.len() as i32)
+    .execute(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(helpers_of(&u.w, u.agent).await.len(), 9);
+
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    // The apply takes the helpers past the agent's current total: the cap judges the
+    // version's set (one small file), and the whole set is replaced by it.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "helpers", "key": ""}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let helpers = helpers_of(&u.w, u.agent).await;
+    assert_eq!(helpers, vec!["report.sh"], "{helpers:?}");
+    let content: Vec<u8> = sqlx::query_scalar(
+        "SELECT content FROM agent_helper_files WHERE agent_id = $1 AND path = 'report.sh'",
+    )
+    .bind(u.agent)
+    .fetch_one(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(content, b"#!/bin/sh\necho v2\n");
+}
+
+/// Deleting a source: its templates and versions are gone (the open decision item with
+/// them), while the agents made from them keep everything they were given — the provenance
+/// is text, so it stays and answers `available: false` with no offer.
+#[tokio::test]
+async fn deleting_a_source_frees_the_agents_and_closes_their_decision_items() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    let id = seed_fs(&w, "acme/tpl", "t", "1.0.0", &upd_files("t", "1.0.0")).await;
+    let created = w.create_agent(ws, &owner, "t", "1.0.0", json!({})).await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+
+    // A version waiting for review is a decision item: one notice per admin, and an open
+    // item in the attention list. Bump and check, and leave 2.0.0 unreviewed.
+    let fs2 = upd_files("t", "2.0.0");
+    let changes: Vec<Change> = fs2.iter().map(|(p, b)| put(p.clone(), b.clone())).collect();
+    w.bump("acme/tpl", &changes);
+    w.git.serve_file("pkg/t-2.0.0.zip", pack_tree("t", &fs2));
+    let r = w.check(id).await;
+    assert_eq!(r["ingested"][0]["status"], "pending_approval", "{r}");
+    let (s, att) = w.call(Method::GET, "/v1/admin/attention", None).await;
+    assert_eq!(s, 200, "{att}");
+    assert!(
+        att["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "agent_template_version"),
+        "{att}"
+    );
+    let notices: i64 = w
+        .count("SELECT count(*) FROM admin_attention_notices WHERE kind = 'agent_template_version'")
+        .await;
+    assert!(notices >= 1, "one notice per instance admin: {notices}");
+
+    // Delete the source.
+    let (s, v) = w
+        .call(
+            Method::DELETE,
+            &format!("/v1/admin/agent-template-sources/{id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(
+        w.count("SELECT count(*) FROM agent_template_sources").await,
+        0
+    );
+    assert_eq!(w.count("SELECT count(*) FROM agent_templates").await, 0);
+    assert_eq!(
+        w.count("SELECT count(*) FROM agent_template_versions")
+            .await,
+        0
+    );
+
+    // The agent keeps everything it was given, and its provenance (text) answers.
+    assert_eq!(brief_of(&w, agent).await, "Watch eu.\n");
+    assert_eq!(skills_of(&w, agent).await.len(), 2);
+    assert_eq!(helpers_of(&w, agent).await, vec!["report.sh"]);
+    assert_eq!(
+        parts_of(&w, agent).await.len(),
+        4,
+        "the recorded parts stay"
+    );
+    let (s, v) = w.tpl_status(&owner, agent).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["template"]["template_id"], "t", "{v}");
+    assert_eq!(v["template"]["version"], "1.0.0", "{v}");
+    assert_eq!(v["available"], false, "{v}");
+    assert_eq!(v["update"], json!(null), "{v}");
+
+    // The decision item is gone with the version. The once-only notice row stays: it is the
+    // e-mail registry (one row per decision item and admin), not an open item.
+    let (s, att) = w.call(Method::GET, "/v1/admin/attention", None).await;
+    assert_eq!(s, 200, "{att}");
+    assert!(
+        !att["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "agent_template_version"),
+        "{att}"
+    );
+    assert_eq!(
+        w.count(
+            "SELECT count(*) FROM admin_attention_notices WHERE kind = 'agent_template_version'"
+        )
+        .await,
+        notices
+    );
 }
 
 #[tokio::test]
