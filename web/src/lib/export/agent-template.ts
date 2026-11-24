@@ -208,7 +208,7 @@ export interface AppAccessRow {
 /** What `appAccessRows` reads: the shapes of the accounts list (C-917) and the grants route (C-504). */
 export interface TemplateAccountRow {
   kind: string;
-  app: { app_id: string } | null;
+  app?: { app_id: string } | null;
   ref: { id: string; type: string };
   agents: { agent: { id: string }; level: "read" | "ask" | "act" | "custom" | "use" }[];
 }

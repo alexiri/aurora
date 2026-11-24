@@ -27,7 +27,9 @@ import {
 import { MAX_ZIP_BYTES, readZip, ZipError } from "@/lib/export/zip";
 import { useVerb } from "@/lib/palette-verb";
 
-type ExportAgent = Pick<Agent, "id" | "name" | "handle" | "brief" | "model_id" | "proactive_messaging">;
+import { SaveTemplateDialog } from "./save-template";
+
+type ExportAgent = Pick<Agent, "id" | "name" | "handle" | "brief" | "model_id" | "proactive_messaging" | "org_id" | "workspace_id">;
 
 /** Hand the zip to the browser as a download. */
 function download(fileName: string, bytes: Uint8Array) {
@@ -48,6 +50,7 @@ function download(fileName: string, bytes: Uint8Array) {
 export function AgentExportImport({ agent }: { agent: ExportAgent }) {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [saving, setSaving] = useState(false);
   useVerb("export-agent", () => setExporting(true));
   useVerb("import-agent", () => setImporting(true));
   return (
@@ -64,10 +67,14 @@ export function AgentExportImport({ agent }: { agent: ExportAgent }) {
           <Button type="button" variant="outline" size="sm" onClick={() => setImporting(true)}>
             Import into {agent.name}…
           </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setSaving(true)}>
+            Save as template…
+          </Button>
         </div>
       </Section>
       {exporting ? <ExportDialog agent={agent} onClose={() => setExporting(false)} /> : null}
       {importing ? <ImportDialog agent={agent} onClose={() => setImporting(false)} /> : null}
+      {saving ? <SaveTemplateDialog agent={agent} onClose={() => setSaving(false)} /> : null}
     </Altitude>
   );
 }
