@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 import { openTemplateScreen, TEMPLATE_SCREENS } from "./support/agent-templates";
+import { org } from "./support/mock-api";
 import { CANVAS, overflow } from "./support/open";
 
 // P6-TPL-4 (C-1114; docs/14 §Agent templates): the Administration › What agents may do › Agent templates tab —
@@ -78,6 +79,19 @@ for (const width of [1280, 390]) {
       await page.getByRole("button", { name: "Approve" }).click();
       await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
       await expect.poll(() => mock.writes.at(-1)).toEqual({ key: "POST /v1/admin/agent-templates/schedule-manager/versions/1.1.0/approve", body: { content_sha256: "c".repeat(64) } });
+    });
+
+    test("organization: turn a template off and on again (C-1115)", async ({ page }) => {
+      const mock = await openTemplateScreen(page, "org", "light");
+      await expect(page.getByTestId("org-templates")).toContainText("Workspace members can create agents from these templates");
+      const sw = page.getByRole("switch", { name: "Offered in Acme Labs: Schedule manager" });
+      await expect(sw).toBeChecked();
+      await sw.click();
+      await expect(sw).not.toBeChecked();
+      await expect.poll(() => mock.writes.at(-1)).toEqual({ key: `PUT /v1/orgs/${org.id}/agent-templates/schedule-manager`, body: { enabled: false } });
+      await sw.click();
+      await expect(sw).toBeChecked();
+      await expect.poll(() => mock.writes.at(-1)).toEqual({ key: `PUT /v1/orgs/${org.id}/agent-templates/schedule-manager`, body: { enabled: true } });
     });
 
     test("check now, edit the schedule, remove the repository", async ({ page }) => {

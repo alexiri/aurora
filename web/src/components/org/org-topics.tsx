@@ -21,11 +21,13 @@ import { OrgRetentionForm } from "@/components/org/retention-form";
 import { OrgStorageView } from "@/components/org/storage-view";
 import { OrgInternet } from "@/components/internet/org-internet";
 import { OrgSkills } from "@/components/skills/org-skills";
+import { OrgTemplates, ORG_TEMPLATES_SENTENCE } from "@/components/templates/org-templates";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { AskAdmin } from "@/components/ask-admin";
 import { AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
+import { WhoCan } from "@/components/ui/who-can";
 import { useAltitude, useHiddenControls } from "@/lib/altitude";
 import { ALTITUDE_REGISTRY, type AltitudeId } from "@/lib/altitude-registry";
 import { useScimSettings } from "@/lib/api/scim";
@@ -67,10 +69,22 @@ export function OrgAgentsPage() {
           <div className="max-w-page-narrow space-y-4" data-testid="member-org-agents">
             <PageHeader title="Agents" description="These rules apply to your organization. Only owners and admins can change them." className="mb-2" />
             <OrgByo org={org} />
+            {/* (P6-TPL-4, C-1115) A member reads the templates' sentence and who turns one off. */}
+            <MemberTemplates org={org} />
           </div>
         )
       }
     </OrgGate>
+  );
+}
+
+/** (P6-TPL-4, C-1115) Templates for a member: the tab's sentence and who turns a template off — never a refusal. */
+function MemberTemplates({ org }: { org: Org }) {
+  return (
+    <div className="space-y-3" data-testid="member-org-templates">
+      <p className="text-base text-ink">{ORG_TEMPLATES_SENTENCE}</p>
+      <WhoCan value={whoCanFromContacts("org_admin", org.contacts, "change_this")} lead />
+    </div>
   );
 }
 
@@ -102,6 +116,8 @@ function AdminOrgAgents({ org, slug }: { org: Org; slug: string }) {
         ]
       : []),
     ...(showSkills ? [{ id: "skills" as const, label: "Skills", content: <OrgSkills /> }] : []),
+    // (P6-TPL-4, C-1115) The organization's offered templates, one switch each.
+    { id: "templates", label: "Templates", content: <OrgTemplates orgId={org.id} orgName={org.name} /> },
   ];
   return (
     <AltitudeScope>

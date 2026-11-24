@@ -102,6 +102,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   commit_required: "Reload the library list so the page knows which commit you are adding.",
   library_tree_too_large: "This repository is too large to list. Choose a narrower folder.",
   skill_libraries_disabled: "Skill libraries are turned off on this instance.",
+  // (P6-TPL-4, C-1109) The agent-templates kill switch: the org and workspace template routes refuse with this code.
+  templates_disabled: "Agent templates are turned off on this instance.",
   // (P5-UX-1, C-915, C-958, C-980) Refusals the connect journey and the access choices show in words.
   connect_probe_failed: "The app did not accept these details. Check them and try again.",
   oauth_client_required: "Signing in to this app needs a sign-in app that an admin has to register first.",

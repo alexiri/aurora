@@ -50,6 +50,9 @@ for (const scheme of ["light", "dark"] as const) {
         await page.emulateMedia({ colorScheme: scheme });
         await page.goto("/o/acme/agents");
         await expect(page.getByTestId("member-org-agents")).toBeVisible();
+        // (P6-TPL-4, C-1115) The templates' sentence and who turns one off, in words.
+        await expect(page.getByTestId("member-org-templates")).toContainText("Workspace members can create agents from these templates");
+        await expect(page.getByTestId("member-org-templates")).toContainText("Only organization owners and admins can change this");
         await expect(page.getByText("Only organization owners and admins can open this page")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);

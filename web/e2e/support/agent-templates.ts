@@ -3,11 +3,11 @@ import { expect, type Page } from "@playwright/test";
 import { id, mockApi, now, org } from "./mock-api";
 import type { Scheme } from "./open";
 
-// P6-TPL-4 (C-1114): the Administration › What agents may do › Agent templates tab, reached through the real UI
-// with the mocked API. The data uses the real built-in GitHub package for the apps a template needs; every
-// address and commit is plain text, as the server stores it.
+// P6-TPL-4 (C-1114, C-1115): the Administration › What agents may do › Agent templates tab and the organization's
+// Templates tab, reached through the real UI with the mocked API. The data uses the real built-in GitHub package
+// for the apps a template needs; every address and commit is plain text, as the server stores it.
 
-export const TEMPLATE_SCREENS = ["tab", "add", "review"] as const;
+export const TEMPLATE_SCREENS = ["tab", "add", "org", "review"] as const;
 export type TemplateScreen = (typeof TEMPLATE_SCREENS)[number];
 
 const SHA_A = "0123456789abcdef0123456789abcdef01234567";
@@ -83,6 +83,10 @@ export async function mockAgentTemplates(page: Page): Promise<TemplateMock> {
   const mock: TemplateMock = { writes: [] };
   let sources: Source[] = [makeSource()];
   let templates: Template[] = [makeTemplate()];
+  // (C-1109) The organization's list: every offered template, on by default.
+  let orgTemplates: { template_id: string; name: string; summary: string; enabled: boolean; version: string | null }[] = [
+    { template_id: "schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work", enabled: true, version: "1.0.0" },
+  ];
   // The version status lives with the template's versions, so a decision survives the review page's refetch.
   const versionStatus = (v: string) =>
     String((templates[0].versions as { version: string; status: string }[]).find((x) => x.version === v)?.status ?? "pending_approval");
@@ -165,7 +169,17 @@ export async function mockAgentTemplates(page: Page): Promise<TemplateMock> {
       templates = templates.map((t) => ({ ...t, offered: b.offered }));
       return json(templates.find((t) => t.template_id === "schedule-manager"));
     }
-    if (p === `/v1/orgs/${org.id}/agent-templates`) return json({ items: [] });
+    if (p === `/v1/orgs/${org.id}/agent-templates` || p.startsWith(`/v1/orgs/${org.id}/agent-templates/`)) {
+      // (C-1109) The organization's offered templates, stateful: a switch is stored at once.
+      if (req.method() === "PUT") {
+        note();
+        const templateId = p.split("/").at(-1) ?? "";
+        const b = req.postDataJSON() as { enabled: boolean };
+        orgTemplates = orgTemplates.map((t) => (t.template_id === templateId ? { ...t, enabled: b.enabled } : t));
+        return json(orgTemplates.find((t) => t.template_id === templateId) ?? null);
+      }
+      return json({ items: orgTemplates });
+    }
     return route.fallback();
   });
   return mock;
@@ -176,7 +190,8 @@ export async function openTemplateScreen(page: Page, screen: TemplateScreen, sch
   page.on("pageerror", (e) => errors.push(e.message));
   const mock = await mockAgentTemplates(page);
   await page.emulateMedia({ colorScheme: scheme });
-  await page.goto("/admin/internet-access?tab=templates");
+  // (C-1115) The organization's Templates tab lives on the org Agents page, not the admin one.
+  await page.goto(screen === "org" ? "/o/acme/agents?tab=templates" : "/admin/internet-access?tab=templates");
   await page.locator("h1").first().waitFor();
   await page.waitForLoadState("networkidle");
   await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
