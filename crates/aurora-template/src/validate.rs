@@ -785,7 +785,9 @@ pub fn helper_path_ok(below_helpers: &str) -> bool {
     below_helpers.split('/').count() <= 4 && rel_path_problem(below_helpers).is_none()
 }
 
-/// `helpers/<path>`: byte-for-byte files, capped and shallow (C-1141; projected by C-1143).
+/// `helpers/<path>`: text-only files (owner decision 2026-11-24: the home sync carries UTF-8
+/// text only, so anything else is `template_helper_invalid`), capped and shallow (C-1141;
+/// projected by C-1143).
 fn parse_helpers(
     raw: Vec<(String, &TreeFile)>,
     problems: &mut Vec<TemplateProblem>,
@@ -835,11 +837,11 @@ fn parse_helpers(
             ));
             break;
         }
-        if f.mode == 0o100755 && !skill_rules::is_text(&f.bytes) {
+        if !skill_rules::is_text(&f.bytes) {
             problems.push(TemplateProblem::new(
-                ProblemCode::TemplateExecutableBinary,
+                ProblemCode::TemplateHelperInvalid,
                 &f.path,
-                "an executable file must be text: the admin reads everything that will run",
+                "a helper file must be UTF-8 text without NUL: the home sync carries text only",
             ));
         }
         out.push(TemplateFile {
@@ -1407,6 +1409,39 @@ pub(crate) mod tests {
                 .any(|p| p.code == ProblemCode::TemplateHelperInvalid
                     && p.message.contains("larger"))
         );
+        // Owner decision 2026-11-24: every helper file is text, executable or not — the home
+        // sync carries UTF-8 text only. A binary helper is refused with the file's path.
+        for (path, mode) in [
+            ("service-monitor/helpers/blob.bin", 0o100644),
+            ("service-monitor/helpers/nul.sh", 0o100755),
+        ] {
+            let mut files = sample_files();
+            files.push(TreeFile {
+                path: path.to_owned(),
+                bytes: if path.ends_with("nul.sh") {
+                    b"#!/bin/sh\necho \0x\n".to_vec()
+                } else {
+                    vec![0xff, 0x00, 0xfe]
+                },
+                mode,
+            });
+            let err = read_tree("service-monitor", &files).unwrap_err();
+            assert!(
+                err.iter()
+                    .any(|p| p.code == ProblemCode::TemplateHelperInvalid
+                        && p.path == path
+                        && p.message.contains("UTF-8")),
+                "{path}: {err:?}"
+            );
+        }
+        // A non-executable binary SKILL file is still fine (the rule changed for helpers only).
+        let mut files = sample_files();
+        files.push(TreeFile {
+            path: "service-monitor/skills/what-is-on/data.bin".to_owned(),
+            bytes: vec![0xff, 0x00, 0xfe],
+            mode: 0o100644,
+        });
+        assert!(read_tree("service-monitor", &files).is_ok());
     }
 
     #[test]

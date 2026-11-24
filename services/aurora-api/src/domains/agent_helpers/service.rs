@@ -61,6 +61,14 @@ pub async fn replace_all(
                 &format!("larger than {} bytes", limits::TEMPLATE_HELPER_FILE_MAX),
             ));
         }
+        // Owner decision 2026-11-24: every helper file is UTF-8 text without NUL (the home sync
+        // carries text only), so nothing non-text can be stored, whatever the caller.
+        if !aurora_template::is_text(f.content) {
+            return Err(invalid(
+                f.path,
+                "not UTF-8 text (helper files carry text only)",
+            ));
+        }
         total += f.content.len();
         if total > limits::TEMPLATE_HELPERS_TOTAL_MAX {
             return Err(cap(format!(

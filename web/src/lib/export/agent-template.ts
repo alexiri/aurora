@@ -1,6 +1,6 @@
 import { exportFiles, slug, type AgentExport } from "./agent-export";
 import { parseYaml, stringifyYaml, type YamlValue } from "./yaml";
-import { writeZip, type ZipEntry } from "./zip";
+import { TEMPLATE_DOS_TIMESTAMP, writeZip, type ZipEntry } from "./zip";
 
 /**
  * (P6-TPL-5, C-1118) **Save as template**: the agent export with `template.yaml` added, rooted at
@@ -169,8 +169,10 @@ export function templateFiles(e: AgentExport, meta: TemplateMeta, apps: Template
     out.push(entry);
   }
   for (const h of helpers) {
-    if (h.executable && !isUtf8(h.content)) {
-      throw new TemplateError(`Refused: the helper “${h.path}” is executable, so it must be text.`);
+    // Owner decision 2026-11-24: every helper file must be UTF-8 text (the home sync carries
+    // text only), executable or not.
+    if (!isUtf8(h.content)) {
+      throw new TemplateError(`Refused: the helper “${h.path}” is not UTF-8 text.`);
     }
     out.push({ name: `${meta.id}/helpers/${h.path}`, data: h.content, executable: h.executable });
   }
@@ -193,7 +195,11 @@ function isUtf8(bytes: Uint8Array): boolean {
 
 /** `<id>-<version>.zip` and its bytes. */
 export function templateZip(e: AgentExport, meta: TemplateMeta, apps: TemplateAppEntry[], skillRefs: TemplateSkillRef[], helpers: TemplateHelper[], now: Date = new Date()): { fileName: string; bytes: Uint8Array } {
-  return { fileName: `${meta.id}-${meta.version}.zip`, bytes: writeZip(templateFiles(e, meta, apps, skillRefs, helpers, now), now) };
+  // The zip's DOS timestamp is the fixed 1980-01-01 the Rust `pack` writes (C-1119), not `now`:
+  // `writeZip` reads a date in the machine's local time, so a current-date stamp would make the
+  // bytes — and the golden fixture the Rust reader tests — depend on the saver's time zone. Only
+  // the README's date line comes from `now`.
+  return { fileName: `${meta.id}-${meta.version}.zip`, bytes: writeZip(templateFiles(e, meta, apps, skillRefs, helpers, now), TEMPLATE_DOS_TIMESTAMP) };
 }
 
 // ---- apps from the agent's access ----------------------------------------------------------------------------------

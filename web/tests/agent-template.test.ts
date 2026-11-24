@@ -176,10 +176,10 @@ describe("templateFiles", () => {
     ).toThrow(/morning\.yaml|s\.yaml|automations\//);
   });
 
-  it("refuses an executable helper that is not UTF-8 text", () => {
-    expect(() => templateFiles(exp, meta, apps, refs, [{ path: "run.sh", content: new Uint8Array([0xff, 0xfe]), executable: true }], now)).toThrow(/run\.sh.*must be text/);
-    // A non-executable helper may be binary.
-    expect(() => templateFiles(exp, meta, apps, refs, [{ path: "blob.bin", content: new Uint8Array([0xff, 0xfe]), executable: false }], now)).not.toThrow();
+  it("refuses a helper that is not UTF-8 text, executable or not", () => {
+    expect(() => templateFiles(exp, meta, apps, refs, [{ path: "run.sh", content: new Uint8Array([0xff, 0xfe]), executable: true }], now)).toThrow(/run\.sh.*not UTF-8 text/);
+    // Owner decision 2026-11-24: any helper must be text — the home sync carries text only.
+    expect(() => templateFiles(exp, meta, apps, refs, [{ path: "blob.bin", content: new Uint8Array([0xff, 0xfe]), executable: false }], now)).toThrow(/blob\.bin.*not UTF-8 text/);
   });
 });
 

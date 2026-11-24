@@ -11,10 +11,17 @@ import type { AgentExport } from "@/lib/export/agent-export";
 // shapes the reader must accept — two apps (one `act`, one custom with `tools:`), a library skill
 // reference, a locked memory, a cron schedule and an executable helper.
 //
-// The builder is deterministic (the zip writer fixes every timestamp; the date is pinned here), so
-// the committed fixture can be proved fresh: with `AURORA_TPL_FIXTURE=1` this test (re)writes
+// The builder is deterministic (the zip's DOS timestamp is the fixed 1980-01-01 the Rust `pack`
+// writes, and the date pinned here only fills the README's "Made ... on <date>" line), so the
+// committed fixture can be proved fresh: with `AURORA_TPL_FIXTURE=1` this test (re)writes
 // `crates/aurora-template/tests/fixtures/web-saved-template.zip`; without it, the test rebuilds
 // the zip and compares it with the committed file byte for byte.
+//
+// The time zone matters: the zip writer used to stamp entries with the machine's LOCAL time
+// (`dosDateTime` reads local getters), so the bytes — and this byte-for-byte comparison against
+// the committed fixture — differed between CI (UTC) and a developer machine (CET). The fixed
+// timestamp makes the archive identical in every time zone; this test is run under TZ=UTC,
+// TZ=Europe/Zurich and TZ=Pacific/Kiritimati to prove it.
 
 const FIXTURE = join(__dirname, "..", "..", "crates", "aurora-template", "tests", "fixtures", "web-saved-template.zip");
 

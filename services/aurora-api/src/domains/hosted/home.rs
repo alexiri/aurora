@@ -858,11 +858,12 @@ pub async fn render(
     }
     // (P6-TPL-6, C-1143) The `helpers` part: the agent's template helper files at
     // `.aurora/helpers/<path>`, in the skills file-entry shape (content encoding and
-    // executable bit as there). Content travels as UTF-8 text exactly as skills carry it; a
-    // non-UTF-8 helper is skipped with a warning (it stays stored, listed and readable through
-    // the API — it is only not projected). The `render_inputs.helpers` fragment names the dir
-    // and the projected count, so the supervisor's instruction file mentions the root only
-    // when there is something in it.
+    // executable bit as there). Content travels as UTF-8 text exactly as skills carry it.
+    // Owner decision 2026-11-24: every helper file is UTF-8 text — the writer
+    // (`agent_helpers::replace_all`) refuses anything else, so a non-UTF-8 entry cannot be
+    // stored any more and the defensive skip below is unreachable. The `render_inputs.helpers`
+    // fragment names the dir and the projected count, so the supervisor's instruction file
+    // mentions the root only when there is something in it.
     let mut helper_entries: Vec<Value> = Vec::new();
     for h in aurora_db::repo::agent_helpers::list(&mut *conn, claim.agent_id).await? {
         let Ok(text) = String::from_utf8(h.content) else {
