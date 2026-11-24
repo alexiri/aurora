@@ -2654,7 +2654,12 @@ offering them again brings them back. When a newer version is offered, the secti
 **About this template** (its README, rendered as C-1116, in a fold), then each part with its state in words and a full
 diff, the checkboxes (ticked for `unchanged_here` and `new`, unticked otherwise; an unreachable new library skill gets
 the "Needs the skill library <repo>" sentence and no checkbox), the inputs needed, and the apps added with **Give
-access** links to the Access tab's journey. **Apply** sends exactly the ticked parts bound to the shown hash (C-1112);
+access** links to the Access tab's journey. The offer lists only instructions, skills, helper files and skills from
+libraries: the newer version's memories, schedules and webhooks are used only when an agent is created and are never
+offered to an existing agent (what it already has stays as it is). The proposed texts are rendered with the agent's
+current name, so renaming <Agent> makes a part that says `{agent.name}` show as changed on the next offer — the diff
+then shows only the name swap — until an apply re-records it with the new name. **Apply** sends exactly the ticked
+parts bound to the shown hash (C-1112);
 a 409 `template_version_changed` closes the dialog, reads the offer again and the section says "This template was
 updated. Check the changes, then apply." **Skip this version** applies with no parts: the provenance moves, nothing
 else changes. **Stop following this template** (with a confirm) forgets the provenance — the helper files and the
