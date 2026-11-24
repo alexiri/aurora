@@ -35,11 +35,17 @@ pub fn not_found() -> ApiError {
 }
 
 pub fn seal_ctx(agent: &AgentRow, webhook: Uuid) -> SealContext {
+    seal_ctx_for(agent.org_id, agent.workspace_id, webhook)
+}
+
+/// (P6-TPL-3) The same context for an agent that does not exist yet: the from-template create
+/// seals its webhooks' secrets before the transaction that creates the agent.
+pub fn seal_ctx_for(org: Uuid, workspace: Uuid, webhook: Uuid) -> SealContext {
     SealContext {
         purpose: Purpose::WebhookVerification,
         owner_id: webhook,
-        org_id: agent.org_id,
-        workspace_id: Some(agent.workspace_id),
+        org_id: org,
+        workspace_id: Some(workspace),
     }
 }
 
@@ -217,11 +223,34 @@ async fn discard(state: &AppState, agent: &AgentRow, webhook: Uuid, r: &str) {
     }
 }
 
-fn stored_ref(v: &Option<Value>) -> Option<String> {
+pub(crate) fn stored_ref(v: &Option<Value>) -> Option<String> {
     v.as_ref()
         .and_then(|v| v.get("secret_ref"))
         .and_then(|v| v.as_str())
         .map(str::to_owned)
+}
+
+/// (P6-TPL-3) [`discard`] for the from-template create's rollback: the agent does not exist
+/// yet, so the seal context is named by its org and workspace.
+pub(crate) async fn discard_for(
+    state: &AppState,
+    org: Uuid,
+    workspace: Uuid,
+    webhook: Uuid,
+    r: &str,
+) {
+    if let Ok(sr) = r.parse::<SecretRef>()
+        && let Err(e) = state
+            .vault
+            .discard(
+                &seal_ctx_for(org, workspace, webhook),
+                &sr,
+                aurora_secrets::ValueSource::Managed,
+            )
+            .await
+    {
+        tracing::warn!(error = %e, "webhook secret discard failed");
+    }
 }
 
 /// What [`create`] returns: the row, the one-time capability URL and (C-1078) the secret Aurora
@@ -230,6 +259,89 @@ pub struct Created {
     pub row: WebhookRow,
     pub url: String,
     pub secret: Option<String>,
+}
+
+/// Everything [`prepare`] decides before any IO, ready for [`PreparedWebhook::seal`] and
+/// [`insert_in_tx`] (P6-TPL-3: the from-template create joins one big transaction, so the vault
+/// seal must happen before it and the insert must take the caller's transaction).
+pub struct PreparedWebhook {
+    pub id: Uuid,
+    pub name: String,
+    pub instructions: String,
+    /// The raw capability token: the URL is built from it and shown once.
+    pub token: String,
+    pub token_hash: [u8; 32],
+    pub display_prefix: String,
+    /// (C-1078) The secret Aurora generated on this call, if any (shown once).
+    pub generated_secret: Option<String>,
+    pub creator: Option<Uuid>,
+    pub anchor: &'static str,
+    checked: Checked,
+}
+
+/// Validate a create with no IO: the name, the instructions and the verification (a generated
+/// secret is made here — random bytes, not network).
+pub fn prepare(c: Create, creator: Option<Uuid>) -> Result<PreparedWebhook, ApiError> {
+    check_name(&c.name)?;
+    check_instructions(&c.instructions)?;
+    let ch = check_verification(c.verification.unwrap_or_else(default_verification))?;
+    let generated_secret = if ch.generated {
+        ch.secret.clone()
+    } else {
+        None
+    };
+    let tok = token::generate(TokenPrefix::Webhook);
+    Ok(PreparedWebhook {
+        id: Uuid::now_v7(),
+        name: c.name,
+        instructions: c.instructions,
+        token: tok.expose().to_owned(),
+        token_hash: token::hash(tok.expose()),
+        display_prefix: token::display_prefix(tok.expose()),
+        generated_secret,
+        creator,
+        anchor: c.anchor,
+        checked: ch,
+    })
+}
+
+impl PreparedWebhook {
+    /// Seal the verification secret (vault IO — call before the transaction that [`insert_in_tx`]
+    /// joins) and build the `verification` JSON to persist; `None` for an unverified hook. The
+    /// agent may not exist yet (P6-TPL-3): it is named by its org and workspace.
+    pub async fn seal(
+        &self,
+        state: &AppState,
+        org: Uuid,
+        workspace: Uuid,
+    ) -> Result<Option<Value>, ApiError> {
+        if self.checked.kind == "none" {
+            return Ok(None);
+        }
+        let secret = self
+            .checked
+            .secret
+            .as_deref()
+            .ok_or_else(|| bad("/verification/secret", "required for this kind"))?;
+        // The agent may not exist yet (P6-TPL-3): the seal context is named by the org and
+        // workspace the agent will be created in.
+        let r = state
+            .vault
+            .seal(
+                &seal_ctx_for(org, workspace, self.id),
+                Secret::new(secret.as_bytes().to_vec()),
+            )
+            .await
+            .map_err(secret_err)?;
+        Ok(Some(
+            json!({"kind": self.checked.kind, "header": self.checked.header, "secret_ref": r.to_column()}),
+        ))
+    }
+
+    /// The one-time capability URL.
+    pub fn url(&self, state: &AppState) -> String {
+        url_for(state, &self.token)
+    }
 }
 
 /// Create a webhook; returns the row and the one-time capability URL. (P5-REFINE-7, C-1078) No
@@ -241,73 +353,39 @@ pub async fn create(
     creator: Option<Uuid>,
     origin: Option<Uuid>,
 ) -> Result<Created, ApiError> {
-    check_name(&c.name)?;
-    check_instructions(&c.instructions)?;
-    let ch = check_verification(c.verification.unwrap_or_else(default_verification))?;
-    let id = Uuid::now_v7();
-    let mut shown: Option<String> = None;
-    let verification = if ch.kind == "none" {
-        None
-    } else {
-        let secret = ch
-            .secret
-            .ok_or_else(|| bad("/verification/secret", "required for this kind"))?;
-        if ch.generated {
-            shown = Some(secret.clone());
-        }
-        let r = seal(state, agent, id, secret).await?;
-        Some(json!({"kind": ch.kind, "header": ch.header, "secret_ref": r.to_column()}))
-    };
-    let tok = token::generate(TokenPrefix::Webhook);
-    let hash = token::hash(tok.expose());
-    let prefix = token::display_prefix(tok.expose());
-    let res = insert(
-        state,
-        agent,
-        id,
-        &c.name,
-        &c.instructions,
-        &hash,
-        &prefix,
-        &verification,
-        creator,
-        c.anchor,
-        origin,
-    )
-    .await;
+    let p = prepare(c, creator)?;
+    let verification = p.seal(state, agent.org_id, agent.workspace_id).await?;
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let res = insert_in_tx(&mut tx, agent, &p, verification.clone(), origin, None).await;
     match res {
         Ok(row) => {
-            let url = url_for(state, tok.expose());
+            tx.commit().await.map_err(DbError::from)?;
             Ok(Created {
                 row,
-                url,
-                secret: shown,
+                url: p.url(state),
+                secret: p.generated_secret,
             })
         }
         Err(e) => {
             if let Some(r) = stored_ref(&verification) {
-                discard(state, agent, id, &r).await;
+                discard(state, agent, p.id, &r).await;
             }
             Err(e)
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn insert(
-    state: &AppState,
+/// (P6-TPL-3) Insert inside a caller's transaction. The caller has already run
+/// [`PreparedWebhook::seal`]; on rollback it must discard the sealed secret via [`discard`].
+/// `paused_by` creates the webhook paused (`enabled = false`, `disabled_reason = 'user'`).
+pub async fn insert_in_tx(
+    tx: &mut PgConnection,
     agent: &AgentRow,
-    id: Uuid,
-    name: &str,
-    instructions: &str,
-    hash: &[u8],
-    prefix: &str,
-    verification: &Option<Value>,
-    creator: Option<Uuid>,
-    anchor: &str,
+    p: &PreparedWebhook,
+    verification: Option<Value>,
     origin: Option<Uuid>,
+    paused_by: Option<Uuid>,
 ) -> Result<WebhookRow, ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     // Serialize the per-agent cap.
     sqlx::query("SELECT 1 FROM agents WHERE id = $1 FOR UPDATE")
         .bind(agent.id)
@@ -320,24 +398,24 @@ async fn insert(
             "This agent has reached its webhook limit.",
         ));
     }
-    let row = repo::insert(
-        &mut tx,
+    repo::insert(
+        &mut *tx,
         &NewWebhook {
-            id,
+            id: p.id,
             agent_id: agent.id,
-            name,
-            instructions,
-            token_hash: hash,
-            display_prefix: prefix,
+            name: &p.name,
+            instructions: &p.instructions,
+            token_hash: &p.token_hash,
+            display_prefix: &p.display_prefix,
             verification: verification.as_ref(),
-            creator_user_id: creator,
-            anchor,
+            creator_user_id: p.creator,
+            anchor: p.anchor,
             origin_conversation_id: origin,
+            paused_by,
         },
     )
-    .await?;
-    tx.commit().await.map_err(DbError::from)?;
-    Ok(row)
+    .await
+    .map_err(Into::into)
 }
 
 /// Apply an `enabled` change in memory.

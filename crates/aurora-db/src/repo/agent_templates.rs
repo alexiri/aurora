@@ -887,3 +887,56 @@ pub async fn set_org_enabled<'e, E: PgExecutor<'e>>(
         .await?;
     Ok(())
 }
+
+// ---- the per-agent parts (P6-TPL-3, C-1112) ----------------------------------------------------
+
+/// One part an agent last took from a template (`03 §agent_template_parts`): `kind` is
+/// `instructions` | `skill` | `helpers` | `library_skill`, `key` is `''` for the singleton
+/// kinds and the skill key / helper path / ref key otherwise, and `content_sha256` is the
+/// C-1104 part hash of what was last written (for `library_skill`, the hash of the ref key —
+/// a library skill's content is never compared).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PartRow {
+    pub agent_id: Uuid,
+    pub kind: String,
+    pub key: String,
+    pub content_sha256: String,
+}
+
+pub async fn insert_part(conn: &mut PgConnection, p: &PartRow) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO agent_template_parts (agent_id, kind, key, content_sha256)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (agent_id, kind, key) DO UPDATE SET content_sha256 = $4",
+    )
+    .bind(p.agent_id)
+    .bind(&p.kind)
+    .bind(&p.key)
+    .bind(&p.content_sha256)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// The parts of one agent (the apply route's diff base and the detach's rows).
+pub async fn parts_of<'e, E: PgExecutor<'e>>(
+    exec: E,
+    agent: Uuid,
+) -> Result<Vec<PartRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT agent_id, kind, key, content_sha256 FROM agent_template_parts
+         WHERE agent_id = $1 ORDER BY kind, key",
+    )
+    .bind(agent)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// Drop the parts of one agent (the detach; its provenance columns go with them).
+pub async fn delete_parts(conn: &mut PgConnection, agent: Uuid) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM agent_template_parts WHERE agent_id = $1")
+        .bind(agent)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}

@@ -3,6 +3,7 @@ pub mod avatar;
 pub mod byo;
 pub mod dto;
 mod routes;
-mod service;
+// (P6-TPL-3) The from-template create runs the agent's insert inside its own transaction.
+pub(crate) mod service;
 
 pub use routes::router;

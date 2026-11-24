@@ -49,6 +49,9 @@ pub enum Origin {
     /// (P5-UX-11, C-990, SEC-131) The limit of an organization's account was lowered: replaces
     /// the agent's grant with what fits; audited with `details.via = "limit"`.
     Limit,
+    /// (P6-TPL-3, C-1111, SEC-146) A template's account entry at creation: the person chose
+    /// this account for the new agent; audited with `details.via = "template"`.
+    Template,
 }
 
 impl Origin {
@@ -75,6 +78,7 @@ fn with_via(origin: Origin, mut meta: serde_json::Value) -> serde_json::Value {
             meta["approval_id"] = json!(id);
         }
         Origin::Limit => meta["via"] = json!("limit"),
+        Origin::Template => meta["via"] = json!("template"),
         Origin::Agent => {}
     }
     meta
@@ -729,11 +733,30 @@ pub async fn grant_connection_in_tx(
     origin: Origin,
 ) -> Result<Written<ConnectionGrant>, ApiError> {
     let (agent, auth) = visible_agent(caller, state, agent_id).await?;
-    crate::http::auth::require_own(&auth)?;
+    grant_connection_in_tx_for_agent(tx, state, &agent, &auth, caller, connection_id, req, origin)
+        .await
+}
+
+/// [`grant_connection_in_tx`] for an agent the caller has already loaded and authorized for
+/// this transaction (P6-TPL-3's from-template route: the agent is being created inside it, so
+/// a pool read could not see it). Same authorization (`require_own`, the C-504 check) and the
+/// same one writer underneath; nothing else differs.
+#[allow(clippy::too_many_arguments)]
+pub async fn grant_connection_in_tx_for_agent(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    agent: &AgentRow,
+    auth: &aurora_db::authz::WorkspaceAuth,
+    caller: &Caller,
+    connection_id: Uuid,
+    req: PutConnectionGrant,
+    origin: Origin,
+) -> Result<Written<ConnectionGrant>, ApiError> {
+    crate::http::auth::require_own(auth)?;
     write_connection_grant(
         tx,
         state,
-        &agent,
+        agent,
         connection_id,
         req,
         origin,

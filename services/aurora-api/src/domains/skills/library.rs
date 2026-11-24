@@ -9,7 +9,7 @@ use aurora_core::ApiError;
 use aurora_core::limits;
 use aurora_core::sanitize::one_line;
 use aurora_db::DbError;
-use aurora_db::repo::skill_libraries::{self as repo, Source, UpdateRow};
+use aurora_db::repo::skill_libraries::{self as repo, LibraryRow, Source, UpdateRow};
 use aurora_db::repo::skills::{self as skills_repo, SkillRow};
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
@@ -25,6 +25,7 @@ use super::routes::authorize;
 use super::service::{self, Owner, SkillView};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
+use crate::domains::skill_libraries::content as lib_content;
 use crate::domains::skill_libraries::content::{self, LoadedFile, LoadedSkill};
 use crate::domains::skill_libraries::dto::TierRef;
 use crate::domains::skill_libraries::service as lib_service;
@@ -163,16 +164,26 @@ async fn lock_budget(conn: &mut PgConnection, org: Uuid, owner: Owner) -> Result
 
 // ---- add ------------------------------------------------------------------------------------
 
-/// Adds a library skill to a tier. The caller has already been authorized for that tier's write
-/// authority. Reads **exactly** `from.commit_sha`; stores the skill pinned and read-only.
-pub async fn add(
+/// What the fetch step of the library add path read and validated (C-572): everything the
+/// write step needs, with the network IO already done (P6-TPL-3 calls the write inside its
+/// transaction, never the fetch).
+pub(crate) struct PreparedAdd {
+    pub lib: LibraryRow,
+    pub path: String,
+    pub commit: String,
+    pub loaded: lib_content::LoadedSkill,
+    pub blobs: serde_json::Value,
+}
+
+/// The fetch-and-validate step of [`add`] (C-572): the commit rules, the library's visibility
+/// and the content read at exactly `from.commit_sha` — every step that touches the network.
+/// The caller has already authorized the tier's write authority.
+pub(crate) async fn prepare_add(
     state: &AppState,
     caller: &Caller,
     org: Uuid,
-    owner: Owner,
-    workspace: Option<Uuid>,
     from: &FromLibrary,
-) -> Result<SkillView, ApiError> {
+) -> Result<PreparedAdd, ApiError> {
     lib_service::ensure_enabled(state)?;
     let commit = from.commit_sha.as_deref().ok_or_else(|| {
         ApiError::unprocessable(
@@ -218,26 +229,47 @@ pub async fn add(
     let loaded = lib_service::load_for_add(state, &lib, &from.path, commit).await?;
     let blobs =
         serde_json::to_value(&loaded.blobs).map_err(|e| ApiError::internal(e.to_string()))?;
-    let mut tx = audit::begin(state).await?;
-    lock_budget(&mut tx, org, owner).await?;
-    check_budget(state, &mut tx, org, owner, loaded.size, None).await?;
+    Ok(PreparedAdd {
+        lib,
+        path: from.path.clone(),
+        commit: commit.to_owned(),
+        loaded,
+        blobs,
+    })
+}
+
+/// The write step of [`add`] (C-572) inside the caller's transaction: the tier's budget, the
+/// pinned read-only insert, the files, the sync bump and the `skill.library.add` audit event —
+/// which the caller commits with the transaction (it is security-critical). P6-TPL-3 calls it
+/// inside its own bigger transaction (C-1111, C-1142).
+pub(crate) async fn write_add_in_tx(
+    tx: &mut PgConnection,
+    state: &AppState,
+    caller: &Caller,
+    org: Uuid,
+    owner: Owner,
+    workspace: Option<Uuid>,
+    p: &PreparedAdd,
+) -> Result<(SkillRow, AuditEvent), ApiError> {
+    lock_budget(tx, org, owner).await?;
+    check_budget(state, tx, org, owner, p.loaded.size, None).await?;
     let src = Source {
-        library_id: lib.id,
-        label: &lib.label,
-        repo: lib.repo.as_deref().unwrap_or(""),
-        path: &from.path,
-        commit_sha: commit,
-        blobs: &blobs,
-        content_sha256: &loaded.content_sha256,
+        library_id: p.lib.id,
+        label: &p.lib.label,
+        repo: p.lib.repo.as_deref().unwrap_or(""),
+        path: &p.path,
+        commit_sha: &p.commit,
+        blobs: &p.blobs,
+        content_sha256: &p.loaded.content_sha256,
         pinned_by: caller.user_id,
     };
     let row = repo::insert_library_skill(
-        &mut tx,
+        tx,
         org,
         owner,
-        &loaded.name,
-        &loaded.description,
-        &loaded.body,
+        &p.loaded.name,
+        &p.loaded.description,
+        &p.loaded.body,
         &src,
     )
     .await
@@ -248,22 +280,38 @@ pub async fn add(
         ),
         e => e.into(),
     })?;
-    for f in &loaded.files {
-        skills_repo::upsert_file(&mut tx, row.id, &f.path, &f.content, Some(f.executable)).await?;
+    for f in &p.loaded.files {
+        skills_repo::upsert_file(tx, row.id, &f.path, &f.content, Some(f.executable)).await?;
     }
-    service::bump(&mut tx, &row).await?;
-    repo::forget_head(&mut tx, lib.id, commit).await?;
+    service::bump(tx, &row).await?;
+    repo::forget_head(tx, p.lib.id, &p.commit).await?;
     let mut ev = AuditEvent::by(caller, "skill.library.add")
         .org(org)
         .target("skill", row.id)
         .metadata(
-            json!({"name": row.name, "tier": service::tier_of(&row), "library_id": lib.id,
-            "repo": lib.repo, "path": from.path, "commit_sha": commit,
-            "content_sha256": content::hex(loaded.content_sha256)}),
+            json!({"name": row.name, "tier": service::tier_of(&row), "library_id": p.lib.id,
+            "repo": p.lib.repo, "path": p.path, "commit_sha": p.commit,
+            "content_sha256": content::hex(p.loaded.content_sha256)}),
         );
     if let Some(w) = workspace {
         ev = ev.workspace(w);
     }
+    Ok((row, ev))
+}
+
+/// Adds a library skill to a tier. The caller has already been authorized for that tier's write
+/// authority. Reads **exactly** `from.commit_sha`; stores the skill pinned and read-only.
+pub async fn add(
+    state: &AppState,
+    caller: &Caller,
+    org: Uuid,
+    owner: Owner,
+    workspace: Option<Uuid>,
+    from: &FromLibrary,
+) -> Result<SkillView, ApiError> {
+    let p = prepare_add(state, caller, org, from).await?;
+    let mut tx = audit::begin(state).await?;
+    let (row, ev) = write_add_in_tx(&mut tx, state, caller, org, owner, workspace, &p).await?;
     audit::commit_critical(tx, &ev).await?;
     let mut c = state.pool.acquire().await.map_err(DbError::from)?;
     service::view(&mut c, row).await

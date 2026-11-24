@@ -37,6 +37,22 @@ pub struct Create {
     pub anchor: &'static str,
 }
 
+/// (P6-TPL-3) Pause a freshly created schedule inside the caller's transaction: the
+/// from-template create makes a schedule the person switched off in the four steps (the same
+/// write `patch` does — `enabled = false`, a user pause, nothing armed), without opening its
+/// own transaction.
+pub async fn pause_in_tx(
+    tx: &mut PgConnection,
+    mut r: ScheduleRow,
+    paused_by: Uuid,
+) -> Result<ScheduleRow, ApiError> {
+    r.enabled = false;
+    r.disabled_reason = Some("user".into());
+    r.disabled_by = Some(paused_by);
+    r.next_fire_at = None;
+    repo::update(tx, &r, true).await.map_err(Into::into)
+}
+
 #[derive(Default)]
 pub struct Patch {
     pub name: Option<String>,
@@ -143,18 +159,33 @@ pub async fn create(
     creator: Option<Uuid>,
     origin: Option<Uuid>,
 ) -> Result<ScheduleRow, ApiError> {
+    let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let row = create_in_tx(&mut tx, agent, c, creator, origin).await?;
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
+    Ok(row)
+}
+
+/// The transaction body of [`create`] (P6-TPL-3's from-template route calls it inside its own
+/// bigger transaction, with `creator` the person who created the agent — the fire-time
+/// authority, `10 §Schedules`). Everything is validated before the row is inserted.
+pub async fn create_in_tx(
+    tx: &mut PgConnection,
+    agent: &AgentRow,
+    c: Create,
+    creator: Option<Uuid>,
+    origin: Option<Uuid>,
+) -> Result<ScheduleRow, ApiError> {
     check_name(&c.name)?;
     check_prompt(&c.prompt)?;
     check_gate(&c.gate_command, &c.gate_description)?;
     let tz = match c.timezone {
         Some(t) => t,
-        None => workspaces::get(pool, agent.workspace_id)
+        None => workspaces::get(&mut *tx, agent.workspace_id)
             .await?
             .map_or_else(|| "UTC".to_owned(), |w| w.timezone),
     };
     let (cron_expr, run_at, next) =
         timing(c.cron.as_deref(), c.run_at.as_deref(), &tz, Utc::now())?;
-    let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
     // Serialize the per-agent cap.
     sqlx::query("SELECT 1 FROM agents WHERE id = $1 FOR UPDATE")
         .bind(agent.id)
@@ -167,8 +198,8 @@ pub async fn create(
             "This agent has reached its schedule limit.",
         ));
     }
-    let row = repo::insert(
-        &mut tx,
+    repo::insert(
+        tx,
         &NewSchedule {
             agent_id: agent.id,
             name: &c.name,
@@ -184,9 +215,8 @@ pub async fn create(
             next_fire_at: Some(next),
         },
     )
-    .await?;
-    tx.commit().await.map_err(aurora_db::DbError::from)?;
-    Ok(row)
+    .await
+    .map_err(ApiError::from)
 }
 
 pub async fn patch(pool: &PgPool, seen: ScheduleRow, p: Patch) -> Result<ScheduleRow, ApiError> {

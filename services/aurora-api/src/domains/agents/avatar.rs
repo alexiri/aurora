@@ -87,7 +87,7 @@ pub fn reencode(bytes: &[u8]) -> Result<Vec<u8>, ApiError> {
     Ok(png)
 }
 
-fn new_public_key() -> Result<String, ApiError> {
+pub(crate) fn new_public_key() -> Result<String, ApiError> {
     let mut b = [0u8; 32];
     aws_lc_rs::rand::fill(&mut b)
         .map_err(|_| ApiError::internal("Random generator unavailable."))?;

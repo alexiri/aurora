@@ -64,6 +64,9 @@ pub struct NewWebhook<'a> {
     pub creator_user_id: Option<Uuid>,
     pub anchor: &'a str,
     pub origin_conversation_id: Option<Uuid>,
+    /// (P6-TPL-3) Set to create the webhook paused: `enabled = false`, `disabled_reason = 'user'`
+    /// and `disabled_by = this user` (a person flips it on with the ordinary edit).
+    pub paused_by: Option<Uuid>,
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<WebhookRow>, DbError> {
@@ -124,8 +127,11 @@ pub async fn count_for_agent<'e, E: PgExecutor<'e>>(exec: E, agent: Uuid) -> Res
 pub async fn insert(conn: &mut PgConnection, n: &NewWebhook<'_>) -> Result<WebhookRow, DbError> {
     sqlx::query(
         "INSERT INTO webhooks (id, agent_id, name, instructions, token_hash, display_prefix,
-            verification, creator_user_id, anchor, origin_conversation_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+            verification, creator_user_id, anchor, origin_conversation_id, enabled,
+            disabled_reason, disabled_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+            CASE WHEN $11 THEN NULL ELSE 'user' END,
+            CASE WHEN $11 THEN NULL ELSE $12 END)",
     )
     .bind(n.id)
     .bind(n.agent_id)
@@ -137,6 +143,8 @@ pub async fn insert(conn: &mut PgConnection, n: &NewWebhook<'_>) -> Result<Webho
     .bind(n.creator_user_id)
     .bind(n.anchor)
     .bind(n.origin_conversation_id)
+    .bind(n.paused_by.is_none())
+    .bind(n.paused_by)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, n.id).await?.ok_or(DbError::NotFound)

@@ -354,12 +354,275 @@ pub fn content_json(c: &aurora_template::TemplateContent) -> serde_json::Value {
     })
 }
 
+/// (P6-TPL-3, C-1112) Lowercase hex of the SHA-256 of `bytes`: the parts table's content hash
+/// (the create and the offer/apply diff agree on it).
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
+    hex(bytes)
+}
+
 fn hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(bytes);
     let d = h.finalize();
     d.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The stored content JSON decoded back into the parsed template (P6-TPL-3): creation and the
+/// apply copy from exactly what was approved, and the part hashes are the C-1104 hashes of this.
+/// `None` for a shape this version's encoder never wrote (a corrupted column); every caller
+/// turns that into a refusal, never into a partial agent (SEC-146).
+pub(crate) fn content_from_json(v: &Value) -> Option<aurora_template::TemplateContent> {
+    use aurora_template::{
+        AppEntry, Automation, Effort, InputDecl, InputKind, Level, MemoryFile, SkillRef,
+        TemplateContent, TemplateFile, TemplateMeta, TemplateSkill, Verification,
+    };
+
+    fn level(k: &str) -> Level {
+        match k {
+            "ask" => Level::Ask,
+            "act" => Level::Act,
+            _ => Level::Read,
+        }
+    }
+    fn file(x: &Value) -> Option<TemplateFile> {
+        Some(TemplateFile {
+            path: x.get("path")?.as_str()?.to_owned(),
+            bytes: B64.decode(x.get("bytes")?.as_str()?).ok()?,
+            executable: x
+                .get("executable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
+    fn input(x: &Value) -> Option<InputDecl> {
+        let arr = |k: &str| {
+            x.get(k)
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Some(InputDecl {
+            id: x.get("id")?.as_str()?.to_owned(),
+            label: x.get("label")?.as_str()?.to_owned(),
+            help: x.get("help").and_then(Value::as_str).map(str::to_owned),
+            kind: match x.get("kind").and_then(Value::as_str) {
+                Some("choice") => InputKind::Choice,
+                _ => InputKind::Text,
+            },
+            required: x.get("required").and_then(Value::as_bool).unwrap_or(true),
+            pattern: x.get("pattern").and_then(Value::as_str).map(str::to_owned),
+            max_length: x
+                .get("max_length")
+                .and_then(Value::as_u64)
+                .and_then(|m| u32::try_from(m).ok()),
+            options: arr("options"),
+            default: x.get("default").and_then(Value::as_str).map(str::to_owned),
+        })
+    }
+    fn app(x: &Value) -> Option<AppEntry> {
+        let l = x.get("level").and_then(Value::as_str).map(level);
+        match (x.get("app"), x.get("any_of")) {
+            (Some(Value::String(a)), _) => Some(AppEntry::App {
+                app: a.clone(),
+                required: x.get("required").and_then(Value::as_bool).unwrap_or(true),
+                level: l.unwrap_or_default(),
+                tools: x.get("tools").filter(|t| !t.is_null()).map(|t| {
+                    let arr = |k: &str| {
+                        t.get(k)
+                            .and_then(Value::as_array)
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_owned)
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    };
+                    aurora_template::AppTools {
+                        allow: arr("allow"),
+                        ask: arr("ask"),
+                    }
+                }),
+                why: x
+                    .get("why")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            }),
+            (_, Some(Value::Array(ids))) => Some(AppEntry::AnyOf {
+                any_of: ids
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect(),
+                required: x.get("required").and_then(Value::as_bool).unwrap_or(true),
+                level: l.unwrap_or_default(),
+                why: x
+                    .get("why")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            }),
+            _ => None,
+        }
+    }
+    fn skill_ref(x: &Value) -> Option<SkillRef> {
+        match x.get("kind").and_then(Value::as_str)? {
+            "library" => Some(SkillRef::Library {
+                // The stored address is already normalized (C-1123); rebuild the typed form.
+                address: aurora_core::git_url::parse(x.get("address")?.as_str()?).ok()?,
+                ref_: x
+                    .get("ref")
+                    .and_then(Value::as_str)
+                    .filter(|s: &&str| !s.is_empty())
+                    .map(str::to_owned),
+                path: x
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .filter(|s: &&str| !s.is_empty())
+                    .map(str::to_owned),
+                skill: x.get("skill")?.as_str()?.to_owned(),
+                required: x.get("required").and_then(Value::as_bool).unwrap_or(true),
+                why: x
+                    .get("why")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            }),
+            "organization" => Some(SkillRef::Organization {
+                name: x.get("name")?.as_str()?.to_owned(),
+                required: x.get("required").and_then(Value::as_bool).unwrap_or(true),
+                why: x
+                    .get("why")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            }),
+            _ => None,
+        }
+    }
+    fn automation(x: &Value) -> Option<Automation> {
+        match x.get("kind").and_then(Value::as_str)? {
+            "schedule" => Some(Automation::Schedule {
+                name: x.get("name")?.as_str()?.to_owned(),
+                prompt: x.get("prompt")?.as_str()?.to_owned(),
+                cron: x.get("cron")?.as_str()?.to_owned(),
+            }),
+            "webhook" => Some(Automation::Webhook {
+                name: x.get("name")?.as_str()?.to_owned(),
+                instructions: x.get("instructions")?.as_str()?.to_owned(),
+                verification: match x.get("verification").and_then(Value::as_str) {
+                    Some("password") => Verification::Password,
+                    Some("none") => Verification::None,
+                    _ => Verification::Signed,
+                },
+            }),
+            _ => None,
+        }
+    }
+    fn skill(x: &Value) -> Option<TemplateSkill> {
+        Some(TemplateSkill {
+            name: x.get("name")?.as_str()?.to_owned(),
+            use_it_when: x.get("use_it_when")?.as_str()?.to_owned(),
+            body: x.get("body")?.as_str()?.to_owned(),
+            files: x
+                .get("files")?
+                .as_array()?
+                .iter()
+                .map(file)
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
+
+    let meta = v.get("meta")?;
+    let str_of = |k: &str| meta.get(k).and_then(Value::as_str);
+    Some(TemplateContent {
+        meta: TemplateMeta {
+            format: u32::try_from(meta.get("format")?.as_u64()?).ok()?,
+            id: str_of("id")?.to_owned(),
+            version: str_of("version")?.to_owned(),
+            name: str_of("name")?.to_owned(),
+            summary: str_of("summary")?.to_owned(),
+            min_core: str_of("min_core").map(str::to_owned),
+            effort: match str_of("effort") {
+                Some("low") => Some(Effort::Low),
+                Some("high") => Some(Effort::High),
+                Some("max") => Some(Effort::Max),
+                Some("medium") => Some(Effort::Medium),
+                _ => None,
+            },
+            inputs: meta
+                .get("inputs")?
+                .as_array()?
+                .iter()
+                .map(input)
+                .collect::<Option<Vec<_>>>()?,
+            apps: meta
+                .get("apps")?
+                .as_array()?
+                .iter()
+                .map(app)
+                .collect::<Option<Vec<_>>>()?,
+            skill_refs: meta
+                .get("skill_refs")?
+                .as_array()?
+                .iter()
+                .map(skill_ref)
+                .collect::<Option<Vec<_>>>()?,
+        },
+        agent_name: v.get("agent_name")?.as_str()?.to_owned(),
+        may_message_first: v
+            .get("may_message_first")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        instructions: v.get("instructions")?.as_str()?.to_owned(),
+        readme: v.get("readme")?.as_str()?.to_owned(),
+        memories: v
+            .get("memories")?
+            .as_array()?
+            .iter()
+            .map(|m| {
+                Some(MemoryFile {
+                    key: m.get("key")?.as_str()?.to_owned(),
+                    content: m.get("content")?.as_str()?.to_owned(),
+                    locked: m.get("locked").and_then(Value::as_bool).unwrap_or(false),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?,
+        skills: v
+            .get("skills")?
+            .as_array()?
+            .iter()
+            .map(skill)
+            .collect::<Option<Vec<_>>>()?,
+        helpers: v
+            .get("helpers")?
+            .as_array()?
+            .iter()
+            .map(file)
+            .collect::<Option<Vec<_>>>()?,
+        automations: v
+            .get("automations")?
+            .as_array()?
+            .iter()
+            .map(automation)
+            .collect::<Option<Vec<_>>>()?,
+        avatar: match v.get("avatar") {
+            // `Some(null)` is the encoder's "no avatar"; an object must decode (a corrupted
+            // one refuses the whole content, not silently drops the avatar).
+            Some(a) if !a.is_null() => Some((
+                a.get("name")?.as_str()?.to_owned(),
+                B64.decode(a.get("bytes")?.as_str()?).ok()?,
+            )),
+            _ => None,
+        },
+    })
 }
 
 /// The base64 engine the content column uses (standard, with padding).

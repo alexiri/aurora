@@ -34,13 +34,20 @@ pub struct AgentRow {
     pub byo_source_cidrs: Option<Vec<String>>,
     /// (RFE-025) BYO only: credentialed requests must use a context credential.
     pub byo_require_context: bool,
+    /// (P6-TPL-3, C-1112) The template this agent was created from (none when not from a
+    /// template); the inputs as given. All keyed by the template id's text — no FK: deleting a
+    /// template changes no agent (agents made from templates are copies).
+    pub template_id: Option<String>,
+    pub template_name: Option<String>,
+    pub template_version: Option<String>,
+    pub template_inputs: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
 const COLS: &str = "id, org_id, workspace_id, handle, name, kind, is_default, harness, model_provider, \
     model_endpoint_id, model_id, effort, model_roles, subagent_model, narration_cards, proactive_messaging, brief, avatar_blob_key, avatar_public_key, \
-    byo_source_cidrs, byo_require_context, created_at, updated_at";
+    byo_source_cidrs, byo_require_context, template_id, template_name, template_version, template_inputs, created_at, updated_at";
 
 pub struct NewDefaultAgent<'a> {
     pub id: Uuid,
@@ -388,6 +395,32 @@ pub async fn avatar_blob_by_public_key<'e, E: PgExecutor<'e>>(
     .bind(key)
     .fetch_optional(exec)
     .await?)
+}
+
+/// (P6-TPL-3, C-1112) Stamp template provenance on a freshly created agent (written inside the
+/// creating transaction, before anything else reads the row). The template id, name and version
+/// are the rendered version's; `inputs` is the checked input values as given.
+pub async fn set_template<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    template_id: &str,
+    template_name: &str,
+    template_version: &str,
+    template_inputs: &serde_json::Value,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE agents SET template_id = $2, template_name = $3, template_version = $4,
+            template_inputs = $5, updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(template_id)
+    .bind(template_name)
+    .bind(template_version)
+    .bind(template_inputs)
+    .execute(exec)
+    .await?;
+    Ok(())
 }
 
 /// (RFE-025) Replaces a BYO agent's source list and require-context flag; `false` when the agent

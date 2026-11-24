@@ -42,8 +42,19 @@ pub struct Agent {
     pub frozen: Option<crate::domains::freeze::dto::Frozen>,
     /// (phase 2, RFE-006) Agent ∨ workspace ∨ organization is frozen.
     pub effective_frozen: bool,
+    /// (P6-TPL-3, C-1112) The template this agent was created from; null otherwise. Plain
+    /// text: deleting the source or the template changes no agent.
+    pub template: Option<AgentTemplateRef>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// (P6-TPL-3, C-1112) The template provenance shown on `Agent.template`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct AgentTemplateRef {
+    pub template_id: String,
+    pub name: String,
+    pub version: String,
 }
 
 impl From<AgentRow> for Agent {
@@ -73,6 +84,14 @@ impl From<AgentRow> for Agent {
             byo: None,
             frozen: None,
             effective_frozen: false,
+            template: match (a.template_id, a.template_name, a.template_version) {
+                (Some(template_id), Some(name), Some(version)) => Some(AgentTemplateRef {
+                    template_id,
+                    name,
+                    version,
+                }),
+                _ => None,
+            },
             created_at: a.created_at,
             updated_at: a.updated_at,
         }

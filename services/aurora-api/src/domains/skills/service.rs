@@ -400,6 +400,21 @@ pub async fn create(
     validate_description(n.description)?;
     validate_body(n.body)?;
     let mut tx = pool.begin().await.map_err(DbError::from)?;
+    let v = create_in_tx(&mut tx, org, owner, n, created_by).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(v)
+}
+
+/// The transaction body of [`create`] (P6-TPL-3's from-template route calls it inside its own
+/// bigger transaction): the per-agent cap under the agent row lock, the insert (its unique
+/// violation is 409 `skill_exists`) and the sync bump. The caller has validated the text.
+pub(crate) async fn create_in_tx(
+    tx: &mut PgConnection,
+    org: Uuid,
+    owner: Owner,
+    n: &NewSkill<'_>,
+    created_by: &str,
+) -> Result<SkillView, ApiError> {
     // (FIX-110) The per-agent cap is checked under the agent row lock (the pattern
     // `schedules::service::create` uses), so concurrent creates cannot overshoot it.
     if let Some(agent) = owner.agent {
@@ -408,7 +423,7 @@ pub async fn create(
             .execute(&mut *tx)
             .await
             .map_err(DbError::from)?;
-        if repo::count_agent_own(&mut tx, agent).await? >= limits::SKILL_PER_AGENT_MAX {
+        if repo::count_agent_own(&mut *tx, agent).await? >= limits::SKILL_PER_AGENT_MAX {
             return Err(ApiError::conflict(
                 "skill_limit_reached",
                 format!(
@@ -419,7 +434,7 @@ pub async fn create(
         }
     }
     let row = repo::insert(
-        &mut tx,
+        tx,
         org,
         owner,
         n.name,
@@ -436,10 +451,8 @@ pub async fn create(
         ),
         e => e.into(),
     })?;
-    bump(&mut tx, &row).await?;
-    let v = view(&mut tx, row).await?;
-    tx.commit().await.map_err(DbError::from)?;
-    Ok(v)
+    bump(tx, &row).await?;
+    view(tx, row).await
 }
 
 pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView, ApiError> {

@@ -44,6 +44,11 @@ pub enum Source {
         turn_id: Option<Uuid>,
     },
     Harvest,
+    /// (P6-TPL-3) Written from an agent template, at creation or at an apply.
+    Template {
+        name: String,
+        version: String,
+    },
 }
 
 impl Source {
@@ -56,6 +61,9 @@ impl Source {
                 turn_id,
             } => json!({"source": "tool", "conversation_id": conversation_id, "turn_id": turn_id}),
             Self::Harvest => json!({"source": "harvest"}),
+            Self::Template { name, version } => {
+                json!({"source": "template", "template": name, "template_version": version})
+            }
         }
     }
 }
@@ -131,14 +139,8 @@ pub fn index_line(
     out
 }
 
-/// Creates or replaces a memory inside one transaction; returns `(row, created)`.
-pub async fn save(
-    pool: &PgPool,
-    agent: Uuid,
-    w: &Write<'_>,
-    author: &Author,
-    source: &Source,
-) -> Result<(repo::MemoryRow, bool), ApiError> {
+/// Validates a write with no IO (the checks [`save`] and [`save_in_tx`] callers share).
+pub fn check(w: &Write<'_>) -> Result<(), ApiError> {
     validate_key(w.key)?;
     let (title, description) = (blank_none(w.title), blank_none(w.description));
     if title.is_some_and(|t| t.chars().count() > 120) {
@@ -168,9 +170,35 @@ pub async fn save(
             ),
         ));
     }
+    Ok(())
+}
+
+/// Creates or replaces a memory inside one transaction; returns `(row, created)`.
+pub async fn save(
+    pool: &PgPool,
+    agent: Uuid,
+    w: &Write<'_>,
+    author: &Author,
+    source: &Source,
+) -> Result<(repo::MemoryRow, bool), ApiError> {
+    check(w)?;
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    repo::lock_agent(&mut tx, agent).await?;
-    let existing = repo::get(&mut tx, agent, w.key).await?;
+    let (row, created) = save_in_tx(&mut tx, agent, w, author, source).await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok((row, created))
+}
+
+/// The write body inside a caller's transaction (P6-TPL-3: the from-template create/apply joins
+/// one). The caller has run [`check`]; [`save`] is `check` + this in its own transaction.
+pub async fn save_in_tx(
+    tx: &mut PgConnection,
+    agent: Uuid,
+    w: &Write<'_>,
+    author: &Author,
+    source: &Source,
+) -> Result<(repo::MemoryRow, bool), ApiError> {
+    repo::lock_agent(tx, agent).await?;
+    let existing = repo::get(tx, agent, w.key).await?;
     // (P6-MEMLOCK, C-1149, SEC-151) The one lock check, inside the write's transaction while the
     // agent row is locked: an agent-authored write to a locked memory is refused, so a lock that
     // commits while a tool write waits on the row lock is still honoured. People are never
@@ -190,20 +218,27 @@ pub async fn save(
         }
         Some(cur) => {
             if w.skip_unchanged
-                && cur.title.as_deref() == title
-                && cur.description.as_deref() == description
+                && cur.title.as_deref() == blank_none(w.title)
+                && cur.description.as_deref() == blank_none(w.description)
                 && cur.content == w.content
             {
                 return Ok((cur, false));
             }
             (
-                repo::update(&mut tx, cur.id, title, description, w.content).await?,
+                repo::update(
+                    tx,
+                    cur.id,
+                    blank_none(w.title),
+                    blank_none(w.description),
+                    w.content,
+                )
+                .await?,
                 false,
                 "save",
             )
         }
         None => {
-            if repo::count(&mut tx, agent).await? >= i64::from(limits::MEMORY_MAX_PER_AGENT) {
+            if repo::count(tx, agent).await? >= i64::from(limits::MEMORY_MAX_PER_AGENT) {
                 return Err(ApiError::unprocessable(
                     "memory_limit_reached",
                     format!(
@@ -217,11 +252,11 @@ pub async fn save(
                 // `locked_at`/`locked_by` from the caller); tool writes and the harvest pass
                 // `false`, which leaves the lock columns at their defaults.
                 repo::insert(
-                    &mut tx,
+                    tx,
                     agent,
                     w.key,
-                    title,
-                    description,
+                    blank_none(w.title),
+                    blank_none(w.description),
                     w.content,
                     w.locked,
                     author.user_id,
@@ -232,8 +267,7 @@ pub async fn save(
             )
         }
     };
-    snapshot(&mut tx, &row, op, author, &source.provenance()).await?;
-    tx.commit().await.map_err(DbError::from)?;
+    snapshot(tx, &row, op, author, &source.provenance()).await?;
     Ok((row, created))
 }
 

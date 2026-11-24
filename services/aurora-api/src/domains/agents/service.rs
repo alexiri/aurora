@@ -18,7 +18,7 @@ fn bad(path: &str, msg: &str) -> ApiError {
     ApiError::invalid_field("Invalid agent.", path, msg)
 }
 
-fn name_ok(n: &str) -> Result<String, ApiError> {
+pub(crate) fn name_ok(n: &str) -> Result<String, ApiError> {
     aurora_core::names::clean(n, 80).map_err(|e| bad("/name", &e.to_string()))
 }
 
@@ -37,8 +37,11 @@ fn harness_ok(state: &AppState, h: &str) -> Result<(), ApiError> {
     ))
 }
 
-fn brief_ok(b: &str) -> Result<(), ApiError> {
-    if b.chars().count() > 20000 {
+/// The brief limit of agent creation (C-1111's `template_too_large` uses it too).
+pub(crate) const BRIEF_MAX: usize = 20_000;
+
+pub(crate) fn brief_ok(b: &str) -> Result<(), ApiError> {
+    if b.chars().count() > BRIEF_MAX {
         return Err(bad("/brief", "must be at most 20000 characters"));
     }
     Ok(())
@@ -329,59 +332,31 @@ pub async fn create(
         req.harness.clone()
     };
 
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-    let (max, count) = agents::lock_org_agent_limit(&mut tx, org_id).await?;
-    if max.is_some_and(|m| count >= m) {
-        return Err(ApiError::unprocessable(
-            "agent_limit_reached",
-            "The organization's agent limit has been reached.",
-        ));
-    }
-    let handle = match explicit {
-        Some(h) => h,
-        None => {
-            let base = derive_handle(&name);
-            let mut cand = base.clone();
-            let mut n = 2;
-            while agents::handle_exists(&mut *tx, ws, &cand).await? {
-                let suffix = format!("-{n}");
-                let keep = base.len().min(40 - suffix.len());
-                cand = format!("{}{suffix}", &base[..keep]);
-                n += 1;
-            }
-            cand
-        }
-    };
     let model_provider = provider_of(state, req.model_endpoint_id.as_deref());
-    let row = agents::insert(
-        &mut *tx,
-        &NewAgent {
-            id: Uuid::now_v7(),
-            org_id,
-            workspace_id: ws,
-            handle: &handle,
-            name: &name,
-            kind,
-            harness: harness.as_deref(),
-            model_provider: model_provider.as_deref(),
-            model_endpoint_id: req.model_endpoint_id.as_deref(),
-            model_id: req.model_id.as_deref(),
-            effort: req.effort.as_deref(),
-            proactive_messaging: proactive,
-            brief,
-            created_by: c.user_id,
-        },
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let row = insert_in_tx(
+        &mut tx,
+        state,
+        c,
+        org_id,
+        ws,
+        kind,
+        &name,
+        explicit,
+        harness,
+        req.effort.as_deref(),
+        proactive,
+        brief,
+        req.model_endpoint_id.as_deref(),
+        req.model_id.as_deref(),
+        model_provider.as_deref(),
     )
-    .await
-    .map_err(|e| conflict_code(e, &[(agents::HANDLE_CONSTRAINT, "handle_taken")]))?;
+    .await?;
     let (tok, expires_at) = if row.kind == "byo" {
         let max = super::byo::token_max_age_days(state, &mut tx, org_id).await?;
         let (t, exp) = mint_agent_token(&mut tx, row.id, max).await?;
         (Some(t), exp)
     } else {
-        // (C-1061) A new hosted agent of the placement's default organization gets the
-        // starter grants in this transaction.
-        crate::domains::placement::service::apply_new_agent_starters(&mut tx, state, &row).await?;
         (None, None)
     };
     tx.commit().await.map_err(DbError::from)?;
@@ -390,6 +365,79 @@ pub async fn create(
         token: tok,
         expires_at,
     })
+}
+
+/// The transaction body of [`create`]: the agent-limit lock and handle rules, the insert (its
+/// unique violation is 409 `handle_taken`) and the kind's tail (the BYO token mint or the
+/// starter grants of a new hosted agent, C-1061). P6-TPL-3's from-template route calls it
+/// inside its own bigger transaction; the rules live here and nowhere else.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_in_tx(
+    tx: &mut audit::Tx,
+    state: &AppState,
+    c: &Caller,
+    org_id: Uuid,
+    ws: Uuid,
+    kind: &str,
+    name: &str,
+    explicit_handle: Option<String>,
+    harness: Option<String>,
+    effort: Option<&str>,
+    proactive_messaging: &str,
+    brief: &str,
+    model_endpoint_id: Option<&str>,
+    model_id: Option<&str>,
+    model_provider: Option<&str>,
+) -> Result<AgentRow, ApiError> {
+    let (max, count) = agents::lock_org_agent_limit(tx, org_id).await?;
+    if max.is_some_and(|m| count >= m) {
+        return Err(ApiError::unprocessable(
+            "agent_limit_reached",
+            "The organization's agent limit has been reached.",
+        ));
+    }
+    let handle = match explicit_handle {
+        Some(h) => h,
+        None => {
+            let base = derive_handle(name);
+            let mut cand = base.clone();
+            let mut n = 2;
+            while agents::handle_exists(&mut **tx, ws, &cand).await? {
+                let suffix = format!("-{n}");
+                let keep = base.len().min(40 - suffix.len());
+                cand = format!("{}{suffix}", &base[..keep]);
+                n += 1;
+            }
+            cand
+        }
+    };
+    let row = agents::insert(
+        &mut **tx,
+        &NewAgent {
+            id: Uuid::now_v7(),
+            org_id,
+            workspace_id: ws,
+            handle: &handle,
+            name,
+            kind,
+            harness: harness.as_deref(),
+            model_provider,
+            model_endpoint_id,
+            model_id,
+            effort,
+            proactive_messaging,
+            brief,
+            created_by: c.user_id,
+        },
+    )
+    .await
+    .map_err(|e| conflict_code(e, &[(agents::HANDLE_CONSTRAINT, "handle_taken")]))?;
+    if row.kind != "byo" {
+        // (C-1061) A new hosted agent of the placement's default organization gets the
+        // starter grants in this transaction.
+        crate::domains::placement::service::apply_new_agent_starters(&mut *tx, state, &row).await?;
+    }
+    Ok(row)
 }
 
 /// Mints the agent's `aug_` token with `expires_at = now() + max age` (C-311).
