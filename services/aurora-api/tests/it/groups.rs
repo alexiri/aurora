@@ -1374,7 +1374,7 @@ async fn group_only_workspace_access_counts_for_workspace_user_checks() {
 // ---------------------------------------------------------------- FIX-083
 
 #[tokio::test]
-async fn fix083_my_role_and_the_implicit_rows_follow_the_effective_roles() {
+async fn fix083_my_role_follows_the_effective_roles() {
     let f = fx().await;
     // A group-only workspace owner: `plain` has no direct binding.
     let owners = f.create("ws-owners", json!({})).await;
@@ -1417,7 +1417,8 @@ async fn fix083_my_role_and_the_implicit_rows_follow_the_effective_roles() {
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["my_role"], "admin", "{v}");
-    // The workspace access list carries the group-mapped admin as an implicit owner.
+    // (FIX-234) A group-mapped org admin reaches no workspace: only their direct `member`
+    // binding is listed, and the org role grants nothing on top of it.
     let (s, v) = f
         .call(
             &f.owner,
@@ -1432,10 +1433,10 @@ async fn fix083_my_role_and_the_implicit_rows_follow_the_effective_roles() {
         .unwrap()
         .iter()
         .find(|a| a["user_id"] == f.member.id.to_string())
-        .unwrap_or_else(|| panic!("group-mapped admin is listed: {v}"));
+        .unwrap_or_else(|| panic!("direct binding is listed: {v}"));
     assert_eq!(
         (row["role"].as_str(), row["implicit"].as_bool()),
-        (Some("owner"), Some(true))
+        (Some("member"), Some(false))
     );
 }
 

@@ -3585,11 +3585,11 @@ async fn shared_presences_enqueue_nothing_on_org_delete() {
     assert!(w.ops_of("presence.deprovision").await.is_empty());
 }
 
-/// FIX-230 (D-473, C-1157): an org owner/admin has the implicit owner role on every workspace, but
-/// the DM-default options, the PUT and the confirm offer and accept only agents of workspaces the
-/// person is in in their own right (or reaches through an approved person grant).
+/// FIX-230 (D-473, C-1157) and FIX-234 (D-477): the DM-default options, the PUT and the confirm
+/// offer and accept only agents of workspaces the person is in in their own right (or reaches
+/// through an approved person grant) — an org role grants no reach.
 #[tokio::test]
-async fn dm_default_options_put_and_confirm_exclude_an_admins_implicit_access() {
+async fn dm_default_options_put_and_confirm_follow_own_reach_only() {
     let w = W::new().await;
     let integ = w.integration(&w.fake, "T1").await;
     let theirs = w.agent("a1").await; // the world's workspace: the org owner has no binding there

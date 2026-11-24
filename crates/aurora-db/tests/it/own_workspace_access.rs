@@ -1,40 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! FIX-230 (D-473, C-1157): `own_workspace_access` is the access a person holds in their own
-//! right; `effective_workspace_access`, redefined over it, returns exactly the rows it did before.
+//! FIX-234 (D-477, C-1160): `effective_workspace_access` is exactly `own_workspace_access` —
+//! an organization role grants no workspace right, so an org owner/admin has no row without a
+//! binding of their own.
 
 use aurora_db::PgPool;
 use aurora_db::authz;
 use uuid::Uuid;
-
-/// The definition of `effective_workspace_access` as migration 20261201000258 left it, inlined
-/// (a verbatim copy of its SELECT) so the new view is compared against the old law, not itself.
-const OLD_DEFINITION: &str = "
-SELECT x.workspace_id, x.org_id, x.user_id,
-       (ARRAY['member', 'approver', 'owner'])[max(x.rank)] AS role
-  FROM (
-        SELECT w.id AS workspace_id, w.org_id, e.user_id, 3 AS rank
-          FROM workspaces w
-          JOIN effective_org_members e ON e.org_id = w.org_id AND e.role IN ('owner', 'admin')
-        UNION ALL
-        SELECT wa.workspace_id, w.org_id, wa.user_id,
-               array_position(ARRAY['member', 'approver', 'owner'], wa.role)
-          FROM workspace_access wa
-          JOIN workspaces w ON w.id = wa.workspace_id
-          JOIN org_members m ON m.org_id = w.org_id AND m.user_id = wa.user_id
-                            AND m.status = 'active'
-         WHERE wa.status = 'active'
-        UNION ALL
-        SELECT b.workspace_id, b.org_id, gm.user_id,
-               array_position(ARRAY['member', 'approver', 'owner'], b.role)
-          FROM group_workspace_access b
-          JOIN group_members gm ON gm.group_id = b.group_id AND gm.org_id = b.org_id
-          JOIN org_members m ON m.org_id = gm.org_id AND m.user_id = gm.user_id
-                            AND m.status = 'active'
-         WHERE NOT EXISTS (SELECT 1 FROM workspace_access s
-                            WHERE s.workspace_id = b.workspace_id AND s.user_id = gm.user_id
-                              AND s.status = 'suspended')
-       ) x
- GROUP BY x.workspace_id, x.org_id, x.user_id";
 
 async fn user(pool: &PgPool, org: Uuid, org_role: Option<(&str, &str)>) -> Uuid {
     let id = Uuid::now_v7();
@@ -126,7 +97,7 @@ async fn rows(pool: &PgPool, source: &str) -> Vec<(Uuid, Uuid, Uuid, String)> {
 }
 
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn effective_workspace_access_returns_the_same_rows_as_before_the_migration(pool: PgPool) {
+async fn the_two_views_are_equal_and_an_admin_has_no_row_without_a_binding(pool: PgPool) {
     let org = Uuid::now_v7();
     sqlx::query("INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,$2,'o',$2)")
         .bind(org)
@@ -186,20 +157,30 @@ async fn effective_workspace_access_returns_the_same_rows_as_before_the_migratio
     bind(&pool, ws1, both, "approver", "active").await;
     bind(&pool, ws1, suspended_via_group, "member", "suspended").await;
 
-    let old = rows(&pool, OLD_DEFINITION).await;
-    let new = rows(&pool, "SELECT * FROM effective_workspace_access").await;
-    assert!(old.len() > 10, "the fixture must be non-trivial: {old:?}");
-    assert_eq!(old, new, "effective_workspace_access changed");
+    // The two views coincide: every workspace right comes from access in one's own right.
+    let effective = rows(&pool, "SELECT * FROM effective_workspace_access").await;
+    let own = rows(&pool, "SELECT * FROM own_workspace_access").await;
+    assert!(own.len() > 5, "the fixture must be non-trivial: {own:?}");
+    assert_eq!(effective, own, "the views diverged");
 
-    // Explicit expectations on the interesting people.
+    // Explicit expectations on the interesting people. An org owner, admin or group-mapped
+    // admin has no row without a binding of their own.
     let role = |u: Uuid, ws: Uuid| {
-        new.iter()
+        effective
+            .iter()
             .find(|r| r.2 == u && r.0 == ws)
             .map(|r| r.3.clone())
     };
-    assert_eq!(role(owner, ws1).as_deref(), Some("owner"));
-    assert_eq!(role(admin, ws2).as_deref(), Some("owner"));
-    assert_eq!(role(group_admin, ws1).as_deref(), Some("owner"));
+    for (u, ws) in [
+        (owner, ws1),
+        (owner, ws2),
+        (admin, ws1),
+        (admin, ws2),
+        (group_admin, ws1),
+        (group_admin, ws2),
+    ] {
+        assert_eq!(role(u, ws), None, "an org role grants no workspace right");
+    }
     assert_eq!(role(direct, ws1).as_deref(), Some("approver"));
     assert_eq!(
         role(direct, ws2).as_deref(),
@@ -216,43 +197,30 @@ async fn effective_workspace_access_returns_the_same_rows_as_before_the_migratio
     assert_eq!(role(pending_org, ws1), None);
     assert_eq!(role(non_member, ws1), None);
 
-    // The own view: the same people, minus the implicit owner role of owners and admins.
+    // `own_access` agrees with the view.
     let pool_ref = &pool;
-    let own = |u: Uuid, ws: Uuid| async move {
+    let own_of = |u: Uuid, ws: Uuid| async move {
         authz::own_access(pool_ref, u, ws)
             .await
             .unwrap()
             .map(|r| r.as_str())
     };
-    for (u, ws) in [
-        (owner, ws1),
-        (owner, ws2),
-        (admin, ws1),
-        (admin, ws2),
-        (group_admin, ws1),
-    ] {
-        assert_eq!(
-            own(u, ws).await,
-            None,
-            "implicit-only access is not own access"
-        );
-    }
-    assert_eq!(own(direct, ws1).await, Some("approver"));
-    assert_eq!(own(direct, ws2).await, Some("member"));
-    assert_eq!(own(group_member, ws1).await, Some("member"));
-    assert_eq!(own(group_member, ws2).await, Some("owner"));
-    assert_eq!(own(both, ws1).await, Some("approver"));
-    assert_eq!(own(suspended_binding, ws1).await, None);
-    assert_eq!(own(suspended_via_group, ws1).await, None);
-    assert_eq!(own(inactive_org, ws1).await, None);
-    assert_eq!(own(pending_org, ws1).await, None);
-    assert_eq!(own(non_member, ws1).await, None);
+    assert_eq!(own_of(direct, ws1).await, Some("approver"));
+    assert_eq!(own_of(direct, ws2).await, Some("member"));
+    assert_eq!(own_of(group_member, ws1).await, Some("member"));
+    assert_eq!(own_of(group_member, ws2).await, Some("owner"));
+    assert_eq!(own_of(both, ws1).await, Some("approver"));
+    assert_eq!(own_of(suspended_binding, ws1).await, None);
+    assert_eq!(own_of(suspended_via_group, ws1).await, None);
+    assert_eq!(own_of(inactive_org, ws1).await, None);
+    assert_eq!(own_of(pending_org, ws1).await, None);
+    assert_eq!(own_of(non_member, ws1).await, None);
     // An org admin who also holds a direct binding keeps it as own access (a creator's workspace).
     let creator = user(&pool, org, Some(("admin", "active"))).await;
     bind(&pool, ws1, creator, "owner", "active").await;
-    assert_eq!(own(creator, ws1).await, Some("owner"));
-    assert_eq!(own(creator, ws2).await, None);
-    // No row of the own view for an admin's implicit-only workspaces, in the whole view.
+    assert_eq!(own_of(creator, ws1).await, Some("owner"));
+    assert_eq!(own_of(creator, ws2).await, None);
+    // No row of either view for the admins' implicit-only workspaces.
     let n: i64 =
         sqlx::query_scalar("SELECT count(*) FROM own_workspace_access WHERE user_id = ANY($1)")
             .bind(vec![owner, admin, group_admin])
@@ -260,4 +228,21 @@ async fn effective_workspace_access_returns_the_same_rows_as_before_the_migratio
             .await
             .unwrap();
     assert_eq!(n, 0);
+
+    // `can_administer` (C-1160): the org role keeps the narrow administer right even without a
+    // binding; a bound non-owner and a plain member do not have it.
+    assert!(authz::can_administer(&pool, owner, ws1).await.unwrap());
+    assert!(authz::can_administer(&pool, admin, ws2).await.unwrap());
+    assert!(
+        authz::can_administer(&pool, group_admin, ws1)
+            .await
+            .unwrap()
+    );
+    assert!(authz::can_administer(&pool, creator, ws1).await.unwrap());
+    assert!(!authz::can_administer(&pool, direct, ws1).await.unwrap());
+    assert!(
+        !authz::can_administer(&pool, group_member, ws1)
+            .await
+            .unwrap()
+    );
 }

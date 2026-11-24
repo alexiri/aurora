@@ -109,21 +109,42 @@ async fn role(pool: &PgPool, u: Uuid, ws: Uuid) -> Option<WorkspaceRole> {
 }
 
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn no_groups_gives_the_phase_0_to_3_answers(pool: PgPool) {
+async fn no_binding_no_access_even_for_an_org_owner(pool: PgPool) {
     let f = fx(&pool).await;
     let owner = member(&pool, f.org, "owner").await;
     let plain = member(&pool, f.org, "member").await;
     let bound = member(&pool, f.org, "member").await;
     bind(&pool, f.ws, bound, "approver").await;
-    assert_eq!(role(&pool, owner, f.ws).await, Some(WorkspaceRole::Owner));
+    // (FIX-234, D-477) The org role grants no workspace right: an org owner without a binding
+    // has none.
+    assert_eq!(role(&pool, owner, f.ws).await, None);
+    assert!(!can_use(&pool, owner, f.ws).await.unwrap());
+    assert!(!can_own(&pool, owner, f.ws).await.unwrap());
+    // ... and the gateway restates the view's law (the gateway role cannot read the views).
+    assert!(
+        !aurora_db::repo::gateway::can_use(&pool, f.ws, owner)
+            .await
+            .unwrap()
+    );
     assert_eq!(role(&pool, plain, f.ws).await, None);
     assert_eq!(
         role(&pool, bound, f.ws).await,
         Some(WorkspaceRole::Approver)
     );
     assert!(!can_use(&pool, plain, f.ws).await.unwrap());
+    assert!(can_use(&pool, bound, f.ws).await.unwrap());
     assert!(can_approve(&pool, bound, f.ws).await.unwrap());
     assert!(!can_own(&pool, bound, f.ws).await.unwrap());
+    // The gateway agrees with the view for everyone.
+    for u in [owner, plain, bound] {
+        assert_eq!(
+            aurora_db::repo::gateway::can_use(&pool, f.ws, u)
+                .await
+                .unwrap(),
+            can_use(&pool, u, f.ws).await.unwrap(),
+            "gateway can_use diverges from the view"
+        );
+    }
 }
 
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
@@ -178,26 +199,34 @@ async fn effective_role_matrix_is_the_strongest_never_a_sum(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn org_role_mapping_admin_owns_everywhere_and_survives_direct_demotion(pool: PgPool) {
+async fn org_role_mapping_admin_reaches_no_workspace(pool: PgPool) {
     let f = fx(&pool).await;
     let ws2 = workspace(&pool, f.org).await;
     let u = member(&pool, f.org, "member").await;
     let g = group(&pool, f.org, "admins", Some("admin")).await;
     add(&pool, g, f.org, u).await.unwrap();
+    // (FIX-234, D-477) The `admin` org-role mapping gives the effective org role and nothing
+    // else: no workspace right on any workspace of the org.
     for ws in [f.ws, ws2] {
-        assert!(can_own(&pool, u, ws).await.unwrap());
+        assert!(!can_use(&pool, u, ws).await.unwrap());
+        assert!(!can_own(&pool, u, ws).await.unwrap());
+        assert!(
+            !aurora_db::repo::gateway::can_use(&pool, ws, u)
+                .await
+                .unwrap()
+        );
     }
     assert_eq!(
         authz::effective_org_role(&pool, u, f.org).await.unwrap(),
         Some(OrgRole::Admin)
     );
-    // A direct demotion (the row already says member) does not take the mapping away.
+    // A direct demotion (the row already says member) changes no workspace answer either.
     sqlx::query("UPDATE org_members SET role = 'member' WHERE user_id = $1")
         .bind(u)
         .execute(&pool)
         .await
         .unwrap();
-    assert!(can_own(&pool, u, f.ws).await.unwrap());
+    assert!(!can_use(&pool, u, f.ws).await.unwrap());
     // `owner` can never be mapped: the CHECK refuses it.
     let err = sqlx::query("UPDATE groups SET org_role = 'owner' WHERE id = $1")
         .bind(g)

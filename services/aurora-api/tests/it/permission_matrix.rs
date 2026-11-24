@@ -120,8 +120,10 @@ enum WsAccess {
 
 fn ws_access(p: P) -> WsAccess {
     match p {
-        P::Owner | P::Admin | P::OrgKeyAdmin | P::GroupAdmin => WsAccess::Owner,
-        P::WsOwner | P::WsKeySame | P::GroupWsOwner => WsAccess::Owner,
+        // (FIX-234, D-477, C-1160) An org role grants no workspace right: Admin, OrgKeyAdmin
+        // and GroupAdmin hold `can_administer` alone. The Owner principal is the org's
+        // creator, so the creation path bound them `owner` in their own right.
+        P::WsOwner | P::WsKeySame | P::GroupWsOwner | P::Owner => WsAccess::Owner,
         P::WsApprover => WsAccess::Approver,
         P::WsMember | P::OrgKeyMember => WsAccess::Member,
         _ => WsAccess::None,
@@ -168,12 +170,20 @@ enum G {
     /// Org-scope credential metadata (I-27 amendment): org owner/admin, or an org member who
     /// is `can_own` on a workspace of the org (so org secrets/connections can be granted).
     OrgCred,
-    /// (phase 4, P4-GSL) `can_use` on at least one workspace of the org (org owners/admins
-    /// included): the skill-library browse audience. A member with no workspace binding is 403.
+    /// (phase 4, P4-GSL) The skill-library browse audience: an **org-level** route, so the org
+    /// owner/admin rule is unchanged (FIX-234 takes no org-level right away) — an administrator
+    /// browses as admin even with no own access; a plain member needs `can_use` on at least one
+    /// workspace of the org and is 403 without it.
     UseAny,
     /// `can_use`, but only with an API key: sessions get 403 `forbidden` before the workspace
     /// is looked at (`POST /v1/agents/{agent}/conversations` creates `api` conversations).
     WsUseKeyOnly,
+    /// (FIX-234, C-1160) `can_administer`: an org owner/admin, or an own-right workspace
+    /// owner. Exactly the C-1160 route list.
+    Administer,
+    /// (FIX-234, C-1160) `GET /workspaces/{ws}`: own access answers in full, an administrator
+    /// without own access gets the metadata.
+    WsUseOrAdminister,
 }
 
 #[derive(Clone, Copy)]
@@ -703,13 +713,13 @@ const ROWS: &[Row] = &[
     r(
         "PUT",
         "/v1/workspaces/{ws}/access/groups/{group}",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
     r(
         "DELETE",
         "/v1/workspaces/{ws}/access/groups/{group}",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
     // (P4-ONB-1, C-520..C-522, SEC-79) new-user placement
@@ -860,10 +870,10 @@ const ROWS: &[Row] = &[
     // (phase 2, RFE-006) freeze / unfreeze: org owner; workspace and agent: `can_own`.
     r("POST", "/v1/orgs/{org}/freeze", G::Owner, false),
     r("POST", "/v1/orgs/{org}/unfreeze", G::Owner, false),
-    r("POST", "/v1/workspaces/{ws}/freeze", G::WsOwn, false),
-    r("POST", "/v1/workspaces/{ws}/unfreeze", G::WsOwn, false),
-    r("POST", "/v1/agents/{agent}/freeze", G::WsOwn, false),
-    r("POST", "/v1/agents/{agent}/unfreeze", G::WsOwn, false),
+    r("POST", "/v1/workspaces/{ws}/freeze", G::Administer, false),
+    r("POST", "/v1/workspaces/{ws}/unfreeze", G::Administer, false),
+    r("POST", "/v1/agents/{agent}/freeze", G::Administer, false),
+    r("POST", "/v1/agents/{agent}/unfreeze", G::Administer, false),
     r(
         "GET",
         "/v1/orgs/{org}/governance/effective",
@@ -921,40 +931,51 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/orgs/{org}/secrets", G::OrgCred, false),
     r("POST", "/v1/orgs/{org}/secrets", G::Admin, false),
     // ---- workspace-level ----
-    r("GET", "/v1/workspaces/{ws}", G::WsUse, false),
+    r("GET", "/v1/workspaces/{ws}", G::WsUseOrAdminister, false),
     r("PATCH", "/v1/workspaces/{ws}", G::WsOwn, false),
-    r("DELETE", "/v1/workspaces/{ws}", G::WsOwn, false),
-    r("GET", "/v1/workspaces/{ws}/access", G::WsOwn, false),
-    // (P5-UX-5, C-919, C-920, SEC-128) Adding people by e-mail: workspace owners only.
+    r("DELETE", "/v1/workspaces/{ws}", G::Administer, false),
+    r("GET", "/v1/workspaces/{ws}/access", G::Administer, false),
+    // (P5-UX-5, C-919, C-920, SEC-128; FIX-234 C-1160) Adding people by e-mail:
+    // `can_administer`.
     r(
         "POST",
         "/v1/workspaces/{ws}/access/by-email",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
-    r("GET", "/v1/workspaces/{ws}/access/pending", G::WsOwn, false),
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/access/pending",
+        G::Administer,
+        false,
+    ),
     r(
         "DELETE",
         "/v1/workspaces/{ws}/access/pending/{id}",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
-    r("PUT", "/v1/workspaces/{ws}/access/{user}", G::WsOwn, false),
+    r(
+        "PUT",
+        "/v1/workspaces/{ws}/access/{user}",
+        G::Administer,
+        false,
+    ),
     // (P5-APIGAP-4, C-1051) suspend/restore; the body restores (a no-op on the active victim).
     r(
         "PATCH",
         "/v1/workspaces/{ws}/access/{user}",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
     r(
         "DELETE",
         "/v1/workspaces/{ws}/access/{user}",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
     r("GET", "/v1/workspaces/{ws}/activity", G::WsUse, false),
-    r("GET", "/v1/workspaces/{ws}/usage", G::WsUse, false),
+    r("GET", "/v1/workspaces/{ws}/usage", G::Administer, false),
     // (P5-CHAT-4, C-727) message search: workspace member; visibility is applied inside the query.
     r(
         "GET",
@@ -965,19 +986,24 @@ const ROWS: &[Row] = &[
     r(
         "GET",
         "/v1/workspaces/{ws}/members/{user}/offboarding",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
     r(
         "POST",
         "/v1/workspaces/{ws}/automations/reassign",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
     r("GET", "/v1/workspaces/{ws}/agents", G::WsUse, false),
     r("POST", "/v1/workspaces/{ws}/agents", G::WsUse, false),
     // (phase 3, RFE-013, C-313) agent-token lists: workspace owner / org owner or admin.
-    r("GET", "/v1/workspaces/{ws}/agent-tokens", G::WsOwn, false),
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/agent-tokens",
+        G::Administer,
+        false,
+    ),
     r("GET", "/v1/orgs/{org}/agent-tokens", G::Admin, false),
     r("GET", "/v1/workspaces/{ws}/api-keys", G::WsOwn, false),
     r("POST", "/v1/workspaces/{ws}/api-keys", G::WsOwn, true),
@@ -1089,14 +1115,14 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/schedules/{id}", G::WsUse, false),
     r("GET", "/v1/schedules/{id}", G::WsUse, false),
     r("PATCH", "/v1/schedules/{id}", G::WsUse, false),
-    r("PUT", "/v1/schedules/{id}/creator", G::WsOwn, false),
+    r("PUT", "/v1/schedules/{id}/creator", G::Administer, false),
     r("POST", "/v1/schedules/{id}/run-now", G::WsUse, false),
     r("GET", "/v1/schedules/{id}/runs", G::WsUse, false),
     r("DELETE", "/v1/webhooks/{id}", G::WsUse, false),
     r("GET", "/v1/webhooks/{id}", G::WsUse, false),
     r("PATCH", "/v1/webhooks/{id}", G::WsUse, false),
     r("GET", "/v1/webhooks/{id}/deliveries", G::WsUse, false),
-    r("PUT", "/v1/webhooks/{id}/creator", G::WsOwn, false),
+    r("PUT", "/v1/webhooks/{id}/creator", G::Administer, false),
     r("POST", "/v1/webhooks/{id}/rotate", G::WsUse, false),
     // (P5-REFINE-7, C-1078) same callers as `rotate`.
     r("POST", "/v1/webhooks/{id}/rotate-secret", G::WsUse, false),
@@ -1285,7 +1311,7 @@ const ROWS: &[Row] = &[
     r(
         "DELETE",
         "/v1/agents/{agent}/grants/connections/{conn}",
-        G::WsOwn,
+        G::Administer,
         false,
     ),
     r(
@@ -1344,13 +1370,21 @@ const ROWS: &[Row] = &[
     r("POST", "/v1/connections/{id}/webhook/test", G::WsOwn, false),
     r("POST", "/v1/apps/webhook/webhook-preview", G::Auth, false),
     r("GET", "/v1/apps/{app}/webhook-presets", G::Auth, false),
-    r("GET", "/v1/connections/{id}/grants", G::WsOwn, false),
+    // (FIX-234, C-1160) An organization's account: grants, removal and the limit preview are
+    // administered by its org owners and admins; a workspace's account needs own `can_own`.
+    // `{id}` is unseeded here — the org-scope credential block below proves the seeded rows.
+    r("GET", "/v1/connections/{id}/grants", G::Administer, false),
     // (P5-UX-11, C-990) who a lower limit would change: workspace `can_own`, or org owner/admin
     // for an organization's account (a workspace's account has no limit: 400).
-    r("GET", "/v1/connections/{id}/limit-preview", G::WsOwn, false),
+    r(
+        "GET",
+        "/v1/connections/{id}/limit-preview",
+        G::Administer,
+        false,
+    ),
     // (FIX-020) credential-side bulk grants: the credential is addressed by its own id (the
     // per-agent `can_own` is proven in grants_bulk.rs); org scope is covered by the org block.
-    r("POST", "/v1/connections/{id}/grants", G::WsOwn, false),
+    r("POST", "/v1/connections/{id}/grants", G::Administer, false),
     r("GET", "/v1/secrets/{id}/grants", G::WsOwn, false),
     r("POST", "/v1/secrets/{id}/grants", G::WsOwn, false),
     r("GET", "/v1/secrets/{id}", G::WsOwn, false),
@@ -1539,6 +1573,10 @@ fn want(g: G, so: bool, p: P) -> Want {
             if p.is_ws_key() {
                 return Deny(&[403], Some("forbidden"));
             }
+            // (FIX-234, C-1160) An org-level browse route: the org owner/admin rule is
+            // unchanged (the brief keeps `skill_libraries/access.rs` as is), so an
+            // administrator still browses as admin without own access. A plain member needs
+            // own use of a workspace of the org.
             match org_role(p) {
                 Some((role, true)) => {
                     if role != "member" || ws_access(p) != WsAccess::None {
@@ -1546,6 +1584,30 @@ fn want(g: G, so: bool, p: P) -> Want {
                     } else {
                         Deny(&[403], Some("forbidden"))
                     }
+                }
+                _ => Deny(&[404], None),
+            }
+        }
+        // (FIX-234, C-1160) The administer routes: org owner/admin or own-right workspace
+        // owner; everyone else finds nothing (the route refuses before saying whether the
+        // workspace exists). A workspace key acts with its own right, so the same workspace's
+        // key passes, another's mismatches.
+        G::Administer | G::WsUseOrAdminister => {
+            if p == P::WsKeyOther {
+                return Deny(&[403], Some("workspace_mismatch"));
+            }
+            if p == P::WsKeySame {
+                return Allow;
+            }
+            match org_role(p) {
+                Some((role, true)) => {
+                    let admin = role != "member";
+                    let own = ws_access(p);
+                    let ok = match g {
+                        G::Administer => admin || own == WsAccess::Owner,
+                        _ => admin || own != WsAccess::None,
+                    };
+                    if ok { Allow } else { Deny(&[404], None) }
                 }
                 _ => Deny(&[404], None),
             }
@@ -1580,7 +1642,17 @@ fn want(g: G, so: bool, p: P) -> Want {
                 return Deny(&[403], Some("workspace_mismatch"));
             }
             match ws_access(p) {
-                WsAccess::None => Deny(&[404], None),
+                WsAccess::None => {
+                    // (FIX-234, C-1160) An administrator without own access is told they are
+                    // not one of the workspace's people (never the content); anyone else
+                    // finds nothing.
+                    match org_role(p) {
+                        Some((role, true)) if role != "member" => {
+                            Deny(&[403], Some("workspace_access_required"))
+                        }
+                        _ => Deny(&[404], None),
+                    }
+                }
                 WsAccess::Member if matches!(g, G::WsOwn) => Deny(&[403], Some("forbidden")),
                 WsAccess::Approver if matches!(g, G::WsOwn) => Deny(&[403], Some("forbidden")),
                 WsAccess::Member | WsAccess::Approver if matches!(g, G::WsApprove) => {

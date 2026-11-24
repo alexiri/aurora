@@ -178,11 +178,11 @@ async fn delete_authorization_matrix_per_kind() {
         f.call(Method::DELETE, &del(g), &f.owner.1, None).await.0,
         204
     );
-    // org admin is an implicit workspace owner
+    // (FIX-234) The org admin has no workspace right: the conversation stays.
     let g2 = f.conv("api", None).await;
     assert_eq!(
         f.call(Method::DELETE, &del(g2), &f.admin.1, None).await.0,
-        204
+        403
     );
     // unknown id
     assert_eq!(

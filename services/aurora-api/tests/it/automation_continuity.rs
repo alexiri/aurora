@@ -12,7 +12,7 @@ struct Rig {
     org: Uuid,
     ws: Uuid,
     agent: Uuid,
-    /// Org owner (implicit `can_own`).
+    /// Org owner (no workspace binding: D-477).
     admin: Uuid,
     /// Workspace owner by binding.
     owner: Uuid,
@@ -572,7 +572,8 @@ async fn offboarding_view_matches_what_the_removal_disables() {
         r.authority("webhooks", &w_on).await.3.as_deref(),
         Some("authorization")
     );
-    // Admins have implicit access that a binding removal cannot take away: nothing listed.
+    // (FIX-234) The org owner has no binding here, so a binding removal WOULD take their access
+    // away; they created nothing in this workspace, so nothing is listed.
     let (s, v) = r
         .call(
             r.owner,
@@ -749,13 +750,19 @@ async fn anchored_automations_need_an_owner_and_outlive_their_creator() {
     r.fire_due().await;
     assert_eq!(r.last_run(&mine).await.as_deref(), Some("fired"));
     assert_ne!(r.deliver(&wurl).await, 403);
-    // Even the hook's creator (a workspace owner) can go; any other active owner suffices.
+    // (FIX-234) A workspace-anchored item answers to active own-right owners only; the org
+    // owner is no longer a fallback. With the only owner suspended, it stops.
     r.h.set_member_status(r.org, r.owner, "suspended").await;
     r.fire_due().await;
-    assert!(
-        r.authority("schedules", &mine).await.2,
-        "the org owner remains"
+    assert_eq!(
+        r.last_run(&mine).await.as_deref(),
+        Some("skipped_unauthorized")
     );
+    assert_eq!(
+        r.authority("schedules", &mine).await.3.as_deref(),
+        Some("authorization")
+    );
+    assert_eq!(r.deliver(&wurl).await, 403);
     // With every owner suspended, nobody is left to answer for the item.
     r.h.set_member_status(r.org, r.admin, "suspended").await;
     sqlx::query("UPDATE schedules SET next_fire_at = now() - interval '2 days'")
@@ -773,11 +780,12 @@ async fn anchored_automations_need_an_owner_and_outlive_their_creator() {
     );
     assert_eq!(r.deliver(&wurl).await, 403);
 
-    // Back to creator anchoring needs a creator who still has access.
-    r.h.set_member_status(r.org, r.admin, "active").await;
+    // Back to creator anchoring needs a creator who still has access; the admin cannot even
+    // reach the item without own access, so the workspace owner does it (D-477).
+    r.h.set_member_status(r.org, r.owner, "active").await;
     let (s, v) = r
         .call(
-            r.admin,
+            r.owner,
             Method::PATCH,
             &patch,
             Some(json!({"anchor": "creator"})),

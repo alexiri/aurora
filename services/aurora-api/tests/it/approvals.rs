@@ -748,12 +748,25 @@ async fn member_cannot_decide_or_see_approvals_approver_can() {
     assert_eq!(st(single).await, "pending");
     assert_eq!(st(batch1).await, "pending");
 
-    // Approver, owner and org admin see the feed and can decide.
-    for c in [&ac, &oc, &adc] {
+    // Approver and owner see the feed and can decide; the org admin without a binding holds no
+    // `can_approve` (FIX-234, D-477): empty feed, decide refused.
+    for c in [&ac, &oc] {
         let (s, v) = h.get("/v1/approvals/pending", &[("cookie", c)]).await;
         assert_eq!(s.as_u16(), 200);
         assert_eq!(v["items"].as_array().unwrap().len(), 2, "{v}");
     }
+    let (s, v) = h.get("/v1/approvals/pending", &[("cookie", &adc)]).await;
+    assert_eq!(s.as_u16(), 200);
+    assert_eq!(v["items"].as_array().unwrap().len(), 0, "{v}");
+    let (s, v) = post(
+        &h,
+        &format!("/v1/approvals/{single}/decision"),
+        ("cookie", &adc),
+        json!({"decision":"approve"}),
+    )
+    .await;
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(v["error"]["code"], "approver_required", "{v}");
     let (s, v) = post(
         &h,
         &format!("/v1/approvals/{single}/decision"),

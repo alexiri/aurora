@@ -32,7 +32,7 @@ struct Fx {
     m: Who,
     /// Workspace owner (binding `owner`).
     o: Who,
-    /// Org admin (implicit owner, no binding).
+    /// Org admin (no workspace binding: D-477).
     a: Who,
     /// The direct conversation of `u`.
     conv: Uuid,
@@ -197,11 +197,12 @@ async fn read_routes_follow_visibility_for_every_credential() {
     f.event().await;
     let get = format!("/v1/conversations/{}", f.conv);
     let events = format!("/v1/conversations/{}/events", f.conv);
-    // 200 for the direct user and for owners (workspace owner, org admin); 404 for a member.
+    // 200 for the direct user and the workspace owner; 403 `workspace_access_required` for the
+    // org admin without a binding (D-477); 404 for a member.
     for (name, who, want) in [
         ("u", &f.u, 200),
         ("o", &f.o, 200),
-        ("a", &f.a, 200),
+        ("a", &f.a, 403),
         ("m", &f.m, 404),
     ] {
         for cred in Fx::creds(who) {
@@ -227,7 +228,7 @@ async fn read_routes_follow_visibility_for_every_credential() {
 async fn other_kinds_stay_visible_to_every_member() {
     let f = fx().await;
     let g = f.group_conv().await;
-    for who in [&f.u, &f.m, &f.o, &f.a] {
+    for who in [&f.u, &f.m, &f.o] {
         let (s, _) = f
             .req(
                 Method::GET,
@@ -238,6 +239,16 @@ async fn other_kinds_stay_visible_to_every_member() {
             .await;
         assert_eq!(s, 200);
     }
+    // The org admin has no own access (D-477): even a group conversation is refused.
+    let (s, _) = f
+        .req(
+            Method::GET,
+            &format!("/v1/conversations/{g}"),
+            ("cookie", &f.a.cookie),
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
 }
 
 #[tokio::test]
@@ -245,22 +256,33 @@ async fn owners_cannot_post_or_upload_but_member_gets_404() {
     let f = fx().await;
     let post = format!("/v1/conversations/{}/messages", f.conv);
     let up = format!("/v1/conversations/{}/attachments", f.conv);
-    for who in [&f.o, &f.a] {
-        for cred in Fx::creds(who) {
-            let (s, v) = f
-                .req(
-                    Method::POST,
-                    &post,
-                    cred,
-                    Some(json!({"text": "hi as the user"})),
-                )
-                .await;
-            assert_eq!(s, 403, "{v}");
-            assert_eq!(v["error"]["code"], "direct_conversation_forbidden", "{v}");
-        }
-        let res = upload(&f, &up, &who.cookie).await;
-        assert_eq!(res, 403);
+    for cred in Fx::creds(&f.o) {
+        let (s, v) = f
+            .req(
+                Method::POST,
+                &post,
+                cred,
+                Some(json!({"text": "hi as the user"})),
+            )
+            .await;
+        assert_eq!(s, 403, "{v}");
+        assert_eq!(v["error"]["code"], "direct_conversation_forbidden", "{v}");
     }
+    assert_eq!(upload(&f, &up, &f.o.cookie).await, 403);
+    // The org admin without a binding is refused before the direct-conversation rule (D-477).
+    for cred in Fx::creds(&f.a) {
+        let (s, v) = f
+            .req(
+                Method::POST,
+                &post,
+                cred,
+                Some(json!({"text": "hi as the admin"})),
+            )
+            .await;
+        assert_eq!(s, 403, "{v}");
+        assert_eq!(v["error"]["code"], "workspace_access_required", "{v}");
+    }
+    assert_eq!(upload(&f, &up, &f.a.cookie).await, 403);
     for cred in Fx::creds(&f.m) {
         let (s, _) = f
             .req(Method::POST, &post, cred, Some(json!({"text": "hi"})))
@@ -366,7 +388,7 @@ async fn owners_can_abort_and_send_now_but_members_get_404() {
         .req(
             Method::POST,
             &format!("/v1/turns/{turn}/abort"),
-            ("cookie", &f.a.cookie),
+            ("cookie", &f.o.cookie),
             None,
         )
         .await;
@@ -402,10 +424,12 @@ async fn conversation_list_shows_owners_every_direct_conversation() {
     for i in v["items"].as_array().unwrap() {
         assert_eq!(i["direct_user"]["id"], i["direct_user_id"], "{i}");
     }
-    let (_, v) = f
+    // The org admin without a binding is refused (D-477).
+    let (s, v) = f
         .req(Method::GET, &list, ("authorization", &f.a.org_key), None)
         .await;
-    assert_eq!(ids(&v).len(), 2);
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(v["error"]["code"], "workspace_access_required");
 }
 
 #[tokio::test]
@@ -446,7 +470,7 @@ async fn approvals_naming_a_direct_conversation_are_hidden_from_other_members() 
     let plain = f.approval(None).await;
     let list = format!("/v1/workspaces/{}/approvals", f.ws);
     // History.
-    for (who, want) in [(&f.u, 2), (&f.o, 2), (&f.a, 2), (&f.m, 1)] {
+    for (who, want) in [(&f.u, 2), (&f.o, 2), (&f.m, 1)] {
         let (s, v) = f
             .req(Method::GET, &list, ("cookie", &who.cookie), None)
             .await;
@@ -456,6 +480,11 @@ async fn approvals_naming_a_direct_conversation_are_hidden_from_other_members() 
         assert!(got.contains(&plain.to_string()));
         assert_eq!(got.contains(&dm.to_string()), want == 2);
     }
+    // The org admin without a binding is refused (D-477).
+    let (s, _) = f
+        .req(Method::GET, &list, ("cookie", &f.a.cookie), None)
+        .await;
+    assert_eq!(s, 403);
     // P5-AGENT-1 (C-700): the `agent_id` filter never reveals a hidden direct approval.
     let filtered = format!("{list}?agent_id={}", f.agent);
     for (who, want) in [(&f.o, 2), (&f.m, 1)] {
@@ -630,13 +659,18 @@ async fn activity_rows_of_invisible_direct_conversations_are_omitted() {
         .execute(f.h.pool()).await.unwrap();
     }
     let uri = format!("/v1/workspaces/{}/activity", f.ws);
-    for (who, want) in [(&f.u, 2), (&f.o, 2), (&f.a, 2), (&f.m, 1)] {
+    for (who, want) in [(&f.u, 2), (&f.o, 2), (&f.m, 1)] {
         for cred in Fx::creds(who) {
             let (s, v) = f.req(Method::GET, &uri, cred, None).await;
             assert_eq!(s, 200);
             assert_eq!(v["items"].as_array().unwrap().len(), want, "{v}");
         }
     }
+    // The org admin without a binding is refused (D-477).
+    let (s, _) = f
+        .req(Method::GET, &uri, ("cookie", &f.a.cookie), None)
+        .await;
+    assert_eq!(s, 403);
     // Filtering by the conversation cannot reveal it either.
     let (_, v) = f
         .req(
@@ -722,9 +756,17 @@ async fn owner_reads_write_one_audit_row_per_hour_and_own_reads_none() {
     .await
     .unwrap();
     assert_eq!(rows, vec![(Some(f.o.id), Some(f.conv.to_string()))]);
-    // A different owner gets their own row.
+    // A different owner gets their own row: `m` is raised to owner in their own right.
+    sqlx::query(
+        "UPDATE workspace_access SET role = 'owner' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(f.ws)
+    .bind(f.m.id)
+    .execute(f.h.pool())
+    .await
+    .unwrap();
     let (s, _) = f
-        .req(Method::GET, &uri, ("cookie", &f.a.cookie), None)
+        .req(Method::GET, &uri, ("cookie", &f.m.cookie), None)
         .await;
     assert_eq!(s, 200);
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -742,7 +784,7 @@ async fn can_see_conversation_predicate_matches_the_sql_fragment() {
     use aurora_db::authz;
     let f = fx().await;
     let g = f.group_conv().await;
-    for (who, dm) in [(&f.u, true), (&f.m, false), (&f.o, true), (&f.a, true)] {
+    for (who, dm) in [(&f.u, true), (&f.m, false), (&f.o, true)] {
         assert_eq!(
             authz::can_see_conversation_id(f.h.pool(), who.id, f.conv)
                 .await
@@ -755,6 +797,17 @@ async fn can_see_conversation_predicate_matches_the_sql_fragment() {
                 .unwrap()
         );
     }
+    // The org admin has no binding (D-477): neither conversation is theirs to see.
+    assert!(
+        !authz::can_see_conversation_id(f.h.pool(), f.a.id, f.conv)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !authz::can_see_conversation_id(f.h.pool(), f.a.id, g)
+            .await
+            .unwrap()
+    );
     let hidden = authz::hidden_conversations(f.h.pool(), f.m.id, &[f.conv, g])
         .await
         .unwrap();

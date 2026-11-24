@@ -3191,7 +3191,7 @@ async fn an_org_admin_without_an_attached_own_agent_gets_the_not_set_up_reply() 
         "{t:?}"
     );
     assert!(!t[0].contains("Team"), "{t:?}");
-    // No own agent at all (only the implicit admin role): create one or ask the owners.
+    // No own agent at all (an org role is no reach since FIX-234): create one or ask the owners.
     w.post(w.integ, "e2", dm("U2", "hi", "B1")).await;
     assert_eq!(w.outcome("e2").await["result"], "not_set_up");
     let t = texts().await;

@@ -107,9 +107,10 @@ async fn a_usable_key_not_given_is_offered_to_owners_and_never_named_to_members(
     assert_eq!(v["fix"]["key"]["name"], "Company key");
     assert_eq!(v["fix"]["key"]["scope"], "organization");
 
-    // An organization admin is an implicit owner: the same fix.
-    let (_, v) = get(&r, &admin, a).await;
-    assert_eq!(v["fix"]["action"], "give_key", "{v}");
+    // (FIX-234) An organization admin without own access is refused (D-477).
+    let (s, v) = get(&r, &admin, a).await;
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(v["error"]["code"], "workspace_access_required");
 
     // A member cannot give it: the roles that can, and not a trace of the key's name.
     let (s, v) = get(&r, &r.cookie, a).await;

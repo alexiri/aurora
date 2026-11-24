@@ -4,7 +4,7 @@
 //! (routes of every FIX-181 family, workspace API keys, the access law the terminal, SSH, Files and
 //! previews re-check, approval decisions and mail, the gateway's speaker law, group-derived
 //! access); their open streams end; their speaker turns there end; other workspaces are untouched;
-//! restore gives everything back. Refusals: self, an implicit org owner/admin, an IdP-claimed
+//! restore gives everything back. Refusals: self, an IdP-claimed binding,
 //! binding, a person without a direct binding, a caller who is not an owner. Both are audited.
 
 use crate::common::*;
@@ -28,6 +28,8 @@ struct World {
     /// Workspace owner (direct binding) who suspends.
     owner: Uuid,
     owner_cookie: String,
+    /// The org owner: no workspace binding since FIX-234 (D-477).
+    boss: Uuid,
     /// The person: `approver` in `ws` and in `other`.
     person: Uuid,
     person_cookie: String,
@@ -63,6 +65,7 @@ async fn world() -> World {
         other_agent,
         owner,
         owner_cookie: cookie(&otok),
+        boss,
         person,
         person_cookie: cookie(&ptok),
         person_key: bearer(&key),
@@ -128,7 +131,7 @@ fn row(list: &Value, user: Uuid) -> &Value {
 }
 
 #[tokio::test]
-async fn joined_at_is_the_binding_time_and_null_for_an_implicit_owner() {
+async fn joined_at_is_the_binding_time() {
     let w = world().await;
     let created: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
         "SELECT created_at FROM workspace_access WHERE workspace_id = $1 AND user_id = $2",
@@ -152,19 +155,18 @@ async fn joined_at_is_the_binding_time_and_null_for_an_implicit_owner() {
     let joined: chrono::DateTime<chrono::Utc> =
         serde_json::from_value(p["joined_at"].clone()).unwrap();
     assert_eq!(joined, created);
-    // The org owner has access only through the org role: no direct row, no recorded start.
-    let boss = v["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["implicit"] == json!(true))
-        .unwrap();
-    assert!(boss["joined_at"].is_null(), "{boss}");
-    assert_eq!(boss["status"], "active");
+    // (FIX-234) An org role is no access: the org owner without a binding is not in the list.
+    assert!(
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["user_id"] != json!(w.boss))
+    );
 }
 
-/// (P5-REFINE-6, C-1086) `signed_in` is `users.last_login_at IS NOT NULL`, on direct and implicit
-/// rows; the callers are unchanged (a member who does not own the workspace is refused).
+/// (P5-REFINE-6, C-1086) `signed_in` is `users.last_login_at IS NOT NULL`, on the direct rows;
+/// the callers are unchanged (a member who does not own the workspace is refused).
 #[tokio::test]
 async fn signed_in_says_whether_the_person_has_signed_in_yet() {
     let w = world().await;
@@ -182,13 +184,6 @@ async fn signed_in_says_whether_the_person_has_signed_in_yet() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(row(&v, w.person)["signed_in"], json!(true), "{v}");
     assert_eq!(row(&v, w.owner)["signed_in"], json!(false), "{v}");
-    let boss = v["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["implicit"] == json!(true))
-        .unwrap();
-    assert_eq!(boss["signed_in"], json!(false), "{boss}");
     // The approver is not an owner of the workspace: refused as before.
     let (s, _) = w.h.call(&w.person_cookie, Method::GET, &uri, None).await;
     assert_eq!(s, 403);
@@ -376,7 +371,7 @@ async fn group_access_does_not_survive_a_suspension() {
 }
 
 #[tokio::test]
-async fn refusals_self_implicit_idp_unbound_and_non_owner() {
+async fn refusals_self_idp_unbound_and_non_owner() {
     let w = world().await;
     // Yourself.
     let (s, v) = w.set(&w.owner_cookie, w.owner, "suspended").await;
@@ -385,16 +380,13 @@ async fn refusals_self_implicit_idp_unbound_and_non_owner() {
         (409, Some("cannot_suspend_self")),
         "{v}"
     );
-    // An org admin (implicit owner) who also holds a direct row.
+    // An org admin who also holds a direct row: the row is real (D-477), so it suspends like
+    // anyone's.
     let admin = w.h.user("admin@x.io", false).await;
     w.h.member(w.org, admin, "admin", "active").await;
     w.h.bind_ws(w.ws, admin, "member").await;
     let (s, v) = w.set(&w.owner_cookie, admin, "suspended").await;
-    assert_eq!(
-        (s, v["error"]["code"].as_str()),
-        (409, Some("implicit_access")),
-        "{v}"
-    );
+    assert_eq!(s, 200, "{v}");
     // An IdP-claimed binding.
     let claimed = w.h.user("claimed@x.io", false).await;
     w.h.member(w.org, claimed, "member", "active").await;

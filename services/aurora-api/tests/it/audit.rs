@@ -228,6 +228,8 @@ async fn workspace_audit_requires_can_own() {
     h.member(org, owner, "owner", "active").await;
     h.member(org, member, "member", "active").await;
     let ws = h.workspace(org).await;
+    // (FIX-234) The route reads the workspace's own law: the caller needs own `can_own`.
+    h.bind_ws(ws, owner, "owner").await;
     h.bind_ws(ws, member, "member").await;
     let (_, ot) = h.good_session(owner).await;
     let (_, mt) = h.good_session(member).await;

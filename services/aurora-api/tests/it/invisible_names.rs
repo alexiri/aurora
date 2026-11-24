@@ -27,6 +27,8 @@ async fn rig() -> Rig {
     let ws = h.workspace(org).await;
     let owner = h.user("owner@x.io", false).await;
     h.member(org, owner, "owner", "active").await;
+    // (FIX-234) The workspace-scoped names are managed with an own `owner` binding.
+    h.bind_ws(ws, owner, "owner").await;
     let agent = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, effort, brief) \

@@ -48,6 +48,8 @@ async fn world_with(helm: Option<&str>) -> W {
     let (_, atok) = h.good_session(a).await;
     let o = h.user("o@x.io", false).await;
     h.member(org, o, "owner", "active").await;
+    // (FIX-234) Creating the workspace's agent needs an own `can_use`/`can_own` right.
+    h.bind_ws(ws, o, "owner").await;
     let (_, owner) = h.good_session(o).await;
     W {
         h,

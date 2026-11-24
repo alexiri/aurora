@@ -101,7 +101,7 @@ async fn mail_goes_to_explicit_deciders_after_the_delay_with_title_and_link_only
 }
 
 #[tokio::test]
-async fn org_owners_and_admins_when_the_workspace_has_no_explicit_decider() {
+async fn nobody_is_notified_when_the_workspace_has_no_explicit_decider() {
     let h = Harness::new().await;
     let f = fixture(&h).await;
     person(&h, &f, "plain@x.io", "member", Some("member")).await;
@@ -110,10 +110,9 @@ async fn org_owners_and_admins_when_the_workspace_has_no_explicit_decider() {
     titled(&h, &f, None, None).await;
     age(&h).await;
     notify_once(&h.state).await.unwrap();
-    assert_eq!(
-        recipients(&h),
-        BTreeSet::from(["admin@x.io".to_owned(), "own@x.io".to_owned()])
-    );
+    // (FIX-234, D-477) Org owners/admins are no decider fallback: without an own-right
+    // approver/owner the approval has nobody to notify (the access report flags it).
+    assert_eq!(recipients(&h), BTreeSet::new());
 }
 
 #[tokio::test]

@@ -389,7 +389,8 @@ async fn workspace_visibility_and_ownership() {
     .await;
     assert_eq!(s, 403);
 
-    // access list includes implicit owner + explicit member
+    // access list: the creator's own owner binding + the explicit member (no implicit rows
+    // since D-477)
     let (s, acc) = call(&h, &ot, Method::GET, &format!("{wsu}/access"), None).await;
     assert_eq!(s, 200);
     let items = acc["items"].as_array().unwrap();
@@ -397,7 +398,7 @@ async fn workspace_visibility_and_ownership() {
     assert!(
         items
             .iter()
-            .any(|i| i["implicit"] == true && i["role"] == "owner")
+            .any(|i| i["implicit"] == false && i["role"] == "owner")
     );
 
     // promote to owner, patch works
@@ -450,7 +451,9 @@ async fn workspace_visibility_and_ownership() {
             .fetch_one(h.pool())
             .await
             .unwrap();
-    let (s, v) = call(
+    // (FIX-234) An org role grants no workspace right, so the creator's binding is a real row
+    // and is removed like anyone's; a second delete is 404.
+    let (s, _) = call(
         &h,
         &ot,
         Method::DELETE,
@@ -458,7 +461,7 @@ async fn workspace_visibility_and_ownership() {
         None,
     )
     .await;
-    assert_eq!((s, code(&v)), (422, "implicit_access"));
+    assert_eq!(s, 204);
     let (s, _) = call(&h, &ot, Method::DELETE, &format!("{wsu}/access/{m}"), None).await;
     assert_eq!(s, 204);
     let (s, _) = call(&h, &ot, Method::DELETE, &format!("{wsu}/access/{m}"), None).await;

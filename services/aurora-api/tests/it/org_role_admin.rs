@@ -1,0 +1,819 @@
+//! SEC-153's proving tests for FIX-234 (D-477, C-1160, C-1161, D-480): an organization role
+//! administers workspaces, it does not use them.
+//!
+//! - The owner's case: an org admin with no binding in Bob's personal workspace can neither read
+//!   nor act there by any route or gateway path; they can still freeze Bob's agent.
+//! - The personal-workspace rules (C-1161): only the person adds people, group bindings and
+//!   raises; remove, suspend, delete stay with `can_administer`; the person is protected.
+//! - Self-grants: session-only, audited critical, owners told; a group the admin belongs to
+//!   counts; someone else does not.
+//! - The admin's own setups stop: a creator-anchored schedule is disabled at its next fire.
+//! - `Workspace` GET by an administrator: `my_role` null, `administers: true`, `audience`.
+
+use crate::common::*;
+use aurora_db::repo::gateway;
+use axum::http::Method;
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+fn code(v: &Value) -> &str {
+    v["error"]["code"].as_str().unwrap_or("")
+}
+
+/// Bob's personal workspace: the person bound `owner` (D-480), an agent, the admin with no
+/// binding, and a workspace-scope connection of the org.
+struct OwnerCase {
+    h: Harness,
+    org: Uuid,
+    ws: Uuid,
+    agent: Uuid,
+    bob: Uuid,
+    bob_cookie: String,
+    admin: Uuid,
+    admin_cookie: String,
+    admin_org_key: String,
+    conv: Uuid,
+    conn: Uuid,
+}
+
+async fn owner_case() -> OwnerCase {
+    let h = Harness::new().await;
+    let org = h.org().await;
+    let bob = h.user("bob@x.io", false).await;
+    h.member(org, bob, "member", "active").await;
+    let ws = h.workspace_owned_by(org, bob).await;
+    // The personal-workspace marker (a personal workspace as the creation path leaves it).
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2, personal = true WHERE id = $1")
+        .bind(ws)
+        .bind(bob)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let agent = h.byo_agent(org, ws, "bot", "Bot").await;
+    let admin = h.user("admin@x.io", false).await;
+    h.member(org, admin, "admin", "active").await;
+    let (_, bob_tok) = h.good_session(bob).await;
+    let (_, admin_tok) = h.good_session(admin).await;
+    let (_, admin_ok) = h.api_key(admin, org, None, false).await;
+    // Bob's direct conversation.
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &format!("/v1/agents/{agent}/conversations/direct"),
+            &[("cookie", &cookie(&bob_tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let conv: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // A workspace-scope connection (the org's own accounts are administered, this one is not).
+    let conn = Uuid::now_v7();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,$3,'acme_app','acme','1.0.0','c','active','x')")
+        .bind(conn)
+        .bind(org)
+        .bind(ws)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    OwnerCase {
+        h,
+        org,
+        ws,
+        agent,
+        bob,
+        bob_cookie: cookie(&bob_tok),
+        admin,
+        admin_cookie: cookie(&admin_tok),
+        admin_org_key: bearer(&admin_ok),
+        conv,
+        conn,
+    }
+}
+
+impl OwnerCase {
+    async fn call(&self, who: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
+        self.h.call(who, m, uri, body).await
+    }
+
+    async fn req(&self, who: &str, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
+        let (s, _, v) = self
+            .h
+            .send(m, uri, &[("cookie", who), ("origin", ORIGIN)], body)
+            .await;
+        (s.as_u16(), v)
+    }
+
+    async fn approval(&self, conv: Option<Uuid>) -> Uuid {
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO approvals (id, org_id, workspace_id, agent_id, gateway_instance_id, conversation_id,
+                method, host, path, summary, status, deadline)
+             VALUES ($1,$2,$3,$4,$5,$6,'POST','api.example.com','/x',
+                '{\"title\":\"T\",\"fields\":[],\"text\":null,\"link\":null,\"group\":null,\"source\":\"generic\"}',
+                'pending', now() + interval '5 minutes')",
+        )
+        .bind(id)
+        .bind(self.org)
+        .bind(self.ws)
+        .bind(self.agent)
+        .bind(Uuid::now_v7())
+        .bind(conv)
+        .execute(self.h.pool())
+        .await
+        .unwrap();
+        id
+    }
+}
+
+/// The owner's case: every use is refused with `workspace_access_required`; administering
+/// (freeze) works and names `org_admin` as its authority.
+#[tokio::test]
+async fn an_admin_without_own_access_cannot_use_bobs_personal_workspace() {
+    let f = owner_case().await;
+    let ws = f.ws.to_string();
+    let agent = f.agent.to_string();
+    let conv = f.conv.to_string();
+
+    // Using the agent: post a message, open a conversation, create a schedule. (`POST …/
+    // conversations` makes `api` conversations and refuses sessions before the workspace is
+    // looked at; the org key below proves the same denial on the workspace's law.)
+    for (m, uri, body) in [
+        (
+            Method::POST,
+            format!("/v1/agents/{agent}/conversations/direct"),
+            None,
+        ),
+        (
+            Method::POST,
+            format!("/v1/agents/{agent}/schedules"),
+            Some(json!({"name": "s", "prompt": "p", "cron": "0 9 * * *"})),
+        ),
+    ] {
+        let (s, v) = f.req(&f.admin_cookie, m, &uri, body).await;
+        assert_eq!(
+            (s, code(&v)),
+            (403, "workspace_access_required"),
+            "{uri}: {v}"
+        );
+    }
+    let (s, v) = f
+        .req(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/agents/{agent}/conversations"),
+            Some(json!({"external_ref": "x"})),
+        )
+        .await;
+    assert_eq!(
+        (s, code(&v)),
+        (403, "forbidden"),
+        "api conversations are key-only: {v}"
+    );
+    {
+        let (s, _, v) =
+            f.h.send(
+                Method::POST,
+                &format!("/v1/agents/{agent}/conversations"),
+                &[("authorization", &f.admin_org_key), ("origin", ORIGIN)],
+                Some(json!({"external_ref": "x"})),
+            )
+            .await;
+        assert_eq!(
+            (s.as_u16(), code(&v)),
+            (403, "workspace_access_required"),
+            "{v}"
+        );
+    }
+
+    // Reading Bob's direct conversation, its export and the workspace search.
+    for (m, uri) in [
+        (Method::GET, format!("/v1/conversations/{conv}")),
+        (Method::GET, format!("/v1/conversations/{conv}/export")),
+        (Method::GET, format!("/v1/conversations/{conv}/events")),
+        (
+            Method::GET,
+            format!("/v1/workspaces/{ws}/messages/search?q=hi"),
+        ),
+    ] {
+        let (s, v) = f.req(&f.admin_cookie, m, &uri, None).await;
+        assert_eq!(
+            (s, code(&v)),
+            (403, "workspace_access_required"),
+            "{uri}: {v}"
+        );
+    }
+
+    // The gateway's law agrees: the admin holds no `can_use`.
+    assert!(
+        !gateway::can_use(f.h.pool(), f.ws, f.admin).await.unwrap(),
+        "the gateway must not accept the org admin"
+    );
+
+    // An approval of Bob's agent is invisible in the admin's feed; deciding it is 403.
+    let appr = f.approval(Some(f.conv)).await;
+    let (s, v) = f
+        .call(&f.admin_cookie, Method::GET, "/v1/approvals/pending", None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        !v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["id"] == json!(appr.to_string())),
+        "{v}"
+    );
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/approvals/{appr}/decision"),
+            Some(json!({"decision": "approve"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "workspace_access_required"), "{v}");
+
+    // Granting Bob's workspace connection to another agent is refused (a workspace's
+    // connection needs own `can_own`).
+    let (s, v) = f
+        .req(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/connections/{}/grants", f.conn),
+            Some(json!({"agent_ids": [f.agent], "mode": "full"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "workspace_access_required"), "{v}");
+
+    // Freezing Bob's agent works — administering, authority `org_admin`.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/agents/{agent}/freeze"),
+            Some(json!({"reason": "r"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["frozen"]["authority"], "org_admin", "{v}");
+
+    // The org key is refused exactly like the session.
+    let (s, _, v) =
+        f.h.send(
+            Method::GET,
+            &format!("/v1/conversations/{conv}"),
+            &[("authorization", &f.admin_org_key), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(
+        (s.as_u16(), code(&v)),
+        (403, "workspace_access_required"),
+        "{v}"
+    );
+}
+
+/// The personal-workspace rules (C-1161): the admin's adds and raises are refused, their
+/// remove/suspend/delete work, the person is protected and can add people.
+#[tokio::test]
+async fn personal_workspace_adds_are_the_persons_alone() {
+    let f = owner_case().await;
+    let ws = f.ws;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+
+    // Adding a person: 403 `personal_workspace_owner_only`.
+    let uri = format!("/v1/workspaces/{ws}/access/{carol}");
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &uri,
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "personal_workspace_owner_only"), "{v}");
+    // By e-mail: the same refusal.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/workspaces/{ws}/access/by-email"),
+            Some(json!({"email": "new@x.io", "role": "member"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "personal_workspace_owner_only"), "{v}");
+    // A group binding: the same refusal.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "g"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let g: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/groups/{g}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "personal_workspace_owner_only"), "{v}");
+
+    // The person adds Carol; then the admin's raise is refused, the remove works.
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/{carol}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/{carol}"),
+            Some(json!({"role": "owner"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "personal_workspace_owner_only"), "{v}");
+    let (s, _) = f
+        .call(
+            &f.admin_cookie,
+            Method::DELETE,
+            &format!("/v1/workspaces/{ws}/access/{carol}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204);
+
+    // Suspending Carol works (not a raise, an administer act).
+    f.h.bind_ws(ws, carol, "member").await;
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PATCH,
+            &format!("/v1/workspaces/{ws}/access/{carol}"),
+            Some(json!({"status": "suspended"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // The person is protected: never lowered, suspended or removed by the admin.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PATCH,
+            &format!("/v1/workspaces/{ws}/access/{}", f.bob),
+            Some(json!({"status": "suspended"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "personal_workspace_person"), "{v}");
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::DELETE,
+            &format!("/v1/workspaces/{ws}/access/{}", f.bob),
+            None,
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "personal_workspace_person"), "{v}");
+
+    // Deleting the workspace works (administering) — the slug confirms.
+    let slug: String = sqlx::query_scalar("SELECT slug FROM workspaces WHERE id = $1")
+        .bind(ws)
+        .fetch_one(f.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::DELETE,
+            &format!("/v1/workspaces/{ws}"),
+            Some(json!({"confirm": slug})),
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+}
+
+/// A self-grant needs a session, writes the critical audit row and tells the owners; a group the
+/// admin belongs to counts; granting someone else is not a self-grant. The shared workspace (Bob
+/// its own-right owner) is the stage: in Bob's personal workspace the person-alone rule would
+/// refuse every add before the self-grant rules come into play.
+#[tokio::test]
+async fn self_grant_rules() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+
+    // An API key is refused.
+    let (s, _, v) =
+        f.h.send(
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/{}", f.admin),
+            &[("authorization", &f.admin_org_key), ("origin", ORIGIN)],
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!((s.as_u16(), code(&v)), (403, "session_required"), "{v}");
+
+    // By session: 200, the critical audit row, and Bob (the workspace's owner) is told.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/{}", f.admin),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let rows: Vec<Value> = sqlx::query_scalar(
+        "SELECT metadata FROM audit_log WHERE action = 'workspace_access.self_grant' \
+         AND workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_all(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["via"], "user", "{rows:?}");
+    let mail = f.h.mail.sent();
+    assert!(
+        mail.iter()
+            .any(|m| m.to == "bob@x.io" && m.body.contains("gave themselves member access to")),
+        "{mail:?}"
+    );
+
+    // A group the admin belongs to counts as a self-grant too (`via: "group"`).
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::DELETE,
+            &format!("/v1/workspaces/{ws}/access/{}", f.admin),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "admins-g"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let g: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // Group membership is an organization act (org owner/admin), not the workspace's.
+    let (s, _) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/groups/{g}/members/{}", f.admin),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200);
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/groups/{g}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let via: Vec<String> = sqlx::query_scalar(
+        "SELECT metadata->>'via' FROM audit_log WHERE action = 'workspace_access.self_grant' \
+         AND workspace_id = $1 ORDER BY created_at",
+    )
+    .bind(ws)
+    .fetch_all(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(via, vec!["user", "group"], "{via:?}");
+
+    // Adding someone else is not a self-grant: no row, no mail.
+    let carol = f.h.user("carol2@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    let before = f.h.mail.sent().len();
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/{carol}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'workspace_access.self_grant' \
+         AND workspace_id = $1 AND target_id = $2",
+    )
+    .bind(ws)
+    .bind(carol.to_string())
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0);
+    assert_eq!(f.h.mail.sent().len(), before);
+}
+
+/// The admin's own setups stop: a creator-anchored schedule of an admin without own access is
+/// disabled at its next fire (`authorization`).
+#[tokio::test]
+async fn an_admins_schedule_stops_at_its_next_fire() {
+    let f = owner_case().await;
+    // Bob creates the schedule; the "admin" is its creator, as an admin's leftover setup is.
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::POST,
+            &format!("/v1/agents/{}/schedules", f.agent),
+            Some(json!({"name": "s", "prompt": "p", "cron": "0 9 * * *"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let id: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query("UPDATE schedules SET creator_user_id = $2 WHERE id = $1")
+        .bind(id)
+        .bind(f.admin)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE schedules SET next_fire_at = now() - interval '2 days' WHERE id = $1")
+        .bind(id)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    let mut tx = f.h.pool().begin().await.unwrap();
+    aurora_api::domains::schedules::fire::arm9(&f.h.state, &mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let outcome: String = sqlx::query_scalar(
+        "SELECT outcome FROM schedule_runs WHERE schedule_id = $1 \
+         ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(outcome, "skipped_unauthorized");
+    let (enabled, reason): (bool, Option<String>) =
+        sqlx::query_as("SELECT enabled, disabled_reason FROM schedules WHERE id = $1")
+            .bind(id)
+            .fetch_one(f.h.pool())
+            .await
+            .unwrap();
+    assert!(!enabled);
+    assert_eq!(reason.as_deref(), Some("authorization"));
+}
+
+/// `Workspace` GET by an administrator: `my_role` null, `administers: true`, and the `audience`
+/// counts own-right people (suspended excluded) with at most five owners.
+#[tokio::test]
+async fn workspace_get_by_an_administrator_names_the_audience() {
+    let f = owner_case().await;
+    let ws = f.ws;
+    // Carol reaches the workspace through a group; Dave is suspended; six more owners.
+    let carol = f.h.user("carol3@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    let dave = f.h.user("dave@x.io", false).await;
+    f.h.member(f.org, dave, "member", "active").await;
+    let mut more = Vec::new();
+    for i in 0..6 {
+        let u = f.h.user(&format!("o{i}@x.io"), false).await;
+        f.h.member(f.org, u, "member", "active").await;
+        f.h.bind_ws(ws, u, "owner").await;
+        more.push(u);
+    }
+    f.h.bind_ws(ws, dave, "member").await;
+    sqlx::query(
+        "UPDATE workspace_access SET status = 'suspended' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(dave)
+    .execute(f.h.pool())
+    .await
+    .unwrap();
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "g3"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let g: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, _) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/groups/{g}/members/{carol}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200);
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/groups/{g}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // The administrator: no own access, administers, the audience counts 8 people
+    // (bob, carol, six owners; dave suspended excluded) and caps the owners at five.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["my_role"].is_null(), "{v}");
+    assert_eq!(v["administers"], json!(true), "{v}");
+    assert_eq!(v["audience"]["people"], json!(8), "{v}");
+    assert_eq!(v["audience"]["owners"].as_array().unwrap().len(), 5, "{v}");
+    assert_eq!(v["audience"]["owners_total"], json!(7), "{v}");
+
+    // An own-right owner reads in full and is named first.
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["my_role"], json!("owner"), "{v}");
+    assert_eq!(v["administers"], json!(true), "{v}");
+    assert_eq!(
+        v["audience"]["owners"][0]["id"],
+        json!(f.bob.to_string()),
+        "{v}"
+    );
+}
+
+/// The access report (C-1163): a seeded instance lists each of the five gaps and writes nothing.
+#[tokio::test]
+async fn the_access_report_lists_every_gap_and_writes_nothing() {
+    let f = owner_case().await;
+    let org = f.org;
+    // 1: an ownerless shared workspace.
+    let orphan = f.h.workspace(org).await;
+    // 2: a creator-anchored schedule whose creator (the admin) has no own access, in the
+    //    ownerless workspace.
+    let agent2 = f.h.byo_agent(org, orphan, "bot2", "Bot2").await;
+    sqlx::query("INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, creator_user_id) VALUES ($1,$2,'nightly','p','0 9 * * *','UTC',$3)")
+        .bind(Uuid::now_v7())
+        .bind(agent2)
+        .bind(f.admin)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    // 3: a space binding bound by the admin, who has no access to the agent's workspace.
+    sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('mattermost', $1, 'Mattermost', '{}', 'active')")
+        .bind(vec![0u8; 32])
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    let integ = Uuid::now_v7();
+    sqlx::query("INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label, config, credentials_ref, status) VALUES ($1,$2,'mattermost','T1','T1','{}','x','active')")
+        .bind(integ)
+        .bind(org)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO space_bindings (id, integration_id, space_ref, space_label, agent_id, listen, bound_by_user_id) VALUES ($1,$2,'ch/town','town-square',$3,'mentions',$4)")
+        .bind(Uuid::now_v7())
+        .bind(integ)
+        .bind(f.agent)
+        .bind(f.admin)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    // 4: a live `auo_` org key of the admin.
+    let key = Uuid::now_v7();
+    sqlx::query("INSERT INTO api_keys (id, org_id, workspace_id, user_id, kind, name, token_hash, display_prefix) VALUES ($1,$2,NULL,$3,'user','org key',sha256('auo'::bytea),'auo_x')")
+        .bind(key)
+        .bind(org)
+        .bind(f.admin)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    // 5: a pending approval in the ownerless workspace (no own-right decider).
+    let appr = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, gateway_instance_id, conversation_id,
+            method, host, path, summary, status, deadline)
+         VALUES ($1,$2,$3,$4,$5,NULL,'POST','api.example.com','/x',
+            '{\"title\":\"T\",\"fields\":[],\"text\":null,\"link\":null,\"group\":null,\"source\":\"generic\"}',
+            'pending', now() + interval '5 minutes')",
+    )
+    .bind(appr)
+    .bind(org)
+    .bind(orphan)
+    .bind(agent2)
+    .bind(Uuid::now_v7())
+    .execute(f.h.pool())
+    .await
+    .unwrap();
+
+    // Row counts of everything the report must not touch, before and after.
+    async fn counts(p: &aurora_db::PgPool) -> (i64, i64, i64, i64, i64) {
+        (
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM workspaces")
+                .fetch_one(p)
+                .await
+                .unwrap(),
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM schedules")
+                .fetch_one(p)
+                .await
+                .unwrap(),
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM approvals")
+                .fetch_one(p)
+                .await
+                .unwrap(),
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM api_keys")
+                .fetch_one(p)
+                .await
+                .unwrap(),
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM space_bindings")
+                .fetch_one(p)
+                .await
+                .unwrap(),
+        )
+    }
+    let before = counts(f.h.pool()).await;
+
+    let report = aurora_api::access_report::run(&f.h.state).await.unwrap();
+    let r = report
+        .orgs
+        .iter()
+        .find(|o| o.org_id == org)
+        .expect("the org is listed");
+
+    // 1: the orphan (a shared workspace with no active own-right owner) — not Bob's personal
+    //    workspace, whose person is its owner.
+    assert!(
+        r.ownerless
+            .iter()
+            .any(|w| w.workspace_id == orphan && w.personal.is_none()),
+        "{:?}",
+        r.ownerless
+    );
+    assert!(
+        !r.ownerless.iter().any(|w| w.workspace_id == f.ws),
+        "the personal workspace has its person as owner: {:?}",
+        r.ownerless
+    );
+    // 2: the admin's schedule is named with its creator.
+    let sched = r
+        .failing_automations
+        .iter()
+        .find(|a| a.kind == "schedule")
+        .expect("the failing schedule is listed");
+    assert_eq!(sched.creator.as_ref().map(|(u, _)| *u), Some(f.admin));
+    // 3: the space binding tied to the admin is named.
+    assert!(
+        r.channel_ties
+            .iter()
+            .any(|t| t.kind == "space_binding" && t.user_id == f.admin),
+        "{:?}",
+        r.channel_ties
+    );
+    // 4: the org key is named with its creator.
+    assert!(
+        r.org_keys
+            .iter()
+            .any(|k| k.key_id == key && k.creator_id == f.admin),
+        "{:?}",
+        r.org_keys
+    );
+    // 5: the undecidable approval is named.
+    assert!(
+        r.undecidable.iter().any(|a| a.approval_id == appr),
+        "{:?}",
+        r.undecidable
+    );
+    // The text rendering names the organization.
+    let text = aurora_api::access_report::text(&report);
+    assert!(text.contains("organization"), "{text}");
+
+    // Nothing was written.
+    let after = counts(f.h.pool()).await;
+    assert_eq!(before, after);
+}

@@ -146,14 +146,15 @@ async fn me_shape_and_suspended_membership() {
             assert!(m["workspaces"].as_array().unwrap().is_empty());
         }
     }
-    // org admin sees all workspaces as owner
+    // (FIX-234) The org admin sees every workspace of the org; `my_role` is null without own
+    // access (D-477).
     let a = h.user("a@x.io", false).await;
     let (_, at) = h.good_session(a).await;
     h.member(o1, a, "admin", "active").await;
     let (_, v) = call(&h, &at, Method::GET, "/v1/me", None).await;
     let ws = v["memberships"][0]["workspaces"].as_array().unwrap();
     assert_eq!(ws.len(), 2);
-    assert!(ws.iter().all(|w| w["my_role"] == "owner"));
+    assert!(ws.iter().all(|w| w["my_role"].is_null()));
 }
 
 #[tokio::test]

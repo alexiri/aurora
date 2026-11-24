@@ -89,10 +89,11 @@ async fn a_workspace_refusal_names_the_role_and_up_to_three_owners() {
     assert_eq!(who["you_can"], false);
     assert_eq!(who["action"], "change_this");
     assert!(who.get("scope").is_none(), "the scope is internal: {v}");
-    // Owners first (explicit workspace owners and the implicit org owner/admin all hold the
-    // effective role), then by name; at most three; no e-mail; never the instance admin.
+    // Owners first (since FIX-234 only explicit workspace owners hold the effective role — the
+    // org owner/admin without a binding are not named), then by name; at most three; no e-mail;
+    // never the instance admin.
     let n = names(who);
-    assert_eq!(n.len(), 3, "{v}");
+    assert_eq!(n.len(), 1, "{v}");
     assert!(
         !n.iter().any(|x| x.contains("Root") || x.contains('@')),
         "{n:?}"
@@ -153,7 +154,8 @@ async fn contacts_are_readable_by_a_member_and_hold_at_most_three_names() {
         .await;
     assert_eq!(s, 200, "{v}");
     let owners = v["contacts"]["owners"].as_array().unwrap();
-    assert_eq!(owners.len(), 3, "{v}");
+    // (FIX-234) Contacts are the workspace's own-right owners only.
+    assert_eq!(owners.len(), 1, "{v}");
     assert!(v["contacts"].get("admins").is_none());
     let (s, v) = w
         .call(&w.member, Method::GET, &format!("/v1/orgs/{}", w.org), None)
