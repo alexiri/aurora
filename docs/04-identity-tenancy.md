@@ -674,6 +674,7 @@ the frozen payload.
 | Workspace LLM keys | `can_own`, **and** org governance permits `workspace`-scoped keys for that endpoint, **and** the key's origin complies (`08 §11`) |
 | Space bindings for an agent of the workspace | `can_own` |
 | Create/edit/delete agents, brief, model, avatar; memory; agent-tier skills; helper files of an agent (list, read, remove — P6-TPL-6, C-1143); schedules; webhooks; restart sandbox | `can_use` |
+| Create an agent **from a template** (`POST /v1/workspaces/{ws}/agents/from-template`); read its template provenance (`GET /v1/agents/{agent}/template`), apply an offered update (`POST …/template/apply`), detach (`DELETE …/template`) (phase 6, P6-TPL-3, C-1111/C-1112) | `can_use` of the workspace; the create's account choices additionally pass the C-504 give check (only connections the caller may give, and `active`) |
 | Create/edit/delete **workspace-tier skills** (phase 3, RFE-020); read them | `can_own` to write (org owners/admins included); read: `can_use` |
 | Create a **BYO** agent; regenerate a BYO agent's token (phase 2, RFE-025) | phase 0/1: `can_use`. **From phase 2: by the effective BYO posture** (`08 §11.9`): `enabled` → `can_use`; `owners_only` (default) → `can_own`; `disabled` → nobody |
 | Edit a BYO agent's source CIDR list and "require context credentials" setting (phase 2, RFE-025) | `can_own` |
@@ -1494,6 +1495,10 @@ coarse client address, terminator replica), `agent.ssh.close` (agent, workspace,
 channel counts per mode, byte totals; written once by the close-exactly-once transition) and
 `ssh_session.disconnect` (a person or owner ended a session; metadata: session, agent, `by`) — is
 best-effort. SSH channel bytes and `exec` command lines are never recorded anywhere.
+(phase 6, P6-TPL-3, C-1111/C-1112) The template routes are ordinary best-effort rows too:
+`agent.create` made from a template carries metadata `template: "<id>@<version>"` (the grants it wrote
+are the critical `grant.create` rows of the one writer), `agent.template_apply` (metadata: `from`, `to`,
+`parts`), `agent.template_detach` and `agent.helpers_remove` (metadata: paths).
 (phase 5, P5-FILES-1, D-316, C-906) `agent.files.download` (agent, workspace, path, bytes, `via`:
 `download`|`editor`), `agent.files.write` (path, bytes, `created`), `agent.files.mkdir` (path),
 `agent.files.rename` (from, to) and `agent.files.delete` (path, entries deleted) are best-effort; paths

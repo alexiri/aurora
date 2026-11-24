@@ -16616,6 +16616,258 @@
         ]
       }
     },
+    "/v1/agents/{agent}/template": {
+      "get": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "The agent's template provenance and its update offer (C-1112).",
+        "operationId": "getAgentTemplate",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTemplateStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Detach the agent from its template (C-1112): the provenance is forgotten; helper files and\nlibrary skills stay.",
+        "operationId": "detachAgentTemplate",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {},
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/template/apply": {
+      "post": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "Apply the listed parts of the offered version (C-1112).",
+        "operationId": "applyAgentTemplate",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTemplateStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/terminal/shell": {
       "get": {
         "tags": [
@@ -41017,6 +41269,112 @@
         ]
       }
     },
+    "/v1/workspaces/{ws}/agents/from-template": {
+      "post": {
+        "tags": [
+          "agent-templates"
+        ],
+        "summary": "`POST /v1/workspaces/{ws}/agents/from-template` (C-1111).",
+        "operationId": "createAgentFromTemplate",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFromTemplateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedFromTemplate"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/workspaces/{ws}/api-keys": {
       "get": {
         "tags": [
@@ -44754,6 +45112,48 @@
           }
         }
       },
+      "AccountChoice": {
+        "type": "object",
+        "description": "One app entry's account (C-1111's `accounts` item): the entry, which of its apps, which\naccount, and optionally the person's own access choice (default the plan's level).",
+        "required": [
+          "entry",
+          "app_id",
+          "connection_id"
+        ],
+        "properties": {
+          "app_id": {
+            "type": "string"
+          },
+          "connection_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "custom": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CustomAccess",
+                "description": "A custom tool split (C-980's shape); replaces the level."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry": {
+            "type": "integer",
+            "description": "The `apps:` entry's index.",
+            "minimum": 0
+          },
+          "level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`read` | `ask` | `act`; default the plan's level for this app."
+          }
+        },
+        "additionalProperties": false
+      },
       "AccountKind": {
         "type": "string",
         "enum": [
@@ -45988,6 +46388,17 @@
             "type": "string",
             "description": "(P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose\ndefinition names none."
           },
+          "template": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgentTemplateRef",
+                "description": "(P6-TPL-3, C-1112) The template this agent was created from; null otherwise. Plain\ntext: deleting the source or the template changes no agent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated_at": {
             "type": "string",
             "format": "date-time"
@@ -46217,6 +46628,46 @@
           }
         }
       },
+      "AgentTemplateRef": {
+        "type": "object",
+        "description": "(P6-TPL-3, C-1112) The template provenance shown on `Agent.template`.",
+        "required": [
+          "template_id",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "AgentTemplateRefView": {
+        "type": "object",
+        "description": "(C-1112) The provenance shown on the agent's Template section: plain text — deleting the\nsource or the template changes no agent.",
+        "required": [
+          "template_id",
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "AgentTemplateSource": {
         "type": "object",
         "description": "A template source (C-1107): the stored rows, never a live read.",
@@ -46396,6 +46847,46 @@
           "url": {
             "type": "string",
             "description": "The normalized address."
+          }
+        }
+      },
+      "AgentTemplateStatus": {
+        "type": "object",
+        "description": "(C-1112) Answer of `GET /v1/agents/{agent}/template`: the provenance, whether the template\nis still available, and the update offer when a newer version is offered.",
+        "required": [
+          "available",
+          "notes"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplyNote"
+            },
+            "description": "(C-1112) What the apply left alone: `skill_kept` when a `removed_upstream` library\nskill was not deleted (it is no longer sourced from the matching library, or it is an\nordinary skill of the same name). Empty on the GET."
+          },
+          "template": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgentTemplateRefView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "update": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TemplateUpdateOffer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -47646,6 +48137,107 @@
           }
         }
       },
+      "ApplyNote": {
+        "type": "object",
+        "description": "(C-1112) One note of an apply.",
+        "required": [
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "`skill_kept`."
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "ApplyPart": {
+        "type": "object",
+        "description": "(C-1112) One part to take.",
+        "required": [
+          "kind",
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ApplySkillRef": {
+        "type": "object",
+        "description": "(C-1112) One library skill reference of an apply (the create's shape).",
+        "required": [
+          "index",
+          "library_id",
+          "commit_sha"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string",
+            "description": "The commit the person reviewed (the fetch pins to it)."
+          },
+          "index": {
+            "type": "integer",
+            "description": "The `skill_refs:` entry's index.",
+            "minimum": 0
+          },
+          "library_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ApplyTemplateRequest": {
+        "type": "object",
+        "description": "(C-1112) Body of `POST /v1/agents/{agent}/template/apply`: which offered version, which\nparts of it. An empty `parts` is \"skip this version\" (the provenance still moves).",
+        "required": [
+          "version",
+          "content_sha256",
+          "parts"
+        ],
+        "properties": {
+          "content_sha256": {
+            "type": "string",
+            "description": "The offered version's content hash the offer showed."
+          },
+          "inputs": {
+            "type": "object",
+            "description": "Supplies `inputs_needed`; stored inputs that still pass are kept.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplyPart"
+            }
+          },
+          "skill_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplySkillRef"
+            },
+            "description": "Required for every `new` `library_skill` part taken."
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "Approval": {
         "type": "object",
         "required": [
@@ -48866,6 +49458,33 @@
             "type": "string"
           }
         }
+      },
+      "AutomationChoice": {
+        "type": "object",
+        "required": [
+          "kind",
+          "name"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "The template's automation name."
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Default the workspace's time zone (as a schedule create)."
+          }
+        },
+        "additionalProperties": false
       },
       "BackfillResult": {
         "type": "object",
@@ -51718,6 +52337,68 @@
           }
         }
       },
+      "CreateFromTemplateRequest": {
+        "type": "object",
+        "required": [
+          "template_id",
+          "version",
+          "content_sha256",
+          "name"
+        ],
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountChoice"
+            },
+            "description": "One account per app entry (required entries must have exactly one)."
+          },
+          "automations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomationChoice"
+            },
+            "description": "The schedules to create (a left-out one is created with its template `enabled`)."
+          },
+          "content_sha256": {
+            "type": "string",
+            "description": "The offered version's content hash the plan showed."
+          },
+          "handle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inputs": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "skill_refs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillRefChoice"
+            },
+            "description": "The library skill references to add (required ones must be here)."
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "The offered version the person planned against."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateGroupRequest": {
         "type": "object",
         "required": [
@@ -51884,6 +52565,36 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "CreateNote": {
+        "type": "object",
+        "description": "(C-1111) One note: `tools_dropped`, `access_not_given` or `skill_skipped`.",
+        "required": [
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "entry": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
           }
         }
       },
@@ -52495,6 +53206,46 @@
           }
         }
       },
+      "CreatedFromTemplate": {
+        "type": "object",
+        "description": "(C-1111) The 201 answer: the new agent and everything that was created with it; each\nwebhook's secret is shown once.",
+        "required": [
+          "agent",
+          "grants",
+          "skills",
+          "webhooks",
+          "notes"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGrant"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreateNote"
+            }
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Skill"
+            }
+          },
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookWithUrl"
+            }
+          }
+        }
+      },
       "CreatedKey": {
         "type": "object",
         "required": [
@@ -52594,6 +53345,24 @@
             "description": "The value in words; a secret reads only \"Set\" or \"Not set\"."
           }
         }
+      },
+      "CustomAccess": {
+        "type": "object",
+        "properties": {
+          "allow_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ask_tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "CustomChoice": {
         "type": "object",
@@ -56457,6 +57226,63 @@
         ],
         "description": "Injection recipe (`08 §5`)."
       },
+      "InputNeededView": {
+        "type": "object",
+        "description": "(C-1112) An input the agent's stored inputs do not cover.",
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "required"
+        ],
+        "properties": {
+          "default": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "help": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`text` | `choice`."
+          },
+          "label": {
+            "type": "string"
+          },
+          "max_length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pattern": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          }
+        }
+      },
       "InstanceAdminName": {
         "type": "object",
         "required": [
@@ -59464,6 +60290,52 @@
           }
         }
       },
+      "OfferPart": {
+        "type": "object",
+        "description": "(C-1112) One part of the offer. Only parts that differ are listed. `current` and\n`proposed` are the full texts, rendered with the stored inputs (a needed input renders as\n`{input.<id>}`). A library skill's content is never a part.",
+        "required": [
+          "kind",
+          "key",
+          "state"
+        ],
+        "properties": {
+          "current": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string",
+            "description": "Empty for `instructions` and `helpers`; the skill name; the C-1104 `skill_ref_key`."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`instructions` | `skill` | `helpers` | `library_skill`."
+          },
+          "proposed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skill_ref": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillRefPlan",
+                "description": "For a `library_skill`: the reference, resolved as C-1142."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "`unchanged_here` | `edited_here` | `removed_here` | `new` | `removed_upstream`."
+          }
+        }
+      },
       "OidcProviderInfo": {
         "type": "object",
         "required": [
@@ -61179,6 +62051,17 @@
                 "subagent_model": {
                   "type": "string",
                   "description": "(P5-MODELS-1, C-876) `inherit` | `large` | `medium` | `small`: the model of subagents whose\ndefinition names none."
+                },
+                "template": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AgentTemplateRef",
+                      "description": "(P6-TPL-3, C-1112) The template this agent was created from; null otherwise. Plain\ntext: deleting the source or the template changes no agent."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "updated_at": {
                   "type": "string",
@@ -72948,6 +73831,30 @@
           }
         }
       },
+      "SkillRefChoice": {
+        "type": "object",
+        "required": [
+          "index",
+          "library_id",
+          "commit_sha"
+        ],
+        "properties": {
+          "commit_sha": {
+            "type": "string",
+            "description": "The commit the person reviewed on the four steps (the fetch pins to it)."
+          },
+          "index": {
+            "type": "integer",
+            "description": "The `skill_refs:` entry's index.",
+            "minimum": 0
+          },
+          "library_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
       "SkillRefPlan": {
         "type": "object",
         "description": "One skill reference, resolved for the workspace (C-1142's `SkillRefPlan`).",
@@ -74724,6 +75631,58 @@
           }
         }
       },
+      "TemplateUpdateOffer": {
+        "type": "object",
+        "description": "(C-1112) The update offer: what the offered (semver-newer) version would change. Until the\nperson applies it, the agent does not change.",
+        "required": [
+          "version",
+          "content_sha256",
+          "readme",
+          "inputs_needed",
+          "apps_added",
+          "parts"
+        ],
+        "properties": {
+          "apps_added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UpdateAppEntry"
+            },
+            "description": "The offered version's app entries the agent has no access for yet."
+          },
+          "changelog": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Format 1 keeps `CHANGELOG.md` out of the content: always null."
+          },
+          "content_sha256": {
+            "type": "string"
+          },
+          "inputs_needed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputNeededView"
+            },
+            "description": "The inputs the stored inputs do not cover (the apply supplies them)."
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OfferPart"
+            },
+            "description": "Only the parts that differ, each with its state."
+          },
+          "readme": {
+            "type": "string",
+            "description": "The new version's `README.md`: shown, never applied, not a part."
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "TemplateVersionDetail": {
         "type": "object",
         "description": "One version of a template, everything the review shows (C-1108).",
@@ -75864,6 +76823,37 @@
           }
         },
         "additionalProperties": false
+      },
+      "UpdateAppEntry": {
+        "type": "object",
+        "description": "(C-1112) One app entry of the offered version the agent has no access for yet: given on the\nAccess tab as usual, never by the apply.",
+        "required": [
+          "app_ids",
+          "required",
+          "why"
+        ],
+        "properties": {
+          "app_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The entry's app ids (`app`, or every id of `any_of`)."
+          },
+          "level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The template's level, capped to `ask` on a `custom_only` app (as the plan's)."
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "why": {
+            "type": "string"
+          }
+        }
       },
       "UpdateConversation": {
         "type": "object",

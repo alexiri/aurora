@@ -2844,6 +2844,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The agent's template provenance and its update offer (C-1112). */
+        get: operations["getAgentTemplate"];
+        put?: never;
+        post?: never;
+        /**
+         * Detach the agent from its template (C-1112): the provenance is forgotten; helper files and
+         *     library skills stay.
+         */
+        delete: operations["detachAgentTemplate"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent}/template/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply the listed parts of the offered version (C-1112). */
+        post: operations["applyAgentTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/terminal/shell": {
         parameters: {
             query?: never;
@@ -6736,6 +6774,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/agents/from-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /v1/workspaces/{ws}/agents/from-template` (C-1111). */
+        post: operations["createAgentFromTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/api-keys": {
         parameters: {
             query?: never;
@@ -7374,6 +7429,20 @@ export interface components {
             give_access: boolean;
             manage: boolean;
         };
+        /**
+         * @description One app entry's account (C-1111's `accounts` item): the entry, which of its apps, which
+         *     account, and optionally the person's own access choice (default the plan's level).
+         */
+        AccountChoice: {
+            app_id: string;
+            /** Format: uuid */
+            connection_id: string;
+            custom?: components["schemas"]["CustomAccess"] | null;
+            /** @description The `apps:` entry's index. */
+            entry: number;
+            /** @description `read` | `ask` | `act`; default the plan's level for this app. */
+            level?: string | null;
+        };
         /** @enum {string} */
         AccountKind: "app" | "website" | "ai_key";
         AccountRef: {
@@ -7757,6 +7826,7 @@ export interface components {
              *     definition names none.
              */
             subagent_model: string;
+            template?: components["schemas"]["AgentTemplateRef"] | null;
             /** Format: date-time */
             updated_at: string;
             /** Format: uuid */
@@ -7841,6 +7911,21 @@ export interface components {
         AgentStartFailures: {
             items: components["schemas"]["AgentStartFailure"][];
         };
+        /** @description (P6-TPL-3, C-1112) The template provenance shown on `Agent.template`. */
+        AgentTemplateRef: {
+            name: string;
+            template_id: string;
+            version: string;
+        };
+        /**
+         * @description (C-1112) The provenance shown on the agent's Template section: plain text — deleting the
+         *     source or the template changes no agent.
+         */
+        AgentTemplateRefView: {
+            name: string;
+            template_id: string;
+            version: string;
+        };
         /** @description A template source (C-1107): the stored rows, never a live read. */
         AgentTemplateSource: {
             /** Format: date-time */
@@ -7890,6 +7975,21 @@ export interface components {
             truncated: boolean;
             /** @description The normalized address. */
             url: string;
+        };
+        /**
+         * @description (C-1112) Answer of `GET /v1/agents/{agent}/template`: the provenance, whether the template
+         *     is still available, and the update offer when a newer version is offered.
+         */
+        AgentTemplateStatus: {
+            available: boolean;
+            /**
+             * @description (C-1112) What the apply left alone: `skill_kept` when a `removed_upstream` library
+             *     skill was not deleted (it is no longer sourced from the matching library, or it is an
+             *     ordinary skill of the same name). Empty on the GET.
+             */
+            notes: components["schemas"]["ApplyNote"][];
+            template?: components["schemas"]["AgentTemplateRefView"] | null;
+            update?: components["schemas"]["TemplateUpdateOffer"] | null;
         };
         AgentToken: {
             container_config: components["schemas"]["ContainerConfig"];
@@ -8273,6 +8373,42 @@ export interface components {
              *     whole; `null` when the package has none (clients then clamp `description`, never cutting mid-word).
              */
             summary?: string | null;
+        };
+        /** @description (C-1112) One note of an apply. */
+        ApplyNote: {
+            /** @description `skill_kept`. */
+            code: string;
+            detail: string;
+        };
+        /** @description (C-1112) One part to take. */
+        ApplyPart: {
+            key: string;
+            kind: string;
+        };
+        /** @description (C-1112) One library skill reference of an apply (the create's shape). */
+        ApplySkillRef: {
+            /** @description The commit the person reviewed (the fetch pins to it). */
+            commit_sha: string;
+            /** @description The `skill_refs:` entry's index. */
+            index: number;
+            /** Format: uuid */
+            library_id: string;
+        };
+        /**
+         * @description (C-1112) Body of `POST /v1/agents/{agent}/template/apply`: which offered version, which
+         *     parts of it. An empty `parts` is "skip this version" (the provenance still moves).
+         */
+        ApplyTemplateRequest: {
+            /** @description The offered version's content hash the offer showed. */
+            content_sha256: string;
+            /** @description Supplies `inputs_needed`; stored inputs that still pass are kept. */
+            inputs?: {
+                [key: string]: string;
+            };
+            parts: components["schemas"]["ApplyPart"][];
+            /** @description Required for every `new` `library_skill` part taken. */
+            skill_refs?: components["schemas"]["ApplySkillRef"][];
+            version: string;
         };
         Approval: {
             agent?: components["schemas"]["ApprovalAgent"] | null;
@@ -8670,6 +8806,14 @@ export interface components {
             /** @description `schedule` | `webhook`. */
             kind: string;
             name: string;
+        };
+        AutomationChoice: {
+            enabled?: boolean;
+            kind: string;
+            /** @description The template's automation name. */
+            name: string;
+            /** @description Default the workspace's time zone (as a schedule create). */
+            timezone?: string | null;
         };
         /**
          * @description What a backfill did: grants written, and grants that already existed or were refused
@@ -9610,6 +9754,24 @@ export interface components {
             name: string;
             timezone: string;
         };
+        CreateFromTemplateRequest: {
+            /** @description One account per app entry (required entries must have exactly one). */
+            accounts?: components["schemas"]["AccountChoice"][];
+            /** @description The schedules to create (a left-out one is created with its template `enabled`). */
+            automations?: components["schemas"]["AutomationChoice"][];
+            /** @description The offered version's content hash the plan showed. */
+            content_sha256: string;
+            handle?: string | null;
+            inputs?: {
+                [key: string]: string;
+            };
+            name: string;
+            /** @description The library skill references to add (required ones must be here). */
+            skill_refs?: components["schemas"]["SkillRefChoice"][];
+            template_id: string;
+            /** @description The offered version the person planned against. */
+            version: string;
+        };
         CreateGroupRequest: {
             description?: string | null;
             /** @description (D-156) Required for `source = idp`: a configured OIDC provider id with a `group_claim`. */
@@ -9663,6 +9825,13 @@ export interface components {
              */
             locked?: boolean | null;
             title?: string | null;
+        };
+        /** @description (C-1111) One note: `tools_dropped`, `access_not_given` or `skill_skipped`. */
+        CreateNote: {
+            code: string;
+            detail: string;
+            entry?: number | null;
+            index?: number | null;
         };
         CreateOAuthClientRequest: {
             client_key: string;
@@ -9849,6 +10018,17 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        /**
+         * @description (C-1111) The 201 answer: the new agent and everything that was created with it; each
+         *     webhook's secret is shown once.
+         */
+        CreatedFromTemplate: {
+            agent: components["schemas"]["Agent"];
+            grants: components["schemas"]["ConnectionGrant"][];
+            notes: components["schemas"]["CreateNote"][];
+            skills: components["schemas"]["Skill"][];
+            webhooks: components["schemas"]["WebhookWithUrl"][];
+        };
         CreatedKey: {
             api_key: components["schemas"]["ApiKey"];
             /** @description The token; shown only in this response. */
@@ -9881,6 +10061,10 @@ export interface components {
             source: string;
             /** @description The value in words; a secret reads only "Set" or "Not set". */
             value_display: string;
+        };
+        CustomAccess: {
+            allow_tools?: string[];
+            ask_tools?: string[];
         };
         CustomChoice: {
             /** @description The nearest level. */
@@ -11108,6 +11292,20 @@ export interface components {
             pattern: string;
             replacement: string;
         };
+        /** @description (C-1112) An input the agent's stored inputs do not cover. */
+        InputNeededView: {
+            default?: string | null;
+            help?: string | null;
+            id: string;
+            /** @description `text` | `choice`. */
+            kind: string;
+            label: string;
+            /** Format: int32 */
+            max_length?: number | null;
+            options?: string[];
+            pattern?: string | null;
+            required: boolean;
+        };
         InstanceAdminName: {
             name: string;
         };
@@ -12040,6 +12238,22 @@ export interface components {
             /** @description Always true here: the list holds exactly what the removal would disable. */
             would_disable: boolean;
         };
+        /**
+         * @description (C-1112) One part of the offer. Only parts that differ are listed. `current` and
+         *     `proposed` are the full texts, rendered with the stored inputs (a needed input renders as
+         *     `{input.<id>}`). A library skill's content is never a part.
+         */
+        OfferPart: {
+            current?: string | null;
+            /** @description Empty for `instructions` and `helpers`; the skill name; the C-1104 `skill_ref_key`. */
+            key: string;
+            /** @description `instructions` | `skill` | `helpers` | `library_skill`. */
+            kind: string;
+            proposed?: string | null;
+            skill_ref?: components["schemas"]["SkillRefPlan"] | null;
+            /** @description `unchanged_here` | `edited_here` | `removed_here` | `new` | `removed_upstream`. */
+            state: string;
+        };
         OidcProviderInfo: {
             display_name: string;
             /**
@@ -12654,6 +12868,7 @@ export interface components {
                  *     definition names none.
                  */
                 subagent_model: string;
+                template?: components["schemas"]["AgentTemplateRef"] | null;
                 /** Format: date-time */
                 updated_at: string;
                 /** Format: uuid */
@@ -16303,6 +16518,14 @@ export interface components {
             pinned_by?: string | null;
             update?: components["schemas"]["LibraryUpdateView"] | null;
         };
+        SkillRefChoice: {
+            /** @description The commit the person reviewed on the four steps (the fetch pins to it). */
+            commit_sha: string;
+            /** @description The `skill_refs:` entry's index. */
+            index: number;
+            /** Format: uuid */
+            library_id: string;
+        };
         /** @description One skill reference, resolved for the workspace (C-1142's `SkillRefPlan`). */
         SkillRefPlan: {
             available: boolean;
@@ -16822,6 +17045,24 @@ export interface components {
             status: string;
             waiting: components["schemas"]["CheckWaitingView"][];
         };
+        /**
+         * @description (C-1112) The update offer: what the offered (semver-newer) version would change. Until the
+         *     person applies it, the agent does not change.
+         */
+        TemplateUpdateOffer: {
+            /** @description The offered version's app entries the agent has no access for yet. */
+            apps_added: components["schemas"]["UpdateAppEntry"][];
+            /** @description Format 1 keeps `CHANGELOG.md` out of the content: always null. */
+            changelog?: string | null;
+            content_sha256: string;
+            /** @description The inputs the stored inputs do not cover (the apply supplies them). */
+            inputs_needed: components["schemas"]["InputNeededView"][];
+            /** @description Only the parts that differ, each with its state. */
+            parts: components["schemas"]["OfferPart"][];
+            /** @description The new version's `README.md`: shown, never applied, not a part. */
+            readme: string;
+            version: string;
+        };
         /** @description One version of a template, everything the review shows (C-1108). */
         TemplateVersionDetail: {
             archive_sha256?: string | null;
@@ -17167,6 +17408,18 @@ export interface components {
         UpdateAddonSourceRequest: {
             /** @description `6h|12h|1d|1w|2w|1mo|never`. */
             update_interval: string;
+        };
+        /**
+         * @description (C-1112) One app entry of the offered version the agent has no access for yet: given on the
+         *     Access tab as usual, never by the apply.
+         */
+        UpdateAppEntry: {
+            /** @description The entry's app ids (`app`, or every id of `any_of`). */
+            app_ids: string[];
+            /** @description The template's level, capped to `ask` on a `custom_only` app (as the plan's). */
+            level?: string | null;
+            required: boolean;
+            why: string;
         };
         /** @description (P5-REFINE-7, C-1073) `PATCH /conversations/{id}` body. */
         UpdateConversation: {
@@ -29800,6 +30053,192 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTemplateStatus"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    detachAgentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    applyAgentTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyTemplateRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTemplateStatus"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -47077,6 +47516,82 @@ export interface operations {
                 };
             };
             /** @description hosted_disabled | agent_limit_reached */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    createAgentFromTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFromTemplateRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedFromTemplate"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             422: {
                 headers: {
                     [name: string]: unknown;

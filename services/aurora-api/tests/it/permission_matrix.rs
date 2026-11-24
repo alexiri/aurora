@@ -23,6 +23,7 @@
 
 use crate::common::*;
 use aurora_db::repo::agent_helpers as helpers_repo;
+use aurora_testkit::git_server::{Change, GitServer};
 use http::Method;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -1142,6 +1143,10 @@ const ROWS: &[Row] = &[
     r("DELETE", "/v1/agents/{agent}/helpers", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/skills", G::WsUse, false),
     r("POST", "/v1/agents/{agent}/skills", G::WsUse, false),
+    // (P6-TPL-3, C-1112) the template provenance: status, apply, detach; `can_use`
+    r("GET", "/v1/agents/{agent}/template", G::WsUse, false),
+    r("POST", "/v1/agents/{agent}/template/apply", G::WsUse, false),
+    r("DELETE", "/v1/agents/{agent}/template", G::WsUse, false),
     r(
         "GET",
         "/v1/agents/{agent}/skills/effective",
@@ -1236,6 +1241,8 @@ const ROWS: &[Row] = &[
         G::WsUse,
         false,
     ),
+    // (P6-TPL-3, C-1111) create from a template: `can_use` on the workspace; session or key
+    r("POST", "/v1/workspaces/{ws}/agents/from-template", G::WsUse, false),
     r(
         "GET",
         "/v1/agents/{agent}/skill-library-updates",
@@ -1632,6 +1639,13 @@ async fn seed(h: &Harness, n: u32) -> Fx {
         .fetch_one(h.pool())
         .await
         .unwrap();
+    // (P6-TPL-3) The agent took the matrix template (stamped the way creation does), so
+    // GET/POST/DELETE `/template` have their real outcomes instead of a plain 404.
+    sqlx::query("UPDATE agents SET template_id='mattpl', template_name='Matrix', template_version='1.0.0' WHERE id=$1")
+        .bind(agent)
+        .execute(h.pool())
+        .await
+        .unwrap();
     // The seeded agent has an avatar so `GET .../avatar` has a 200 outcome to compare against.
     sqlx::query("INSERT INTO blobs (key, content) VALUES ($1, $2)")
         .bind(format!("matrix-avatar-{n}"))
@@ -1945,6 +1959,17 @@ fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"content_sha256": "0".repeat(64)})
         }
         ("POST", "/v1/agents/{agent}/webhooks") => json!({"name": "w", "instructions": "i"}),
+        // (P6-TPL-3) The matrix template (seeded below); the stale hash gives an authorized
+        // principal the semantic 409, the denial side is refused before the plan is built.
+        ("POST", "/v1/workspaces/{ws}/agents/from-template") => {
+            json!({
+                "template_id": "mattpl", "version": "1.0.0",
+                "content_sha256": "0".repeat(64), "name": "Matrix agent",
+            })
+        }
+        ("POST", "/v1/agents/{agent}/template/apply") => {
+            json!({"version": "1.0.0", "content_sha256": "0".repeat(64), "parts": []})
+        }
         ("POST", "/v1/agents/{agent}/schedules/preview") => json!({"cron": "*/5 * * * *"}),
         ("PUT", "/v1/agents/{agent}/byo") => {
             json!({"source_cidrs": null, "require_context": false})
@@ -2199,7 +2224,7 @@ async fn permission_matrix_routes_by_principal() {
     let ca = ca_dir.to_string_lossy().into_owned();
     // The matrix asserts the access law; the BYO posture that further restricts creating BYO
     // agents (RFE-025, default `owners_only`) is covered in `byo.rs`, so the floor is `enabled`.
-    let shared = Harness::with_config(move |c| {
+    let mut shared = Harness::with_config(move |c| {
         c.gateway_ca_dir = ca;
         c.governance.byo.minimum_posture = aurora_config::ByoPosture::Enabled;
     })
@@ -2209,6 +2234,100 @@ async fn permission_matrix_routes_by_principal() {
     aurora_api::domains::plugins::registry::ensure_initial(&shared.state)
         .await
         .unwrap();
+    // (P6-TPL-3) A git server and one approved template (`mattpl@1.0.0`): the create route's
+    // plan is built after authorization, so an authorized principal must not 404 on it.
+    let git = GitServer::start().await;
+    let state = shared.state.clone().with_connect_override(&git.base());
+    shared.app = crate::common::test_router(state.clone());
+    shared.state = state;
+    let tpl_files = vec![
+        (
+            "mattpl/template.yaml".to_owned(),
+            "format: 1\nid: mattpl\nversion: 1.0.0\nname: Matrix\nsummary: The matrix one.\n"
+                .to_owned()
+                .into_bytes(),
+        ),
+        (
+            "mattpl/agent.yaml".to_owned(),
+            b"format: 1\nname: T\npurpose: monitor\nmodel: default\nmay_message_first: false\n"
+                .to_vec(),
+        ),
+        (
+            "mattpl/instructions.md".to_owned(),
+            b"Matrix instructions.\n".to_vec(),
+        ),
+        ("mattpl/README.md".to_owned(), b"# mattpl\nMatrix.\n".to_vec()),
+    ];
+    git.add_repo("acme/tpl");
+    let mut tpl_changes: Vec<Change> = vec![Change::Put(
+        "aurora-templates.yaml".into(),
+        b"api: 1\nrepo:\n  name: Matrix templates\n  description: Test repo\n\
+         packages:\n  url: https://git.example/pkg/{id}-{version}.zip\n"
+            .to_vec(),
+    )];
+    tpl_changes.extend(
+        tpl_files
+            .iter()
+            .map(|(p, b)| Change::Put(p.clone(), b.clone())),
+    );
+    git.commit("acme/tpl", "main", &tpl_changes);
+    git.serve_file(
+        "pkg/mattpl-1.0.0.zip",
+        aurora_template::pack(
+            "mattpl",
+            &tpl_files
+                .iter()
+                .map(|(p, b)| aurora_template::TreeFile {
+                    path: p.clone(),
+                    bytes: b.clone(),
+                    mode: 0o100644,
+                })
+                .collect::<Vec<_>>(),
+        ),
+    );
+    {
+        let ta = shared.user("matrix-tpl@x.io", true).await;
+        let (_, ta_tok) = shared.good_session(ta).await;
+        let tc = cookie(&ta_tok);
+        let (s, _, v) = shared
+            .send(
+                Method::POST,
+                "/v1/admin/agent-template-sources",
+                &[("cookie", tc.as_str()), ("origin", ORIGIN)],
+                Some(json!({"url": "https://git.example/acme/tpl"})),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+        let src: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+        let (s, _, v) = shared
+            .send(
+                Method::POST,
+                &format!("/v1/admin/agent-template-sources/{src}/check"),
+                &[("cookie", tc.as_str()), ("origin", ORIGIN)],
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        let (s, _, v) = shared
+            .send(
+                Method::GET,
+                "/v1/admin/agent-templates/mattpl/versions/1.0.0",
+                &[("cookie", tc.as_str()), ("origin", ORIGIN)],
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        let sha = v["content_sha256"].as_str().unwrap().to_owned();
+        let (s, _, v) = shared
+            .send(
+                Method::POST,
+                "/v1/admin/agent-templates/mattpl/versions/1.0.0/approve",
+                &[("cookie", tc.as_str()), ("origin", ORIGIN)],
+                Some(json!({"content_sha256": sha})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+    }
     let shared_fx = seed(&shared, 0).await;
     let mut n = 0u32;
     for row in ROWS {
