@@ -461,6 +461,12 @@ CI's `check` then tells you what is missing.
 
 ## The CLI
 
+Get the binary from the Aurora repository's releases: the tag `cli-v<version>`
+carries `aurora-linux-x86_64` (built on Ubuntu 24.04, x86-64) and its
+`.sha256`. The release is created by Aurora's CI when a `cli-v<version>` tag
+is pushed, after every check has passed; the tag must equal the workspace
+version. Pin the version in your CI (the reference workflow does).
+
 `aurora template` needs no server and no login:
 
 ```
