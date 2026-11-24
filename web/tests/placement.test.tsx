@@ -106,7 +106,7 @@ describe("Admin › Sign-up & placement (P4-ONB-1, D-140)", () => {
         default_org_id: ORG,
         default_org_role: "member",
         shared_workspaces: [{ workspace_id: "w1", role: "member" }],
-        personal_workspace: { enabled: true, role: "owner", name_template: "{sub}|{email_local}" },
+        personal_workspace: { enabled: true, name_template: "{sub}|{email_local}" },
         starter_grants: [{ kind: "secret", id: KEY }],
       },
     ]);

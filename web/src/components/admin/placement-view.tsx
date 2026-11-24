@@ -28,7 +28,6 @@ import {
 } from "@/lib/api/placement";
 
 type SharedRole = "member" | "approver";
-type PersonalRole = "owner" | "approver" | "member";
 type OrgRole = "member" | "admin";
 
 const NEW_ORG = "__new__";
@@ -84,7 +83,6 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
     Object.fromEntries(saved.shared_workspaces.map((w) => [w.workspace_id, w.role])),
   );
   const [personal, setPersonal] = useState(saved.saved ? saved.personal_workspace.enabled : true);
-  const [personalRole, setPersonalRole] = useState<PersonalRole>(saved.personal_workspace.role);
   const [template, setTemplate] = useState(saved.personal_workspace.name_template);
   const [sample, setSample] = useState("bobj");
   const [starters, setStarters] = useState<Set<string>>(
@@ -115,7 +113,9 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
       else body.default_org_id = orgChoice;
       body.default_org_role = orgRole;
       body.shared_workspaces = Object.entries(shared).map(([workspace_id, role]) => ({ workspace_id, role }));
-      body.personal_workspace = { enabled: personal, role: personalRole, name_template: template };
+      // (FIX-234, D-480) No role choice: people own their personal workspace; the API ignores
+      // `personal_role`.
+      body.personal_workspace = { enabled: personal, name_template: template };
       body.starter_grants = personal
         ? [...starters].map((s) => {
             const [kind, id] = s.split(":");
@@ -264,9 +264,10 @@ function PlacementForm({ saved, embedded, onSaved }: { saved: Placement; embedde
               </div>
               {personal ? (
                 <>
-                  <SettingField id="pl-personal-role" label="Their role in it" source="default">
-                    <Select id={settingControlId("pl-personal-role")} value={personalRole} onChange={(v) => setPersonalRole(v as PersonalRole)} options={[{ value: "owner", label: "Owner" }, { value: "approver", label: "Approver" }, { value: "member", label: "Member" }]} />
-                  </SettingField>
+                  {/* (FIX-234, D-480) The role choice is gone: the person is the owner, always. */}
+                  <p className="pb-2 text-sm text-ink-2" data-testid="pl-personal-own">
+                    People own their personal workspace.
+                  </p>
                   <SettingField
                     id="pl-template"
                     label="Workspace address"
