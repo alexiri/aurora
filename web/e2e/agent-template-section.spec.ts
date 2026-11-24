@@ -6,10 +6,15 @@ import { CANVAS, overflow } from "./support/open";
 
 const expect = baseExpect.configure({ timeout: 30_000 });
 
+// Surface token values from globals.css (`--surface`), as computed `rgb()` strings — the dialog's background.
+const SURFACE: Record<"light" | "dark", string> = { light: "rgb(255, 255, 255)", dark: "rgb(18, 24, 41)" };
+
 // P6-TPL-4 B2 (C-1117, C-1143): the agent's Template section on Settings › Manage — "Made from
 // <template> <version>", the helper files with View (path, size, Executable, the text as plain
-// text) and Remove (one or all, with a confirm). Themed in both themes, usable at 390 px without
-// horizontal scroll, no serious axe violations. The API is mocked; the apply journey is below.
+// text) and Remove (one or all, with a confirm), and the apply journey (C-1112): Review changes
+// with the README fold, the parts' states and checkboxes, then Apply of exactly the ticked parts,
+// bound to the shown hash. Themed in both themes (the dialog included), usable at 390 px without
+// horizontal scroll, no serious axe violations. The API is mocked.
 
 const SHA = "a".repeat(64);
 
@@ -34,13 +39,38 @@ const overrides: Record<string, unknown> = {
   [`/v1/agents/${agent.id}/helpers`]: helpers,
 };
 
-async function open(page: Page, scheme: "light" | "dark") {
+// (C-1112) The update offer the apply journey works through: the instructions were edited here, the
+// helper files changed upstream, and a skill is new.
+const OFFER_SHA = "c".repeat(64);
+const update = {
+  version: "1.1.0",
+  content_sha256: OFFER_SHA,
+  readme: "# New in 1.1.0\n\nQuieter, and it greets.",
+  changelog: null,
+  inputs_needed: [],
+  apps_added: [],
+  parts: [
+    { kind: "instructions", key: "", state: "edited_here", current: "Triage the team's pull requests.", proposed: "Triage the team's pull requests quietly.", skill_ref: null },
+    { kind: "helpers", key: "", state: "unchanged_here", current: "tidy.sh, notes.md", proposed: "tidy.sh, notes.md, greet.md", skill_ref: null },
+    { kind: "skill", key: "greet", state: "new", current: null, proposed: "Say hello once a day.", skill_ref: null },
+  ],
+};
+
+const helpersAfter = {
+  items: [
+    { path: "tidy.sh", size: 24, executable: true, sha256: SHA },
+    { path: "notes.md", size: 120, executable: false, sha256: "b".repeat(64) },
+    { path: "greet.md", size: 32, executable: false, sha256: "c".repeat(64) },
+  ],
+};
+
+async function open(page: Page, scheme: "light" | "dark", extra: Record<string, unknown> = {}) {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error" && !/^Failed to load resource/.test(m.text())) errors.push(m.text());
   });
-  await mockApi(page, overrides);
+  await mockApi(page, { ...overrides, ...extra });
   // Registered after mockApi, so it matches first.
   await page.route(`**/v1/agents/${agent.id}/helpers/content*`, (route) => {
     const path = new URL(route.request().url()).searchParams.get("path") ?? "";
@@ -99,6 +129,65 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(all).toContainText("The 2 files in .aurora/helpers are removed from Daneel.");
         await all.getByRole("button", { name: "Remove all" }).click();
         await expect(all).toHaveCount(0);
+        expect(errors).toEqual([]);
+      });
+
+      test("applies part of an update, the helper files included (C-1112, C-1117)", async ({ page }) => {
+        let applied: unknown = null;
+        const errors = await open(page, scheme, {
+          [`/v1/agents/${agent.id}/template`]: {
+            template: { template_id: "schedule-manager", name: "Schedule manager", version: "1.0.0" },
+            available: true,
+            notes: [],
+            update,
+          },
+        });
+        // Registered after mockApi, so they match first. The apply answers with the new status; the
+        // helper list reflects what the applied version brought.
+        await page.route(`**/v1/agents/${agent.id}/template/apply`, (route) => {
+          applied = route.request().postDataJSON();
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ template: { template_id: "schedule-manager", name: "Schedule manager", version: "1.1.0" }, available: true, notes: [], update: null }),
+          });
+        });
+        await page.route(`**/v1/agents/${agent.id}/helpers`, (route) =>
+          route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(applied ? helpersAfter : helpers) }),
+        );
+        const section = page.getByTestId("agent-template-section");
+        await expect(section.getByTestId("template-update")).toHaveText("Version 1.1.0 is available. Daneel keeps working as it is until you apply it.");
+        await section.getByRole("button", { name: "Review changes" }).click();
+        const dlg = page.getByRole("dialog", { name: "Review changes" });
+        // The README is a fold — shown, never applied — and the parts' texts are inert (SEC-146).
+        const readme = dlg.getByTestId("offer-readme");
+        await readme.locator("summary").click();
+        await expect(readme).toContainText("Quieter, and it greets.");
+        await expect(dlg.getByTestId("offer-part-0").getByTestId("part-state")).toHaveText("You changed it since. Leave it unticked to keep yours.");
+        // The checkboxes: ticked for `unchanged_here` and `new`, not for `edited_here` (C-1117).
+        await expect(dlg.getByTestId("offer-part-0").getByRole("checkbox")).not.toBeChecked();
+        await expect(dlg.getByTestId("offer-part-1").getByRole("checkbox")).toBeChecked();
+        await expect(dlg.getByTestId("offer-part-2").getByRole("checkbox")).toBeChecked();
+        // The dialog is themed and scrolls inside itself, at 390 px too.
+        expect(await dlg.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+        expect(await dlg.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(SURFACE[scheme]);
+        await dlg.getByRole("button", { name: "Apply" }).click();
+        // Exactly the ticked parts, bound to the shown hash (C-1112).
+        expect(applied).toEqual({
+          version: "1.1.0",
+          content_sha256: OFFER_SHA,
+          parts: [
+            { kind: "helpers", key: "" },
+            { kind: "skill", key: "greet" },
+          ],
+          skill_refs: [],
+          inputs: {},
+        });
+        // The section reads the answer: the new provenance and the helper files the version brought.
+        await expect(section.getByTestId("template-made-from")).toHaveText("Made from Schedule manager 1.1.0");
+        await expect(section.getByTestId("helper-count")).toHaveText("3 helper files in .aurora/helpers");
+        await expect(dlg).toHaveCount(0);
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(errors).toEqual([]);
       });
     });
