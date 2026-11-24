@@ -71,7 +71,8 @@ function useLiveAltitude(at: { wsId?: string; orgId?: string }): AltitudeState {
     {
       instanceAdmin,
       org: orgRole === "owner" || orgRole === "admin" || orgRole === "member" ? orgRole : undefined,
-      workspace: wsQ.data?.my_role,
+      // (FIX-234) A `null` my_role is no own access: no workspace floor.
+      workspace: wsQ.data?.my_role ?? undefined,
       personalWorkspace: personal,
     },
     inAdmin,

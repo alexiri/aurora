@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { ApiError } from "@/lib/api/client";
 import { errorMessage } from "@/lib/api/errors";
+import { orgRoutes } from "@/lib/routes";
 import { copyLabel, useCopy } from "@/lib/use-copy";
 import { onlySentence, whoCanOf, type WhoCanValue } from "@/lib/who-can";
 
@@ -55,10 +57,25 @@ export function Loading({ label = "Loading…", variant = "inline", rows }: { la
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   // (C-915) A refusal that names who can fix it reads "Only <role phrase> can open this page." and then who to ask.
   const refused = isRefusal(error) ? whoCanOf(error) : null;
+  // (FIX-235, D-477) On a workspace page, the administrator gate points at the manage page.
+  // The org and workspace slugs come from the address, not the router: ErrorState also renders
+  // outside the app shell's router context (and pages mock or omit it).
+  const m = typeof window === "undefined" ? null : /^\/o\/([^/]+)\/w\/([^/]+)/.exec(window.location.pathname);
+  const manage =
+    error instanceof ApiError && error.code === "workspace_access_required" && m
+      ? orgRoutes(m[1]!).workspace(m[2]!)
+      : null;
   return (
     <div role="alert" className="rounded-card border border-danger-ink/30 bg-danger-soft p-4 text-sm text-danger-ink">
       <p>{refused ? onlySentence(refused) : errorMessage(error)}</p>
       {refused ? <WhoCan value={refused} className="mt-1 text-danger-ink" /> : null}
+      {manage ? (
+        <p className="mt-2">
+          <Link className="underline" href={manage}>
+            Manage this workspace
+          </Link>
+        </p>
+      ) : null}
       <RequestReference error={error} />
       {onRetry ? (
         <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>

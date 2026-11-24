@@ -32,9 +32,9 @@ function InfoCard({ id, title, children }: { id: string; title: string; children
   );
 }
 
-/** The one sentence about the viewer's role that a person who is not an owner reads (C-927). */
-export function roleSentence(role: string, agent: string): string | null {
-  if (role === "owner") return null;
+/** The one sentence about the viewer's role that a person who is not an owner reads (C-927). A `null` role (FIX-234: no own access) says nothing. */
+export function roleSentence(role: string | null | undefined, agent: string): string | null {
+  if (role === null || role === undefined || role === "owner") return null;
   return role === "approver"
     ? `You are an approver here: you can chat with ${agent} and answer what it asks you in Approvals. An owner sets up its accounts and access.`
     : `You are a member here: you can chat with ${agent} and see what it did. An owner sets up its accounts and access.`;

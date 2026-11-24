@@ -101,21 +101,24 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
       slug: m.org.slug,
       name: m.org.name ?? m.org.slug,
       role: m.role,
-      workspaces: m.workspaces.map((w) => ({
-        slug: w.slug,
-        name: w.name ?? w.slug,
-        role: w.my_role ?? "member",
-        personal: w.personal,
-      })),
+      // (FIX-235) The switcher lists only workspaces the person is in (`my_role` set); the
+      // session's list already holds only those, the filter keeps the type honest.
+      workspaces: m.workspaces.flatMap((w) =>
+        w.my_role ? [{ slug: w.slug, name: w.name ?? w.slug, role: w.my_role, personal: w.personal }] : [],
+      ),
     }));
     if (orgSlug && resolved.data) {
-      const fresh: WsItem[] | undefined = currentWorkspaces.data?.items.map((w) => ({
-        slug: w.slug,
-        name: w.name,
-        role: w.my_role,
-        personal: list.find((o) => o.slug === orgSlug)?.workspaces.some((x) => x.slug === w.slug && x.personal === true),
-        personal_of: w.personal_of,
-      }));
+      // (FIX-235) The org's full list shows every workspace to an administrator (C-1160); the
+      // switcher keeps listing only the ones this person is in.
+      const fresh: WsItem[] | undefined = currentWorkspaces.data?.items
+        .filter((w) => w.my_role != null)
+        .map((w) => ({
+          slug: w.slug,
+          name: w.name,
+          role: w.my_role!,
+          personal: list.find((o) => o.slug === orgSlug)?.workspaces.some((x) => x.slug === w.slug && x.personal === true),
+          personal_of: w.personal_of,
+        }));
       const at = list.findIndex((o) => o.slug === orgSlug);
       if (at >= 0) {
         if (fresh) list[at] = { ...list[at]!, workspaces: fresh };

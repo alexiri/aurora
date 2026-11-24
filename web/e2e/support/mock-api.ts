@@ -397,7 +397,13 @@ export async function mockApi(
           next_cursor: null,
         });
       }
-      if (grp[2] === "/workspaces") return json({ items: [{ workspace: { id: id(2), name: "Main workspace", slug: "main" }, role: "member", created_at: now }], next_cursor: null });
+      if (grp[2] === "/workspaces")
+        return json({
+          // (FIX-234/235) Rows are Workspace entries now: every row the caller administers, with
+          // `my_role` set only where they hold own access.
+          items: [{ ...ws, personal_of: null, audience: ws.audience }],
+          next_cursor: null,
+        });
       if (grp[2] === "/impact") return json({ workspaces: [] });
     }
     // P4-ONB-1: Admin › Sign-up & placement (a saved shared-org placement with a starter grant).

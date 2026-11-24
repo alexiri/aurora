@@ -108,6 +108,9 @@ function stub(routes: Record<string, (req: Request) => Response>) {
 describe("organization agents from the one route (C-1090, D-425)", () => {
   it("shows the header's state and last use", async () => {
     stub({
+      // (FIX-235, D-477) The viewer is one of the workspace's people, so the agents link in.
+      "GET /v1/orgs/o1/workspaces": () =>
+        json(200, { items: [{ id: "w1", org_id: "o1", slug: "acme", name: "Acme Team", my_role: "owner", memory_language: "en", timezone: "UTC", created_at: "2026-11-20T12:00:00Z", updated_at: "2026-11-20T12:00:00Z" }], next_cursor: null }),
       "GET /v1/orgs/o1/agents": () =>
         json(200, { items: [
           { id: "a1", name: "Daneel", handle: "daneel", kind: "hosted", state: "needs_key", last_active_at: null, workspace: { id: "w1", slug: "acme", name: "Acme Team", personal_of: null } },

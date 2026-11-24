@@ -130,6 +130,8 @@ export function orgRoutes(org: string) {
     base,
     home: () => base,
     agents: (tab?: TabOf<"orgAgents">) => url(`${base}/agents`, { tab }),
+    /** The manage page for a workspace an administrator is not in (FIX-235). */
+    workspace: (ws: string) => `${base}/workspaces/${seg(ws)}`,
     skillLibraries: () => `${base}/agents/skills/libraries`,
     apps: (tab?: TabOf<"orgApps">, query?: Query, hash?: string) => url(`${base}/apps`, { tab, ...query }, hash),
     /** The organization's accounts; `kind` filters the list (`ai-key`, `app`, `website`). */

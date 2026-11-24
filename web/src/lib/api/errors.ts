@@ -26,7 +26,6 @@ export const ERROR_MESSAGES: Record<string, string> = {
   member_limit_reached: "The member limit for this organization has been reached.",
   already_member: "This person is already a member.",
   not_an_org_member: "The user must be a member of the organization first.",
-  implicit_access: "Organization owners and admins always have access.",
   invitation_expired: "This invitation has expired.",
   email_mismatch: "This invitation was sent to a different email address.",
   email_unverified:

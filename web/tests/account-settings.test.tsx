@@ -97,7 +97,7 @@ describe("KeysTab", () => {
 
 const bindings = {
   items: [
-    { user_id: "a", email: "boss@x.io", display_name: "Boss", role: "owner", implicit: true },
+    { user_id: "a", email: "boss@x.io", display_name: "Boss", role: "owner", implicit: false },
     { user_id: "b", email: "bob@x.io", display_name: "Bob", role: "member", implicit: false },
   ],
   next_cursor: null,
@@ -108,18 +108,20 @@ const members = {
 };
 
 describe("AccessTab", () => {
-  it("owner sees edit controls, implicit badge and member picker", async () => {
+  it("owner sees edit controls and member picker", async () => {
     mockFetch({
       "GET /v1/workspaces/w/access": () => json(200, bindings),
       "GET /v1/orgs/o/members": () => json(200, members),
       "GET /v1/orgs/o": () => json(200, { id: "o", slug: "users", name: "Users", my_role: "admin" }),
     });
     wrap(<AccessTab wsId="w" orgId="o" canOwn />);
-    // (D6) The inherited owner's reason is a line under the person.
-    expect(await screen.findByText("Has access as an owner of Users")).toBeInTheDocument();
-    // Remove is in the row's … menu (D6); organization owners have no menu.
+    // (FIX-234, D-477) No implicit rows any more: every row is a binding in its own right.
+    expect(await screen.findByText("Boss")).toBeInTheDocument();
+    expect(screen.queryByText(/Has access as an owner of/)).not.toBeInTheDocument();
+    // Remove is in the row's … menu (D6) — now for every row but the viewer's own.
     expect(screen.getByRole("button", { name: "More for Bob" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "More for Boss" })).not.toBeInTheDocument();    expect(await screen.findByLabelText("Organization member")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More for Boss" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Organization member")).toBeInTheDocument();
     // (workspace-7) The role choices are words, not the raw role values.
     const role = screen.getByLabelText("Role") as HTMLSelectElement;
     expect(Array.from(role.options).map((o) => o.textContent)).toEqual(["Member", "Approver", "Owner"]);

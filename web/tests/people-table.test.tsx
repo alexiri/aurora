@@ -190,16 +190,20 @@ describe("People table", () => {
     await waitFor(() => expect(within(screen.getByTestId("access-row-c")).queryByText("Suspended")).toBeNull());
   });
 
-  it("does not mark an organization owner suspended: their access comes from the organization", async () => {
+  it("marks a suspended owner suspended: every row is a binding in its own right (FIX-234, D-477)", async () => {
+    // Since FIX-234 the server returns no implicit rows: an organization owner without a binding
+    // is not in the list at all (the API tests check the query), and a stored suspension on a
+    // row that is returned applies to it like to any other.
     mockFetch({
       ...routes,
       "GET /v1/workspaces/w/access": () =>
-        json(200, { ...access, items: [access.items[0], { user_id: "z", email: "zed@x.io", display_name: "Zed", role: "owner", implicit: true, status: "suspended", joined_at: null }] }),
+        json(200, { ...access, items: [access.items[0], { user_id: "z", email: "zed@x.io", display_name: "Zed", role: "owner", implicit: false, status: "suspended", joined_at: "2025-03-04T10:00:00Z" }] }),
     });
     wrap(<AccessTab wsId="w" orgId="o" canOwn />);
     const row = await screen.findByTestId("access-row-z");
-    expect(within(row).queryByText("Suspended")).toBeNull();
-    expect(within(row).queryByRole("button")).toBeNull();
+    expect(within(row).getByText("Suspended")).toBeInTheDocument();
+    fireEvent.keyDown(within(row).getByRole("button", { name: "More for Zed" }), { key: "Enter" });
+    expect(await screen.findByRole("menuitem", { name: "Restore zed@x.io" })).toBeInTheDocument();
   });
 
   it("shows Groups in a shared workspace and not in a personal one", async () => {

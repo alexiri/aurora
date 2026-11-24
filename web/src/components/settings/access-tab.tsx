@@ -170,18 +170,19 @@ function Row({
   onError,
   mine,
   lastOwner,
-  orgName,
   address,
+  protectedRow,
   select,
 }: {
   /** (P5-REFINE-19, Expert) The row's bulk checkbox; `disabled` says why it cannot be ticked. */
   select?: { checked: boolean; onChange: (on: boolean) => void; disabled: boolean; title?: string };
   /** The workspace's full address to send, for a person who has not signed in yet. */
   address?: string;
-  orgName?: string;
   b: AccessBinding;
   /** This row is the viewer's own: no menu and no role change. */
   mine: boolean;
+  /** (FIX-234, D-480) The person of a personal workspace: no role change, no suspend, no remove. */
+  protectedRow?: boolean;
   /** The only direct owner: the roles below Owner are not offered. */
   lastOwner: boolean;
   wsId: string;
@@ -199,8 +200,7 @@ function Row({
   const saved = useSaveBar();
   const offboarding = useWorkspaceOffboarding(wsId, confirm ? b.user_id : null);
   const who = personName(b.display_name);
-  // (P5-APIGAP-4, C-1051) An implicit row's access comes from the organization: a stored suspension does not apply to it.
-  const suspended = b.status === "suspended" && !b.implicit;
+  const suspended = b.status === "suspended";
   return (
     <tr data-testid={`access-row-${b.user_id}`}>
       <Td cell="title">
@@ -216,20 +216,16 @@ function Row({
               {suspended ? <Badge tone="neutral">Suspended</Badge> : null}
             </div>
             <div className="text-xs text-muted">{b.email}</div>
-            {b.implicit ? <div className="text-xs text-ink-2">Has access as an owner of {orgName ?? "the organization"}</div> : null}
           </div>
         </div>
       </Td>
       <Td label="Role">
-        {b.implicit ? (
-          // (D6) The role is "Owner"; why is a line under the person: "Has access as an owner of Users".
-          "Owner"
-        ) : b.idp_value ? (
+        {b.idp_value ? (
           <span className="flex flex-wrap items-center gap-1.5">
             {ROLE_LABEL[b.role as Role] ?? b.role}
             <IdpRoleBadge value={b.idp_value} />
           </span>
-        ) : canOwn && !mine ? (
+        ) : canOwn && !mine && !protectedRow ? (
           <span className="inline-flex items-center gap-2">
           <select
             aria-label={`Role for ${b.email}`}
@@ -307,8 +303,8 @@ function Row({
             </div>
           </DialogContent>
         </Dialog>
-        {/* (P5-POLISH-7, D6) A … menu; never on your own row, and not for access that comes from the organization or the IdP. */}
-        {canOwn && !b.implicit && !b.idp_value && !mine ? (
+        {/* (P5-POLISH-7, D6) A … menu; never on your own row, and not for access that comes from the IdP. */}
+        {canOwn && !b.idp_value && !mine && !protectedRow ? (
           <Menu>
             <MenuTrigger asChild>
               <Button variant="outline" size="sm" disabled={busy} aria-label={`More for ${who}`}>
@@ -391,7 +387,6 @@ export function AccessTab({
 }) {
   const access = useAccess(wsId);
   const meId = useMe().data?.user.id;
-  const org = useOrg(orgId);
   const origin = useSyncExternalStore(
     () => () => {},
     () => window.location.origin,
@@ -406,11 +401,26 @@ export function AccessTab({
   const [bulkRole, setBulkRole] = useState<Role>("member");
   const bulkPut = usePutAccess(wsId);
   const bulkDel = useDeleteAccess(wsId);
-  const wsName = useWorkspace(wsId).data?.name;
+  const wsData = useWorkspace(wsId).data;
+  const wsName = wsData?.name;
   const rows = access.data?.items ?? [];
-  const soleOwner = rows.filter((b) => b.role === "owner" && !b.implicit && b.status !== "suspended").length === 1;
+  const soleOwner = rows.filter((b) => b.role === "owner" && b.status !== "suspended").length === 1;
+  // (FIX-234, D-480) A personal workspace's person cannot be lowered, suspended or removed
+  // there; they leave by deleting the workspace (the API refuses with 409
+  // `personal_workspace_person`, and the UI hides the actions outright).
+  const personId = wsData?.personal_of?.id ?? null;
   const whyNot = (b: AccessBinding): string | undefined =>
-    !canOwn ? "Only workspace owners can change who has access" : b.user_id === meId ? "You cannot change yourself" : b.implicit ? "Has access as an owner of the organization" : b.idp_value ? "Managed by your identity provider" : b.role === "owner" && soleOwner ? "The last owner stays an owner" : undefined;
+    !canOwn
+      ? "Only workspace owners can change who has access"
+      : b.user_id === meId
+        ? "You cannot change yourself"
+        : b.user_id === personId
+          ? "The person of a personal workspace cannot be changed here"
+          : b.idp_value
+            ? "Managed by your identity provider"
+            : b.role === "owner" && soleOwner
+              ? "The last owner stays an owner"
+              : undefined;
   const sel = useSelection(rows.filter((b) => whyNot(b) === undefined).map((b) => b.user_id));
   if (access.isPending) return <Loading />;
   if (access.isError) return <ErrorState error={access.error} onRetry={() => access.refetch()} />;
@@ -422,7 +432,7 @@ export function AccessTab({
   );
   const bound = new Set(items.map((b) => b.user_id));
   const inherited = (access.data.derived_members?.items ?? []).filter((d) => !bound.has(d.user.id));
-  const directOwners = items.filter((b) => b.role === "owner" && !b.implicit && b.status !== "suspended").length;
+  const directOwners = items.filter((b) => b.role === "owner" && b.status !== "suspended").length;
   const picked = items.filter((b) => sel.selected.has(b.user_id));
   const targets = picked.map((b) => ({ id: b.user_id, name: personName(b.display_name) }));
   const n = picked.length;
@@ -505,8 +515,8 @@ export function AccessTab({
                 key={b.user_id}
                 b={b}
                 mine={b.user_id === meId}
-                lastOwner={b.role === "owner" && !b.implicit && directOwners === 1}
-                orgName={org.data?.name}
+                protectedRow={b.user_id === personId}
+                lastOwner={b.role === "owner" && directOwners === 1}
                 address={address}
                 select={canOwn ? { checked: sel.selected.has(b.user_id), onChange: (on) => sel.toggle(b.user_id, on), disabled: whyNot(b) !== undefined || bulk.running, title: whyNot(b) } : undefined}
                 wsId={wsId}

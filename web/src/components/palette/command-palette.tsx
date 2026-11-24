@@ -68,7 +68,7 @@ export function usePaletteContext(): PaletteContext {
       topics: wsId ? visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") }, altitude) : [],
       agents: wsId ? agentList : [],
       agentPages: pages.map((p: { id: AgentPageId; label: string }) => ({ id: p.id, label: p.label })),
-      role,
+      role: role ?? undefined,
       instanceAdmin,
       ssh: instance.data?.features?.ssh === true,
     } satisfies PaletteContext;

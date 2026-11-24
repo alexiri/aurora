@@ -40,6 +40,9 @@ function PeopleCard({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
 
 function AgentsCard({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
   const { rows, pending } = useOrgAgents(orgId);
+  // (FIX-235, D-477) An agent links only when the viewer is one of its workspace's people.
+  const workspaces = useWorkspaces(orgId);
+  const inWs = new Map((workspaces.data?.items ?? []).filter((w) => w.my_role != null).map((w) => [w.id, true]));
   const last = [...rows].sort((a, b) => (b.agent.last_active_at ?? "").localeCompare(a.agent.last_active_at ?? "")).slice(0, 5);
   return (
     <Section
@@ -57,7 +60,7 @@ function AgentsCard({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
         <Card className="overflow-hidden p-0">
           <ul className="divide-y divide-line" aria-label="Latest agents">
             {last.map((r) => (
-              <AgentRow key={r.agent.id} row={r} orgSlug={orgSlug} />
+              <AgentRow key={r.agent.id} row={r} orgSlug={orgSlug} orgId={orgId} inWs={inWs.has(r.ws.id)} />
             ))}
           </ul>
         </Card>
@@ -82,16 +85,22 @@ export default function OrgPage() {
   const items = workspaces.data?.items ?? [];
   const shared = items.filter((w) => !w.personal_of).sort((a, b) => workspaceDisplayName(a, me.data?.user).localeCompare(workspaceDisplayName(b, me.data?.user)));
   const personal = items.filter((w) => !!w.personal_of).sort((a, b) => (a.personal_of?.name ?? "").localeCompare(b.personal_of?.name ?? ""));
-  const row = (w: (typeof items)[number]) => (
-    <ListRow key={w.id} className="p-0 sm:px-0">
-      <Link href={`/o/${org}/w/${w.slug}`} className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 hover:bg-subtle">
-        <span className="font-medium text-ink">
-          {workspaceDisplayName(w, me.data?.user)}
-          {w.personal_of ? <span className="ml-2 font-normal text-ink-2">{personName(w.personal_of.name)}</span> : null}
-        </span>
-      </Link>
-    </ListRow>
-  );
+  const row = (w: (typeof items)[number]) => {
+    // (FIX-235, D-477) A workspace this person is in links as today; an administrator who is not
+    // one of its people gets the manage page, with a quiet "Manage" label instead of a link in.
+    const href = w.my_role != null ? `/o/${org}/w/${w.slug}` : orgRoutes(org).workspace(w.slug);
+    return (
+      <ListRow key={w.id} className="p-0 sm:px-0">
+        <Link href={href} className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 hover:bg-subtle">
+          <span className="font-medium text-ink">
+            {workspaceDisplayName(w, me.data?.user)}
+            {w.personal_of ? <span className="ml-2 font-normal text-ink-2">{personName(w.personal_of.name)}</span> : null}
+          </span>
+          {w.my_role == null ? <span className="text-sm text-muted" data-testid="manage-row">Manage</span> : null}
+        </Link>
+      </ListRow>
+    );
+  };
 
   return (
     <div className="space-y-6">

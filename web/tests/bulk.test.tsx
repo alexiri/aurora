@@ -181,26 +181,28 @@ describe("People of a workspace", () => {
     user_id: id, email: `${name.toLowerCase()}@x.io`, display_name: name, role, implicit: false, status: "active", joined_at: "2026-01-01T00:00:00Z", signed_in: true, ...over,
   });
 
-  it("removes selected people from the workspace, never yourself, the inherited owner or the last owner", async () => {
+  it("removes selected people from the workspace, never yourself (FIX-234: no inherited rows)", async () => {
     const calls = serve({
       "GET /v1/me": () => json(200, { user: { id: "u0", display_name: "Ada", email: "ada@x.io" }, memberships: [] }),
-      "GET /v1/workspaces/w/access": () => json(200, { items: [bind("u0", "Ada", "owner"), bind("u1", "Alice"), bind("u2", "Bob"), bind("u9", "Boss", "owner", { implicit: true })], next_cursor: null }),
+      "GET /v1/workspaces/w/access": () => json(200, { items: [bind("u0", "Ada", "owner"), bind("u1", "Alice"), bind("u2", "Bob"), bind("u9", "Boss", "owner")], next_cursor: null }),
       "GET /v1/workspaces/w": () => json(200, { id: "w", org_id: "o", name: "Ops", my_role: "owner" }),
       "GET /v1/orgs/o": () => json(200, { id: "o", slug: "users", name: "Users", my_role: "admin" }),
       "GET /v1/orgs/o/members": () => json(200, { items: [], next_cursor: null }),
       "DELETE /v1/workspaces/w/access/u1": () => json(204, null),
       "DELETE /v1/workspaces/w/access/u2": () => json(204, null),
+      "DELETE /v1/workspaces/w/access/u9": () => json(204, null),
     });
     wrap(<AccessTab wsId="w" orgId="o" canOwn />);
     await screen.findByText("Alice");
     expect(screen.getByRole("checkbox", { name: "Select Ada" })).toBeDisabled();
-    expect(screen.getByRole("checkbox", { name: "Select Boss" })).toBeDisabled();
+    // (FIX-234, D-477) Boss's owner binding is in its own right now: no inherited row shields it.
+    expect(screen.getByRole("checkbox", { name: "Select Boss" })).toBeEnabled();
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all people" }));
-    expect(screen.getByTestId("bulk-bar")).toHaveTextContent("2 people selected");
+    expect(screen.getByTestId("bulk-bar")).toHaveTextContent("3 people selected");
     fireEvent.click(screen.getByRole("button", { name: "Remove…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Remove 2 people from Ops?" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Remove 2 people" }));
-    await waitFor(() => expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(2));
+    const dialog = await screen.findByRole("dialog", { name: "Remove 3 people from Ops?" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Remove 3 people" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(3));
   });
 
   it("has no checkboxes with Show more controls off, and none for a member who is not an owner", async () => {

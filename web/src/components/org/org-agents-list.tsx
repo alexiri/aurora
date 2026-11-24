@@ -5,9 +5,15 @@ import Link from "next/link";
 import { AgentAvatar } from "@/components/agent-avatar";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { ErrorNotice } from "@/components/ui/notice";
 import { StatusDot } from "@/components/ui/status-dot";
+import { FreezeControl } from "@/components/freeze/freeze-panel";
+import { useFreezeAgent, useFreezeAuthority } from "@/lib/api/freeze";
 import { useOrganizationAgents, type OrgAgent, type OrgAgentWorkspace } from "@/lib/api/org";
+import { useWorkspaces } from "@/lib/api/queries";
 import { When } from "@/components/ui/when";
+import { orgRoutes } from "@/lib/routes";
 import { personName } from "@/lib/workspace-name";
 
 export interface OrgAgentRow {
@@ -70,26 +76,53 @@ export function useOrgAgents(orgId: string | undefined) {
   };
 }
 
-export function AgentRow({ row, orgSlug }: { row: OrgAgentRow; orgSlug: string }) {
+/** The row action for an agent of a workspace the viewer manages but is not in (FIX-235, D-477):
+ * Pause opens the freeze dialog; Resume lifts the agent's own pause at once (a workspace-level
+ * pause is lifted on the manage page, where the workspace's controls are). */
+function OrgAgentAction({ agentId, name, orgId, paused }: { agentId: string; name: string; orgId: string; paused: boolean }) {
+  const m = useFreezeAgent(agentId);
+  const rank = useFreezeAuthority(orgId);
+  if (paused) {
+    return (
+      <Button variant="outline" size="sm" disabled={m.unfreeze.isPending} onClick={() => void m.unfreeze.mutateAsync()} aria-label={`Resume ${name}`}>
+        Resume
+      </Button>
+    );
+  }
+  return <FreezeControl subject="agent" name={name} frozen={null} callerRank={rank} freeze={m.freeze} unfreeze={m.unfreeze} buttonLabel="Pause…" buttonVariant="outline" />;
+}
+
+export function AgentRow({ row, orgSlug, orgId, inWs = true }: { row: OrgAgentRow; orgSlug: string; orgId: string; /** The viewer holds own access to the agent's workspace (FIX-235); only then is the agent a link. */ inWs?: boolean }) {
   const state = agentRowState(row.agent);
   return (
     <li className="flex items-center gap-3 px-4 py-3">
       <AgentAvatar name={row.agent.name} url={null} tintKey={row.agent.id} size={36} />
       <div className="min-w-0 flex-1">
-        <Link href={`/o/${orgSlug}/w/${row.ws.slug}/agents/${row.agent.handle}`} className="font-semibold text-ink underline-offset-2 hover:underline">
-          {row.agent.name}
-        </Link>
+        {inWs ? (
+          <Link href={`/o/${orgSlug}/w/${row.ws.slug}/agents/${row.agent.handle}`} className="font-semibold text-ink underline-offset-2 hover:underline">
+            {row.agent.name}
+          </Link>
+        ) : (
+          <span className="font-semibold text-ink">{row.agent.name}</span>
+        )}
         <p className="truncate text-sm text-ink-2">
-          {row.agent.last_active_at ? (
-            <>
-              used <When value={row.agent.last_active_at} />
-            </>
+          {inWs ? (
+            row.agent.last_active_at ? (
+              <>
+                used <When value={row.agent.last_active_at} />
+              </>
+            ) : (
+              "never used"
+            )
           ) : (
-            "never used"
+            <Link href={orgRoutes(orgSlug).workspace(row.ws.slug)} className="underline underline-offset-2 hover:underline" data-testid="agent-manage-link">
+              {row.ws.name}
+            </Link>
           )}
         </p>
       </div>
       <StatusDot tone={state.tone}>{state.word}</StatusDot>
+      {inWs ? null : <OrgAgentAction agentId={row.agent.id} name={row.agent.name} orgId={orgId} paused={row.agent.state === "paused"} />}
     </li>
   );
 }
@@ -97,6 +130,10 @@ export function AgentRow({ row, orgSlug }: { row: OrgAgentRow; orgSlug: string }
 /** (org-6) Organization › Agents: one card, a header per workspace, a row per agent. */
 export function OrgAgentsList({ orgId, orgSlug }: { orgId: string; orgSlug: string }) {
   const { groups, pending, error, refetch } = useOrgAgents(orgId);
+  // (FIX-235, D-477) An agent links only when the viewer is one of its workspace's people; the
+  // org agents route's rows carry no my_role, so join the org's workspace list (C-1160).
+  const workspaces = useWorkspaces(orgId);
+  const inWs = new Map((workspaces.data?.items ?? []).filter((w) => w.my_role != null).map((w) => [w.id, true]));
   if (error) return <ErrorState error={error} onRetry={refetch} />;
   if (pending && groups.length === 0) return <Loading variant="rows" label="Loading agents…" />;
   if (groups.length === 0) return <EmptyState title="No agents yet">Agents show up here once a workspace has one.</EmptyState>;
@@ -108,7 +145,7 @@ export function OrgAgentsList({ orgId, orgSlug }: { orgId: string; orgSlug: stri
             <h3 className="border-b border-line bg-subtle px-4 py-2 text-label font-semibold uppercase tracking-label text-muted">{g.title}</h3>
             <ul className="divide-y divide-line" aria-label={`Agents in ${g.title}`}>
               {g.rows.map((r) => (
-                <AgentRow key={r.agent.id} row={r} orgSlug={orgSlug} />
+                <AgentRow key={r.agent.id} row={r} orgSlug={orgSlug} orgId={orgId} inWs={inWs.has(r.ws.id)} />
               ))}
             </ul>
           </section>
