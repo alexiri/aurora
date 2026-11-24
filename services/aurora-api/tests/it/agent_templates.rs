@@ -1281,6 +1281,113 @@ async fn the_interval_never_is_never_due() {
     assert_eq!(out["waiting"].as_array().unwrap().len(), 1, "{out}");
 }
 
+/// A check that dies without writing its outcome (here: a database-level failure, the way
+/// the SEC-146 D fixture refuses a commit) must not leave the source due on the next tick:
+/// the lease is released AND the failure backs off 1 h, like every other failure.
+#[tokio::test]
+async fn a_check_that_errors_backs_off_instead_of_being_retried_every_tick() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    // The database refuses every template write, so `check_source` returns Err at
+    // `store_head` — past the reads, before any outcome was written.
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION aurora_tpl_fail_tpl() RETURNS trigger AS $$
+         BEGIN RAISE EXCEPTION 'test: refused template write'; END;
+         $$ LANGUAGE plpgsql",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER aurora_tpl_tpl_trg BEFORE INSERT ON agent_templates
+         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_fail_tpl()",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE agent_template_sources SET next_check_at = now() - interval '1 second'")
+        .bind(id)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(poll::poll_once(&w.h.state).await.unwrap(), 1);
+    let row = w.source(id).await;
+    assert_eq!(row["status"], "check_failed", "{row}");
+    assert!(
+        !row["check_failed_reason"].as_str().unwrap().is_empty(),
+        "{row}"
+    );
+    let (lease, owner): (Option<chrono::DateTime<chrono::Utc>>, Option<Uuid>) = sqlx::query_as(
+        "SELECT check_lease_until, lease_owner FROM agent_template_sources WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(lease.is_none() && owner.is_none(), "lease still held");
+    // Not due again for the backoff: the next tick claims nothing.
+    let next: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT next_check_at FROM agent_template_sources WHERE id = $1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    let mins = (next - chrono::Utc::now()).num_minutes();
+    assert!((55..=65).contains(&mins), "next in {mins}m");
+    assert_eq!(poll::poll_once(&w.h.state).await.unwrap(), 0);
+}
+
+/// A `never` source that errors keeps having no schedule: the backoff must not turn a
+/// manual-only source into a scheduled one.
+#[tokio::test]
+async fn a_failed_check_leaves_a_never_source_unscheduled() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    let src = w
+        .add_source("acme/tpl", json!({"update_interval": "never"}))
+        .await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION aurora_tpl_fail_tpl() RETURNS trigger AS $$
+         BEGIN RAISE EXCEPTION 'test: refused template write'; END;
+         $$ LANGUAGE plpgsql",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER aurora_tpl_tpl_trg BEFORE INSERT ON agent_templates
+         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_fail_tpl()",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "failed", "{out}");
+    // Still ~a year out (`never`), not the 1 h failure backoff.
+    let next: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT next_check_at FROM agent_template_sources WHERE id = $1")
+            .bind(id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    let days = (next - chrono::Utc::now()).num_days();
+    assert!((360..=366).contains(&days), "next in {days}d");
+    let (lease, owner): (Option<chrono::DateTime<chrono::Utc>>, Option<Uuid>) = sqlx::query_as(
+        "SELECT check_lease_until, lease_owner FROM agent_template_sources WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(lease.is_none() && owner.is_none(), "lease still held");
+    assert_eq!(poll::poll_once(&w.h.state).await.unwrap(), 0);
+}
+
 // ---- the token (C-1125/C-1126, SEC-146) --------------------------------------------------------
 
 #[tokio::test]

@@ -790,12 +790,13 @@ pub async fn check_now(
             )
         })?;
     drop(c);
-    let out = check::check_source(state, &source, actor).await;
-    if out.is_err() {
-        // The check died without writing its outcome: free the lease.
-        release(state, &source).await;
-    }
-    Ok(result_dto(id, out?))
+    let out = match check::check_source(state, &source, actor).await {
+        Ok(out) => out,
+        // The check died without writing its outcome: write the failed outcome (which
+        // releases the lease and applies the failure backoff) and answer with it.
+        Err(e) => check::fail(state, &source, e.message()).await?,
+    };
+    Ok(result_dto(id, out))
 }
 
 /// Manual check of every source (C-1107): sequential; a failing or busy source never blocks
@@ -827,20 +828,15 @@ pub async fn check_all(
             });
             continue;
         };
-        let out = check::check_source(state, &source, actor).await;
-        if out.is_err() {
-            release(state, &source).await;
-        }
-        items.push(result_dto(r.id, out?));
+        let out = match check::check_source(state, &source, actor).await {
+            Ok(out) => out,
+            // The check died without writing its outcome: write the failed outcome (which
+            // releases the lease and applies the failure backoff) and answer with it.
+            Err(e) => check::fail(state, &source, e.message()).await?,
+        };
+        items.push(result_dto(r.id, out));
     }
     Ok(dto::TemplateSourceCheckAll { items })
-}
-
-/// Free the lease of a check that ended without writing its outcome.
-pub(crate) async fn release(state: &AppState, source: &SourceRow) {
-    if let (Some(owner), Ok(mut c)) = (source.lease_owner, state.pool.acquire().await) {
-        let _ = repo::release_lease(&mut c, source.id, owner).await;
-    }
 }
 
 // ---- the stored views -------------------------------------------------------------------------

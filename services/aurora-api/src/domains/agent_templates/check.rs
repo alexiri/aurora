@@ -255,14 +255,23 @@ async fn finish_ok(
     Ok(())
 }
 
-/// Records a failed check: the source keeps serving its last known state, the reason is
-/// stored sanitized (never a token, never credentials) and nothing else changes.
-async fn fail(
+/// Records a failed check — including one that died before writing any outcome (the poll
+/// and the manual checks route an `Err` from [`check_source`] here): the source keeps
+/// serving its last known state, the reason is stored sanitized (never a token, never
+/// credentials), the lease is released and the next check backs off [`FAILURE_BACKOFF`].
+/// A source with no schedule (`never`) keeps having none — the same one-year stand-in the
+/// insert, the interval writes and the success path use — so a failed check never turns a
+/// manual-only source into a scheduled one.
+pub(crate) async fn fail(
     state: &AppState,
     source: &SourceRow,
     reason: &str,
 ) -> Result<CheckOutcome, ApiError> {
     let reason = sanitize::one_line(reason, 200);
+    let next_in_secs = match super::next_in_secs(&source.update_interval, source.id) {
+        Some(_) => FAILURE_BACKOFF,
+        None => YEAR,
+    };
     let mut c = state
         .pool
         .acquire()
@@ -275,7 +284,7 @@ async fn fail(
             owner: source.lease_owner.unwrap_or_default(),
             status: "check_failed",
             reason: Some(reason.clone()),
-            next_in_secs: FAILURE_BACKOFF,
+            next_in_secs,
         },
     )
     .await?;
