@@ -964,6 +964,7 @@ pub struct TemplateVersionDetail {
 }
 
 #[derive(Debug, Clone, Deserialize, ToSchema)]
+#[schema(as = ApproveTemplateVersionRequest)]
 #[serde(deny_unknown_fields)]
 pub struct ApproveRequest {
     /// The hash the review showed; it must still be the stored one.

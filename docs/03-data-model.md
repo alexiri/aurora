@@ -990,7 +990,6 @@ One row per part an agent last wrote from a template, written at creation and at
 | org_id | uuid not null FK→organizations (cascade) | pk part |
 | template_id | text not null | pk part; keyed by the template id (not a FK), so a source removed and added again keeps the organization's choice |
 | disabled_by | uuid null FK→users (set null) | |
-| created_at | timestamptz not null default now() | |
 
 The gateway role gets nothing on these tables.
 

@@ -8576,6 +8576,11 @@ export interface components {
             content_sha256: string;
         };
         ApproveRequest: {
+            user_code: string;
+            /** Format: uuid */
+            workspace_id: string;
+        };
+        ApproveTemplateVersionRequest: {
             /** @description The hash the review showed; it must still be the stored one. */
             content_sha256: string;
         };
@@ -19425,7 +19430,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ApproveRequest"];
+                "application/json": components["schemas"]["ApproveTemplateVersionRequest"];
             };
         };
         responses: {

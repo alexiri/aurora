@@ -459,6 +459,10 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "agent.freeze": named("paused", "the agent", "an agent", "important"),
   "agent.unfreeze": named("resumed", "the agent", "an agent"),
   "agent.token_regenerate": named("made a new token for", "the agent", "an agent", "important"),
+  // (P6-TPL-2/3/6, C-1112, C-1143) What a template does to an agent, and its helper files.
+  "agent.helpers_remove": named("removed a helper file from", "the agent", "an agent"),
+  "agent.template_apply": named("applied a template update to", "the agent", "an agent"),
+  "agent.template_detach": named("detached the template from", "the agent", "an agent"),
   "workspace.create": named("created", "the workspace", "a workspace"),
   "workspace.delete": named("deleted", "the workspace", "a workspace", "important"),
   "workspace.freeze": named("paused", "the workspace", "the workspace", "important"),
@@ -515,6 +519,21 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "approval.decide": { sentence: (actor) => `${actor} answered an approval`, weight: "routine" },
   "action_approval.decide": { sentence: (actor) => `${actor} answered an approval`, weight: "routine" },
   "skill.library.add": { sentence: (actor, t) => `${actor} added ${t ? `the skill library ${t}` : "a skill library"}`, weight: "routine" },
+  // (P6-TPL-2, C-1106) The instance administrators' template catalogue and the organizations' switches.
+  "agent_template.approve": named("approved a new version of", "the template", "a template", "important"),
+  "agent_template.reject": named("rejected a new version of", "the template", "a template", "important"),
+  "agent_template.update": {
+    sentence: (actor, t, m) => `${actor} ${m.offered === false ? "withdrew" : "offered"} ${t ? `the template ${t}` : "a template"}${m.offered === false ? "" : " again"}`,
+    weight: "important",
+  },
+  "agent_template.ingest": named("took in a new version of", "the template", "a template", "important"),
+  "agent_template_source.add": named("connected", "the template source", "a template source", "important"),
+  "agent_template_source.update": named("changed", "the template source", "a template source", "important"),
+  "agent_template_source.remove": named("removed", "the template source", "a template source", "important"),
+  "org.template_availability": {
+    sentence: (actor, _t, m) => `${actor} turned ${m.enabled === false ? "off" : "on"} a template for the organization`,
+    weight: "routine",
+  },
   // (P5-REFINE-18 #11, admin-10) What instance administrators did, for the Administration audit log.
   "instance_settings.update": {
     sentence: (actor, _t, m) => `${actor} changed the ${settingsAreaWords(m.section)} settings`,
@@ -810,7 +829,7 @@ export function auditActionLabel(action: string): string {
 /** Where an action belongs in the filter's list, by what it is about. */
 const AUDIT_GROUPS: [string, string[]][] = [
   ["People and sign-in", ["user", "session", "cli_login", "instance_admin", "org_role", "user_link", "user_token", "invitation", "scim", "scim_token", "oauth_client", "member", "workspace_access", "workspace.access", "group", "group_access", "group_member", "admin.user"]],
-  ["Agents", ["agent", "agent_link", "reach", "reach_grant", "ssh_key", "ssh_session", "preview", "api_key", "push", "push_subscription"]],
+  ["Agents", ["agent", "agent_link", "agent_template", "agent_template_source", "reach", "reach_grant", "ssh_key", "ssh_session", "preview", "api_key", "push", "push_subscription"]],
   ["Apps and accounts", ["plugin", "addon", "addon_source", "app_instance", "app_setup_request", "connect", "connection", "grant", "secret", "secret_stores", "trusted_key", "account", "policy", "approval", "action_approval"]],
   ["Chat platforms", ["channel", "channel_integration", "channel_presence", "connector", "admin.connector", "presence", "space_binding", "dm_default"]],
   ["Conversations, memory and skills", ["conversation", "transcript_event", "attachment", "memory", "skill", "skill_library", "schedule", "webhook", "eval", "automation"]],
@@ -818,7 +837,7 @@ const AUDIT_GROUPS: [string, string[]][] = [
 ];
 
 /** What only an instance administrator does: not offered on a workspace's or an organization's audit. */
-const INSTANCE_ONLY = ["instance_settings.", "placement.", "plugin.", "addon", "trusted_key.", "admin.", "connector.", "runner.", "scim", "secret_stores.", "instance_admin.", "oauth_client.", "push.vapid", "org_role.", "channel.credential_dead", "user.admit_by_claim"];
+const INSTANCE_ONLY = ["instance_settings.", "placement.", "plugin.", "addon", "trusted_key.", "admin.", "connector.", "runner.", "scim", "secret_stores.", "instance_admin.", "oauth_client.", "push.vapid", "org_role.", "channel.credential_dead", "user.admit_by_claim", "agent_template"];
 
 export interface AuditFilterGroup {
   group: string;
