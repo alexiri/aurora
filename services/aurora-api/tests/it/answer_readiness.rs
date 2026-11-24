@@ -84,11 +84,15 @@ async fn no_key_at_all_member_asks_admin_org_admin_adds_one() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["fix"]["action"], "ask_admin", "{v}");
 
-    // An organization admin can.
+    // An organization admin who is not one of the workspace's people: the readiness view is a
+    // can-use view (FIX-234, C-1160) — they are refused here and add the key through the
+    // administer routes (covered by the secrets tests).
     let (s, v) = get(&r, &admin, a).await;
-    assert_eq!(s, 200, "{v}");
-    assert_eq!(v["reason"], "no_ai_key");
-    assert_eq!(v["fix"], serde_json::json!({"action": "add_key"}));
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("workspace_access_required")),
+        "{v}"
+    );
 }
 
 #[tokio::test]

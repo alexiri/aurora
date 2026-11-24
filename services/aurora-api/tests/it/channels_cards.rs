@@ -69,6 +69,9 @@ impl W {
         h.member(org, outsider, "member", "active").await;
         // RFE-012: the clicking `member` of these fixtures is an approver.
         h.bind_ws(ws, member, "approver").await;
+        // (FIX-234, D-477) The org owner's workspace reach is an own-right owner binding: an org
+        // role grants no workspace right, and the card clicks act in the workspace.
+        h.bind_ws(ws, owner, "owner").await;
         let p = h.pool();
         sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', $2, 'active')")
             .bind(vec![7u8; 32]).bind(caps(names)).execute(p).await.unwrap();

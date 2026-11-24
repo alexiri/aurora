@@ -35,6 +35,9 @@ async fn world() -> World {
     h.member(org, member, "member", "active").await;
     let ws = h.workspace(org).await;
     h.bind_ws(ws, member, "member").await;
+    // (FIX-234, D-477) The org owner's workspace reach is an own-right owner binding: an org role
+    // grants no workspace right, so the fixture binds it.
+    h.bind_ws(ws, owner, "owner").await;
     let (_, owner_tok) = h.good_session(owner).await;
     let (_, member_tok) = h.good_session(member).await;
     World {
@@ -280,6 +283,9 @@ async fn hosted_rules_and_limits() {
     let u = h.user("a@x.io", false).await;
     h.member(org, u, "owner", "active").await;
     let ws = h.workspace(org).await;
+    // (FIX-234, C-1160) Creating an agent is a can-use act: the org owner holds an own-right
+    // owner binding, as the org role alone grants no workspace right.
+    h.bind_ws(ws, u, "owner").await;
     let (_, t) = h.good_session(u).await;
     let (s, e) = sess(
         &h,

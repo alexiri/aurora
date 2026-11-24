@@ -17,7 +17,7 @@ struct Fx {
     mixed: Person,
     /// Approver of ws1 and ws2.
     approvers: Person,
-    /// Organization admin without any workspace binding.
+    /// Organization admin, also an own-right owner of both workspaces.
     admin: Person,
 }
 
@@ -72,7 +72,15 @@ async fn fx() -> Fx {
         &[(ws1, "approver"), (ws2, "approver")],
     )
     .await;
-    let admin = person(&rig, "admin@x.io", "admin", &[]).await;
+    // (FIX-234, D-477) The org admin also holds own-right owner bindings on both workspaces:
+    // linking is a can-use feature, so an org role alone no longer reaches the agents.
+    let admin = person(
+        &rig,
+        "admin@x.io",
+        "admin",
+        &[(ws1, "owner"), (ws2, "owner")],
+    )
+    .await;
     Fx {
         rig,
         members,

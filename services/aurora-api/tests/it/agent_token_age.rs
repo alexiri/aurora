@@ -34,6 +34,9 @@ async fn world_with(instance_days: Option<u32>) -> W {
     h.member(org, m, "member", "active").await;
     let ws = h.workspace(org).await;
     h.bind_ws(ws, m, "member").await;
+    // (FIX-234, D-477) The org owner's workspace reach is an own-right owner binding: an org role
+    // grants no workspace right, so the fixture binds it.
+    h.bind_ws(ws, o, "owner").await;
     let (_, owner) = h.good_session(o).await;
     let (_, member) = h.good_session(m).await;
     W {
@@ -671,13 +674,14 @@ async fn stale_and_expiring_lists_thresholds_filters_authorization_and_no_secret
     let (_, v) = w.call(Method::GET, &list(""), &w.owner, None).await;
     assert_eq!(v["items"].as_array().unwrap().len(), 3);
 
-    // Org route: org owner/admin only; the workspace member is refused on both.
+    // Org route: org owner/admin only; the workspace member is refused on both — the workspace
+    // list is an administer route (FIX-234, C-1160), so it hides as 404.
     let org_list = format!("/v1/orgs/{}/agent-tokens", w.org);
     let (s, v) = w.call(Method::GET, &org_list, &w.owner, None).await;
     assert_eq!(s, 200);
     assert_eq!(v["items"].as_array().unwrap().len(), 3);
     assert_eq!(w.call(Method::GET, &org_list, &w.member, None).await.0, 403);
-    assert_eq!(w.call(Method::GET, &list(""), &w.member, None).await.0, 403);
+    assert_eq!(w.call(Method::GET, &list(""), &w.member, None).await.0, 404);
 }
 
 #[tokio::test]

@@ -200,6 +200,9 @@ impl W {
         h.member(org, plain, "member", "active").await;
         h.bind_ws(ws, wso, "owner").await;
         h.bind_ws(ws, wsm, "member").await;
+        // (FIX-234, D-477) The org owner's workspace reach is an own-right owner binding: an org
+        // role grants no workspace right, and the presence/binding routes are workspace acts.
+        h.bind_ws(ws, owner, "owner").await;
         let ck = |u: Uuid| {
             let h = &h;
             async move { cookie(&h.good_session(u).await.1) }
@@ -1301,6 +1304,8 @@ async fn workspace_and_integration_delete_enqueue_deprovision() {
 
     // Integration delete: the ops outlive the integration (no integration id).
     let ws2 = w.h.workspace(w.org).await;
+    // (FIX-234, D-477) The org owner reaches ws2's agents through an own-right owner binding.
+    w.h.bind_ws(ws2, w.users.owner, "owner").await;
     let a2 = Uuid::now_v7();
     sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind, harness) VALUES ($1,$2,$3,'b1','b1','hosted','fake')")
         .bind(a2).bind(w.org).bind(ws2).execute(w.h.pool()).await.unwrap();
@@ -2524,6 +2529,8 @@ async fn deprovision_ops_commit_with_agent_workspace_org_integration_and_detach(
     let p1 = w.dedicated(a1, integ, "BOT-1").await;
     assert_eq!(w.attach(&w.owner, shared, integ, "shared").await.0, 201);
     let ws2 = w.h.workspace(w.org).await;
+    // (FIX-234, D-477) The org owner reaches ws2's agents through an own-right owner binding.
+    w.h.bind_ws(ws2, w.users.owner, "owner").await;
     let b1 = w.agent_in(ws2, "b1").await;
     let p2 = w.dedicated(b1, integ, "BOT-2").await;
     let c1 = w.agent("c1").await;
@@ -3592,9 +3599,13 @@ async fn shared_presences_enqueue_nothing_on_org_delete() {
 async fn dm_default_options_put_and_confirm_follow_own_reach_only() {
     let w = W::new().await;
     let integ = w.integration(&w.fake, "T1").await;
-    let theirs = w.agent("a1").await; // the world's workspace: the org owner has no binding there
-    w.attach(&w.owner, theirs, integ, "shared").await;
-    let other = w.agent("a2").await; // unattached
+    // Their agents live in a workspace the org owner is not bound to (FIX-234, D-477: the world's
+    // own workspace is theirs by an own-right binding).
+    let theirs_ws = w.h.workspace(w.org).await;
+    let theirs = w.agent_in(theirs_ws, "a1").await;
+    w.h.bind_ws(theirs_ws, w.users.wsowner, "owner").await;
+    w.attach(&w.wsowner, theirs, integ, "shared").await;
+    let other = w.agent_in(theirs_ws, "a2").await; // unattached
     // The org owner's own workspace with an agent.
     let own_ws = w.h.workspace(w.org).await;
     w.h.bind_ws(own_ws, w.users.owner, "owner").await;

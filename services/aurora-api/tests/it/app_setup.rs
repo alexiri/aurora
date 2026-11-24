@@ -246,6 +246,9 @@ async fn world_with(mutate: impl FnOnce(&mut aurora_config::ApiConfig)) -> W {
     let wo = named(&h, "wo@x.io", "Wendy Owner", false).await;
     h.member(org, wo, "member", "active").await;
     h.bind_ws(ws, wo, "owner").await;
+    // (FIX-234, D-477) The workspace catalogue and guide are can-use reads: the org admin holds
+    // an own-right owner binding to reach them.
+    h.bind_ws(ws, adam, "owner").await;
     let m = named(&h, "mem@x.io", "Mia Member", false).await;
     h.member(org, m, "member", "active").await;
     h.bind_ws(ws, m, "member").await;

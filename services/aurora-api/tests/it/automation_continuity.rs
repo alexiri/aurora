@@ -187,7 +187,8 @@ async fn reassign_is_can_own_only_to_an_authorized_member_and_audited() {
         )
     };
     for kind in ["schedules", "webhooks"] {
-        // A plain member (even the creator) cannot reassign.
+        // A plain member (even the creator) cannot reassign: the route is administer-only and
+        // hides from them (FIX-234, C-1160).
         let (s, _) = r
             .call(
                 r.alice,
@@ -196,7 +197,7 @@ async fn reassign_is_can_own_only_to_an_authorized_member_and_audited() {
                 Some(json!({"user_id": r.bob})),
             )
             .await;
-        assert_eq!(s, 403, "{kind}");
+        assert_eq!(s, 404, "{kind}");
         // Targets that cannot use the workspace: unbound org member, stranger.
         for bad in [r.carol, Uuid::now_v7()] {
             let (s, v) = r
@@ -245,7 +246,9 @@ async fn reassign_is_can_own_only_to_an_authorized_member_and_audited() {
     assert_eq!(v["anchor"], "creator");
     let (s, v) = r
         .call(
-            r.admin,
+            // (FIX-234, D-477) The org owner without own access cannot even reach the item; the
+            // workspace owner reassigns.
+            r.owner,
             Method::PUT,
             &url("webhooks"),
             Some(json!({"user_id": r.bob})),
@@ -317,7 +320,8 @@ async fn bulk_reassign_is_atomic_and_audited_per_item() {
     let (w1, _) = r.webhook(r.alice, "w1", json!({})).await;
     let other = r.schedule(r.bob, "bobs", json!({})).await;
     let uri = format!("/v1/workspaces/{}/automations/reassign", r.ws);
-    // Members cannot; an unauthorized target changes nothing.
+    // Members cannot; an unauthorized target changes nothing. The bulk route is administer-only
+    // and hides from them (FIX-234, C-1160).
     let (s, _) = r
         .call(
             r.alice,
@@ -326,7 +330,7 @@ async fn bulk_reassign_is_atomic_and_audited_per_item() {
             Some(json!({"from_user_id": r.alice, "to": r.bob})),
         )
         .await;
-    assert_eq!(s, 403);
+    assert_eq!(s, 404);
     let (s, v) = r
         .call(
             r.owner,
@@ -506,9 +510,10 @@ async fn offboarding_view_matches_what_the_removal_disables() {
     let _bobs = r.schedule(r.bob, "bobs", json!({})).await;
     let org_view = format!("/v1/orgs/{}/members/{}/offboarding", r.org, r.alice);
     let ws_view = format!("/v1/workspaces/{}/members/{}/offboarding", r.ws, r.alice);
-    // Authorization: org view needs org owner/admin, workspace view `can_own`.
+    // Authorization: org view needs org owner/admin, the workspace view is administer-only and
+    // hides from a plain member (FIX-234, C-1160).
     assert_eq!(r.call(r.owner, Method::GET, &org_view, None).await.0, 403);
-    assert_eq!(r.call(r.alice, Method::GET, &ws_view, None).await.0, 403);
+    assert_eq!(r.call(r.alice, Method::GET, &ws_view, None).await.0, 404);
     assert_eq!(
         r.call(
             r.admin,
@@ -572,13 +577,27 @@ async fn offboarding_view_matches_what_the_removal_disables() {
         r.authority("webhooks", &w_on).await.3.as_deref(),
         Some("authorization")
     );
-    // (FIX-234) The org owner has no binding here, so a binding removal WOULD take their access
-    // away; they created nothing in this workspace, so nothing is listed.
+    // (FIX-234, D-477) The org owner holds no binding here, so a binding removal WOULD take
+    // their access away — but the offboarding view describes one of the workspace's people, and
+    // an org owner without a binding is not one: 404. A bound person with no creations lists
+    // empty.
     let (s, v) = r
         .call(
             r.owner,
             Method::GET,
             &format!("/v1/workspaces/{}/members/{}/offboarding", r.ws, r.admin),
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    let idle = r.h.user("idle@x.io", false).await;
+    r.h.member(r.org, idle, "member", "active").await;
+    r.h.bind_ws(r.ws, idle, "member").await;
+    let (s, v) = r
+        .call(
+            r.owner,
+            Method::GET,
+            &format!("/v1/workspaces/{}/members/{}/offboarding", r.ws, idle),
             None,
         )
         .await;
@@ -762,6 +781,8 @@ async fn anchored_automations_need_an_owner_and_outlive_their_creator() {
         r.authority("schedules", &mine).await.3.as_deref(),
         Some("authorization")
     );
+    // The webhook itself is still enabled here: the authority check refuses the delivery (403);
+    // it is only after the next sweep that the item is disabled and answers 410.
     assert_eq!(r.deliver(&wurl).await, 403);
     // With every owner suspended, nobody is left to answer for the item.
     r.h.set_member_status(r.org, r.admin, "suspended").await;
@@ -778,7 +799,9 @@ async fn anchored_automations_need_an_owner_and_outlive_their_creator() {
         r.authority("schedules", &mine).await.3.as_deref(),
         Some("authorization")
     );
-    assert_eq!(r.deliver(&wurl).await, 403);
+    // The skip disabled the webhook, so a delivery answers 410 `webhook_disabled` (the receive
+    // route's disabled check comes first), not the 403 of an enabled one.
+    assert_eq!(r.deliver(&wurl).await, 410);
 
     // Back to creator anchoring needs a creator who still has access; the admin cannot even
     // reach the item without own access, so the workspace owner does it (D-477).

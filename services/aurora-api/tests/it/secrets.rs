@@ -416,6 +416,9 @@ async fn world() -> World {
     h.member(org, member, "member", "active").await;
     let ws = h.workspace(org).await;
     h.bind_ws(ws, member, "member").await;
+    // (FIX-234, D-477) The org owner's workspace reach is an own-right owner binding: an org role
+    // grants no workspace right, so the fixture binds it.
+    h.bind_ws(ws, owner, "owner").await;
     let (_, owner) = h.good_session(owner).await;
     let (_, admin) = h.good_session(admin).await;
     let (_, member) = h.good_session(member).await;

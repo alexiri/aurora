@@ -184,9 +184,10 @@ async fn signed_in_says_whether_the_person_has_signed_in_yet() {
     assert_eq!(s, 200, "{v}");
     assert_eq!(row(&v, w.person)["signed_in"], json!(true), "{v}");
     assert_eq!(row(&v, w.owner)["signed_in"], json!(false), "{v}");
-    // The approver is not an owner of the workspace: refused as before.
+    // The approver is not an administerer of the workspace: the people routes are administer
+    // routes (FIX-234, C-1160), so they find nothing there.
     let (s, _) = w.h.call(&w.person_cookie, Method::GET, &uri, None).await;
-    assert_eq!(s, 403);
+    assert_eq!(s, 404);
 }
 
 #[tokio::test]

@@ -82,7 +82,9 @@ async fn the_workspace_route_aggregates_filters_and_stays_in_its_workspace() {
     let (ws, other_ws) = (h.workspace(org).await, h.workspace(org).await);
     let member = h.user("m@x.io", false).await;
     h.member(org, member, "member", "active").await;
-    h.bind_ws(ws, member, "member").await;
+    // (FIX-234, C-1160) The workspace usage route is an administer route: the fixture's caller
+    // holds its own-right owner binding.
+    h.bind_ws(ws, member, "owner").await;
     let (_, mt) = h.good_session(member).await;
     let outsider = h.user("o@x.io", false).await;
     let (_, ot) = h.good_session(outsider).await;

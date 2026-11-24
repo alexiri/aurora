@@ -3139,8 +3139,9 @@ async fn an_org_admin_dm_goes_to_their_own_agent_never_to_another_members() {
     assert_eq!(w.count("SELECT count(*) FROM dm_defaults").await, 1);
     w.finish("done", Some("ok"), None).await;
 
-    // A thread linked to the other member's agent (made while the admin was in that workspace in
-    // their own right) still routes there once they are not: authorization stays `can_use`.
+    // A thread linked to the other member's agent, made while the admin was in that workspace in
+    // their own right, still routes while the binding lasts: the routing authorization is the
+    // sender's own `can_use` (FIX-234, D-477).
     w.h.bind_ws(w.ws, admin, "member").await;
     let mut p = dm("U1", "first", "B1");
     p["thread_ref"] = json!("T9");
@@ -3153,10 +3154,13 @@ async fn an_org_admin_dm_goes_to_their_own_agent_never_to_another_members() {
         .execute(w.h.pool())
         .await
         .unwrap();
+    // (FIX-234, C-1160) With the binding gone the org role grants no reach to the other member's
+    // agent: the message is refused with the reach notice, and no turn is created.
+    let turns = w.count("SELECT count(*) FROM turns").await;
     p["message_ref"] = json!("m2");
     w.post(w.integ, "e4", p).await;
-    assert_eq!(w.outcome("e4").await["result"], "turn_created");
-    assert_eq!(last_turn_agent(&w).await, theirs);
+    assert_eq!(w.outcome("e4").await["result"], "refused");
+    assert_eq!(w.count("SELECT count(*) FROM turns").await, turns);
 }
 
 /// FIX-230: with no own agent on the bot, an org admin is told "not set up" and never routed to

@@ -749,7 +749,8 @@ async fn member_cannot_decide_or_see_approvals_approver_can() {
     assert_eq!(st(batch1).await, "pending");
 
     // Approver and owner see the feed and can decide; the org admin without a binding holds no
-    // `can_approve` (FIX-234, D-477): empty feed, decide refused.
+    // `can_approve` (FIX-234, D-477): empty feed, and the decide route's own-access gate refuses
+    // them first (C-1160), before the approver check.
     for c in [&ac, &oc] {
         let (s, v) = h.get("/v1/approvals/pending", &[("cookie", c)]).await;
         assert_eq!(s.as_u16(), 200);
@@ -766,7 +767,7 @@ async fn member_cannot_decide_or_see_approvals_approver_can() {
     )
     .await;
     assert_eq!(s, 403, "{v}");
-    assert_eq!(v["error"]["code"], "approver_required", "{v}");
+    assert_eq!(v["error"]["code"], "workspace_access_required", "{v}");
     let (s, v) = post(
         &h,
         &format!("/v1/approvals/{single}/decision"),
