@@ -243,11 +243,11 @@ describe("Save as template", () => {
     expect(clicked).toHaveLength(1);
   });
 
-  it("refuses an executable helper that is not UTF-8 text, and a placeholder in the instructions", async () => {
-    const d = await ready({ accounts: [githubAccount], helpers: [{ path: "run.bin", size: 4, executable: true, sha256: "x" }], helperBodies: { "run.bin": new Uint8Array([10, 0, 255, 254]) } });
+  it("refuses a helper that is not UTF-8 text, executable or not, and a placeholder in the instructions", async () => {
+    const d = await ready({ accounts: [githubAccount], helpers: [{ path: "run.bin", size: 4, executable: false, sha256: "x" }], helperBodies: { "run.bin": new Uint8Array([10, 0, 255, 254]) } });
     fillRequired(d);
     fireEvent.click(within(d).getByRole("button", { name: "Save" }));
-    expect(await within(d).findByTestId("save-problem")).toHaveTextContent(/run\.bin.*must be text/);
+    expect(await within(d).findByTestId("save-problem")).toHaveTextContent(/run\.bin.*not UTF-8 text/);
     // A placeholder in the instructions is refused, naming the file (through templateFiles).
     cleanup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

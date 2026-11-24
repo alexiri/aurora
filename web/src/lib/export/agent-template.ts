@@ -169,8 +169,10 @@ export function templateFiles(e: AgentExport, meta: TemplateMeta, apps: Template
     out.push(entry);
   }
   for (const h of helpers) {
-    if (h.executable && !isUtf8(h.content)) {
-      throw new TemplateError(`Refused: the helper “${h.path}” is executable, so it must be text.`);
+    // Owner decision 2026-11-24: every helper file must be UTF-8 text (the home sync carries
+    // text only), executable or not.
+    if (!isUtf8(h.content)) {
+      throw new TemplateError(`Refused: the helper “${h.path}” is not UTF-8 text.`);
     }
     out.push({ name: `${meta.id}/helpers/${h.path}`, data: h.content, executable: h.executable });
   }
