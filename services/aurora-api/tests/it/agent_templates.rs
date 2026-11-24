@@ -1343,6 +1343,79 @@ async fn a_busy_source_is_refused_409_and_skipped_in_check_all() {
     assert_eq!(v["items"][0]["check_failed_reason"], "busy", "{v}");
 }
 
+/// A check that loses its lease mid-way (another replica claimed the source — with many
+/// templates downloading packages the 5-minute lease can expire) aborts cleanly: it answers
+/// the failed outcome, writes nothing of its own (no head, no check state) and leaves the
+/// source with the lease of whoever holds it now.
+#[tokio::test]
+async fn a_check_that_loses_the_lease_aborts_cleanly() {
+    let w = world().await;
+    // Two fresh templates: the first template row hands the lease to the "thief", the
+    // renewal before the second one must fail.
+    w.git.add_repo("acme/tpl");
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        manifest_yaml().into_bytes(),
+    )];
+    for dir in ["a", "b"] {
+        for (p, b) in files(dir, "1.0.0") {
+            changes.push(put(p, b));
+        }
+    }
+    w.git.commit("acme/tpl", "main", &changes);
+    for dir in ["a", "b"] {
+        w.git
+            .serve_file(&format!("pkg/{dir}-1.0.0.zip"), pack(dir, "1.0.0"));
+    }
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+
+    // The "thief" replica claims the source the moment the check writes its first template
+    // row (as if the lease had expired during a long check).
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION aurora_tpl_steal_lease() RETURNS trigger AS $$
+         BEGIN UPDATE agent_template_sources
+               SET lease_owner = '00000000-0000-0000-0000-000000000002'::uuid,
+                   check_lease_until = now() + interval '5 minutes'
+               WHERE id = NEW.source_id;
+         RETURN NEW; END;
+         $$ LANGUAGE plpgsql",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER aurora_tpl_lease_trg AFTER INSERT ON agent_templates
+         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_steal_lease()",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "failed", "{out}");
+    assert!(
+        out["check_failed_reason"]
+            .as_str()
+            .unwrap()
+            .contains("changed while this check was running"),
+        "{out}"
+    );
+
+    // The check wrote nothing of its own: no head sha, no finished check — the source
+    // serves its last known state and keeps the lease of whoever holds it now.
+    let row = w.source(id).await;
+    assert!(row["last_head_sha"].is_null(), "{row}");
+    let stolen: i64 = w
+        .count(&format!(
+            "SELECT count(*) FROM agent_template_sources
+             WHERE id = '{id}' AND lease_owner = '00000000-0000-0000-0000-000000000002'::uuid
+               AND check_lease_until > now()"
+        ))
+        .await;
+    assert_eq!(stolen, 1, "the thief's lease was cleared");
+}
+
 #[tokio::test]
 async fn the_poll_claims_due_sources_only() {
     let w = world().await;

@@ -343,6 +343,32 @@ async fn store_head(
 
 // ---- the check ---------------------------------------------------------------------------------
 
+/// Extends the source's lease between the per-template steps (a source with many templates
+/// downloading packages can outlive the 5-minute lease): only the current owner succeeds.
+/// A lost lease means another replica claimed the source while this check ran — it aborts
+/// cleanly; nothing it writes afterwards would be true.
+async fn renew_lease(state: &AppState, source: &SourceRow) -> Result<(), ApiError> {
+    let mut c = state
+        .pool
+        .acquire()
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    let owned = repo::extend_lease(
+        &mut c,
+        source.id,
+        source.lease_owner.unwrap_or_default(),
+        limits::TEMPLATE_LEASE.as_secs_f64(),
+    )
+    .await?;
+    if !owned {
+        return Err(ApiError::conflict(
+            "template_check_in_progress",
+            "The source changed while this check was running.",
+        ));
+    }
+    Ok(())
+}
+
 /// The full check of one source (C-1108). The caller holds the source's lease; every path
 /// here ends in the lease being released with a written outcome.
 pub async fn check_source(
@@ -406,6 +432,7 @@ pub async fn check_source(
     // (template row id, template id, dir, meta) of the head's healthy templates, for step 4.
     let mut healthy: Vec<(uuid::Uuid, String, String, aurora_template::TemplateMeta)> = Vec::new();
     for d in &read.templates {
+        renew_lease(state, source).await?;
         let (meta, mut ps) = match &d.meta {
             Some(bytes) => match aurora_template::parse_meta(bytes) {
                 Ok(m) => (Some(m), Vec::new()),
@@ -541,6 +568,7 @@ pub async fn check_source(
     // version of that template (any status); nothing stored yet is taken too. Lower is the
     // `version_not_newer` problem, equal is ignored.
     for (row_id, template_id, dir, meta) in &healthy {
+        renew_lease(state, source).await?;
         let newest = versions
             .iter()
             .filter(|v| v.version.agent_template_id == *row_id)
@@ -609,6 +637,7 @@ pub async fn check_source(
         .iter()
         .filter(|v| v.version.status == "awaiting_package")
     {
+        renew_lease(state, source).await?;
         let out = process_awaiting(state, source, token.as_ref(), v).await?;
         match &out {
             StepOut::Left(status, reason, _, _, _, _) => {

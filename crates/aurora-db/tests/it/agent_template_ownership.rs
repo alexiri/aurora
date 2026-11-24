@@ -125,3 +125,69 @@ async fn a_lost_ownership_race_reports_id_taken_instead_of_stealing(pool: PgPool
     .unwrap();
     assert_eq!(again.map(|r| r.id), Some(row.id));
 }
+
+/// A check extends the lease of the source it is still working on: only the current owner
+/// succeeds, and a released (or stolen) lease cannot be extended.
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn extend_lease_only_succeeds_for_the_current_owner(pool: PgPool) {
+    aurora_db::migrate(&pool).await.unwrap();
+    let source = seed_source(&pool, "first").await;
+    let owner = Uuid::now_v7();
+    let other = Uuid::now_v7();
+
+    // The check claims the source, then extends while it works: the lease moves.
+    repo::claim_one(&mut pool.acquire().await.unwrap(), source, owner, 300.0)
+        .await
+        .unwrap()
+        .expect("a free source is claimed");
+    let epoch = |pool: &PgPool| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, f64>(
+                "SELECT EXTRACT(EPOCH FROM check_lease_until)::float8 FROM agent_template_sources
+                 WHERE id = $1",
+            )
+            .bind(source)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = epoch(&pool).await;
+    assert!(
+        repo::extend_lease(&mut pool.acquire().await.unwrap(), source, owner, 300.0)
+            .await
+            .unwrap(),
+        "the current owner extends the lease"
+    );
+    assert!(
+        epoch(&pool).await > before,
+        "the lease moved into the future"
+    );
+
+    // Another replica's extend is refused: the owner (and its lease) stays.
+    assert!(
+        !repo::extend_lease(&mut pool.acquire().await.unwrap(), source, other, 300.0)
+            .await
+            .unwrap(),
+        "a non-owner extended the lease"
+    );
+    let lease_owner: Uuid =
+        sqlx::query_scalar("SELECT lease_owner FROM agent_template_sources WHERE id = $1")
+            .bind(source)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(lease_owner, owner);
+
+    // A released source cannot be extended either.
+    repo::release_lease(&mut pool.acquire().await.unwrap(), source, owner)
+        .await
+        .unwrap();
+    assert!(
+        !repo::extend_lease(&mut pool.acquire().await.unwrap(), source, owner, 300.0)
+            .await
+            .unwrap(),
+        "extended a lease the source does not hold"
+    );
+}

@@ -365,6 +365,29 @@ pub async fn release_lease(conn: &mut PgConnection, id: Uuid, owner: Uuid) -> Re
     Ok(())
 }
 
+/// A still-running check extends its own lease (the 5-minute lease does not cover a source
+/// with many templates downloading packages). Only the current owner succeeds: `false`
+/// means the lease was lost — another replica claimed the source — and the caller aborts.
+pub async fn extend_lease(
+    conn: &mut PgConnection,
+    id: Uuid,
+    owner: Uuid,
+    lease_secs: f64,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "UPDATE agent_template_sources SET check_lease_until = now() + make_interval(secs => $3),
+            updated_at = now()
+         WHERE id = $1 AND lease_owner = $2",
+    )
+    .bind(id)
+    .bind(owner)
+    .bind(lease_secs)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
 /// Outcome of one check (the lease owner writes it). The templates and versions are written
 /// by the check itself; this only records the source's own state.
 pub struct CheckDone {
