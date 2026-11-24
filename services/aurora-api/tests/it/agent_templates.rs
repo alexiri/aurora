@@ -2703,6 +2703,25 @@ async fn seed_fs(w: &W, repo: &str, dir: &str, version: &str, fs: &[(String, Vec
     id
 }
 
+/// Commit `fs` as one more template `dir` on `repo`'s existing source (a second source for
+/// the same repo would be 409 `template_source_exists`), check and approve it.
+async fn add_template_to_source(
+    w: &W,
+    id: Uuid,
+    repo: &str,
+    dir: &str,
+    version: &str,
+    fs: &[(String, Vec<u8>)],
+) {
+    let changes: Vec<Change> = fs.iter().map(|(p, b)| put(p.clone(), b.clone())).collect();
+    w.bump(repo, &changes);
+    w.git
+        .serve_file(&format!("pkg/{dir}-{version}.zip"), pack_tree(dir, fs));
+    let r = w.check(id).await;
+    assert_eq!(r["status"], "updated", "{r}");
+    w.approve(dir, version).await;
+}
+
 /// Move `repo`'s head to `version` of `fs` (with `deletions` applied), check and approve it.
 async fn advance_fs(
     w: &W,
@@ -4254,4 +4273,342 @@ async fn the_create_accepts_what_the_plan_showed() {
         skills_of(&w, agent).await,
         vec![("alpha".to_owned(), Some(plan["skill_refs"][0]["library"]["id"].as_str().unwrap().parse().unwrap()))]
     );
+}
+
+// ---- the create's refusals (C-1111, C-1119's create list) ----------------------------------------
+
+#[tokio::test]
+async fn a_stale_plan_is_a_409_with_the_fresh_plan() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    seed_library(&w, org, &owner).await;
+    let id = seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "full").await;
+    let stale = plan["content_sha256"].clone();
+
+    // A hash the plan did not show (a lie, the empty string): 409 with the plan in details,
+    // nothing created.
+    for sha in [json!("0".repeat(64)), json!("")] {
+        let (s, v) = w
+            .create_body(
+                ws,
+                &owner,
+                json!({
+                    "template_id": "full", "version": "1.0.0", "content_sha256": sha,
+                    "name": "Monitor", "inputs": {"zone": "eu"},
+                }),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+        assert_eq!(v["error"]["details"]["plan"]["version"], "1.0.0", "{v}");
+    }
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+
+    // After the template moved on, the stale hash still answers 409 — and the details carry
+    // the *fresh* plan to re-plan from.
+    advance_fs(
+        &w,
+        id,
+        "acme/tpl",
+        "full",
+        "2.0.0",
+        &full_files("full", "2.0.0"),
+        &[],
+    )
+    .await;
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "full", "version": "1.0.0", "content_sha256": stale,
+                "name": "Monitor", "inputs": {"zone": "eu"},
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    assert_eq!(v["error"]["details"]["plan"]["version"], "2.0.0", "{v}");
+    assert_ne!(
+        v["error"]["details"]["plan"]["content_sha256"], stale,
+        "{v}"
+    );
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+}
+
+#[tokio::test]
+async fn a_create_refuses_bad_account_choices() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let member = w.h.user("member@x.io", false).await;
+    w.h.member(org, member, "member", "active").await;
+    w.h.bind_ws(ws, member, "member").await;
+    let member_cookie = cookie(&w.h.good_session(member).await.1);
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    seed_library(&w, org, &owner).await;
+    seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "full").await;
+    let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
+    let other = conn(&w, org, "com-example-other", Some(ws), "write").await;
+    let base = json!({
+        "template_id": "full", "version": "1.0.0",
+        "content_sha256": plan["content_sha256"],
+        "name": "Monitor", "inputs": {"zone": "eu"},
+        "skill_refs": [{"index": 0, "library_id": plan["skill_refs"][0]["library"]["id"],
+                        "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]}],
+    });
+
+    // The required entry without an account: 422 naming the entry, all problems at once is
+    // the inputs' rule, the accounts name their entry.
+    let (s, v) = w
+        .create_body(ws, &owner, base.clone().merge(json!({"accounts": []})))
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_account_missing"), "{v}");
+    assert_eq!(
+        v["error"]["details"]["fields"],
+        json!([{"path": "/accounts", "message": "entry 0"}]),
+        "{v}"
+    );
+
+    // Two accounts on one entry.
+    let acct = json!({"entry": 0, "app_id": "com-example-thing", "connection_id": mine});
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.clone().merge(json!({"accounts": [acct.clone(), acct]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_account_invalid"), "{v}");
+
+    // An app the entry does not name.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.clone().merge(json!({"accounts": [acct.clone()
+                .merge(json!({"app_id": "com-example-other"}))]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_app_unavailable"), "{v}");
+
+    // A connection of another app (the plan never listed it for this entry): the same 403
+    // the C-504 check gives anything it did not list.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.clone().merge(json!({"accounts": [acct
+                .merge(json!({"connection_id": other}))]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
+    assert_eq!(
+        v["error"]["details"]["who_can"]["role"], "workspace_owner",
+        "{v}"
+    );
+
+    // A plain member: the plan lists no accounts for them, so the create is the same 403
+    // (the route's one C-504 check, SEC-67's shape).
+    let (s, v) = w
+        .create_body(
+            ws,
+            &member_cookie,
+            base.merge(json!({"accounts": [{"entry": 0, "app_id": "com-example-thing",
+                                            "connection_id": mine}]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
+    assert_eq!(
+        v["error"]["details"]["who_can"]["role"], "workspace_owner",
+        "{v}"
+    );
+
+    // Nothing was created by any of the refusals.
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+}
+
+#[tokio::test]
+async fn a_create_refuses_levels_above_the_caps() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    seed_library(&w, org, &owner).await;
+    seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "full").await;
+    let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
+    let base = json!({
+        "template_id": "full", "version": "1.0.0",
+        "content_sha256": plan["content_sha256"],
+        "name": "Monitor", "inputs": {"zone": "eu"},
+        "skill_refs": [{"index": 0, "library_id": plan["skill_refs"][0]["library"]["id"],
+                        "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]}],
+    });
+
+    // `act` on a custom_only app: the plan capped it, but a body that insists is refused by
+    // the one grant writer (SEC-67: the cap is not the plan's politeness).
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.clone().merge(json!({"accounts": [{"entry": 0,
+                "app_id": "com-example-thing", "connection_id": mine, "level": "act"}]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "full_grant_forbidden"), "{v}");
+
+    // An organization's account with a `read` limit: an `ask` choice is above it, with the
+    // limit in the details (P5-UX-4, whichever path asked).
+    let org_acct = conn(&w, org, "com-example-thing", None, "write").await;
+    sqlx::query("UPDATE app_connections SET limit_level = 'read' WHERE id = $1")
+        .bind(org_acct)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.merge(json!({"accounts": [{"entry": 0,
+                "app_id": "com-example-thing", "connection_id": org_acct, "level": "ask"}]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "above_account_limit"), "{v}");
+    assert_eq!(v["error"]["details"]["limit"], "read", "{v}");
+    assert_eq!(
+        v["error"]["details"]["who_can"]["role"], "org_admin",
+        "{v}"
+    );
+
+    // Nothing was created by either refusal.
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+}
+
+#[tokio::test]
+async fn a_create_enforces_the_agent_rules() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(APP_PKG_YAML).await;
+    seed_library(&w, org, &owner).await;
+    let id = seed_fs(&w, "acme/tpl", "full", "1.0.0", &full_files("full", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "full").await;
+    let mine = conn(&w, org, "com-example-thing", Some(ws), "write").await;
+    let acct = json!({"entry": 0, "app_id": "com-example-thing", "connection_id": mine});
+    let skill_refs = json!([{"index": 0, "library_id": plan["skill_refs"][0]["library"]["id"],
+                             "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"]}]);
+
+    // A hostile input value is still a value: it must match the pattern (all problems at
+    // once, C-1104). The pattern comes from the reference fixture's `zone` (the full fixture
+    // has no pattern on purpose). A second source for the same repo would be 409, so the
+    // template rides on the same source.
+    add_template_to_source(&w, id, "acme/tpl", "refin", "1.0.0", &ref_files("refin", "1.0.0", ""))
+        .await;
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "refin", "version": "1.0.0",
+                "content_sha256": w.plan(ws, &owner, "refin").await["content_sha256"],
+                "name": "Monitor", "handle": "monitor",
+                "inputs": {"zone": "EU1 {agent.name}"},
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_inputs_invalid"), "{v}");
+    assert_eq!(v["error"]["details"]["fields"][0]["path"], "/inputs/zone", "{v}");
+
+    // A handle that is not `[a-z][a-z0-9-]{0,39}`.
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "full", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor", "handle": "Bad_Handle",
+                "inputs": {"zone": "eu"}, "accounts": [acct], "skill_refs": skill_refs,
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (400, "invalid_request"), "{v}");
+    assert_eq!(v["error"]["details"]["fields"][0]["path"], "/handle", "{v}");
+
+    // A taken handle: the agent rules' 409.
+    let taken = w
+        .create_agent(ws, &owner, "full", "1.0.0",
+            json!({"handle": "monitor", "accounts": [acct.clone()], "skill_refs": skill_refs.clone()}))
+        .await;
+    assert_eq!(taken["agent"]["handle"], "monitor", "{taken}");
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "full", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor 2", "handle": "monitor",
+                "inputs": {"zone": "eu"}, "accounts": [acct],
+                "skill_refs": skill_refs,
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (409, "handle_taken"), "{v}");
+
+    // The organization's max_agents: the agent-limit rule of ordinary creation applies.
+    sqlx::query("UPDATE organizations SET settings = jsonb_set(settings, '{max_agents}', '1')")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "full", "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Monitor 3", "handle": "other",
+                "inputs": {"zone": "eu"}, "accounts": [acct],
+                "skill_refs": skill_refs,
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "agent_limit_reached"), "{v}");
+
+    // A rendered brief above BRIEF_MAX never even becomes a version: the source check stores
+    // it invalid with `template_too_large`, so nothing can be approved (the create's own
+    // BRIEF_MAX check is the belt for already-stored content).
+    let big = "b".repeat(20_001);
+    let fs = vec![
+        (
+            "tbig/template.yaml".to_owned(),
+            "format: 1\nid: tbig\nversion: 1.0.0\nname: Big\nsummary: Too big.\n"
+                .to_owned()
+                .into_bytes(),
+        ),
+        ("tbig/agent.yaml".to_owned(), AGENT_YAML.as_bytes().to_vec()),
+        ("tbig/instructions.md".to_owned(), big.into_bytes()),
+        ("tbig/README.md".to_owned(), b"# tbig\nBig.\n".to_vec()),
+    ];
+    let changes: Vec<Change> = fs.iter().map(|(p, b)| put(p.clone(), b.clone())).collect();
+    w.bump("acme/tpl", &changes);
+    w.git.serve_file("pkg/tbig-1.0.0.zip", pack_tree("tbig", &fs));
+    w.check(id).await;
+    let (s, v) = w
+        .call(
+            Method::GET,
+            "/v1/admin/agent-templates/tbig/versions/1.0.0",
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["status"], "invalid", "{v}");
+    assert_eq!(v["status_reason"], "template_too_large", "{v}");
+    // No offered version: the plan (and so the create) cannot reach it at all.
+    let (s, _) = ws_get(&w, ws, &owner, "/tbig").await;
+    assert_eq!(s, 404);
 }
