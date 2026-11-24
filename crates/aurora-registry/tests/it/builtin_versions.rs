@@ -39,7 +39,7 @@ fn check(id: &str, previous: &str, shipped: &str) {
 fn github_2_0_0_still_upgrades_to_the_shipped_version_without_widening() {
     // 2.1.0 (FIX-133/136) is superseded by 2.2.0 (FIX-135); an install still on 2.0.0 takes the
     // shipped version the same way.
-    check("github", "2.0.0", "2.5.0");
+    check("github", "2.0.0", "2.5.1");
 }
 
 /// FIX-135 (D-242): the packages that declare app families (presentation only) are a minor bump
@@ -47,7 +47,7 @@ fn github_2_0_0_still_upgrades_to_the_shipped_version_without_widening() {
 /// family is in the package, and a family has the same name on all members.
 #[test]
 fn github_2_2_0_and_atlassian_1_1_0_declare_families_without_widening() {
-    check("github", "2.1.0", "2.5.0");
+    check("github", "2.1.0", "2.5.1");
     check("atlassian", "1.0.3", "1.6.0");
     for (id, fams) in [
         ("github", vec![("github", vec!["github", "github-ghes"])]),
@@ -103,5 +103,5 @@ fn sentry_2_0_0_replaces_1_0_2_without_widening_and_takes_over_the_old_apps() {
 
 #[test]
 fn indico_1_2_0_replaces_1_1_1_without_widening() {
-    check("indico", "1.1.1", "1.6.1");
+    check("indico", "1.1.1", "1.6.2");
 }

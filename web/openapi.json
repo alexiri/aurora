@@ -50716,7 +50716,7 @@
             "items": {
               "type": "string"
             },
-            "description": "(FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token\nhas (\"Which scopes did you give this token?\"). Absent = prefilled by the method's read\nprobes. Each must be one of the method's scopes."
+            "description": "(FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token\nhas (\"Which scopes did you give this token?\"). Absent = prefilled by the method's read\nprobes. Each must be one of the method's scopes.\n(C-1166, D-481) For an `oauth2` method: the scopes the sign-in asks the provider for (the\nlevel's `scope_presets` or the person's choice); each declared, at least one. Absent = the\nreconnected connection's requested scopes, else the method's `default_scopes`."
           },
           "webhook": {
             "oneOf": [

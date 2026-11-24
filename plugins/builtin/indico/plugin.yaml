@@ -1,6 +1,6 @@
 package:
   id: indico
-  version: 1.6.1
+  version: 1.6.2
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -82,6 +82,10 @@ apps:
           - { scope: "write:legacy_api", name: "Book rooms through the documented HTTP API", access: write }
           - { scope: "read:everything", name: "Extended: read everything you can see in Indico (room search by free time, favorites, my bookings, search)", access: read }
           - { scope: "full:everything", name: "Extended write: recurring bookings, cancellations, favorites, event preparation — Indico's internal endpoints, may change between versions", access: write }
+        # (D-481) The extended scopes are ticked by hand, never part of a level's preset.
+        scope_presets:
+          read: ["read:user", "read:legacy_api"]
+          write: ["read:user", "read:legacy_api", "write:legacy_api"]
         default_scopes: ["read:user", "read:legacy_api"]
         callback: query
         token_response:

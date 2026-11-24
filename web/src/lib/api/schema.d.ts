@@ -9226,6 +9226,9 @@ export interface components {
              * @description (FIX-136, D-241) For a `fields` method that declares scopes: the scopes the pasted token
              *     has ("Which scopes did you give this token?"). Absent = prefilled by the method's read
              *     probes. Each must be one of the method's scopes.
+             *     (C-1166, D-481) For an `oauth2` method: the scopes the sign-in asks the provider for (the
+             *     level's `scope_presets` or the person's choice); each declared, at least one. Absent = the
+             *     reconnected connection's requested scopes, else the method's `default_scopes`.
              */
             scopes?: string[] | null;
             webhook?: components["schemas"]["WebhookConnectBody"] | null;

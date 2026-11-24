@@ -1410,6 +1410,52 @@ fn continue_to(
     Ok((u.to_string(), flow::cookie(&sealed, flow::cookie_ttl())))
 }
 
+/// (C-1166, D-481) The scopes a sign-in asks the provider for. The request's `scopes` (the
+/// journey's level preset or the person's Advanced choice) when given: each a scope the method
+/// declares, at least one when it declares any, kept in order without repeats. Without them, a
+/// reconnect asks again for what its connection asked for (still declared scopes only), and a
+/// new sign-in for the method's `default_scopes`.
+fn oauth_scopes(
+    o: &Oauth2Connect,
+    chosen: Option<&[String]>,
+    reconnect: Option<&ConnectionRow>,
+) -> Result<Vec<String>, ConnectErr> {
+    let declared = |s: &str| o.scopes.iter().any(|d| d.scope == s);
+    let mut out: Vec<String> = Vec::new();
+    match chosen {
+        Some(list) => {
+            for s in list {
+                if !declared(s) {
+                    return Err(invalid("/scopes", "not a scope of this sign-in method"));
+                }
+                if !out.contains(s) {
+                    out.push(s.clone());
+                }
+            }
+            if out.is_empty() && !o.scopes.is_empty() {
+                return Err(invalid("/scopes", "choose at least one scope"));
+            }
+        }
+        None => {
+            let before: Vec<String> = reconnect
+                .map(|r| {
+                    r.requested_scopes
+                        .iter()
+                        .filter(|s| declared(s))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            out = if before.is_empty() {
+                o.default_scopes.clone()
+            } else {
+                before
+            };
+        }
+    }
+    Ok(out)
+}
+
 async fn start_oauth(
     ctx: &Ctx<'_>,
     o: &Oauth2Connect,
@@ -1484,8 +1530,9 @@ async fn start_oauth(
             "a tenant host is required for this connect method",
         ));
     }
+    let requested = oauth_scopes(o, req.scopes.as_deref(), ctx.reconnect.as_ref())?;
     let mut flow = ctx.new_flow(&o.id, Some(client.id), level.map(|l| l.id.clone()))?;
-    flow.scopes = o.default_scopes.clone();
+    flow.scopes = requested.clone();
     flow.tenant_host = tenant;
     flow.metadata = parsed.metadata;
     let mut params: BTreeMap<String, String> = o.authorize_params.clone();
@@ -1505,8 +1552,8 @@ async fn start_oauth(
     params.insert("client_id".into(), client_id);
     params.insert("redirect_uri".into(), redirect_uri(ctx.state));
     params.insert("state".into(), sealed.clone());
-    if !o.default_scopes.is_empty() {
-        params.insert("scope".into(), o.default_scopes.join(" "));
+    if !requested.is_empty() {
+        params.insert("scope".into(), requested.join(" "));
     }
     let mut url =
         reqwest::Url::parse(&authorize).map_err(|_| ApiError::internal("Bad authorize URL."))?;

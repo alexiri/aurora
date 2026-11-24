@@ -53,7 +53,7 @@ import { WebhookSignInStep } from "@/components/webhook/webhook-connect-step";
 import { DynamicForm } from "../dynamic-form";
 import { InstanceField, OAuthClientField, RequestedScopes, TokenScopes } from "./advanced-fields";
 import { BackNext, StepFooter } from "./frame";
-import { buildJourneyConnect, connectFailure, hostOf, permissionHints, suggestedMethod, tokenPage, tokenSite } from "./logic";
+import { buildJourneyConnect, connectFailure, hostOf, permissionHints, scopesFor, suggestedMethod, tokenPage, tokenSite } from "./logic";
 import { useSignInWindow } from "./use-sign-in-window";
 
 /** What the step reports when the account exists. `granted` are the agents the access was saved for. */
@@ -405,7 +405,8 @@ function GenericSignInStep({
           <summary className="min-h-9 cursor-pointer text-sm font-semibold text-ink">More options</summary>
           <div className="mt-3 space-y-4">
             {method.scopes.length > 0 && method.kind !== "fields" ? (
-              <RequestedScopes method={method} selected={scopes ?? method.default_scopes} onChange={setScopes} disabled={busy} />
+              // (C-1166) The switches show what the sign-in asks for: the level's preset until edited.
+              <RequestedScopes method={method} selected={scopesFor(method, level, scopes)} onChange={setScopes} disabled={busy} />
             ) : null}
             {method.scopes.length > 0 && method.kind === "fields" ? (
               <TokenScopes method={method} mode={scopeMode} onMode={setScopeMode} selected={scopes ?? method.default_scopes} onChange={setScopes} disabled={busy} />

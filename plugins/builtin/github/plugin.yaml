@@ -1,6 +1,6 @@
 package:
   id: github
-  version: 2.5.0
+  version: 2.5.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -136,6 +136,10 @@ apps:
           - { scope: repo, name: "Private and public repositories: read AND write code, issues and pull requests (GitHub offers no read-only repository scope)", access: write }
           - { scope: public_repo, name: "Public repositories: read AND write code, issues and pull requests", access: write }
           - { scope: workflow, name: Add and update GitHub Actions workflow files, access: write }
+        # (D-481) `repo` covers public repositories; `workflow` is ticked by hand only.
+        scope_presets:
+          read: ["read:user", "read:org"]
+          write: ["read:user", "read:org", repo]
         default_scopes: ["read:user", "read:org"]
         callback: query
         token_response:
@@ -382,6 +386,10 @@ apps:
           - { scope: repo, name: "Private and public repositories: read AND write code, issues and pull requests (GitHub offers no read-only repository scope)", access: write }
           - { scope: public_repo, name: "Public repositories: read AND write code, issues and pull requests", access: write }
           - { scope: workflow, name: Add and update GitHub Actions workflow files, access: write }
+        # (D-481) `repo` covers public repositories; `workflow` is ticked by hand only.
+        scope_presets:
+          read: ["read:user", "read:org"]
+          write: ["read:user", "read:org", repo]
         default_scopes: ["read:user", "read:org"]
         callback: query
         token_response:

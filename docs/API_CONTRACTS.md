@@ -2844,6 +2844,13 @@ Rule: `docs/tasks/P6-TEMPLATES.md` (design), `docs/25-agent-templates.md` (the p
   - **Where it is filled.** The connect start (authorize and token URL), the code exchange, the sign-in app Test (C-1070) and the gateway's refresh all fill the URL from the minting client's public fields. A stored value that fails the rule fails closed: the connect start answers 422 as for a missing tenant, the exchange `oauth_exchange_failed`, the Test `not_testable`, and the refresh `unavailable`.
   - **Microsoft 365 1.5.0.** Its client gains `tenant` ("Directory (tenant) ID", default `common`), and both URLs use `{client.tenant}`. Existing sign-in apps keep `common`.
 
+- C-1166 **A sign-in asks for the scopes the request chose** (FIX-237, D-481; amends C-14, C-956 and the `scopes` field of `POST /v1/apps/{app}/connect`; no route, migration or schema change).
+  - **Request.** For an `oauth2` method, `scopes` is what the provider's authorize request asks for. The journey sends the chosen level's `scope_presets` (C-956), or the person's edit under More options. Each must be a scope the method declares, else 400 `invalid_request` on `/scopes`. A method that declares scopes needs at least one. Repeats are dropped, and the order is kept.
+  - **Without `scopes`.** A reconnect asks for what its connection asked for before (`requested_scopes`, still declared ones only). Otherwise the sign-in uses the method's `default_scopes`, as before. The Reconnect dialog sends none.
+  - **Recorded.** The connection's `requested_scopes`, and `missing_scopes` at the callback, are computed from the scopes actually requested. Before this, the server ignored `scopes` for sign-in methods and always sent `default_scopes`, so the dialog's switches and the "Read and change" level had no effect.
+  - **Dashboard.** The More options switches of a sign-in method start at the chosen level's preset, which is what is sent, rather than at `default_scopes`.
+  - **Built-in presets pinned** where the derived preset would ask for more than a level means: Microsoft 365 1.5.1 (read = the defaults, without `Sites.Read.All`; write = the defaults plus `Mail.Send`, `Calendars.ReadWrite`, `Files.ReadWrite`), Indico 1.6.2 (the extended `read:everything`/`full:everything` stay out; write adds `write:legacy_api`), GitHub 2.5.1, both `github` and `github-ghes` (write = `read:user`, `read:org`, `repo`, without `workflow`). Those scopes are still offered under More options.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._
