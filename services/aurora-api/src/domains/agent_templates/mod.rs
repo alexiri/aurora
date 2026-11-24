@@ -434,6 +434,7 @@ async fn preview_of(
         manifest: ManifestRepoView {
             name: sanitize::one_line(&m.repo.name, 80),
             description: sanitize::one_line(&m.repo.description, 280),
+            packages_url: m.packages.url.clone(),
         },
         templates,
         truncated: read.truncated,

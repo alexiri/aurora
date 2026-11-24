@@ -88,11 +88,14 @@ pub struct AgentTemplateSourceList {
     pub items: Vec<AgentTemplateSource>,
 }
 
-/// The repository part of a manifest (C-1103).
+/// The repository part of a manifest (C-1103), with where its packages come from: the URL
+/// template is plain text for the dialog (never fetched by the browser).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ManifestRepoView {
     pub name: String,
     pub description: String,
+    /// The manifest's `packages.url` pattern, as text.
+    pub packages_url: String,
 }
 
 /// One template the preview found in the folder.

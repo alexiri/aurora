@@ -401,6 +401,11 @@ async fn preview_answers_the_read_without_storing_anything() {
         json!({"kind": "branch", "name": "main", "default": true})
     );
     assert_eq!(v["manifest"]["name"], "Acme templates");
+    // The manifest's `packages.url` pattern rides along as text (C-1114's step 2 shows it).
+    assert_eq!(
+        v["manifest"]["packages_url"],
+        format!("{GIT_ORIGIN}/{PKG_PATH}")
+    );
     assert_eq!(v["truncated"], false);
     assert_eq!(
         v["templates"][0],

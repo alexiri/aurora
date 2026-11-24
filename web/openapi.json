@@ -58934,10 +58934,11 @@
       },
       "ManifestRepoView": {
         "type": "object",
-        "description": "The repository part of a manifest (C-1103).",
+        "description": "The repository part of a manifest (C-1103), with where its packages come from: the URL\ntemplate is plain text for the dialog (never fetched by the browser).",
         "required": [
           "name",
-          "description"
+          "description",
+          "packages_url"
         ],
         "properties": {
           "description": {
@@ -58945,6 +58946,10 @@
           },
           "name": {
             "type": "string"
+          },
+          "packages_url": {
+            "type": "string",
+            "description": "The manifest's `packages.url` pattern, as text."
           }
         }
       },

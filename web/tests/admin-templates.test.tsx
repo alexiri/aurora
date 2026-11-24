@@ -37,7 +37,7 @@ const sourceTemplate = (over: Record<string, unknown> = {}) => ({
 const preview = {
   url: "https://github.com/acme/agent-templates.git", repo: "github.com/acme/agent-templates", ref: "main",
   resolved: { kind: "branch", name: "main", default: true }, commit_sha: SHA_B, path: "templates",
-  manifest: { name: "acme-templates", description: "Templates for the ops team" },
+  manifest: { name: "acme-templates", description: "Templates for the ops team", packages_url: "https://github.com/acme/agent-templates/releases/download/{version}/{id}-{version}.zip" },
   templates: [
     { template_id: "schedule-manager", dir: "schedule-manager", name: "Schedule manager", summary: "Keep the team's schedules tidy", version: "1.1.0", state: "new", problems: [] },
     { template_id: "broken", dir: "broken", name: "broken", summary: "", version: null, state: "new", problems: [{ code: "template_readme_missing", path: "broken/README.md", message: "The README.md file is missing." }] },
@@ -274,6 +274,8 @@ describe("Agent templates: Add repository", () => {
     expect(within(f).getByText("main (default branch)")).toBeTruthy();
     expect(within(f).getByText("89abcde")).toBeTruthy();
     expect(within(f).getByText("templates")).toBeTruthy();
+    expect(within(f).getByText("Packages come from")).toBeTruthy();
+    expect(within(f).getByText("https://github.com/acme/agent-templates/releases/download/{version}/{id}-{version}.zip")).toBeTruthy();
     expect(within(f).getByText("2 templates")).toBeTruthy();
     // each template with its version, state and problems in words; repository text is data, never markup
     expect(within(f).getByText("Version 1.1.0 · New")).toBeTruthy();

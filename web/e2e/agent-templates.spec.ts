@@ -51,6 +51,8 @@ for (const width of [1280, 390]) {
       const found = dlg.getByTestId("template-source-found");
       await expect(found).toContainText("github.com/acme/agent-templates");
       await expect(found).toContainText("main");
+      await expect(found).toContainText("Packages come from");
+      await expect(found).toContainText("https://github.com/acme/agent-templates/releases/download/{version}/{id}-{version}.zip");
       await expect(found).toContainText("1 template");
       await expect(found).toContainText("Schedule manager");
       await dlg.getByRole("button", { name: "Add repository" }).click();
