@@ -1,0 +1,179 @@
+"use client";
+
+import { AccessChoice } from "@/components/accounts/access-choice";
+import { Button } from "@/components/ui/button";
+import { ChoiceCards } from "@/components/ui/choice-cards";
+import { Notice } from "@/components/ui/notice";
+import type { PlanChoice } from "@/lib/api/agent-templates";
+import type { Level } from "@/lib/api/accounts";
+import type { PlanEntry } from "@/lib/api/agent-templates";
+
+import { unavailableWords } from "./words";
+
+/**
+ * One entry's account choice (C-1116, the Accounts step): which app (`any_of`), which account of it (an existing one
+ * the person may give, or **Connect a new account** through the account-only connect journey), and the access
+ * preselected to the template's level (capped as C-980 by the plan's accounts). Optional entries can be skipped.
+ */
+export interface AccountEntryState {
+  /** The chosen app among the entry's choices; the first available one by default. */
+  appId?: string;
+  /** The chosen account: a connection id, `new` (the journey), or `skip` (optional entries only). */
+  accountId?: string;
+  /** The access when the person changed the template's level; absent = the plan's level. */
+  level?: Level;
+}
+
+const ToolList = ({ label, tools }: { label: string; tools: string[] }) =>
+  tools.length === 0 ? null : (
+    <p className="text-sm text-ink-2">
+      {label} <span className="font-mono text-xs [overflow-wrap:anywhere]">{tools.join(", ")}</span>
+    </p>
+  );
+
+/** What one entry stands for after its state: the chosen app, the account (or new/skip) and the effective access. */
+export interface EntryResolution {
+  /** The entry's chosen app (the first available choice by default). */
+  chosen?: PlanChoice;
+  isNew: boolean;
+  skipped: boolean;
+  /** The account the entry stands for: a connection id, `new` (the journey), `skip`, or undefined (the default). */
+  accountId?: string;
+  /** The chosen existing account, when the entry uses one. */
+  target?: PlanChoice["accounts"][number];
+  /** The access the entry asks for: the person's change, else the plan's level capped to the account (C-980). */
+  level: Level | null;
+  /** True when the person changed the access; the create request then carries the level. */
+  levelChanged: boolean;
+}
+
+export function resolveEntry(entry: PlanEntry, pick: AccountEntryState | undefined): EntryResolution {
+  const chosen =
+    (pick?.appId ? entry.choices.find((c) => c.app_id === pick.appId) : undefined) ??
+    entry.choices.find((c) => c.available) ??
+    entry.choices[0];
+  const existing = chosen?.accounts ?? [];
+  const explicit = pick?.accountId;
+  const isNew = explicit === "new";
+  const skipped = explicit === "skip";
+  const accountId = !isNew && !skipped && explicit ? explicit : existing[0]?.ref.id;
+  const target = existing.find((a) => a.ref.id === accountId);
+  const planLevel = (chosen?.level ?? "read") as Level;
+  const levels = target?.levels ?? [];
+  const level: Level | null = pick?.level ?? (levels.includes(planLevel) ? planLevel : (levels[0] ?? null));
+  return {
+    chosen,
+    isNew,
+    skipped,
+    accountId,
+    target,
+    level,
+    levelChanged: pick?.level != null,
+  };
+}
+
+export function AccountsStep({
+  entries,
+  state,
+  onChange,
+  onConnect,
+  orgName,
+}: {
+  entries: PlanEntry[];
+  state: Record<number, AccountEntryState>;
+  onChange: (index: number, next: AccountEntryState) => void;
+  /** Opens the account-only connect journey for the entry's app; the page owns the dialog. */
+  onConnect: (index: number, appId: string) => void;
+  /** The organization that may limit an account, for "Limited by <org>". */
+  orgName?: string;
+}) {
+  const set = (index: number, patch: Partial<AccountEntryState>) => onChange(index, { ...state[index], ...patch });
+  return (
+    <div className="space-y-6">
+      {entries.length === 0 ? <p className="text-sm text-ink-2">The template needs no accounts. You can give the agent apps later.</p> : null}
+      {entries.map((entry) => {
+        const pick = state[entry.index] ?? {};
+        const r = resolveEntry(entry, pick);
+        const chosen = r.chosen;
+        const existing = chosen?.accounts ?? [];
+        const isNew = r.isNew;
+        const skipped = r.skipped;
+        const target = r.target;
+        // An entry with no existing account stands on "Connect a new account" from the start: the radio is already
+        // chosen, so clicking it cannot ask again — the button below is the way in (and back in, after a close).
+        const needsConnect = !isNew && !skipped && existing.length === 0;
+        const customOnly = chosen?.level_note === "custom_only";
+        const levels = target?.levels ?? [];
+        const value: Level | null = r.level;
+        return (
+          <section key={entry.index} className="space-y-3" aria-label={entry.why}>
+            <p className="text-sm font-medium text-ink">
+              {entry.why}
+              {entry.required ? "" : " (optional)"}
+            </p>
+            {!chosen ? null : !chosen.available ? (
+              <Notice tone="pending">
+                <p>{unavailableWords(chosen.app_name, chosen.unavailable_reason)}</p>
+              </Notice>
+            ) : (
+              <>
+                {entry.choices.length > 1 ? (
+                  <ChoiceCards
+                    legend="Which app?"
+                    value={chosen.app_id}
+                    onChange={(appId) => set(entry.index, { appId, accountId: undefined, level: undefined })}
+                    options={entry.choices.map((c) => ({ value: c.app_id, label: c.app_name, disabled: !c.available }))}
+                  />
+                ) : null}
+                <ChoiceCards<string>
+                  legend={`Which ${chosen.app_name} account?`}
+                  value={isNew ? "new" : skipped ? "skip" : (r.accountId ?? "new")}
+                  onChange={(v) => {
+                    if (v === "new") {
+                      set(entry.index, { accountId: "new", level: undefined });
+                      onConnect(entry.index, chosen.app_id);
+                    } else set(entry.index, { accountId: v, level: undefined });
+                  }}
+                  options={[
+                    ...existing.map((a, i) => ({
+                      value: a.ref.id,
+                      label: `Use ${a.name}`,
+                      badge: i === 0 && pick.accountId == null ? "Recommended" : undefined,
+                    })),
+                    { value: "new", label: `Connect a new ${chosen.app_name} account` },
+                    ...(entry.required ? [] : [{ value: "skip", label: `Skip ${chosen.app_name}` }]),
+                  ]}
+                />
+                {isNew || needsConnect ? (
+                  <p className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
+                    Not connected yet.
+                    <Button variant="outline" size="sm" onClick={() => onConnect(entry.index, chosen.app_id)}>
+                      Connect {chosen.app_name}
+                    </Button>
+                  </p>
+                ) : null}
+                {customOnly && chosen.custom ? (
+                  <div className="space-y-1 rounded-card border border-line bg-surface p-3 text-sm">
+                    <p className="font-medium text-ink">The organization limits this app: it asks you before each change.</p>
+                    <ToolList label="Allowed without asking:" tools={chosen.custom.allow_tools} />
+                    <ToolList label="Needs your approval:" tools={chosen.custom.ask_tools} />
+                    <ToolList label="Not available here:" tools={chosen.custom.dropped_tools} />
+                  </div>
+                ) : target && levels.length > 0 ? (
+                  <AccessChoice
+                    account={{ levels, limit: target.limit, app: target.app, managed_by: target.managed_by }}
+                    agentName="the agent"
+                    value={value}
+                    onChange={(level) => set(entry.index, { level })}
+                    legend={`What may the agent do in ${chosen.app_name}?`}
+                    orgName={orgName}
+                  />
+                ) : null}
+              </>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}

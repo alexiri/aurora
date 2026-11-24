@@ -45,15 +45,17 @@ export interface JourneyShape {
   noAgentChosen: boolean;
   /** The Outgoing webhook: Address and Message instead of Sign in (P5-REFINE-13). */
   webhook?: boolean;
+  /** (P6-TPL-4 B1) An account is made for a template, not for an agent: no Agent or Access step, nothing granted. */
+  accountOnly?: boolean;
 }
 
 /** The steps that apply, in order; the Done step is always last. */
 export function stepsOf(s: JourneyShape): StepId[] {
   const out: StepId[] = [];
   if (!s.appGiven) out.push("app");
-  if (!s.agentFixed && !s.noAgents) out.push("agent");
+  if (!s.agentFixed && !s.noAgents && !s.accountOnly) out.push("agent");
   if (!s.website && s.hasExisting) out.push("account");
-  if (!s.website && s.hasChoice && !s.noAgentChosen) out.push("access");
+  if (!s.website && s.hasChoice && !s.noAgentChosen && !s.accountOnly) out.push("access");
   if (!(s.hasExisting && s.useExisting && !s.website)) {
     if (s.webhook && !s.website) out.push("address", "message");
     else out.push("signin");

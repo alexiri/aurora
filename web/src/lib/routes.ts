@@ -156,6 +156,8 @@ export function wsRoutes(org: string, ws: string) {
     agents: () => `${base}/agents`,
     /** An agent's page (an id or a handle), optionally on a tab. */
     agent: (handle: string, query?: Query) => url(`${base}/agents/${seg(handle)}`, query),
+    /** (C-1116) The four-step page that creates an agent from a template. */
+    newAgent: (templateId: string) => `${base}/agents/new/${seg(templateId)}`,
     terminal: (handle: string) => `${base}/agents/${seg(handle)}/terminal`,
     skills: () => `${base}/skills`,
     apps: (tab?: TabOf<"wsApps">, query?: Query, hash?: string) => url(`${base}/apps`, { tab, ...query }, hash),

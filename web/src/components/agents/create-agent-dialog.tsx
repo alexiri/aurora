@@ -15,11 +15,14 @@ import { useInstance, useMe, useWorkspace } from "@/lib/api/queries";
 import { AGENT_TEMPLATES, BRIEF_MAX, DRAFT_MAX, fillTemplate, templateFor, type AgentTemplateId } from "@/lib/onboarding/templates";
 import { useVerb } from "@/lib/palette-verb";
 import { wsRoutes } from "@/lib/routes";
+import { useWorkspaceTemplates } from "@/lib/api/agent-templates";
 
 import { personName } from "@/lib/workspace-name";
+import { TemplateGalleryDialog } from "@/components/templates/gallery";
 import { AgentRevealDialog, type Revealed } from "./reveal";
 
-const HANDLE_RE = /^[a-z][a-z0-9-]{0,39}$/;
+/** Also used by the template's About step (C-1116), which asks the same handle. */
+export const HANDLE_RE = /^[a-z][a-z0-9-]{0,39}$/;
 
 /** A handle made from a name ("Rex the Ops helper" → "rex-the-ops-helper"); empty when nothing usable is left. */
 export function handleFromName(name: string): string {
@@ -64,6 +67,10 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
   const [clientErr, setClientErr] = useState<Record<string, string>>({});
   const [revealed, setRevealed] = useState<Revealed | null>(null);
   const [after, setAfter] = useState<string | null>(null);
+  // (C-1116) **More templates…** appears in the Start from row when the workspace has at least one template; it opens
+  // the gallery, and its "Use this template" goes to the four-step page.
+  const gallery = useWorkspaceTemplates(wsId, open);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const fe = create.error ? fieldErrors(create.error) : {};
 
   const template = templateFor(templateId);
@@ -151,7 +158,18 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
             <p id="agent-template-label" className="text-sm font-medium text-ink">
               Start from
             </p>
-            <ChoiceChips label="Start from" value={templateId} options={CHIPS} onChange={pick} />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <ChoiceChips label="Start from" value={templateId} options={CHIPS} onChange={pick} />
+              {gallery.data && gallery.data.items.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setGalleryOpen(true)}
+                  className="min-h-9 rounded-full border border-line bg-surface px-3 py-1 text-sm font-medium text-ink-2 hover:border-line-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent dark:bg-canvas"
+                >
+                  More templates…
+                </button>
+              ) : null}
+            </div>
           </div>
           <Field id="agent-name" label="Name" error={clientErr.name || fe.name}>
             <input
@@ -224,6 +242,17 @@ export function CreateAgentDialog({ wsId }: { wsId: string }) {
           {create.error && Object.keys(fe).length === 0 ? <ErrorNotice error={create.error} /> : null}
         </div>
       </FormDialog>
+      <TemplateGalleryDialog
+        open={galleryOpen}
+        onOpenChange={setGalleryOpen}
+        wsId={wsId}
+        onUse={(templateId) => {
+          setGalleryOpen(false);
+          setOpen(false);
+          reset();
+          if (params.org && params.ws) router.push(wsRoutes(params.org, params.ws).newAgent(templateId));
+        }}
+      />
       <AgentRevealDialog
         revealed={revealed}
         onClose={() => {

@@ -1275,6 +1275,7 @@ unified by D-407 (P5-REFINE-1).
 | **Self-hosted apps**, **Sign-in apps** | Instances; client keys as labels; OAuth clients | unchanged term (FIX-132) and the renamed one (D-407) | Set up |
 | **Your account** | — | the signed-in person's own Aurora account (`/account`). It is always "your account", so it is never confused with a connected account | Use |
 | **Agent templates** | Agent presets, Agent blueprints | ready-made agents an instance admin brings in from a git repository and approves version by version; people create an agent from one in a few steps | Use |
+| **More templates…** | Template gallery, Template picker | the chip in the New agent dialog that opens the workspace's offered templates as cards; a card opens its details first, then the four-step page makes the agent | Use |
 | **Template repository** | Template source | the git repository a set of agent templates comes from; Administration checks it and holds every new version until it is reviewed | Expert |
 | **Waiting for review** | Pending approval | a new template version an instance admin must read and approve before it is offered; people keep using the offered version meanwhile | Expert |
 | **Waiting for its package** | Awaiting package | a version Aurora has read whose package the repository has not published yet | Expert |
@@ -2626,6 +2627,24 @@ posture forbids it; when the instance has no hosted agents the dialog says so an
 **Instructions (optional)**. After Create: the toast "<Agent> is ready" and the new agent's chat, with the
 template's first message in the composer as a `?draft=` (C-1035), not sent. A BYO agent opens on Connect after its
 token has been copied.
+
+**More templates… (phase 6, P6-TPL-4 B1, C-1116).** The Start from row gains **More templates…** when the workspace
+has at least one available template. The gallery "More templates" shows a card per template — name and summary, the
+version, what it runs on its own ("Schedule Morning triage", "Webhook Alerts, created paused") and, when a need is not
+met, "Needs <app>, which isn't available here.", "Needs the skill library for the <skill> skill." or "Needs your
+organization's <name> skill." — and a card that is not ready cannot be used. Choosing a card opens its details first
+(D-458): **About this template** (the README rendered as C-1116, inert data), what it needs, what it runs on its own,
+helper files by name and the version; **Use this template** opens the four-step page
+`/o/<org>/w/<ws>/agents/new/<template_id>`, **Back** returns to the gallery. The page keeps the fold **About this
+template** above the steps: **About** (name, optional handle, the template's inputs), **Accounts** (per entry the why;
+an existing account, or **Connect a new account** through the connect journey without the Agent and Access steps — the
+access is chosen here; optional entries offer **Skip <app>**), **Automations** (each schedule with its cadence in the
+workspace's zone and a switch; webhooks "Created paused.") and **Review** (what <Agent> can do, C-986; instructions,
+skills, helper files and memories as inert data in folds; **Skills from libraries** at their commit, optional ones with
+**Add <skill>**, unavailable optional ones "Not added: needs the <skill> skill, which isn't available here.").
+**Create** sends C-1111: a 409 `template_version_changed` reopens the plan with "This template was updated. Check the
+changes, then create.", 422 field errors jump to the step they belong to; each new webhook's secret is shown once, then
+the toast "<Agent> is ready" opens the new agent's chat. The agent's Template section (C-1117) is the next part (B2).
 
 **Instructions.** The picture is a visible **Change picture** button with a real **Remove** and the hint "PNG, JPG
 or WebP, up to 512 KiB. Shown round." (the API's true limit). Models show display names only. **Advanced** (Expert)
