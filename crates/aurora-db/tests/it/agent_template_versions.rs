@@ -31,7 +31,7 @@ async fn seed_source(pool: &PgPool) -> Uuid {
         first_check_in_secs: Some(3600),
         created_by: user,
     };
-    repo::insert_source(&mut *pool.acquire().await.unwrap(), &s)
+    repo::insert_source(&mut pool.acquire().await.unwrap(), &s)
         .await
         .unwrap()
         .id
@@ -48,7 +48,7 @@ async fn seed_template(pool: &PgPool, source: Uuid, template_id: &str) -> Uuid {
         head_version: Some("1.0.0"),
         head_state: "ok",
     };
-    repo::upsert_template(&mut *pool.acquire().await.unwrap(), &t)
+    repo::upsert_template(&mut pool.acquire().await.unwrap(), &t)
         .await
         .unwrap()
         .id
@@ -101,7 +101,7 @@ async fn a_stale_finish_does_not_change_an_approved_version(pool: PgPool) {
     // The stale finish matches nothing; the honest one matches.
     let mut c = pool.acquire().await.unwrap();
     let moved = repo::finish_version(
-        &mut *c,
+        &mut c,
         stale,
         "pending_approval",
         None,
@@ -114,7 +114,7 @@ async fn a_stale_finish_does_not_change_an_approved_version(pool: PgPool) {
     .await
     .unwrap();
     let again = repo::finish_version(
-        &mut *c,
+        &mut c,
         stale,
         "pending_approval",
         None,
@@ -127,7 +127,7 @@ async fn a_stale_finish_does_not_change_an_approved_version(pool: PgPool) {
     .await
     .unwrap();
     let honest = repo::finish_version(
-        &mut *c,
+        &mut c,
         waiting,
         "pending_approval",
         None,
