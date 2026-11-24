@@ -39,6 +39,7 @@ pub use render::{
     CheckedInputs, InputProblem, InputProblemCode, RenderedAutomation, RenderedMemory,
     RenderedSkill, RenderedTemplate, check_inputs, render,
 };
+pub use skill_rules::is_text;
 pub use validate::{helper_path_ok, read_tree};
 
 /// Reads a packed template (a zip whose only top-level directory is `<id>/`, stored or deflate).
