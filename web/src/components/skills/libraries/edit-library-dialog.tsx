@@ -9,6 +9,7 @@ import { Field, inputClass } from "@/components/ui/field";
 import { ErrorNotice } from "@/components/ui/notice";
 import { SecretInput } from "@/components/ui/secret-input";
 import { usePatchSkillLibrary, type LibraryOwner, type PatchSkillLibraryRequest, type SkillLibrary } from "@/lib/api/skill-libraries";
+import { RepositoryAddressFields } from "@/components/ui/repository-address";
 import { formatDay } from "@/lib/format-date";
 
 import { addressError } from "./words";
@@ -89,12 +90,7 @@ function EditFlow({ library: l, orgId, onOpenChange }: { library: SkillLibrary; 
                 <p className="text-xs text-muted">To use another repository, add a new library.</p>
               </div>
             )}
-            <Field id="edit-ref" label="Branch or tag" hint="Default: the repository's default branch">
-              <input id="edit-ref" className={inputClass} value={ref} autoComplete="off" spellCheck={false} onChange={(e) => setRef(e.target.value)} />
-            </Field>
-            <Field id="edit-path" label="Folder" hint="The folder that holds the skill folders. Default: the repository root">
-              <input id="edit-path" className={inputClass} value={path} autoComplete="off" spellCheck={false} onChange={(e) => setPath(e.target.value)} />
-            </Field>
+            <RepositoryAddressFields idPrefix="edit" ref={ref} onRef={setRef} path={path} onPath={setPath} pathHint="The folder that holds the skill folders. Default: the repository root" />
             <div className="space-y-2">
               <p className="text-sm font-medium text-ink">Access token</p>
               {l.token_set ? (

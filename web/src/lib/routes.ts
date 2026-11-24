@@ -21,15 +21,15 @@ const seg = encodeURIComponent;
 
 /** The tab ids of each topic page (`14 §Topics per level`). Order is the order of the tab bar. */
 export const TABS = {
-  // (P5-REFINE-18 #1) What agents may do: Internet access · AI keys and rules · Bring your own · Defaults.
-  adminAgentPolicy: ["internet-access", "ai-keys", "byo", "defaults"],
+  // (P5-REFINE-18 #1) What agents may do: Internet access · AI keys and rules · Bring your own · Defaults · Agent templates (C-1114).
+  adminAgentPolicy: ["internet-access", "ai-keys", "byo", "defaults", "templates"],
   adminApps: ["apps", "oauth-clients", "self-hosted", "advanced"],
   adminPeople: ["users", "organizations", "sign-in", "new-users"],
   adminData: ["retention", "storage", "audit", "usage"],
   // Health & runners: Health · Runners · Computers, then the installation's own settings pages.
   adminPlatform: ["health", "runners", "computers", "secret-stores", "email", "limits"],
-  // (P5-REFINE-17, org-6) Agents · Bring your own · Skills; Previews is a second section of Bring your own.
-  orgAgents: ["agents", "byo", "skills"],
+  // (P5-REFINE-17, org-6) Agents · Bring your own · Skills · Templates (C-1115); Previews is a second section of Bring your own.
+  orgAgents: ["agents", "byo", "skills", "templates"],
   orgApps: ["accounts", "apps", "oauth-clients", "self-hosted"],
   orgPeople: ["members", "groups", "directory-sync"],
   orgData: ["retention", "storage", "audit", "usage"],
@@ -57,6 +57,8 @@ export const adminRoutes = {
   internetAccess: () => "/admin/internet-access",
   /** (P5-SKLIB-3, D-450(b)) The instance's skill libraries, a sub-page of What agents may do › Defaults. */
   skillLibraries: () => "/admin/skill-libraries",
+  /** (C-1114) The review of one template version, a sub-page of What agents may do › Agent templates. */
+  templateReview: (templateId: string, version: string) => `/admin/internet-access/templates/${seg(templateId)}/${seg(version)}`,
   people: (tab?: TabOf<"adminPeople">, hash?: string) => url("/admin/people", { tab }, hash),
   organizations: (hash?: string) => url("/admin/people", { tab: "organizations" }, hash),
   organization: (id: string) => `/admin/people/organizations/${seg(id)}`,

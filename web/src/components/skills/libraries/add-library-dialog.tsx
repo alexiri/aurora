@@ -5,9 +5,8 @@ import { useId, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
-import { Fold } from "@/components/ui/fold";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
-import { SecretInput } from "@/components/ui/secret-input";
+import { RepositoryAddressFields } from "@/components/ui/repository-address";
 import { errorMessage } from "@/lib/api/errors";
 import {
   shortSha,
@@ -129,31 +128,20 @@ function AddLibraryFlow({ orgId, onOpenChange }: { orgId: LibraryOwner; onOpenCh
             <Found check={found} label={label} onLabel={setLabel} refGiven={!!ref.trim()} pathGiven={!!path.trim()} labelError={missing} />
           ) : (
             <>
-              <Field
-                id="lib-url"
-                label="Repository address"
-                error={missing || urlProblem || undefined}
-                hint="The address you clone, or the repository's page. For example https://gitlab.example.org/team/skills or https://github.com/acme/skills/tree/main/skills"
-              >
-                <input id="lib-url" className={inputClass} value={url} inputMode="url" autoComplete="off" spellCheck={false} onChange={(e) => setUrl(e.target.value)} />
-              </Field>
-              <Field id="lib-ref" label="Branch or tag" hint="Default: the repository's default branch">
-                <input id="lib-ref" className={inputClass} value={ref} autoComplete="off" spellCheck={false} onChange={(e) => setRef(e.target.value)} />
-              </Field>
-              <Field id="lib-path" label="Folder" hint="The folder that holds the skill folders. Default: the repository root">
-                <input id="lib-path" className={inputClass} value={path} autoComplete="off" spellCheck={false} onChange={(e) => setPath(e.target.value)} />
-              </Field>
-              <Fold summary="This repository is private" defaultOpen={!!token}>
-                <div className="mt-3 space-y-4">
-                  <Field id="lib-token" label="Access token">
-                    <SecretInput id="lib-token" value={token} onChange={setToken} aria-label="Access token" />
-                  </Field>
-                  <Field id="lib-user" label="User name" hint="Most hosts accept any name. Bitbucket: x-token-auth">
-                    <input id="lib-user" className={inputClass} value={username} autoComplete="off" spellCheck={false} onChange={(e) => setUsername(e.target.value)} />
-                  </Field>
-                  <p className="text-xs text-muted">Use a token that can only read this repository. Aurora only reads.</p>
-                </div>
-              </Fold>
+              <RepositoryAddressFields
+                idPrefix="lib"
+                url={url}
+                onUrl={setUrl}
+                ref={ref}
+                onRef={setRef}
+                path={path}
+                onPath={setPath}
+                token={token}
+                onToken={setToken}
+                username={username}
+                onUsername={setUsername}
+                urlError={missing || urlProblem || undefined}
+              />
             </>
           )}
         </form>

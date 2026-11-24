@@ -38,7 +38,7 @@ function wrap(ui: React.ReactElement) {
 
 describe("route helpers and tab ids", () => {
   it("the merged pages' tabs and addresses", () => {
-    expect(TABS.adminAgentPolicy).toEqual(["internet-access", "ai-keys", "byo", "defaults"]);
+    expect(TABS.adminAgentPolicy).toEqual(["internet-access", "ai-keys", "byo", "defaults", "templates"]);
     expect(TABS.adminPlatform).toEqual(["health", "runners", "computers", "secret-stores", "email", "limits"]);
     expect(adminRoutes.agentPolicy("byo")).toBe("/admin/internet-access?tab=byo");
     expect(adminRoutes.agentPolicy()).toBe("/admin/internet-access");
