@@ -66,9 +66,24 @@ function dosDateTime(d: Date): { time: number; date: number } {
   return { time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1), date: ((y - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate() };
 }
 
-/** A store-only zip of `entries`, in order. Names are written as UTF-8. */
-export function writeZip(entries: ZipEntry[], now: Date = new Date()): Uint8Array {
-  const { time, date } = dosDateTime(now);
+/** A DOS timestamp given directly, instead of read from a date in the machine's local time. */
+export interface FixedDosTimestamp {
+  time: number;
+  date: number;
+}
+
+/**
+ * (P6-TPL-5, C-1119) The fixed DOS timestamp of a Save-as-template archive: the same 1980-01-01
+ * midnight the Rust `pack` writes, so the template's bytes never depend on when or where it was
+ * saved (`dosDateTime` reads the machine's local time, so a current-date stamp would make the
+ * golden fixture fail outside the time zone that wrote it). Ordinary agent exports keep their
+ * local-time stamp.
+ */
+export const TEMPLATE_DOS_TIMESTAMP: FixedDosTimestamp = { time: 0, date: 0x0021 };
+
+/** A store-only zip of `entries`, in order. Names are written as UTF-8. A `FixedDosTimestamp` pins the stamps byte for byte. */
+export function writeZip(entries: ZipEntry[], now: Date | FixedDosTimestamp = new Date()): Uint8Array {
+  const { time, date } = now instanceof Date ? dosDateTime(now) : now;
   const chunks: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
