@@ -208,6 +208,9 @@ function GenericSignInStep({
     if (!method) return;
     const errs = validateFields(method.fields, values);
     if (instanceBound && !app.instances?.default_host && !instanceId) errs.__instance = "Choose an instance.";
+    // (C-1166) A sign-in asks for at least one of its scopes; with none on, nothing would be asked honestly.
+    if (method.kind === "oauth2" && method.scopes.length > 0 && scopesFor(method, level, scopes).length === 0)
+      errs.__scopes = "Turn on at least one permission.";
     setErrors(errs);
     if (Object.keys(errs).length) return;
     // The sign-in window is opened here, synchronously in the click, so pop-up blockers allow it (C-842).
@@ -401,12 +404,26 @@ function GenericSignInStep({
       <DynamicForm fields={fields} values={values} errors={shownErrors} onChange={(n, v) => setValues((s) => ({ ...s, [n]: v }))} />
 
       {moreOptions ? (
-        <details open={needsInstance || undefined} className="rounded-control border border-line p-3">
+        <details open={needsInstance || !!errors.__scopes || undefined} className="rounded-control border border-line p-3">
           <summary className="min-h-9 cursor-pointer text-sm font-semibold text-ink">More options</summary>
           <div className="mt-3 space-y-4">
             {method.scopes.length > 0 && method.kind !== "fields" ? (
               // (C-1166) The switches show what the sign-in asks for: the level's preset until edited.
-              <RequestedScopes method={method} selected={scopesFor(method, level, scopes)} onChange={setScopes} disabled={busy} />
+              <RequestedScopes
+                method={method}
+                selected={scopesFor(method, level, scopes)}
+                onChange={(s) => {
+                  setScopes(s);
+                  if (s.length > 0)
+                    setErrors((e) => {
+                      const rest = { ...e };
+                      delete rest.__scopes;
+                      return rest;
+                    });
+                }}
+                disabled={busy}
+                error={errors.__scopes}
+              />
             ) : null}
             {method.scopes.length > 0 && method.kind === "fields" ? (
               <TokenScopes method={method} mode={scopeMode} onMode={setScopeMode} selected={scopes ?? method.default_scopes} onChange={setScopes} disabled={busy} />

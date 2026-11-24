@@ -204,6 +204,8 @@ export function orgDoneSentence(app: string, org: string): string {
 export function buildJourneyConnect(i: SubmitInput): ConnectRequest {
   const fields = buildConnectFields(i.method.fields, i.fields);
   const scopes = i.scopes ?? (i.method.scopes.length > 0 ? scopesFor(i.method, i.level, i.scopesOverride) : []);
+  // (C-1166) An edit is sent even when empty, so the server refuses it instead of falling back to the defaults.
+  const sendScopes = scopes.length > 0 || (i.scopesOverride != null && i.method.scopes.length > 0);
   if (i.org) {
     return {
       scope: "organization",
@@ -213,7 +215,7 @@ export function buildJourneyConnect(i: SubmitInput): ConnectRequest {
       ...(i.clientId ? { oauth_client_id: i.clientId } : {}),
       ...(i.instanceId ? { instance_id: i.instanceId } : {}),
       ...(i.accessLevel ? { access_level: i.accessLevel } : {}),
-      ...(scopes.length > 0 ? { scopes } : {}),
+      ...(sendScopes ? { scopes } : {}),
       ...(i.hasWriteTools ? { limit: i.level ?? "read" } : {}),
     };
   }
@@ -225,7 +227,7 @@ export function buildJourneyConnect(i: SubmitInput): ConnectRequest {
     ...(i.clientId ? { oauth_client_id: i.clientId } : {}),
     ...(i.instanceId ? { instance_id: i.instanceId } : {}),
     ...(i.accessLevel ? { access_level: i.accessLevel } : {}),
-    ...(scopes.length > 0 ? { scopes } : {}),
+    ...(sendScopes ? { scopes } : {}),
     ...(i.agentIds.length > 0 ? { grant: { agent_ids: i.agentIds, level: i.level ?? "read" } } : i.hasWriteTools ? { access: "read" } : {}),
   };
 }

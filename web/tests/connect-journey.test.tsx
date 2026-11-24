@@ -447,10 +447,26 @@ describe("the journey for a fixed agent and a given app", () => {
     expect(on("Read profile")).toBeChecked();
     expect(on("Read orgs")).toBeChecked();
     expect(off("Repositories")).toBeChecked();
+    // Every switch off: nothing is sent (the defaults would be asked for instead); the step says why.
     fireEvent.click(off("Read orgs"));
+    fireEvent.click(off("Read profile"));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
+    expect(await screen.findByText("Turn on at least one permission.")).toBeInTheDocument();
+    expect(post(calls)).toBeUndefined();
+    fireEvent.click(on("Read profile"));
+    expect(screen.queryByText("Turn on at least one permission.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
     await screen.findByText("Waiting for you to sign in to GitHub…");
     expect(post(calls)?.body).toMatchObject({ method_id: "oauth", scopes: ["read:user"] });
+  });
+
+  it("an edited choice is sent even when empty, so the server refuses it rather than asking for the defaults (C-1166)", () => {
+    const oauth = method({
+      id: "oauth", kind: "oauth2", scopes: [{ scope: "a", name: "A", access: "read" }], default_scopes: ["a"], scope_presets: { read: ["a"], write: ["a"] },
+    }) as unknown as ConnectMethod;
+    const base = { workspaceId: "w1", method: oauth, fields: {}, agentIds: [], level: "read" as const, hasWriteTools: false };
+    expect(buildJourneyConnect({ ...base, scopesOverride: [] })).toMatchObject({ scopes: [] });
+    expect(buildJourneyConnect({ ...base, scopesOverride: null })).toMatchObject({ scopes: ["a"] });
   });
 
   it("grant_failed after a sign-in shows the account as made; Give access retries only the access", async () => {
