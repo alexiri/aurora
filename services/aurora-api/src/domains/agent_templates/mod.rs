@@ -13,6 +13,7 @@ pub mod git;
 pub mod org;
 pub mod poll;
 pub(crate) mod routes;
+pub(crate) mod updates;
 pub(crate) mod workspace;
 pub use routes::router;
 
