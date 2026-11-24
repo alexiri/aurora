@@ -99,6 +99,9 @@ export function AccountsStep({
         const isNew = r.isNew;
         const skipped = r.skipped;
         const target = r.target;
+        // An entry with no existing account stands on "Connect a new account" from the start: the radio is already
+        // chosen, so clicking it cannot ask again — the button below is the way in (and back in, after a close).
+        const needsConnect = !isNew && !skipped && existing.length === 0;
         const customOnly = chosen?.level_note === "custom_only";
         const levels = target?.levels ?? [];
         const value: Level | null = r.level;
@@ -141,7 +144,7 @@ export function AccountsStep({
                     ...(entry.required ? [] : [{ value: "skip", label: `Skip ${chosen.app_name}` }]),
                   ]}
                 />
-                {isNew ? (
+                {isNew || needsConnect ? (
                   <p className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
                     Not connected yet.
                     <Button variant="outline" size="sm" onClick={() => onConnect(entry.index, chosen.app_id)}>

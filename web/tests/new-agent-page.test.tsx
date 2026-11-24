@@ -274,6 +274,20 @@ describe("the four-step page (C-1116)", () => {
     expect(await screen.findByText("Needs GitHub, which isn't installed here.")).toBeTruthy();
   });
 
+  it("an entry with no existing account offers the way in: Connect <app> opens the account-only journey", async () => {
+    const noAccountPlan = {
+      ...plan,
+      entries: [{ index: 0, required: true, why: "It triages pull requests.", choices: [choice({ accounts: [] })] }],
+    };
+    stubFetch({ "GET /v1/workspaces/w1/agent-templates/schedule-manager": () => json(200, noAccountPlan) });
+    wrap(<NewAgentFromTemplateView />);
+    await gotoAccounts();
+    // The "Connect a new GitHub account" radio is the entry's default, so the button is what asks (and asks again).
+    expect(await screen.findByText("Not connected yet.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+  });
+
   it("Connect a new account opens the account-only journey; closing it refetches the plan", async () => {
     const stub = openPlan();
     await gotoAccounts();
