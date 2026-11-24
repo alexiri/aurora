@@ -319,7 +319,10 @@ person.
 
 **The executable-text rule:** a file with the executable bit — in `helpers/`
 or in a skill — must be valid UTF-8 without a NUL byte, so the admin can read
-everything that will run. Files without the executable bit may be binary.
+everything that will run. Every **helper file** must be text, executable or
+not (owner decision 2026-11-24): the home sync carries UTF-8 text only, so a
+non-text helper would be stored but silently never installed. A skill's
+non-executable data files may be binary.
 
 ### What is refused, and why
 

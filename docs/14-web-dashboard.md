@@ -2583,7 +2583,7 @@ what the file carries; memories are unticked by default (they can hold what the 
 skills (C-1142) go in as references to their library, never copies, and the helper files are kept byte for byte with
 their executable bit (C-1143). One-time schedules, organization and workspace skills and library skills that could not
 be read are listed as left out. **Save** refuses one problem per sentence (the placeholder lines left in, the limits of
-C-1141, a placeholder in the instructions or a skill, an executable helper that is not text) and downloads
+C-1141, a placeholder in the instructions or a skill, a helper that is not text) and downloads
 `<id>-<version>.zip`, built in the browser by `lib/export/agent-template.ts` (the export's files with `template.yaml`
 added, rooted at `<id>/`; the same content the Rust reader parses — a golden fixture of a web-saved zip is read by
 `crates/aurora-template/tests/web_saved.rs`). It publishes nothing; the next steps are docs/25 §Save as template.

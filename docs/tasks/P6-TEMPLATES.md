@@ -166,9 +166,12 @@ Scripts and small tools come in two places:
   instructions are told where they are. People see them in the agent's Template section and can remove them. They
   are offered again with each update, as one part.
 
-**Everything that will run must be readable**: an executable file in a template (a helper or a skill file) must be
-UTF-8 text without NUL bytes, such as a script with a `#!` line. Non-executable data files may be binary; the review
-shows their size and sha256. Nothing in a template runs on the platform: helpers and skill scripts run only in the
+**Helper files are text** (owner decision 2026-11-24): every file under `helpers/` must be UTF-8 text without
+NUL bytes — executable or not — because the home sync carries UTF-8 text only, so a non-text helper would be
+stored but silently never installed. The template validation, the API's helper writer and the Save as template
+dialog all refuse one (with the file's path). An executable skill file must also be text, so the admin can read
+everything that will run; a non-executable skill data file may be binary, and the review shows its size and
+sha256. Nothing in a template runs on the platform: helpers and skill scripts run only in the
 agent's own computer, when the agent runs them.
 
 ### Examples (P6-TPL-1, the example repository `templates/examples/`)
