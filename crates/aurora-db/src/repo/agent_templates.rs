@@ -940,3 +940,20 @@ pub async fn delete_parts(conn: &mut PgConnection, agent: Uuid) -> Result<(), Db
         .await?;
     Ok(())
 }
+
+/// (P6-TPL-3, C-1112) Drop one recorded part (an apply that takes a `removed_upstream` part
+/// deletes the agent's copy and the recorded hash with it).
+pub async fn delete_part(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    kind: &str,
+    key: &str,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM agent_template_parts WHERE agent_id = $1 AND kind = $2 AND key = $3")
+        .bind(agent)
+        .bind(kind)
+        .bind(key)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
