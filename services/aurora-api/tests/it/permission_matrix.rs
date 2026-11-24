@@ -1242,7 +1242,12 @@ const ROWS: &[Row] = &[
         false,
     ),
     // (P6-TPL-3, C-1111) create from a template: `can_use` on the workspace; session or key
-    r("POST", "/v1/workspaces/{ws}/agents/from-template", G::WsUse, false),
+    r(
+        "POST",
+        "/v1/workspaces/{ws}/agents/from-template",
+        G::WsUse,
+        false,
+    ),
     r(
         "GET",
         "/v1/agents/{agent}/skill-library-updates",
@@ -2240,7 +2245,7 @@ async fn permission_matrix_routes_by_principal() {
     let state = shared.state.clone().with_connect_override(&git.base());
     shared.app = crate::common::test_router(state.clone());
     shared.state = state;
-    let tpl_files = vec![
+    let tpl_files = [
         (
             "mattpl/template.yaml".to_owned(),
             "format: 1\nid: mattpl\nversion: 1.0.0\nname: Matrix\nsummary: The matrix one.\n"
@@ -2256,7 +2261,10 @@ async fn permission_matrix_routes_by_principal() {
             "mattpl/instructions.md".to_owned(),
             b"Matrix instructions.\n".to_vec(),
         ),
-        ("mattpl/README.md".to_owned(), b"# mattpl\nMatrix.\n".to_vec()),
+        (
+            "mattpl/README.md".to_owned(),
+            b"# mattpl\nMatrix.\n".to_vec(),
+        ),
     ];
     git.add_repo("acme/tpl");
     let mut tpl_changes: Vec<Change> = vec![Change::Put(

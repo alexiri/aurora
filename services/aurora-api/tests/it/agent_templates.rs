@@ -3807,7 +3807,9 @@ fn full_files(dir: &str, version: &str) -> Vec<(String, Vec<u8>)> {
         ),
         (
             format!("{dir}/memory/policy.md"),
-            format!("---\nkey: policy\nupdated: 2026-11-20\nlocked: true\n---\nPolicy {{input.zone}}.\n").into_bytes(),
+            "---\nkey: policy\nupdated: 2026-11-20\nlocked: true\n---\nPolicy {{input.zone}}.\n"
+                .to_owned()
+                .into_bytes(),
         ),
         (
             format!("{dir}/automations/daily.yaml"),
@@ -4038,9 +4040,14 @@ async fn a_full_creation_writes_every_kind_with_its_provenance() {
         .await
         .unwrap();
     assert_eq!(hooks.len(), 1);
-    assert_eq!(hooks[0].0, false);
+    assert!(!hooks[0].0, "{hooks:?}");
     assert!(v["webhooks"][0]["secret"].is_string(), "{v}");
-    assert_eq!(v["webhooks"][0]["webhook"]["enabled"], false, "{v}");
+    assert!(
+        !v["webhooks"][0]["webhook"]["enabled"]
+            .as_bool()
+            .unwrap_or(true),
+        "{v}"
+    );
 
     // The access: the capped level of the plan (custom_only: ask over the read tools, the
     // write tools ask), through the one grant writer with `via: "template"`.
@@ -5018,7 +5025,7 @@ async fn admin_actions_never_change_a_created_agent() {
     let (s, v) = w
         .call(
             Method::POST,
-            &format!("/v1/admin/agent-templates/full/versions/2.0.0/reject"),
+            "/v1/admin/agent-templates/full/versions/2.0.0/reject",
             None,
         )
         .await;
