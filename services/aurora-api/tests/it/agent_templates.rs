@@ -3114,6 +3114,42 @@ async fn applying_a_subset_changes_only_those_parts() {
 }
 
 #[tokio::test]
+async fn applying_a_skill_keeps_its_enabled_choice() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    // The person switched the agent's own skill off; the offer lists it as `edited_here`.
+    sqlx::query("UPDATE skills SET enabled = false WHERE id = $1")
+        .bind(u.watch)
+        .execute(u.w.h.pool())
+        .await
+        .unwrap();
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "skill", "key": "watch"}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The template's text was applied, but the skill stays off (SEC-146 E).
+    let (enabled, body): (bool, String) =
+        sqlx::query_as("SELECT enabled, body FROM skills WHERE id = $1")
+            .bind(u.watch)
+            .fetch_one(u.w.h.pool())
+            .await
+            .unwrap();
+    assert!(!enabled);
+    assert_eq!(body, "\nWatch body v2.\n");
+}
+
+#[tokio::test]
 async fn a_needed_input_blocks_the_apply_until_given() {
     let u = upd_world().await;
     upd_advance(&u, "3.0.0").await;

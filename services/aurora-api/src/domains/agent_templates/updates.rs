@@ -1217,7 +1217,10 @@ async fn apply_in_tx(
                         ));
                     }
                     Some(row) => {
-                        skills_repo::update(tx, row.id, &s.use_it_when, &s.body, true).await?;
+                        // The apply replaces the skill's text, not the person's on/off
+                        // choice (SEC-146 E): the existing row's `enabled` stays.
+                        skills_repo::update(tx, row.id, &s.use_it_when, &s.body, row.enabled)
+                            .await?;
                         // The files are replaced as a set.
                         for f in skills_repo::files(tx, &[row.id]).await? {
                             skills_repo::delete_file(tx, row.id, &f.path).await?;
