@@ -6,8 +6,8 @@ description: "How the Microsoft Graph API is addressed ($select, $filter, paging
 # Microsoft Graph conventions
 
 Base URL `https://graph.microsoft.com/v1.0` (also in `$MICROSOFT_GRAPH_URL`). Requests go through the
-proxy with no token and no `-k`. Only the signed-in user's own resources (`/me/...`) and SharePoint
-sites and drives by id are available; `tools.md` lists the operations and your access.
+proxy with no token and no `-k`. Only the signed-in user's own mail, calendar and profile (`/me/...`)
+are available; files (OneDrive, SharePoint) are not. `tools.md` lists the operations and your access.
 
 ## Entry points the catalogue covers
 
@@ -16,12 +16,6 @@ sites and drives by id are available; `tools.md` lists the operations and your a
 | Profile | `GET /me` |
 | Mail | `GET /me/mailFolders`, `/me/mailFolders/<id>/messages`, `/me/messages`, `/me/messages/<id>`, `/me/messages/<id>/attachments`; send: `POST /me/sendMail` |
 | Calendar | `GET /me/calendars`, `/me/events`, `/me/events/<id>`, `/me/calendarView?startDateTime=&endDateTime=`; create: `POST /me/events` |
-| OneDrive | `GET /me/drive`, `/me/drive/root/children`, `/me/drive/recent`, `/me/drive/items/<id>`, `.../children`, `.../content` |
-| SharePoint | `GET /sites`, `/sites/<id>`, `/sites/<id>/drives`, `/drives/<id>/root/children`, `/drives/<id>/items/<id>` |
-
-OneDrive files are addressed by **item id** (`/me/drive/items/{id}`); paths such as
-`/me/drive/root:/folder/file` are not available. Downloads (`.../content`) redirect to a
-pre-authenticated storage URL outside this connection: follow the redirect once, do not forward headers.
 
 ## Keep responses small
 

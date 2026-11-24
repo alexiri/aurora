@@ -44,59 +44,12 @@
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events" }
   expect: { app: microsoft-365 }
-- name: "upload_drive_item_content: summary shows the item"
+# (D-482) No file uploads (no Files.* or Sites.*): OneDrive and document-library writes select no tool.
+- name: "negative upload to OneDrive is not a tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
-  request:
-    method: PUT
-    url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content?@microsoft.graph.conflictBehavior=replace"
-    headers: { content-type: text/plain }
-    body: "new content"
-  expect:
-    tool: upload_drive_item_content
-    summary: { title: "upload a file", fields: { Item: "01EXAMPLEITEM", Conflict: "replace" } }
-- name: "negative upload_drive_item_content: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content" }
+  request: { method: PUT, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content", body: "hello" }
   expect: { app: microsoft-365 }
-- name: "create_drive_root_folder: summary shows the name"
+- name: "negative upload to a document library is not a tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
-  request:
-    method: POST
-    url: "https://graph.microsoft.com/v1.0/me/drive/root/children"
-    headers: { content-type: application/json }
-    body: '{"name":"Reports","folder":{},"@microsoft.graph.conflictBehavior":"rename"}'
-  expect:
-    tool: create_drive_root_folder
-    summary: { title: "create a OneDrive folder", fields: { Name: "Reports" } }
-- name: "negative create_drive_root_folder: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/root/children" }
-  expect: { app: microsoft-365 }
-- name: "create_drive_item_folder: summary shows parent and name"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request:
-    method: POST
-    url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children"
-    headers: { content-type: application/json }
-    body: '{"name":"2026","folder":{}}'
-  expect:
-    tool: create_drive_item_folder
-    summary: { title: "create a OneDrive folder", fields: { Parent: "01EXAMPLEITEM", Name: "2026" } }
-- name: "negative create_drive_item_folder: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children" }
-  expect: { app: microsoft-365 }
-- name: "upload_shared_drive_item_content: summary shows drive and item"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request:
-    method: PUT
-    url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content?@microsoft.graph.conflictBehavior=fail"
-    headers: { content-type: text/plain }
-    body: "new content"
-  expect:
-    tool: upload_shared_drive_item_content
-    summary: { title: "upload a file to a document library", fields: { Drive: "b!exampledrive", Item: "01EXAMPLEITEM", Conflict: "fail" } }
-- name: "negative upload_shared_drive_item_content: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content" }
+  request: { method: PUT, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content", body: "hello" }
   expect: { app: microsoft-365 }

@@ -120,137 +120,22 @@
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/calendarView" }
   expect: { app: microsoft-365 }
-- name: "get_drive"
+# (D-482) Files are not offered (no Files.* or Sites.*): OneDrive and SharePoint paths select no tool.
+- name: "negative OneDrive: the user's drive is not a tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive" }
-  expect: { tool: get_drive }
-- name: "negative get_drive: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive" }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/root/children" }
   expect: { app: microsoft-365 }
-- name: "list_drives"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drives" }
-  expect: { tool: list_drives }
-- name: "negative list_drives: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drives" }
-  expect: { app: microsoft-365 }
-- name: "get_drive_root"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/root" }
-  expect: { tool: get_drive_root }
-- name: "negative get_drive_root: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/root" }
-  expect: { app: microsoft-365 }
-- name: "list_drive_root_children"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/root/children?$top=50" }
-  expect: { tool: list_drive_root_children }
-- name: "negative list_drive_root_children: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/root/children" }
-  expect: { app: microsoft-365 }
-- name: "list_recent_files"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/recent" }
-  expect: { tool: list_recent_files }
-- name: "negative list_recent_files: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/recent" }
-  expect: { app: microsoft-365 }
-- name: "get_drive_item"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM" }
-  expect: { tool: get_drive_item }
-- name: "negative get_drive_item: DELETE selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: DELETE, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM" }
-  expect: { app: microsoft-365 }
-- name: "negative get_drive_item: path-addressed items are not a tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/root:/Documents/notes.txt" }
-  expect: { app: microsoft-365 }
-- name: "list_drive_item_children"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children" }
-  expect: { tool: list_drive_item_children }
-- name: "negative list_drive_item_children: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/children" }
-  expect: { app: microsoft-365 }
-- name: "get_drive_item_content"
+- name: "negative OneDrive: an item's content is not a tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content" }
-  expect: { tool: get_drive_item_content }
-- name: "negative get_drive_item_content: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/drive/items/01EXAMPLEITEM/content" }
   expect: { app: microsoft-365 }
-- name: "list_sites: search"
+- name: "negative SharePoint: site search is not a tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites?search=design" }
-  expect: { tool: list_sites }
-- name: "negative list_sites: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/sites" }
+  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites?search=handbook" }
   expect: { app: microsoft-365 }
-- name: "get_site: composite id with commas is one segment"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites/example.sharepoint.com,11111111-aaaa-bbbb-cccc-222222222222,33333333-dddd-eeee-ffff-444444444444" }
-  expect: { tool: get_site }
-- name: "negative get_site: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/sites/example.sharepoint.com,11111111-aaaa-bbbb-cccc-222222222222,33333333-dddd-eeee-ffff-444444444444" }
-  expect: { app: microsoft-365 }
-- name: "list_site_drives"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites/site-fixture-1/drives" }
-  expect: { tool: list_site_drives }
-- name: "negative list_site_drives: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/sites/site-fixture-1/drives" }
-  expect: { app: microsoft-365 }
-- name: "get_site_drive"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/sites/site-fixture-1/drive" }
-  expect: { tool: get_site_drive }
-- name: "negative get_site_drive: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/sites/site-fixture-1/drive" }
-  expect: { app: microsoft-365 }
-- name: "list_shared_drive_root_children"
+- name: "negative SharePoint: a document library's files are not a tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/root/children" }
-  expect: { tool: list_shared_drive_root_children }
-- name: "negative list_shared_drive_root_children: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/root/children" }
-  expect: { app: microsoft-365 }
-- name: "get_shared_drive_item"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM" }
-  expect: { tool: get_shared_drive_item }
-- name: "negative get_shared_drive_item: DELETE selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: DELETE, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM" }
-  expect: { app: microsoft-365 }
-- name: "list_shared_drive_item_children"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/children" }
-  expect: { tool: list_shared_drive_item_children }
-- name: "negative list_shared_drive_item_children: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/children" }
-  expect: { app: microsoft-365 }
-- name: "get_shared_drive_item_content"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: GET, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content" }
-  expect: { tool: get_shared_drive_item_content }
-- name: "negative get_shared_drive_item_content: PATCH selects no tool"
-  connection: { credentials: { access_token: "tok-fixture-1" } }
-  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/drives/b!exampledrive/items/01EXAMPLEITEM/content" }
   expect: { app: microsoft-365 }
 - name: "negative: the batch endpoint is deliberately not a tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
