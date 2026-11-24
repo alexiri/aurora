@@ -742,7 +742,11 @@ fn parse_skill_md(
     match value.get("use-it-when").and_then(serde_yaml::Value::as_str) {
         Some(w) => {
             let w = clean_text(w);
-            if w.contains('\n') || w.trim().is_empty() {
+            // One line, like the skill service's description rule: `\r` survives
+            // `clean_text` (a control character that is whitespace is kept), so it is
+            // refused explicitly — the stored description must never differ from the
+            // rendered text (it is hashed at create).
+            if w.contains(['\n', '\r']) || w.trim().is_empty() {
                 problems.push(TemplateProblem::new(
                     ProblemCode::TemplateSkillInvalid,
                     format!("{}#/use-it-when", f.path),
@@ -1317,6 +1321,28 @@ pub(crate) mod tests {
             mode: 0o100644,
         });
         assert!(read_tree("service-monitor", &files).is_ok());
+    }
+
+    /// The skill service stores a description only as a single line (it rejects `\r` and
+    /// `\n`); the validator refuses the same at template time, so the stored use-it-when
+    /// never differs from the rendered text (it is hashed at create). A bare `\r` survives
+    /// `clean_text` (a control character that is whitespace is kept) and is refused too.
+    #[test]
+    fn skill_description_is_a_single_line() {
+        for bad in ["\"one\\rtwo\"", "\"one\\r\\ntwo\"", "\"one\\r\""] {
+            let mut files = sample_files();
+            files[5] = file(
+                "service-monitor/skills/what-is-on/SKILL.md",
+                &format!("---\nname: what-is-on\nuse-it-when: {bad}\n---\nbody\n"),
+            );
+            let err = read_tree("service-monitor", &files).unwrap_err();
+            assert!(
+                err.iter()
+                    .any(|p| p.code == ProblemCode::TemplateSkillInvalid
+                        && p.path.contains("#/use-it-when")),
+                "{bad}: {err:?}"
+            );
+        }
     }
 
     #[test]
