@@ -449,6 +449,14 @@ impl Harness {
             .unwrap();
         id
     }
+    /// (FIX-234, D-477) A workspace plus an own `owner` binding for `user`, as the API's
+    /// creation path does: an org role grants no workspace right, so a test whose subject is
+    /// ordinary owner behaviour needs a real owner binding.
+    pub async fn workspace_owned_by(&self, org: Uuid, user: Uuid) -> Uuid {
+        let ws = self.workspace(org).await;
+        self.bind_ws(ws, user, "owner").await;
+        ws
+    }
     /// A hosted agent on the fake harness named like its handle (replaces the per-file `INSERT INTO
     /// agents … 'hosted','fake'` helpers).
     pub async fn hosted_agent(&self, org: Uuid, ws: Uuid, handle: &str) -> Uuid {
