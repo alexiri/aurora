@@ -254,9 +254,9 @@ fn builtin_reason(source: Source, signer: &Signer) -> Option<&'static str> {
     }
 }
 
-/// Ordering key of a semantic version: `(major, minor, patch, is_release)` — a pre-release
-/// sorts before its release. `None` when it does not parse.
-fn semver_key(v: &str) -> Option<(u64, u64, u64, bool)> {
+/// Ordering key of a semantic version: real semver precedence (`SemVer`) — a release sorts
+/// above its pre-releases, `1.0.0-rc.1 < 1.0.0-rc.2 < 1.0.0`. `None` when it does not parse.
+fn semver_key(v: &str) -> Option<aurora_registry::manifest::SemVer> {
     aurora_registry::manifest::parse_semver(v)
 }
 

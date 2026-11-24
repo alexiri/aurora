@@ -1002,6 +1002,40 @@ async fn a_head_that_is_not_newer_is_not_recorded() {
     assert_eq!(w.versions().await.len(), 1);
 }
 
+/// A new pre-release version is a new version (real semver precedence): `1.0.0-rc.2` is
+/// ingested after `1.0.0-rc.1`, not silently ignored as an equal version.
+#[tokio::test]
+async fn a_new_prerelease_version_is_ingested() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0-rc.1");
+    w.git
+        .serve_file("pkg/t-1.0.0-rc.1.zip", pack("t", "1.0.0-rc.1"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(w.check(id).await["status"], "updated");
+    assert_eq!(w.versions().await.len(), 1);
+
+    // The head moves to 1.0.0-rc.2: semver-newer than the stored rc.1, so it is offered.
+    w.bump(
+        "acme/tpl",
+        &[put(
+            "t/template.yaml".into(),
+            template_yaml("t", "1.0.0-rc.2").into_bytes(),
+        )],
+    );
+    w.git
+        .serve_file("pkg/t-1.0.0-rc.2.zip", pack("t", "1.0.0-rc.2"));
+    let out = w.check(id).await;
+    assert_eq!(out["status"], "updated", "{out}");
+    assert_eq!(
+        w.versions().await,
+        vec![
+            ("1.0.0-rc.1".into(), "pending_approval".into(), None),
+            ("1.0.0-rc.2".into(), "pending_approval".into(), None),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn a_removed_directory_comes_back() {
     let w = world().await;

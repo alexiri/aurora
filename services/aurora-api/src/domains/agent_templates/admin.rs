@@ -68,9 +68,9 @@ pub(crate) async fn offered_version_share<'e, E: sqlx::PgExecutor<'e>>(
 /// so a tie keeps the newest stored one), one rule for every reader (C-1108).
 fn newest_approved(versions: Vec<repo::VersionRow>) -> Option<repo::VersionRow> {
     let mut best: Option<repo::VersionRow> = None;
-    let mut best_key = (0u64, 0u64, 0u64, false);
+    let mut best_key = aurora_registry::manifest::SemVer::default();
     for v in versions {
-        let key = aurora_registry::manifest::parse_semver(&v.version).unwrap_or((0, 0, 0, false));
+        let key = aurora_registry::manifest::parse_semver(&v.version).unwrap_or_default();
         if best.is_none() || key > best_key {
             best_key = key;
             best = Some(v);

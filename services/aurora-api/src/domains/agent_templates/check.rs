@@ -213,8 +213,8 @@ fn core_supports(min_core: Option<&str>) -> bool {
     let Some(mc) = min_core.and_then(parse_semver) else {
         return true;
     };
-    let running = parse_semver(env!("CARGO_PKG_VERSION")).unwrap_or((0, 0, 0, true));
-    (running.0, running.1, running.2) >= (mc.0, mc.1, mc.2)
+    let running = parse_semver(env!("CARGO_PKG_VERSION")).unwrap_or_default();
+    running.core >= mc.core
 }
 
 /// The origin of the source's stored git address (the token's origin rule). An unparseable

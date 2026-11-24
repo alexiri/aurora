@@ -27,7 +27,7 @@ pub fn required_fields(app: &App) -> BTreeSet<String> {
 /// `true` when activating `new` over the active `old` is a major upgrade (`N > M`).
 pub fn is_major_upgrade(old: &str, new: &str) -> bool {
     match (parse_semver(old), parse_semver(new)) {
-        (Some((a, ..)), Some((b, ..))) => b > a,
+        (Some(a), Some(b)) => b.core.0 > a.core.0,
         _ => false,
     }
 }
