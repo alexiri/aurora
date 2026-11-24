@@ -225,8 +225,9 @@ for (const scheme of ["light", "dark"] as const) {
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
 const ARCHIVED_DIRECT = conv(7, "direct", { direct_user_id: user.id, archived_at: minutesAgo(60 * 24 * 3), last_activity_at: minutesAgo(60 * 24 * 4) });
 const META_CASES = [
-  { name: "an archived direct chat", fx: { ...DEFAULT, archived: [ARCHIVED_DIRECT], events: { [ARCHIVED_DIRECT.id]: [] } }, conv: ARCHIVED_DIRECT.id, archived: true, texts: ["Only you and workspace owners can see this conversation", "Archived", "read only"] },
-  { name: "another member's chat", fx: { ...DEFAULT, events: { [ANN_DIRECT.id]: [] } }, conv: ANN_DIRECT.id, archived: false, texts: ["Only Grace Hopper and workspace owners can see this conversation"] },
+  // (FIX-235, D-479) The line is the visibility line now: who can use the agent and who reads the chat.
+  { name: "an archived direct chat", fx: { ...DEFAULT, archived: [ARCHIVED_DIRECT], events: { [ARCHIVED_DIRECT.id]: [] } }, conv: ARCHIVED_DIRECT.id, archived: true, texts: ["All 2 people in this workspace can use this agent. Only you can read this chat.", "Archived", "read only"] },
+  { name: "another member's chat", fx: { ...DEFAULT, events: { [ANN_DIRECT.id]: [] } }, conv: ANN_DIRECT.id, archived: false, texts: ["Only Grace Hopper and the workspace's owners can see this conversation."] },
 ];
 
 for (const scheme of ["light", "dark"] as const) {

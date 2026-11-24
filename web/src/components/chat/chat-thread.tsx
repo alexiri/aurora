@@ -11,6 +11,7 @@ import { DropZone } from "@/components/ui/drop-zone";
 import { Notice } from "@/components/ui/notice";
 import { ApiError } from "@/lib/api/client";
 import { chatApi, type Conversation } from "@/lib/api/conversations";
+import { visibilityLines, type WorkspaceAudience } from "@/lib/chat/audience";
 import { automationNotes, conversationTitle, kindLabel } from "@/lib/chat/layout";
 import { buildPermalink, permalinkSeq, withoutMessageParam } from "@/lib/chat/permalink";
 import { markStopped, useStoppedTurns } from "@/lib/chat/stopped";
@@ -39,6 +40,9 @@ export function ChatThread({
   ownDirect = false,
   archived = false,
   retentionDays = null,
+  audience = null,
+  myRole = null,
+  readerId = null,
   onGone,
   onBack,
   onTurn,
@@ -71,6 +75,10 @@ export function ChatThread({
   archived?: boolean;
   /** The org's conversation retention window in days, when one is set. */
   retentionDays?: number | null;
+  /** (FIX-235, D-479) `Workspace.audience` and the reader's own role/id: the visibility line's inputs. */
+  audience?: WorkspaceAudience | null;
+  myRole?: string | null;
+  readerId?: string | null;
   onGone?: () => void;
   /** Phones: back to the list. */
   onBack?: () => void;
@@ -131,11 +139,17 @@ export function ChatThread({
   const empty = !loading && !error && state.events.length === 0 && Object.keys(state.deltas).length === 0;
 
   const title = conversation ? conversationTitle(conversation) : readOnly ? ownerView || "Direct chat" : "Direct chat";
-  const visibility = isDirect
-    ? readOnly
-      ? `Only ${ownerView || "the member"} and workspace owners can see this conversation`
-      : "Only you and workspace owners can see this conversation"
-    : undefined;
+  // (FIX-235, D-479) Every conversation shows the line: who can use the agent and who can read
+  // this conversation, from the server's `audience`. The list has one line today; FIX-236
+  // appends the emergency-access line, so join what comes.
+  const visibility = visibilityLines({
+    kind: conversation?.kind ?? "direct",
+    ownDirect,
+    ownerView: readOnly ? ownerView || "the member" : null,
+    audience,
+    readerId,
+    myRole,
+  }).join(" ");
   const segments = [
     ...(isDirect || !conversation ? [] : [kindLabel(conversation.kind)]),
     // (schedules-7) "Schedule · was "Every minute ping", renamed with it", then "Schedule deleted" / "Webhook deleted".
@@ -152,6 +166,7 @@ export function ChatThread({
         <ThreadHeader
           title={title}
           visibility={visibility}
+          visibilityIcon={isDirect ? "lock" : "people"}
           segments={segments}
           live={loading || error ? null : live}
           onBack={onBack}
@@ -226,6 +241,8 @@ export function ChatThread({
                     <Avatar name={agent?.name ?? "Agent"} url={agent?.avatarUrl} tintKey={agent?.id} size={72} />
                     <h3 className="font-display text-lg font-semibold text-ink">Say hello to {agent?.name ?? "the agent"}</h3>
                     {agent?.handle ? <p className="text-sm text-ink-2">@{agent.handle}</p> : null}
+                    {/* (FIX-235, D-479) The same visibility line, once, under the greeting. */}
+                    <p className="text-xs text-muted">{visibility}</p>
                   </div>
                 )
               ) : undefined

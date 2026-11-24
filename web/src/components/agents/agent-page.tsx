@@ -16,7 +16,7 @@ import { useAltitude, useHiddenControls } from "@/lib/altitude";
 import { ChevronLeftIcon, SettingsIcon } from "@/components/ui/icons";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useCanApprove } from "@/lib/api/approvals";
-import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
+import { useAgents, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useTabParam } from "@/lib/use-tab-param";
 
 import { AccessTab } from "./access-tab";
@@ -61,6 +61,8 @@ export function AgentPage() {
   const wsId = resolved.data?.workspace?.id;
   const agents = useAgents(wsId);
   const workspace = useWorkspace(wsId);
+  // (FIX-235, D-479) The visibility line names the reader only to exclude them from the owners.
+  const me = useMe();
   const canApprove = useCanApprove(wsId);
   // (P4-PRV-1) The Previews tab exists only for hosted agents when the instance runs previews AND
   // the organization has switched Port previews on (docs/14 §Previews): without the org switch the
@@ -289,6 +291,9 @@ export function AgentPage() {
               agent={{ id: agent.id, name: agent.name, handle: agent.handle, avatarUrl: agent.avatar_url, brief: agent.brief, frozen: agent.frozen !== null }}
               agentKind={agent.kind}
               isDefault={agent.is_default}
+              audience={workspace.data?.audience ?? null}
+              myRole={workspace.data?.my_role ?? null}
+              readerId={me.data?.user.id ?? null}
               terminalAvailable={terminalEnabled}
               sshAvailable={sshEnabled && !byo}
               onNavigate={choosePage}

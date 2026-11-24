@@ -28,13 +28,33 @@ function mock(list: unknown[]) {
   );
 }
 
-describe("direct conversation visibility (RFE-009)", () => {
-  it("shows the privacy banner on the member's own direct chat and no owner group", async () => {
+describe("direct conversation visibility (RFE-009, FIX-235 D-479)", () => {
+  it("shows the visibility line on the member's own direct chat and no owner group", async () => {
     mock([conv("mine", "direct", { direct_user_id: "me" }), conv("g1", "group", { title: "Team room" })]);
-    wrap(<ChatTab agentId="a1" wsId="w" base="/o/x/w/y" />);
-    expect(await screen.findByText(/Only you and workspace owners can see this conversation/)).toBeTruthy();
+    wrap(<ChatTab agentId="a1" wsId="w" base="/o/x/w/y" audience={{ people: 3, owners: [{ id: "u9", display_name: "Ann" }], owners_total: 1 }} myRole="member" readerId="me" />);
+    // The header's meta line and the empty state under the greeting both carry it.
+    expect((await screen.findAllByText(/All 3 people in this workspace can use this agent\. This chat is visible to you and the workspace's owner, Ann\./)).length).toBeGreaterThan(0);
     expect(await screen.findByText("Team room")).toBeTruthy();
     expect(screen.queryByText("Other members' direct chats")).toBeNull();
+  });
+
+  it("shows the line on a non-direct conversation too", async () => {
+    const g = conv("g1", "group", { title: "Team room" });
+    mock([g]);
+    wrap(
+      <ChatPane
+        agentId="a1"
+        wsId="w"
+        base="/o/x/w/y"
+        convId="g1"
+        direct={null}
+        conversation={g}
+        audience={{ people: 2, owners: [{ id: "me", display_name: "Me" }], owners_total: 1 }}
+        myRole="owner"
+        readerId="me"
+      />,
+    );
+    expect((await screen.findAllByText(/All 2 people in this workspace can use this agent and read this conversation\./)).length).toBeGreaterThan(0);
   });
 
   it("gives owners a read-only group for other members' direct conversations", async () => {

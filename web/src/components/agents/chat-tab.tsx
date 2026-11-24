@@ -12,6 +12,7 @@ import { errorDetail } from "@/lib/api/errors";
 import { useAgents, useOrg } from "@/lib/api/queries";
 import { useMessageSearch, type SearchItem } from "@/lib/api/search";
 import { extractFilters, queryOf, toSearchParams, type FilterChip } from "@/lib/chat/search-syntax";
+import type { WorkspaceAudience } from "@/lib/chat/audience";
 import { ChatThread } from "@/components/chat/chat-thread";
 import { ConversationList } from "@/components/chat/conversation-list";
 import type { AgentIdent } from "@/components/chat/types";
@@ -91,6 +92,9 @@ export function ChatTab({
   agent,
   agentKind = "hosted",
   isDefault = false,
+  audience = null,
+  myRole = null,
+  readerId = null,
   terminalAvailable = false,
   sshAvailable = false,
   onNavigate,
@@ -105,6 +109,10 @@ export function ChatTab({
   /** The About part's kind badge. */
   agentKind?: string;
   isDefault?: boolean;
+  /** (FIX-235, D-479) The workspace's audience and the reader's own role/id, for the visibility line. */
+  audience?: WorkspaceAudience | null;
+  myRole?: string | null;
+  readerId?: string | null;
   /** The Terminal page is available (the Computer part offers it). */
   terminalAvailable?: boolean;
   /** (P4-SSH-2, C-795) The SSH page is available (the Computer part links to it). */
@@ -420,6 +428,9 @@ export function ChatTab({
             ownDirect={ownDirect}
             archived={archived || !!conv?.archived_at}
             retentionDays={retention.data?.conversations_days ?? null}
+            audience={audience}
+            myRole={myRole}
+            readerId={readerId}
             onGone={done}
             onBack={() => {
               setListShown(true);

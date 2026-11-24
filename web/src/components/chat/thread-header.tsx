@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeftIcon, LockIcon } from "@/components/ui/icons";
+import { ArrowLeftIcon, LockIcon, UsersIcon } from "@/components/ui/icons";
 
 /**
  * The thread header: a 44 px back button on phones, the title, one muted meta line (visibility, kind, archived date,
@@ -16,14 +16,17 @@ import { ArrowLeftIcon, LockIcon } from "@/components/ui/icons";
 export function ThreadHeader({
   title,
   visibility,
+  visibilityIcon = "lock",
   segments,
   live,
   onBack,
   actions,
 }: {
   title: string;
-  /** The visibility note, shown with a lock icon (direct conversations). */
+  /** The visibility note (D-479's line, every conversation). */
   visibility?: string;
+  /** (FIX-235, D-479) The note's icon: the lock for direct chats, the people icon for the others. */
+  visibilityIcon?: "lock" | "people";
   /** The other meta segments (kind, archived date, retention). */
   segments: string[];
   /** `true` Live, `false` Reconnecting…, `null` no pill (loading or failed). */
@@ -62,7 +65,11 @@ export function ThreadHeader({
             className="order-2 -mx-3 mt-2 flex grow basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 border-y border-line px-3 py-2 text-xs text-muted md:-mx-5 md:-mt-px md:px-5 xl:m-0 xl:w-auto xl:border-0 xl:p-0">
             {visibility ? (
               <span className="inline-flex min-w-0 items-start gap-1">
-                <LockIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0" />
+                {visibilityIcon === "people" ? (
+                  <UsersIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0" />
+                ) : (
+                  <LockIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0" />
+                )}
                 <span>{visibility}</span>
               </span>
             ) : null}
