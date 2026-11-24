@@ -445,6 +445,17 @@ rooted at `<id>/` with a `template.yaml` added. Unzip it into your repository
 as `<id>/`, adjust `template.yaml` (id, version, inputs, apps), write the
 README, and push. The CI's `check` then tells you what is missing.
 
+The dialog asks what the file is for before it saves: the name, the id (it
+follows the name until edited; it is also the zip's root directory), the
+version (a fresh template starts at 1.0.0), a one-line summary and the
+README's **What it's for** text from an outline, plus one **Why it's needed**
+line per app. Library skills are written as references to their library,
+never copies; memories are unticked by default. **Save** refuses one problem
+per sentence and only downloads `<id>-<version>.zip` — nothing is published.
+To publish: unzip the file into your repository folder as `<id>/`, raise
+nothing (the version is already 1.0.0), open a pull request and merge; the
+CI's `check` then tells you what is missing.
+
 ## The CLI
 
 `aurora template` needs no server and no login:

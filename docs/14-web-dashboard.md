@@ -2574,6 +2574,20 @@ importer; any other value refuses the file, naming it); schedules and webhooks a
 signing secret shown once in `SecretOnce`; its address is on the card, *Rotate URL*); a failure is listed and the rest go on.
 Import never changes access, accounts or the AI key.
 
+**Save as template (C-1118).** The third button of the same section, **Save as template…**, opens the publisher's dialog:
+template name, id (it follows the name until edited; it is also the zip's root directory), version (1.0.0) and summary,
+the **What it's for** README from an outline whose placeholder lines must be replaced (with a Markdown preview) and one
+row per app the agent reaches — from the accounts list read for this agent (C-917: read, ask or act; a `custom` choice
+carries the tool lists of the agent's grant, C-504) — each with **Required** and **Why it's needed**. A checklist says
+what the file carries; memories are unticked by default (they can hold what the agent learned about people), library
+skills (C-1142) go in as references to their library, never copies, and the helper files are kept byte for byte with
+their executable bit (C-1143). One-time schedules, organization and workspace skills and library skills that could not
+be read are listed as left out. **Save** refuses one problem per sentence (the placeholder lines left in, the limits of
+C-1141, a placeholder in the instructions or a skill, an executable helper that is not text) and downloads
+`<id>-<version>.zip`, built in the browser by `lib/export/agent-template.ts` (the export's files with `template.yaml`
+added, rooted at `<id>/`; the same content the Rust reader parses — a golden fixture of a web-saved zip is read by
+`crates/aurora-template/tests/web_saved.rs`). It publishes nothing; the next steps are docs/25 §Save as template.
+
 **Copy as curl (`copy.curl`, Expert).** A webhook row's **Copy as curl** copies the command the *How to call it* panel shows
 for its verification (signed: the `X-Signature: sha256=<hex>` recipe; password: the header; none: a plain POST), built by the
 same function (`lib/webhook-snippets.ts`: the one generator, byte for byte) with `$SECRET` and `"$WEBHOOK_URL"`; a row holds only
