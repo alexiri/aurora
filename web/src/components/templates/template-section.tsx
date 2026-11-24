@@ -56,7 +56,7 @@ export function AgentTemplateSection({ agent, agentBase }: { agent: Pick<Agent, 
             Made from <span className="font-semibold text-ink">{template.name}</span> {template.version}
           </p>
         ) : null}
-        {status.data && status.data.notes.length > 0 ? (
+        {status.data && (status.data.notes ?? []).length > 0 ? (
           <Notice tone="accent" role="status" data-testid="template-notes">
             {status.data.notes.map((n, i) => (
               <p key={i}>{n.detail}</p>
