@@ -112,7 +112,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("the organization's Agents page: the list, then Bring your own under Administration's limits (with Previews) and Skills", async ({ page }) => {
         await open(page, "/o/acme/agents", scheme);
-        await expect(page.getByRole("tab")).toHaveText(["Agents", "Bring your own", "Skills"]);
+        await expect(page.getByRole("tab")).toHaveText(["Agents", "Bring your own", "Skills", "Templates"]);
         await page.getByRole("tab", { name: "Bring your own" }).click();
         await expect(page).toHaveURL(/\/o\/acme\/agents\?tab=byo$/);
         const above = page.getByRole("region", { name: "Set for you by an Aurora administrator" });
@@ -126,20 +126,22 @@ for (const scheme of ["light", "dark"] as const) {
       });
 
       // (P5-REFINE-18 #1) The old Agents topic is now What agents may do (Internet access, AI keys and rules, Bring your
-      // own, Defaults); Computers moved under Health & runners.
-      test("Administration › What agents may do has four tabs, each a coherent page", async ({ page }) => {
+      // own, Defaults, Agent templates (P6-TPL-4)); Computers moved under Health & runners.
+      test("Administration › What agents may do has five tabs, each a coherent page", async ({ page }) => {
         await open(page, "/admin/internet-access", scheme);
-        await expect(page.getByRole("tab")).toHaveText(["Internet access", "AI keys and rules", "Bring your own", "Defaults"]);
+        await expect(page.getByRole("tab")).toHaveText(["Internet access", "AI keys and rules", "Bring your own", "Defaults", "Agent templates"]);
         // One heading for the page: the tabs' sections do not repeat it as another title.
         await expect(page.getByRole("heading", { name: "What agents may do", level: 1 })).toHaveCount(1);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
-        for (const tab of ["AI keys and rules", "Bring your own", "Defaults"]) {
+        for (const tab of ["AI keys and rules", "Bring your own", "Defaults", "Agent templates"]) {
           await page.getByRole("tab", { name: tab }).click();
           await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
           expect(await overflow(page)).toBeLessThanOrEqual(0);
           expect(await axeClean(page)).toEqual([]);
         }
+        // The loop ends on the last tab (P6-TPL-4), so go back to Defaults for its headings.
+        await page.getByRole("tab", { name: "Defaults" }).click();
         // The agents section's groups, its runners table and the skills library refresh are one run on Defaults.
         // (P5-POLISH-2) Settings groups are SettingsCards: a section titled by its heading, no longer a named group.
         await expect(page.getByRole("heading", { name: "Defaults for new agents" })).toBeVisible();
