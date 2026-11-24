@@ -5875,3 +5875,555 @@ fn the_copied_skill_rules_match_the_platform_validator() {
         assert!(!copy::path_ok(p), "{p}");
     }
 }
+
+// ---- the whole journey on the checked-in example (the service-monitor) --------------------------
+
+/// The instance's catalogue for the example's apps: `grafana` (read tools) and `atlassian`
+/// (the read and write tools the template's `tools:` name). The optional `gitlab` entry gets
+/// no package and no account (optional means optional).
+const EXAMPLE_APPS_YAML: &str = r#"package: { id: acme, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }
+apps:
+  - about: { id: grafana, name: Grafana, description: D, category: dev }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    tools:
+      read:
+        items:
+          - { id: read_dashboard, name: Read, host: grafana.example, path: /d, methods: [GET] }
+    hosts:
+      - match: { host: "grafana.example" }
+        inject:
+          - bearer: "{credentials.api_token}"
+  - about: { id: atlassian, name: Atlassian, description: D, category: dev }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    tools:
+      read:
+        items:
+          - { id: search_issues, name: Search, host: jira.example, path: /s, methods: [GET] }
+          - { id: get_issue, name: Get, host: jira.example, path: /i, methods: [GET] }
+          - { id: list_issue_comments, name: Comments, host: jira.example, path: /c, methods: [GET] }
+      write:
+        items:
+          - { id: create_issue, name: Create, host: jira.example, path: /i, methods: [POST] }
+          - { id: add_issue_comment, name: Comment, host: jira.example, path: /c, methods: [POST] }
+    hosts:
+      - match: { host: "jira.example" }
+        inject:
+          - bearer: "{credentials.api_token}"
+"#;
+
+/// The checked-in examples repository (the publisher's checkout): the real manifest and the
+/// real template files with their real modes.
+fn examples_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../templates/examples")
+}
+
+/// The checked-in example `dir` as the publisher commits it: the real bytes from
+/// `templates/examples` and the real modes (the helper keeps its executable bit). The paths
+/// are `dir/...`, exactly like the git tree's.
+fn example_files(dir: &str) -> Vec<(String, Vec<u8>, bool)> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fn walk(rel: &str, out: &mut Vec<(String, Vec<u8>, bool)>) {
+        let base = examples_root().join(rel);
+        let mut es: Vec<_> = std::fs::read_dir(&base)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .collect();
+        es.sort_by_key(|e| e.file_name());
+        for e in es {
+            let p = format!("{rel}/{}", e.file_name().to_string_lossy());
+            let m = e.metadata().unwrap();
+            if m.is_dir() {
+                walk(&p, out);
+            } else {
+                out.push((
+                    p,
+                    std::fs::read(e.path()).unwrap(),
+                    m.permissions().mode() & 0o111 != 0,
+                ));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, &mut out);
+    out
+}
+
+/// The publisher's next version of the example: `version:` bumped, the instructions changed
+/// and the helper rewritten (the same files and modes otherwise).
+fn example_files_bumped(dir: &str, to: &str) -> Vec<(String, Vec<u8>, bool)> {
+    example_files(dir)
+        .into_iter()
+        .map(|(p, b, x)| {
+            let b = match p.as_str() {
+                p if p == format!("{dir}/template.yaml") => std::str::from_utf8(&b)
+                    .unwrap()
+                    .replace("version: 1.0.0", &format!("version: {to}"))
+                    .into_bytes(),
+                p if p == format!("{dir}/instructions.md") => {
+                    let mut s = String::from_utf8(b).unwrap();
+                    s.push_str("\nEvery morning report ends with the words: checked by 1.1.0.\n");
+                    s.into_bytes()
+                }
+                p if p == format!("{dir}/helpers/alert-summary.sh") => {
+                    let mut s = String::from_utf8(b).unwrap();
+                    s.push_str("\necho 'summary 1.1.0'\n");
+                    s.into_bytes()
+                }
+                _ => b,
+            };
+            (p, b, x)
+        })
+        .collect()
+}
+
+/// The git commit of `files` (the executable bit as `Exec`, like the publisher's tree).
+fn example_changes(files: &[(String, Vec<u8>, bool)]) -> Vec<Change> {
+    files
+        .iter()
+        .map(|(p, b, x)| {
+            if *x {
+                Change::Exec(p.clone(), b.clone())
+            } else {
+                Change::Put(p.clone(), b.clone())
+            }
+        })
+        .collect()
+}
+
+/// The package zip of `files`, built with the real packer from the real tree (the modes
+/// included, so the zip's tree matches the git tree's hashes).
+fn example_zip(dir: &str, files: &[(String, Vec<u8>, bool)]) -> Vec<u8> {
+    let tree: Vec<TreeFile> = files
+        .iter()
+        .map(|(p, b, x)| TreeFile {
+            path: p.clone(),
+            bytes: b.clone(),
+            mode: if *x { 0o100755 } else { 0o100644 },
+        })
+        .collect();
+    aurora_template::pack(dir, &tree)
+}
+
+/// The checked-in manifest's `packages.url` with `{id}` and `{version}` filled: the path the
+/// package fetch dials (the override maps the host to the git server, the path stays).
+fn example_pkg_path(dir: &str, version: &str) -> String {
+    format!("example/agent-templates/releases/download/{dir}-v{version}/{dir}-{version}.zip")
+}
+
+/// The skill library the example references (its real address; the override dials the git
+/// server), with `incident-writeup`; added to `org`; returns its id.
+async fn seed_example_library(w: &W, org: Uuid, owner: &str) -> Uuid {
+    w.git.add_repo("agents/skills.git");
+    w.git.commit(
+        "agents/skills.git",
+        "main",
+        &[put(
+            "incident-writeup/SKILL.md".into(),
+            skill_md("Incident write-up", "The service desk's format."),
+        )],
+    );
+    let (s, lib) =
+        w.h.call(
+            owner,
+            Method::POST,
+            &format!("/v1/orgs/{org}/skill-libraries"),
+            Some(json!({"label": "skills", "url": "https://gitlab.cern.ch/agents/skills.git"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{lib}");
+    lib["id"].as_str().unwrap().parse().unwrap()
+}
+
+/// The real home-sync renderer's parts for `agent` (the supervisor's view).
+async fn home_sync_parts(w: &W, agent: Uuid) -> Vec<aurora_protocol::runner::HomeSync> {
+    use aurora_db::repo::hosted::HomeSyncClaim;
+    let mut conn = w.h.pool().acquire().await.unwrap();
+    let claim = HomeSyncClaim {
+        sandbox_id: Uuid::now_v7(),
+        boot_id: Uuid::now_v7(),
+        agent_id: agent,
+        generation: 7,
+        harness_id: None,
+    };
+    aurora_api::domains::hosted::home::render(&w.h.state, &mut conn, &claim)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_checked_in_example_walks_the_whole_journey() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let admin = crate::plugins_lifecycle::Admin::trust(&w.h, w.root.clone()).await;
+    admin.install(EXAMPLE_APPS_YAML).await;
+    let lib = seed_example_library(&w, org, &owner).await;
+
+    // The publisher: the examples repository in git — the real manifest and the real
+    // service-monitor tree — and the package at the manifest's packages.url.
+    let repo = "acme/examples";
+    w.git.add_repo(repo);
+    let mut changes = vec![put(
+        "aurora-templates.yaml".into(),
+        std::fs::read(examples_root().join("aurora-templates.yaml")).unwrap(),
+    )];
+    let fs = example_files("service-monitor");
+    changes.extend(example_changes(&fs));
+    w.git.commit(repo, "main", &changes);
+    w.git.serve_file(
+        &example_pkg_path("service-monitor", "1.0.0"),
+        example_zip("service-monitor", &fs),
+    );
+
+    // The admin's preview reads the real manifest and the real folder without storing.
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-template-sources/preview",
+            Some(json!({"url": format!("{GIT_ORIGIN}/{repo}")})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["manifest"]["name"], "Example agent templates", "{v}");
+    assert_eq!(
+        v["manifest"]["packages_url"],
+        "https://github.com/example/agent-templates/releases/download/{id}-v{version}/{id}-{version}.zip",
+        "{v}"
+    );
+    let t = &v["templates"][0];
+    assert_eq!(t["template_id"], "service-monitor", "{v}");
+    assert_eq!(t["name"], "Service monitor", "{v}");
+    assert_eq!(t["version"], "1.0.0", "{v}");
+    assert_eq!(
+        w.count("SELECT count(*) FROM agent_template_sources").await,
+        0
+    );
+
+    // The source is added, the check fetches the real package and stores the version, the
+    // pending review approves it.
+    let src = w.add_source(repo, json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    let r = w.check(id).await;
+    assert_eq!(r["status"], "updated", "{r}");
+    w.approve("service-monitor", "1.0.0").await;
+
+    // The workspace catalogue offers the real card (the helper files make `has_helpers`).
+    let (s, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(s, 200, "{v}");
+    let items = v["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{v}");
+    assert_eq!(items[0]["template_id"], "service-monitor", "{v}");
+    assert_eq!(items[0]["version"], "1.0.0", "{v}");
+    assert_eq!(items[0]["source_name"], "Example agent templates", "{v}");
+    assert_eq!(items[0]["has_helpers"], true, "{v}");
+    assert_eq!(items[0]["ready"], true, "{v}");
+
+    // The plan: the reviewed content with the real app entries and the resolved library
+    // reference (the atlassian entry's `tools:` cut to the catalogue without drops).
+    let plan = w.plan(ws, &owner, "service-monitor").await;
+    assert_eq!(plan["entries"].as_array().unwrap().len(), 3, "{plan}");
+    let grafana = &plan["entries"][0];
+    assert_eq!(grafana["required"], true, "{plan}");
+    assert_eq!(grafana["choices"][0]["app_id"], "grafana", "{plan}");
+    assert_eq!(grafana["choices"][0]["available"], true, "{plan}");
+    assert_eq!(grafana["choices"][0]["level"], "read", "{plan}");
+    let atlassian = &plan["entries"][1];
+    assert_eq!(atlassian["choices"][0]["app_id"], "atlassian", "{plan}");
+    assert_eq!(atlassian["choices"][0]["level"], "ask", "{plan}");
+    assert_eq!(
+        atlassian["choices"][0]["custom"],
+        json!({
+            "allow_tools": ["search_issues", "get_issue", "list_issue_comments"],
+            "ask_tools": ["create_issue", "add_issue_comment"],
+            "dropped_tools": [],
+        }),
+        "{plan}"
+    );
+    assert_eq!(plan["entries"][2]["required"], false, "{plan}");
+    let refr = &plan["skill_refs"][0];
+    assert_eq!(refr["kind"], "library", "{plan}");
+    assert_eq!(refr["name"], "incident-writeup", "{plan}");
+    assert_eq!(refr["required"], false, "{plan}");
+    assert_eq!(refr["available"], true, "{plan}");
+    assert!(
+        refr["repo"]
+            .as_str()
+            .unwrap()
+            .contains("gitlab.cern.ch/agents/skills"),
+        "{plan}"
+    );
+    assert_eq!(refr["library"]["id"], json!(lib), "{plan}");
+
+    // The creation: the accounts for the two required entries, the library skill taken, the
+    // inputs given.
+    let g = conn(&w, org, "grafana", Some(ws), "read").await;
+    let a = conn(&w, org, "atlassian", Some(ws), "write").await;
+    let (s, created) = w
+        .create_body(
+            ws,
+            &owner,
+            json!({
+                "template_id": "service-monitor",
+                "version": "1.0.0",
+                "content_sha256": plan["content_sha256"],
+                "name": "Service monitor",
+                "inputs": {"jira_project": "OPS", "grafana_folder": "Checkout"},
+                "accounts": [
+                    {"entry": 0, "app_id": "grafana", "connection_id": g},
+                    {"entry": 1, "app_id": "atlassian", "connection_id": a},
+                ],
+                "skill_refs": [{
+                    "index": 0,
+                    "library_id": refr["library"]["id"],
+                    "commit_sha": refr["library"]["commit_sha"],
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 201, "{created}");
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+
+    // The grants the template asked for: grafana read, atlassian ask (the read tools allow,
+    // the write tools ask).
+    let rows: Vec<(String, String, Vec<String>, Vec<String>)> = sqlx::query_as(
+        "SELECT c.app_id, gr.mode, gr.allow_tools, gr.ask_tools FROM grants gr
+         JOIN app_connections c ON c.id = gr.connection_id
+         WHERE gr.agent_id = $1 ORDER BY c.app_id",
+    )
+    .bind(agent)
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "atlassian".to_owned(),
+                "custom".to_owned(),
+                vec![
+                    "search_issues".to_owned(),
+                    "get_issue".to_owned(),
+                    "list_issue_comments".to_owned()
+                ],
+                vec!["create_issue".to_owned(), "add_issue_comment".to_owned()],
+            ),
+            (
+                "grafana".to_owned(),
+                "custom".to_owned(),
+                vec!["read_dashboard".to_owned()],
+                Vec::<String>::new(),
+            ),
+        ],
+        "{rows:?}"
+    );
+
+    // The helper file landed through C-1143's writer, the provenance records every part.
+    assert_eq!(
+        helpers_of(&w, agent).await,
+        vec!["alert-summary.sh".to_owned()]
+    );
+    assert_eq!(
+        parts_of(&w, agent).await,
+        vec![
+            ("helpers".to_owned(), String::new()),
+            ("instructions".to_owned(), String::new()),
+            (
+                "library_skill".to_owned(),
+                "library|https://gitlab.cern.ch/agents/skills.git|||incident-writeup".to_owned()
+            ),
+            ("skill".to_owned(), "open-incident".to_owned()),
+            ("skill".to_owned(), "triage-alert".to_owned()),
+        ]
+    );
+
+    // The home-sync's `helpers` part carries the helper at `.aurora/helpers/` with its
+    // executable bit, and `render_inputs.helpers` names the dir and the count.
+    let parts = home_sync_parts(&w, agent).await;
+    let entries: Vec<&Value> = parts
+        .iter()
+        .filter(|p| p.part.kind == aurora_protocol::runner::HomeSyncKind::Helpers)
+        .flat_map(|p| p.part.entries.iter())
+        .collect();
+    assert_eq!(entries.len(), 1, "{parts:?}");
+    assert_eq!(
+        entries[0]["path"], ".aurora/helpers/alert-summary.sh",
+        "{v}"
+    );
+    assert_eq!(entries[0]["exec"], true, "{v}");
+    assert!(
+        entries[0]["content"].as_str().unwrap().contains("summary"),
+        "{v}"
+    );
+    let inputs = parts
+        .iter()
+        .find(|p| p.part.kind == aurora_protocol::runner::HomeSyncKind::RenderInputs)
+        .unwrap();
+    assert_eq!(
+        inputs.part.entries[0]["helpers"],
+        json!({"dir": ".aurora/helpers", "count": 1}),
+        "{parts:?}"
+    );
+
+    // The provenance the agent's Template section shows.
+    let (s, v) = w.tpl_status(&owner, agent).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["template"]["template_id"], "service-monitor", "{v}");
+    assert_eq!(v["template"]["name"], "Service monitor", "{v}");
+    assert_eq!(v["template"]["version"], "1.0.0", "{v}");
+    assert_eq!(v["available"], true, "{v}");
+    assert_eq!(v["update"], json!(null), "{v}");
+
+    // The publisher publishes 1.1.0: the bumped tree committed, the new package served, the
+    // check ingests it and the review approves it. The catalogue now offers 1.1.0.
+    let fs2 = example_files_bumped("service-monitor", "1.1.0");
+    w.bump(repo, &example_changes(&fs2));
+    w.git.serve_file(
+        &example_pkg_path("service-monitor", "1.1.0"),
+        example_zip("service-monitor", &fs2),
+    );
+    let r = w.check(id).await;
+    assert_eq!(r["status"], "updated", "{r}");
+    w.approve("service-monitor", "1.1.0").await;
+    let (s, v) = ws_get(&w, ws, &owner, "").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["items"][0]["version"], "1.1.0", "{v}");
+
+    // The offer lists exactly the two changed parts, the helper's text with its executable
+    // bit and the rendered instructions.
+    let (s, v) = w.tpl_status(&owner, agent).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["update"]["version"], "1.1.0", "{v}");
+    let kinds: Vec<&str> = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, vec!["instructions", "helpers"], "{v}");
+    assert_eq!(part_state(&v, "instructions", ""), Some("unchanged_here"));
+    assert_eq!(part_state(&v, "helpers", ""), Some("unchanged_here"));
+    let instructions = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "instructions")
+        .unwrap();
+    assert!(
+        !instructions["current"].as_str().unwrap().contains("1.1.0"),
+        "{v}"
+    );
+    assert!(
+        instructions["proposed"]
+            .as_str()
+            .unwrap()
+            .contains("checked by 1.1.0"),
+        "{v}"
+    );
+    let helpers = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "helpers")
+        .unwrap();
+    assert!(
+        helpers["proposed"]
+            .as_str()
+            .unwrap()
+            .starts_with("- alert-summary.sh ("),
+        "{v}"
+    );
+    assert!(
+        helpers["proposed"]
+            .as_str()
+            .unwrap()
+            .contains(", executable"),
+        "{v}"
+    );
+
+    // The apply takes both: the brief and the helper content move, nothing else does.
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent,
+            json!({
+                "version": "1.1.0",
+                "content_sha256": sha,
+                "parts": [
+                    {"kind": "instructions", "key": ""},
+                    {"kind": "helpers", "key": ""},
+                ],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["template"]["version"], "1.1.0", "{v}");
+    assert_eq!(v["update"], json!(null), "{v}");
+    assert!(
+        brief_of(&w, agent).await.contains("checked by 1.1.0"),
+        "{}",
+        brief_of(&w, agent).await
+    );
+    assert_eq!(
+        helpers_of(&w, agent).await,
+        vec!["alert-summary.sh".to_owned()]
+    );
+    let content: Vec<u8> = sqlx::query_scalar(
+        "SELECT content FROM agent_helper_files WHERE agent_id = $1 AND path = 'alert-summary.sh'",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(
+        String::from_utf8_lossy(&content).contains("summary 1.1.0"),
+        "{content:?}"
+    );
+
+    // The home-sync's helpers part still carries the one helper, executable, with the new
+    // content.
+    let parts = home_sync_parts(&w, agent).await;
+    let entries: Vec<&Value> = parts
+        .iter()
+        .filter(|p| p.part.kind == aurora_protocol::runner::HomeSyncKind::Helpers)
+        .flat_map(|p| p.part.entries.iter())
+        .collect();
+    assert_eq!(entries.len(), 1, "{parts:?}");
+    assert_eq!(entries[0]["exec"], true, "{v}");
+    assert!(
+        entries[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("summary 1.1.0"),
+        "{v}"
+    );
+
+    // The detach: the provenance is forgotten, the helper files and the skills stay.
+    let (s, v) =
+        w.h.call(
+            &owner,
+            Method::DELETE,
+            &format!("/v1/agents/{agent}/template"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let (s, v) = w.tpl_status(&owner, agent).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["template"], json!(null), "{v}");
+    assert_eq!(v["available"], false, "{v}");
+    assert_eq!(v["update"], json!(null), "{v}");
+    assert_eq!(
+        helpers_of(&w, agent).await,
+        vec!["alert-summary.sh".to_owned()]
+    );
+    assert_eq!(skills_of(&w, agent).await.len(), 3);
+}
