@@ -812,6 +812,59 @@ async fn callback_scripts_carry_the_response_nonce() {
     }
 }
 
+/// (C-1166, D-481) A sign-in asks the provider for the scopes the request chose (each declared,
+/// at least one); without a choice, the method's defaults, and a reconnect what its connection
+/// asked for before.
+#[tokio::test]
+async fn the_sign_in_asks_for_the_chosen_scopes() {
+    let w = world(None).await;
+    w.oauth_client().await;
+    let start = |scopes: Option<Value>, reconnect: Option<Uuid>| {
+        let mut b = w.connect_body("oauth");
+        if let Some(s) = scopes {
+            b["scopes"] = s;
+        }
+        if let Some(id) = reconnect {
+            b["reconnect_connection_id"] = json!(id);
+        }
+        w.call(&w.owner, Method::POST, "/v1/apps/acme_app/connect", Some(b))
+    };
+    let scope_of = |v: &Value| {
+        let u = reqwest::Url::parse(v["url"].as_str().unwrap()).unwrap();
+        u.query_pairs()
+            .find(|(k, _)| k == "scope")
+            .map(|(_, v)| v.into_owned())
+    };
+    // No choice: the method's default_scopes.
+    let (s, _, v) = start(None, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(scope_of(&v).as_deref(), Some("read write"));
+    // An unknown scope or an empty choice is refused before any redirect.
+    for bad in [json!(["read", "admin"]), json!([])] {
+        let (s, _, v) = start(Some(bad), None).await;
+        assert_eq!(s, 400, "{v}");
+        assert_eq!(v["error"]["details"]["fields"][0]["path"], "/scopes", "{v}");
+    }
+    // The choice is what the provider is asked for, without repeats, and what is recorded.
+    let (s, sc, v) = start(Some(json!(["read", "read"])), None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(scope_of(&v).as_deref(), Some("read"));
+    let ck = sc[0].1.split(';').next().unwrap().to_owned();
+    let loc = w.oauth.approve(v["url"].as_str().unwrap()).await;
+    let (pg, _) = w.page(&w.owner, Some(&ck), &local(&loc)).await;
+    assert!(pg.contains("type:\"aurora:connected\""), "{pg}");
+    let (id, requested): (Uuid, Vec<String>) =
+        sqlx::query_as("SELECT id, requested_scopes FROM app_connections")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(requested, ["read"]);
+    // A reconnect without a choice asks again for what the connection asked for.
+    let (s, _, v) = start(None, Some(id)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(scope_of(&v).as_deref(), Some("read"));
+}
+
 #[tokio::test]
 async fn reconnect_updates_in_place_and_clears_reauth() {
     let w = world(None).await;

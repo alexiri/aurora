@@ -413,6 +413,38 @@ describe("the journey for a fixed agent and a given app", () => {
     expect(post(calls)).toBeUndefined();
   });
 
+  it("a sign-in's scope switches start at the level's preset and are what the request asks for (C-1166)", async () => {
+    openSpy.mockReturnValue({ closed: false, opener: window, location: { replace: vi.fn() }, focus: vi.fn(), close: vi.fn() });
+    const oauth = method({
+      id: "oauth", kind: "oauth2", label: "Sign in", client_key: "gh", callback: "query",
+      scopes: [
+        { scope: "read:user", name: "Read profile", access: "read" },
+        { scope: "read:org", name: "Read orgs", access: "read" },
+        { scope: "repo", name: "Repositories", access: "write" },
+      ],
+      default_scopes: ["read:user"],
+      scope_presets: { read: ["read:user", "read:org"], write: ["read:user", "read:org", "repo"] },
+    });
+    const calls = stub({
+      "GET /v1/apps/github": () => json(200, { ...DETAIL, connect: [DETAIL.connect[0], oauth] }),
+      "POST /v1/apps/github/connect": () => json(200, { kind: "redirect", url: "https://provider.example/a" }),
+    });
+    open();
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /Sign in/ }));
+    fireEvent.click(screen.getByText("More options"));
+    // The level is "read": its preset is on, the write scope is off (not the method's default_scopes).
+    const on = (name: string) => within(screen.getByRole("radiogroup", { name })).getByRole("radio", { name: "On" });
+    const off = (name: string) => within(screen.getByRole("radiogroup", { name })).getByRole("radio", { name: "Off" });
+    expect(on("Read profile")).toBeChecked();
+    expect(on("Read orgs")).toBeChecked();
+    expect(off("Repositories")).toBeChecked();
+    fireEvent.click(off("Read orgs"));
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to GitHub" }));
+    await screen.findByText("Waiting for you to sign in to GitHub…");
+    expect(post(calls)?.body).toMatchObject({ method_id: "oauth", scopes: ["read:user"] });
+  });
+
   it("grant_failed after a sign-in shows the account as made; Give access retries only the access", async () => {
     openSpy.mockReturnValue({ closed: false, opener: window, location: { replace: vi.fn() }, focus: vi.fn(), close: vi.fn() });
     const calls = stub({

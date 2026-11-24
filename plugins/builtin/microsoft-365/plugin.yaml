@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.5.0
+  version: 1.5.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -59,6 +59,10 @@ apps:
           - { scope: Mail.Send, name: Send mail as you, access: write }
           - { scope: Calendars.ReadWrite, name: Create and change calendar events, access: write }
           - { scope: Files.ReadWrite, name: Create folders and upload or replace OneDrive files, access: write }
+        # (D-481) SharePoint (Sites.Read.All) usually needs admin consent: ticked by hand only.
+        scope_presets:
+          read: [offline_access, User.Read, Mail.Read, Calendars.Read, Files.Read]
+          write: [offline_access, User.Read, Mail.Read, Calendars.Read, Files.Read, Mail.Send, Calendars.ReadWrite, Files.ReadWrite]
         default_scopes: [offline_access, User.Read, Mail.Read, Calendars.Read, Files.Read]
         callback: query
         token_response:
