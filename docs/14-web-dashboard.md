@@ -571,13 +571,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     Memory "What it remembers", Skills "What it knows how to do"), a **left sub-nav** (Instructions · Apps & access · Memory ·
     Skills · Tests* · Other agents* · **Manage** (owners only), * Expert altitude) that is the segmented `Tabs` under 768 px, and
     the page. **(D-447, FIX-213) The frame no longer ends with a danger zone:** Pause, Export and import and Delete are the owners'
-    last page, **Manage** (`?tab=manage`, lead "Pause, export, import or delete <Agent>"), with three sections in this order:
-    **Pause** ("Stops it until you resume it"; **Pause <Agent>**, or the paused state with **Resume <Agent>**), **Export and
-    import** (Expert, hosted agents only) and **Delete** (danger style, **Delete <Agent>…**). A BYO agent's Manage has Pause and
-    Delete only. Members and approvers see no Manage entry (they see the other pages read-only) and `?tab=manage` lands them on
-    the default page. `?tab=` ids are otherwise unchanged. Section ids are now `chat`,
-    `triggers`, `computer`, `settings`. The computer's secondary tabs (Terminal, Files, …) collapse into a **More** menu rather
-    than scrolling sideways.
+    last page, **Manage** (`?tab=manage`, lead "Pause, export, import or delete <Agent>"), with the owners' sections in
+    this order: **Pause** ("Stops it until you resume it"; **Pause <Agent>**, or the paused state with **Resume <Agent>**),
+    the agent's **Template** section (C-1117, only for agents made from a template or holding helper files), **Export and
+    import** (Expert, hosted agents only) and **Delete** (danger style, **Delete <Agent>…**). A BYO agent's Manage has
+    Pause and Delete only. Members and approvers see no Manage entry (they see the other pages read-only) and
+    `?tab=manage` lands them on the default page. `?tab=` ids are otherwise unchanged. Section ids are now `chat`,
   - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
     `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; beside it
     the one action the API chose for the viewer (`fix`): **Give <Agent> the <key name>** (one click, "<Agent> can answer now",
@@ -2644,7 +2643,22 @@ skills, helper files and memories as inert data in folds; **Skills from librarie
 **Add <skill>**, unavailable optional ones "Not added: needs the <skill> skill, which isn't available here.").
 **Create** sends C-1111: a 409 `template_version_changed` reopens the plan with "This template was updated. Check the
 changes, then create.", 422 field errors jump to the step they belong to; each new webhook's secret is shown once, then
-the toast "<Agent> is ready" opens the new agent's chat. The agent's Template section (C-1117) is the next part (B2).
+the toast "<Agent> is ready" opens the new agent's chat.
+
+The agent's **Template section** (C-1117) sits on Settings › Manage, above Export and import, and is shown only for
+agents made from a template or holding helper files. It says "Made from <template> <version>" and lists the helper
+files ("2 helper files in .aurora/helpers"): **View** opens a dialog with one fold per file — path, size, Executable,
+the text as plain text — and **Remove** takes one file or all of them, each with a confirm that says a template update
+offering them again brings them back. When a newer version is offered, the section says "Version <v> is available.
+<Agent> keeps working as it is until you apply it." and **Review changes** opens the dialog: the new version's
+**About this template** (its README, rendered as C-1116, in a fold), then each part with its state in words and a full
+diff, the checkboxes (ticked for `unchanged_here` and `new`, unticked otherwise; an unreachable new library skill gets
+the "Needs the skill library <repo>" sentence and no checkbox), the inputs needed, and the apps added with **Give
+access** links to the Access tab's journey. **Apply** sends exactly the ticked parts bound to the shown hash (C-1112);
+a 409 `template_version_changed` closes the dialog, reads the offer again and the section says "This template was
+updated. Check the changes, then apply." **Skip this version** applies with no parts: the provenance moves, nothing
+else changes. **Stop following this template** (with a confirm) forgets the provenance — the helper files and the
+skills from libraries stay. Everything the template brings is inert text (SEC-146).
 
 **Instructions.** The picture is a visible **Change picture** button with a real **Remove** and the hint "PNG, JPG
 or WebP, up to 512 KiB. Shown round." (the API's true limit). Models show display names only. **Advanced** (Expert)
