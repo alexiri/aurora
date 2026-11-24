@@ -33,7 +33,7 @@ jobs:
         run: |
           cd /usr/local/bin
           curl -fsSL \
-            "https://github.com/aurora/aurora/releases/download/aurora-cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
+            "https://github.com/alexiri/aurora/releases/download/cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
             -o aurora
           chmod +x aurora
           aurora --version
@@ -59,7 +59,7 @@ jobs:
         run: |
           cd /usr/local/bin
           curl -fsSL \
-            "https://github.com/aurora/aurora/releases/download/aurora-cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
+            "https://github.com/alexiri/aurora/releases/download/cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
             -o aurora
           chmod +x aurora
           aurora --version
