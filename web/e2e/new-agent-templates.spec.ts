@@ -56,7 +56,8 @@ for (const width of [1280, 390]) {
       await expect(details.getByText("GitHub — required")).toBeVisible();
       await expect(details.getByText("Schedule Morning triage")).toBeVisible();
       await expect(details.getByText("triage.py")).toBeVisible();
-      await expect(details.getByText("Version 1.0.0")).toBeVisible();
+      // The version and the source name (C-1116's details view).
+      await expect(details.getByText("Version 1.0.0 · from Team templates")).toBeVisible();
       // Back returns to the gallery (the dialog header's arrow is the first Back control).
       await page.getByRole("button", { name: "Back", exact: true }).first().click();
       await expect(page.getByRole("dialog", { name: "More templates" }).getByText("Schedule manager")).toBeVisible();
@@ -143,6 +144,8 @@ for (const width of [1280, 390]) {
         await expect(view.getByText("It can reach any website.")).toBeVisible();
         await expect(view.getByTestId("ref-0").getByText("From Team skills (github.com/acme/skills) at abcdef1")).toBeVisible();
         await expect(view.getByText("Not added: needs the Reports skill, which isn't available here.")).toBeVisible();
+        // A library that is not added is named by its repository (C-1116's Review step).
+        await expect(view.getByText("Not added: needs the skill library github.com/acme/skills.")).toBeVisible();
         await page.screenshot({ path: `${SHOTS}/new-agent-review-${scheme}-${width}.png` });
         await view.getByRole("button", { name: "Create" }).click();
 

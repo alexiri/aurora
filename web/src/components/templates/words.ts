@@ -41,7 +41,14 @@ export function useAppName() {
 
 type CardLike = {
   apps: { app_ids: string[]; available: boolean; required: boolean }[];
-  skill_refs: { index: number; kind: string; name: string; required: boolean; available: boolean }[];
+  skill_refs: {
+    index: number;
+    kind: string;
+    name: string;
+    required: boolean;
+    available: boolean;
+    repo?: string | null;
+  }[];
   ready: boolean;
 };
 
@@ -54,7 +61,9 @@ export function notReadyWords(card: CardLike, appName: (id: string) => string): 
   for (const ref of card.skill_refs) {
     if (ref.required && !ref.available) {
       if (ref.kind === "organization") out.push(`Needs your organization's ${ref.name} skill.`);
-      // The card carries no repository address, so the line names the skill the library must hold.
+      // The card names the library's repository (C-1116's "Needs the skill library <repo>"); the
+      // API normalizes it (C-1142). Without one the line still names the skill to look for.
+      else if (ref.repo) out.push(`Needs the skill library ${ref.repo}.`);
       else out.push(`Needs the skill library for the ${ref.name} skill.`);
     }
   }

@@ -31,11 +31,21 @@ export function sha7(sha: string | null | undefined): string {
 }
 
 /**
- * Why a skill reference is not added (C-1116's Review step). The plan's resolved reference carries no repository when
- * the resolution failed, so the sentence names the skill the way the gallery's does (a reported contract gap: the
- * C-1116 sentence wants the library's repository, which the plan does not carry here).
+ * Why a skill reference is not added (C-1116's Review step). A `library_not_added` reference names the library's
+ * repository (C-1142): the required one gets C-1142's full sentence, an optional one C-1116's "Not added" form.
+ * The other reasons keep the sentence that says why, without the repository.
  */
-export function notAddedWords(ref: { name: string; required: boolean; unavailable_reason?: string | null }): string {
+export function notAddedWords(ref: {
+  name: string;
+  required: boolean;
+  repo?: string | null;
+  unavailable_reason?: string | null;
+}): string {
+  if (ref.unavailable_reason === "library_not_added" && ref.repo) {
+    return ref.required
+      ? `Needs the skill library ${ref.repo}. An organization admin can add it.`
+      : `Not added: needs the skill library ${ref.repo}.`;
+  }
   const words = unavailableWords(`the ${ref.name} skill`, ref.unavailable_reason);
   return ref.required ? words : `Not added: ${words.charAt(0).toLowerCase()}${words.slice(1)}`;
 }

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NewAgentFromTemplateView } from "@/components/templates/new-agent/page-view";
+import { notAddedWords } from "@/components/templates/new-agent/words";
 import { json, type Handler } from "./support/api";
 import { wrap } from "./support/render";
 
@@ -51,6 +52,7 @@ const choice = (over: Record<string, unknown> = {}) => ({
 const plan = {
   template_id: "schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work",
   readme: README, version: "1.0.0", has_avatar: false, has_helpers: true, ready: true, content_sha256: "c".repeat(64),
+  source_name: "Acme templates",
   apps: [{ app_ids: ["github"], required: true, available: true, skills: [] }],
   automations: [],
   content: {
@@ -76,10 +78,11 @@ const plan = {
     { index: 1, required: false, why: "It files cards.", choices: [choice({ app_id: "linear", app_name: "Linear", accounts: [LINEAR], level: "read" })] },
   ],
   skill_refs: [
-    { index: 0, kind: "library", name: "Triage", required: true, available: true, why: "It triages the queue.", library: library(), content: { use_it_when: "The queue is long.", body: "Read the queue.", files: [] } },
-    { index: 1, kind: "library", name: "Sorting", required: false, available: true, why: "", library: library(), content: { use_it_when: "The queue needs order.", body: "Sort it newest first.", files: [] } },
-    { index: 2, kind: "library", name: "Reports", required: false, available: false, why: "", library: null, unavailable_reason: "library_unreadable", content: null },
-    { index: 3, kind: "organization", name: "House style", required: true, available: true, why: "", library: null, content: null },
+    { index: 0, kind: "library", name: "Triage", required: true, available: true, why: "It triages the queue.", repo: "github.com/acme/skills", library: library(), content: { use_it_when: "The queue is long.", body: "Read the queue.", files: [] } },
+    { index: 1, kind: "library", name: "Sorting", required: false, available: true, why: "", repo: "github.com/acme/skills", library: library(), content: { use_it_when: "The queue needs order.", body: "Sort it newest first.", files: [] } },
+    { index: 2, kind: "library", name: "Reports", required: false, available: false, why: "", repo: "github.com/acme/skills", library: null, unavailable_reason: "library_unreadable", content: null },
+    { index: 3, kind: "organization", name: "House style", required: true, available: true, why: "", repo: null, library: null, content: null },
+    { index: 4, kind: "library", name: "Briefs", required: false, available: false, why: "", repo: "github.com/acme/skills", library: null, unavailable_reason: "library_not_added", content: null },
   ],
 };
 
@@ -353,6 +356,8 @@ describe("the four-step page (C-1116)", () => {
     expect(within(libraries).getByTestId("ref-1").textContent).not.toContain("Sort it newest first.");
     // An unavailable one is not added, in the sentence that says why.
     expect(within(libraries).getByTestId("ref-2").textContent).toContain("Not added: needs the Reports skill, which isn't available here.");
+    // A library that is not added is named by its repository (C-1116's "Not added" form).
+    expect(within(libraries).getByTestId("ref-4").textContent).toContain("Not added: needs the skill library github.com/acme/skills.");
     // An organization skill is not a library skill: it is not listed here.
     expect(within(libraries).queryByTestId("ref-3")).toBeNull();
   });
@@ -467,5 +472,21 @@ describe("the four-step page (C-1116)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Create" }));
     expect(await screen.findByText("You cannot create agents here.")).toBeTruthy(); // a danger Notice on the review step
+  });
+});
+
+describe("notAddedWords (C-1142's library_not_added message)", () => {
+  it("names the repository: the full sentence for a required reference, C-1116's form for an optional one", () => {
+    const ref = { name: "briefs", repo: "gitlab.example.org/agents/skills", unavailable_reason: "library_not_added" };
+    expect(notAddedWords({ ...ref, required: true })).toEqual(
+      "Needs the skill library gitlab.example.org/agents/skills. An organization admin can add it.",
+    );
+    expect(notAddedWords({ ...ref, required: false })).toEqual("Not added: needs the skill library gitlab.example.org/agents/skills.");
+  });
+
+  it("keeps the reason's own sentence when the reason is not a missing library", () => {
+    expect(
+      notAddedWords({ name: "reports", required: false, repo: "github.com/acme/skills", unavailable_reason: "library_unreadable" }),
+    ).toEqual("Not added: needs the reports skill, which isn't available here.");
   });
 });

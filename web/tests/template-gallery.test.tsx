@@ -19,9 +19,9 @@ const README =
 
 const card = (over: Record<string, unknown> = {}) => ({
   template_id: "schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work",
-  readme: README, version: "1.0.0", has_avatar: false,
+  readme: README, version: "1.0.0", has_avatar: false, source_name: "Acme templates",
   apps: [{ app_ids: ["github"], required: true, available: true, skills: [] }],
-  skill_refs: [] as { index: number; kind: string; name: string; required: boolean; available: boolean }[],
+  skill_refs: [] as { index: number; kind: string; name: string; required: boolean; available: boolean; repo?: string | null }[],
   has_helpers: true,
   automations: [{ kind: "schedule", name: "Morning triage" }, { kind: "webhook", name: "Alerts" }],
   ready: true,
@@ -120,13 +120,14 @@ describe("the gallery card (C-1116)", () => {
       ready: false,
       apps: [{ app_ids: ["jira"], required: true, available: false, skills: [] }],
       skill_refs: [
-        { index: 0, kind: "library", name: "incident-writeup", required: true, available: false },
+        { index: 0, kind: "library", name: "incident-writeup", required: true, available: false, repo: "git.example/acme/skills" },
         { index: 1, kind: "organization", name: "triage-rules", required: false, available: false },
       ],
     });
     wrap(<ul><TemplateCardView card={notReady as never} wsId="w1" appName={appName} onOpen={() => undefined} /></ul>);
     expect(screen.getByText("Needs jira, which isn't available here.")).toBeTruthy();
-    expect(screen.getByText("Needs the skill library for the incident-writeup skill.")).toBeTruthy();
+    // The card names the library's repository (C-1116).
+    expect(screen.getByText("Needs the skill library git.example/acme/skills.")).toBeTruthy();
     expect(screen.queryByText(/triage-rules/)).toBeNull(); // an optional reference is not "missing"
   });
 
@@ -135,9 +136,9 @@ describe("the gallery card (C-1116)", () => {
     const both = card({
       ready: false,
       apps: [{ app_ids: ["jira"], required: true, available: false, skills: [] }],
-      skill_refs: [{ index: 0, kind: "library", name: "x", required: true, available: false }],
+      skill_refs: [{ index: 0, kind: "library", name: "x", required: true, available: false, repo: "git.example/acme/skills" }],
     });
-    expect(notReadyWords(both as never, appName)).toEqual(["Needs jira, which isn't available here.", "Needs the skill library for the x skill."]);
+    expect(notReadyWords(both as never, appName)).toEqual(["Needs jira, which isn't available here.", "Needs the skill library git.example/acme/skills."]);
   });
 
   it("runsOnItsOwn names the schedules and marks the webhooks paused", () => {
@@ -164,14 +165,14 @@ describe("the details view (D-458)", () => {
     expect(within(readme).getByRole("heading", { level: 3, name: "Schedule manager" })).toBeTruthy();
   });
 
-  it("shows what it needs, what it runs on its own, helper files by name and the version", async () => {
+  it("shows what it needs, what it runs on its own, helper files by name, the version and the source", async () => {
     details();
     // The app name comes from the catalogue fetch, so it arrives after the first render.
     expect(await screen.findByText("GitHub — required")).toBeTruthy();
     expect(screen.getByText("Schedule Morning triage")).toBeTruthy();
     expect(screen.getByText("Webhook Alerts, created paused")).toBeTruthy();
     expect(await screen.findByText("triage.py")).toBeTruthy();
-    expect(screen.getAllByText("Version 1.0.0").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Version 1.0.0 · from Acme templates").length).toBeGreaterThan(0);
   });
 
   it("disables Use this template while the template is not ready, and shows why", () => {

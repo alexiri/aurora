@@ -88,7 +88,7 @@ export function TemplateCardView({ card, wsId, appName, onOpen }: { card: Templa
 /**
  * The template's details view (D-458, C-1116), before anything else: the name, avatar and summary; **About this
  * template** (the README, rendered the C-1116 way); what it needs; what it runs on its own; its helper files by
- * name; and the version. Then **Use this template** or **Back**.
+ * name; and the version and source name. Then **Use this template** or **Back**.
  */
 export function TemplateDetails({ card, wsId, onBack, onUse }: { card: TemplateCard; wsId: string; onBack: () => void; onUse: () => void }) {
   const appName = useAppName();
@@ -101,7 +101,9 @@ export function TemplateDetails({ card, wsId, onBack, onUse }: { card: TemplateC
         <Avatar name={card.name} url={card.has_avatar ? templateAvatarUrl(wsId, card.template_id) : null} tintKey={card.template_id} size={48} />
         <div className="min-w-0">
           <h3 className="font-display text-base font-semibold text-ink">{card.name}</h3>
-          <p className="text-sm text-muted">Version {card.version}</p>
+          <p className="text-sm text-muted">
+            Version {card.version} · from {card.source_name}
+          </p>
         </div>
       </div>
       <p className="text-sm text-ink-2 [overflow-wrap:anywhere]">{card.summary}</p>

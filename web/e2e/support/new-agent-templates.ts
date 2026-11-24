@@ -19,11 +19,12 @@ export const LIBRARY_SHA = "abcdef1234567890abcdef1234567890abcdef12";
 
 const library = { id: "lib1", label: "Team skills", repo: "github.com/acme/skills", path: "", ref: null, commit_sha: LIBRARY_SHA, scope: "organization" };
 
-/** The plan's resolved library skill references (C-1142): a required one, an optional one, an unavailable one. */
+/** The plan's resolved library skill references (C-1142): a required one, an optional one, two unavailable ones. */
 const skillRefs = [
-  { index: 0, kind: "library", name: "Triage", required: true, available: true, why: "It triages the queue.", library, content: { use_it_when: "The queue is long.", body: "Read the queue.", files: [] } },
-  { index: 1, kind: "library", name: "Sorting", required: false, available: true, why: "", library, content: { use_it_when: "The queue needs order.", body: "Sort it newest first.", files: [] } },
-  { index: 2, kind: "library", name: "Reports", required: false, available: false, why: "", library: null, unavailable_reason: "library_unreadable", content: null },
+  { index: 0, kind: "library", name: "Triage", required: true, available: true, why: "It triages the queue.", repo: "github.com/acme/skills", library, content: { use_it_when: "The queue is long.", body: "Read the queue.", files: [] } },
+  { index: 1, kind: "library", name: "Sorting", required: false, available: true, why: "", repo: "github.com/acme/skills", library, content: { use_it_when: "The queue needs order.", body: "Sort it newest first.", files: [] } },
+  { index: 2, kind: "library", name: "Reports", required: false, available: false, why: "", repo: "github.com/acme/skills", library: null, unavailable_reason: "library_unreadable", content: null },
+  { index: 3, kind: "library", name: "Briefs", required: false, available: false, why: "", repo: "github.com/acme/skills", library: null, unavailable_reason: "library_not_added", content: null },
 ];
 
 const planAccount = (n: number, appId: string, appName: string, name: string) => ({
@@ -68,7 +69,7 @@ const plan = (linearConnected: boolean) => ({
 
 const card = (over: Record<string, unknown> = {}) => ({
   template_id: "schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work",
-  readme: TEMPLATE_README, version: "1.0.0", has_avatar: false, has_helpers: true,
+  readme: TEMPLATE_README, version: "1.0.0", has_avatar: false, has_helpers: true, source_name: "Team templates",
   apps: [{ app_ids: ["github"], required: true, available: true, skills: [] }],
   skill_refs: [],
   automations: [{ kind: "schedule", name: "Morning triage" }, { kind: "webhook", name: "Alerts" }],
