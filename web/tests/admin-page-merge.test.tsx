@@ -47,13 +47,13 @@ describe("route helpers and tab ids", () => {
 });
 
 describe("What agents may do", () => {
-  it("has the four tabs in the brief's order, opening on Internet access", async () => {
+  it("has the five tabs in the brief's order, opening on Internet access", async () => {
     window.history.replaceState(null, "", "/admin/internet-access");
     mock();
     wrap(<AdminInternetAccessPage />);
     await screen.findByRole("heading", { name: "What agents may do" });
     const tabs = (await screen.findAllByRole("tab")).map((t) => t.textContent);
-    expect(tabs).toEqual(["Internet access", "AI keys and rules", "Bring your own", "Defaults"]);
+    expect(tabs).toEqual(["Internet access", "AI keys and rules", "Bring your own", "Defaults", "Agent templates"]);
     expect(screen.getByRole("tab", { name: "Internet access" })).toHaveAttribute("aria-selected", "true");
   });
 
@@ -61,6 +61,7 @@ describe("What agents may do", () => {
     ["ai-keys", "AI keys and rules"],
     ["byo", "Bring your own"],
     ["defaults", "Defaults"],
+    ["templates", "Agent templates"],
   ])("?tab=%s selects %s", async (tab, name) => {
     window.history.replaceState(null, "", `/admin/internet-access?tab=${tab}`);
     mock();

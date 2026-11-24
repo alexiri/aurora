@@ -34,6 +34,43 @@ export const LIBRARY_STATUS = {
   over_budget: { label: "Pending updates over budget" },
 } satisfies LabelTable;
 
+/** (C-1114) An agent template source's last read (`AgentTemplateSource.status`); the reason sits beside "Can't be read". */
+export const TEMPLATE_SOURCE_STATUS = {
+  ok: { label: "Ok" },
+  check_failed: { label: "Can't be read" },
+} satisfies LabelTable;
+
+/** (C-1114) The repository's newest version of a template (`AdminTemplateView.head_state`). */
+export const TEMPLATE_HEAD_STATE = {
+  ok: { label: "Up to date" },
+  needs_newer_aurora: { label: "Needs a newer Aurora" },
+  invalid: { label: "Has problems" },
+} satisfies LabelTable;
+
+/** (C-1114) What a check of one source did (`TemplateSourceCheckResult.status`): a failed read is a result, not an error. */
+export const TEMPLATE_CHECK_STATUS = {
+  updated: { label: "Updated" },
+  up_to_date: { label: "Up to date" },
+  failed: { label: "Couldn't be read" },
+} satisfies LabelTable;
+
+/** (C-1107, C-1108) A template found in a repository (`SourceTemplateView.state`, `PreviewTemplateView.state`). */
+export const TEMPLATE_FOUND_STATE = {
+  new: { label: "New" },
+  ingested: { label: "Stored" },
+  id_taken: { label: "The id is used by another source" },
+  invalid: { label: "Can't be used" },
+} satisfies LabelTable;
+
+/** (C-1108) A stored template version (`TemplateVersionListItem.status`). */
+export const TEMPLATE_VERSION_STATUS = {
+  awaiting_package: { label: "Waiting for its package" },
+  pending_approval: { label: "Waiting for review" },
+  approved: { label: "Approved" },
+  rejected: { label: "Rejected" },
+  invalid: { label: "Invalid" },
+} satisfies LabelTable;
+
 /** Gateway decisions of the request log (`request_log.decision`, docs/03). */
 export const GATEWAY_DECISION = {
   allow: { label: "Allowed" },

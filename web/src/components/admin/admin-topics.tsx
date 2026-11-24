@@ -4,6 +4,7 @@ import { AdminStorageView } from "@/components/account/admin-storage-view";
 import { AdminUsersView } from "@/components/account/admin-users-view";
 import { AdminInternet } from "@/components/internet/admin-internet";
 import { AdminGuard } from "@/components/admin/admin-guard";
+import { AdminTemplates } from "@/components/templates/admin-templates";
 import { AddonSourcesView } from "@/components/admin/addon-sources-view";
 import { AdminAuditView } from "@/components/admin/audit-view";
 import { HostClaimsView } from "@/components/admin/host-claims-view";
@@ -101,8 +102,9 @@ export function AdminAiModelsPage() {
 }
 
 /**
- * (P5-REFINE-18 #1, rec 9) What agents may do: one page, four tabs. The preset card sits first on Internet access;
- * AI keys and rules and Bring your own are the governance parts that used to live under AI models and Agents.
+ * (P5-REFINE-18 #1, rec 9) What agents may do: one page, five tabs. The preset card sits first on Internet access;
+ * AI keys and rules and Bring your own are the governance parts that used to live under AI models and Agents; Agent
+ * templates is where template repositories are added and their versions are approved (C-1114).
  */
 export function AdminInternetAccessPage() {
   return (
@@ -110,7 +112,7 @@ export function AdminInternetAccessPage() {
       <TopicPage<Tabs<"adminAgentPolicy">>
         idBase="admin-agent-policy"
         title="What agents may do"
-        description="Which websites agents can reach, which AI keys they may use, whether people can bring their own agents, and the defaults every agent starts with."
+        description="Which websites agents can reach, which AI keys they may use, whether people can bring their own agents, the defaults every agent starts with, and the agent templates people can make agents from."
         tabs={[
           { id: "internet-access", label: "Internet access", content: <AdminInternet /> },
           { id: "ai-keys", label: "AI keys and rules", content: <GovernanceRulesFields /> },
@@ -125,6 +127,7 @@ export function AdminInternetAccessPage() {
               </div>
             ),
           },
+          { id: "templates", label: "Agent templates", content: <AdminTemplates /> },
         ]}
       />
     </AdminGuard>
