@@ -31,6 +31,8 @@ interface World {
   orgRole: string;
   /** Workspaces of "Users"; the first is Bob's personal one. */
   usersCount: number;
+  /** (FIX-235) Workspaces of "Users" this person is NOT in (`my_role: null`): the org list shows them, the switcher does not. */
+  notMine?: number;
   acmeCount: number;
   /** Further organizations with one workspace each. */
   extraOrgs: number;
@@ -50,6 +52,7 @@ const BOB = { id: "u1", name: "Bob Builder" };
 function usersWorkspaces() {
   const list = [mkWs("w1", "o1", "bob", "Bob Builder", "owner", BOB)];
   for (let i = 2; i <= world.usersCount; i++) list.push(mkWs(`w${i}`, "o1", `team-${i}`, `Team ${i}`));
+  for (let i = 0; i < (world.notMine ?? 0); i++) list.push(mkWs(`nw${i}`, "o1", `other-${i}`, `Not mine ${i}`, null));
   return list;
 }
 
@@ -69,7 +72,8 @@ function mockFetch() {
             org: { id: "o1", slug: "users", name: "Users" },
             role: world.orgRole,
             status: "active",
-            workspaces: mine.map((w) => ({ id: w.id, slug: w.slug, name: w.name, my_role: w.my_role, personal: w.personal_of !== null })),
+            // (FIX-235) The session lists only the workspaces the person is in; the org list carries the rest with `my_role: null`.
+            workspaces: mine.filter((w) => w.my_role != null).map((w) => ({ id: w.id, slug: w.slug, name: w.name, my_role: w.my_role, personal: w.personal_of !== null })),
           },
         ];
         if (world.acmeCount > 0) {
@@ -173,6 +177,17 @@ describe("scope switcher", () => {
     const mine = screen.getByRole("link", { name: /Your workspace/ });
     expect(mine).toHaveAttribute("aria-current", "true");
     expect(mine).toHaveTextContent("Owner");
+  });
+
+  it("(FIX-235, D-477) lists only the workspaces the person is in in their own right, and 'All n in' counts those", async () => {
+    onWorkspace({ usersCount: 6, notMine: 2 });
+    await openSwitcher();
+    // The six own workspaces (five listed), none of the `my_role: null` ones.
+    const links = await screen.findAllByRole("link", { name: /Team \d|Your workspace/ });
+    expect(links).toHaveLength(5);
+    expect(screen.queryByRole("link", { name: /Not mine/ })).toBeNull();
+    // The count covers only the listed (own) workspaces, not the whole organization.
+    expect(screen.getByRole("link", { name: "All 6 in Users" })).toBeInTheDocument();
   });
 
   it("recently used workspaces come first (kept in this browser)", async () => {
