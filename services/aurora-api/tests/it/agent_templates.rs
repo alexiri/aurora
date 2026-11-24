@@ -4444,6 +4444,28 @@ async fn a_create_refuses_bad_account_choices() {
         "{v}"
     );
 
+    // A connection that is not `active` (the plan still lists it: it lists accounts by whom
+    // they may be given): the same 403.
+    sqlx::query("UPDATE app_connections SET status = 'disabled' WHERE id = $1")
+        .bind(mine)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w
+        .create_body(
+            ws,
+            &owner,
+            base.clone().merge(json!({"accounts": [{"entry": 0,
+                "app_id": "com-example-thing", "connection_id": mine}]})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
+    sqlx::query("UPDATE app_connections SET status = 'active' WHERE id = $1")
+        .bind(mine)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+
     // A plain member: the plan lists no accounts for them, so the create is the same 403
     // (the route's one C-504 check, SEC-67's shape).
     let (s, v) = w

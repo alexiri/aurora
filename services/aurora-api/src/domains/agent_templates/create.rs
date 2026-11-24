@@ -38,7 +38,9 @@ use crate::http::who_can::{WhoCanRole, forbid};
 use aurora_core::ApiError;
 use aurora_core::limits;
 use aurora_db::repo::agent_templates as trepo;
+use aurora_db::repo::connections;
 use aurora_db::repo::skills::Owner;
+use aurora_db::DbError;
 
 fn not_found() -> ApiError {
     ApiError::not_found("Template not found.")
@@ -502,6 +504,20 @@ async fn choose_accounts(
                 && a.app.as_ref().is_some_and(|x| x.app_id == g.app_id)
         });
         if !giveable {
+            return Err(forbid(
+                "Workspace owner role required.",
+                WhoCanRole::WorkspaceOwner,
+                Some(org),
+                Some(ws),
+            ));
+        }
+        // (C-1111) The connection itself must be `active` (the plan lists accounts by whom
+        // they may be given, not by the row's status); anything else is the same 403.
+        let active = connections::get(&state.pool, g.connection_id)
+            .await
+            .map_err(DbError::from)?
+            .is_some_and(|c| c.org_id == org && c.status == "active");
+        if !active {
             return Err(forbid(
                 "Workspace owner role required.",
                 WhoCanRole::WorkspaceOwner,
