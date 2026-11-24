@@ -1023,6 +1023,9 @@ pub struct CardSkillRef {
     pub name: String,
     pub required: bool,
     pub available: bool,
+    /// The reference's own library address in display form (`host/path`, C-1123's
+    /// normalization); null for an `organization` reference.
+    pub repo: Option<String>,
 }
 
 /// One automation of the card (C-1110).
@@ -1042,6 +1045,8 @@ pub struct TemplateCard {
     /// The offered version's `README.md`, in full.
     pub readme: String,
     pub version: String,
+    /// The source's display name, as the admin sources list shows it (display only, C-1110).
+    pub source_name: String,
     pub has_avatar: bool,
     pub apps: Vec<CardAppEntry>,
     pub skill_refs: Vec<CardSkillRef>,
@@ -1129,6 +1134,9 @@ pub struct SkillRefPlan {
     /// `library_not_added` | `skill_not_in_library` | `library_unreadable` |
     /// `libraries_disabled` | `not_in_organization` | null.
     pub unavailable_reason: Option<String>,
+    /// The reference's own library address in display form (`host/path`, C-1123's
+    /// normalization); null for an `organization` reference.
+    pub repo: Option<String>,
     /// The matched library, with the commit the content comes from; null when unmatched.
     pub library: Option<ResolvedLibraryView>,
     /// The skill's content at that commit (the plan only); null while unavailable.
@@ -1144,6 +1152,8 @@ pub struct TemplatePlan {
     pub summary: String,
     pub readme: String,
     pub version: String,
+    /// The source's display name, as the admin sources list shows it (display only, C-1110).
+    pub source_name: String,
     pub has_avatar: bool,
     pub apps: Vec<CardAppEntry>,
     pub has_helpers: bool,

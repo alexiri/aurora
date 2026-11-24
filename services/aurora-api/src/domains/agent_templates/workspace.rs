@@ -439,6 +439,7 @@ impl<'a> Resolver<'a> {
 async fn build_card(
     ctx: &Ctx,
     t: &repo::TemplateRow,
+    source_name: String,
     version: String,
     parsed: &Parsed<'_>,
     refs: &[SkillRefPlan],
@@ -473,6 +474,7 @@ async fn build_card(
             name: r.name.clone(),
             required: r.required,
             available: r.available,
+            repo: r.repo.clone(),
         })
         .collect();
     TemplateCard {
@@ -481,6 +483,7 @@ async fn build_card(
         summary: t.summary.clone(),
         readme: parsed.readme.clone(),
         version,
+        source_name,
         has_avatar: dto::TemplateContentView::avatar_bytes(parsed.content).is_some(),
         apps,
         skill_refs: card_refs,
@@ -604,6 +607,19 @@ pub(crate) fn resolved_view(row: &LibraryRow, commit: &str) -> ResolvedLibraryVi
     }
 }
 
+/// (C-1142, amended) The reference's own library address in display form: the C-1123 parser's
+/// `host/path` (no scheme, no trailing `.git`) — the same display normalization
+/// [`ResolvedLibraryView.repo`] uses. `None` for an `organization` reference.
+pub(crate) fn ref_repo(r: &RefJson) -> Option<String> {
+    if r.kind != "library" {
+        return None;
+    }
+    r.url
+        .as_deref()
+        .and_then(|u| aurora_core::git_url::parse(u).ok())
+        .map(|a| a.repo_display)
+}
+
 /// (C-1142) The resolved skill references of a stored content, shared by the plan (C-1110)
 /// and the update offer (C-1112).
 pub(crate) async fn skill_ref_plans(
@@ -647,6 +663,7 @@ pub(crate) async fn skill_ref_plans(
             why: r.why.clone(),
             available: x.available,
             unavailable_reason: x.unavailable_reason.map(str::to_owned),
+            repo: ref_repo(r),
             library,
             content: content_brief,
         });
@@ -661,14 +678,14 @@ pub async fn list_cards(
     ws: Uuid,
 ) -> Result<TemplateCardList, ApiError> {
     let ctx = Ctx::build(state, caller, ws).await?;
-    let rows = repo::all_templates(&state.pool).await?;
+    let rows = repo::all_templates_with_source(&state.pool).await?;
     let mut resolver = Resolver::new(state, ctx.org, ctx.ws).await?;
     let mut items = Vec::new();
     for t in &rows {
-        if !t.offered || ctx.disabled.contains(&t.template_id) {
+        if !t.template.offered || ctx.disabled.contains(&t.template.template_id) {
             continue;
         }
-        let Some(v) = admin::offered_version(&state.pool, t.id).await? else {
+        let Some(v) = admin::offered_version(&state.pool, t.template.id).await? else {
             continue;
         };
         let Some(content) = v.content.as_ref() else {
@@ -688,11 +705,22 @@ pub async fn list_cards(
                 why: r.why.clone(),
                 available: x.available,
                 unavailable_reason: x.unavailable_reason.map(str::to_owned),
+                repo: ref_repo(r),
                 library: None,
                 content: None,
             });
         }
-        items.push(build_card(&ctx, t, v.version, &parsed, &refs).await);
+        items.push(
+            build_card(
+                &ctx,
+                &t.template,
+                t.source_name.clone(),
+                v.version,
+                &parsed,
+                &refs,
+            )
+            .await,
+        );
     }
     items.sort_by(|a, b| {
         a.name
@@ -715,9 +743,13 @@ pub async fn plan(
     let Some(parsed) = Parsed::parse(content) else {
         return Err(not_found());
     };
+    let source_name = repo::get_source(&state.pool, t.source_id)
+        .await?
+        .map(|s| s.name)
+        .unwrap_or_default();
     let mut resolver = Resolver::new(state, ctx.org, ctx.ws).await?;
     let refs = skill_ref_plans(state, &mut resolver, &parsed.refs).await?;
-    let card = build_card(&ctx, &t, v.version.clone(), &parsed, &refs).await;
+    let card = build_card(&ctx, &t, source_name, v.version.clone(), &parsed, &refs).await;
     // One accounts read for the whole plan (C-504's `give_access` flags included); the
     // choices filter it per app.
     let all_accounts = if parsed.apps.is_empty() {
@@ -752,6 +784,7 @@ pub async fn plan(
         summary: card.summary,
         readme: card.readme,
         version: card.version,
+        source_name: card.source_name,
         has_avatar: card.has_avatar,
         apps: card.apps,
         has_helpers: card.has_helpers,

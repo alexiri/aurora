@@ -49917,6 +49917,13 @@
           "name": {
             "type": "string"
           },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reference's own library address in display form (`host/path`, C-1123's\nnormalization); null for an `organization` reference."
+          },
           "required": {
             "type": "boolean"
           }
@@ -73919,6 +73926,13 @@
           "name": {
             "type": "string"
           },
+          "repo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reference's own library address in display form (`host/path`, C-1123's\nnormalization); null for an `organization` reference."
+          },
           "required": {
             "type": "boolean"
           },
@@ -75332,6 +75346,7 @@
           "summary",
           "readme",
           "version",
+          "source_name",
           "has_avatar",
           "apps",
           "skill_refs",
@@ -75374,6 +75389,10 @@
             "items": {
               "$ref": "#/components/schemas/CardSkillRef"
             }
+          },
+          "source_name": {
+            "type": "string",
+            "description": "The source's display name, as the admin sources list shows it (display only, C-1110)."
           },
           "summary": {
             "type": "string"
@@ -75495,6 +75514,7 @@
           "summary",
           "readme",
           "version",
+          "source_name",
           "has_avatar",
           "apps",
           "has_helpers",
@@ -75552,6 +75572,10 @@
             "items": {
               "$ref": "#/components/schemas/SkillRefPlan"
             }
+          },
+          "source_name": {
+            "type": "string",
+            "description": "The source's display name, as the admin sources list shows it (display only, C-1110)."
           },
           "summary": {
             "type": "string"

@@ -1577,6 +1577,7 @@ async fn the_workspace_catalogue_shows_available_templates() {
     assert_eq!(items.len(), 1, "{v}");
     assert_eq!(items[0]["template_id"], "t", "{v}");
     assert_eq!(items[0]["version"], "1.0.0", "{v}");
+    assert_eq!(items[0]["source_name"], "Acme templates", "{v}");
     assert!(
         items[0]["readme"]
             .as_str()
@@ -1596,6 +1597,7 @@ async fn the_workspace_catalogue_shows_available_templates() {
     assert_eq!(s, 200, "{v}");
     assert!(v["content_sha256"].is_string(), "{v}");
     assert_eq!(v["content"]["name"], "T", "{v}");
+    assert_eq!(v["source_name"], "Acme templates", "{v}");
     assert_eq!(v["entries"], json!([]), "{v}");
     assert_eq!(v["skill_refs"], json!([]), "{v}");
 
@@ -1709,6 +1711,8 @@ async fn the_plan_resolves_apps_and_skill_references() {
     assert_eq!(refs[0]["name"], "alpha", "{v}");
     assert_eq!(refs[0]["available"], true, "{v}");
     assert_eq!(refs[0]["unavailable_reason"], json!(null), "{v}");
+    // The reference's own library address, in the C-1123 display form.
+    assert_eq!(refs[0]["repo"], "git.example/acme/skills", "{v}");
     assert!(refs[0]["library"]["id"].is_string(), "{v}");
     assert_eq!(refs[0]["library"]["scope"], "organization", "{v}");
     assert!(refs[0]["library"]["commit_sha"].is_string(), "{v}");
@@ -1720,6 +1724,8 @@ async fn the_plan_resolves_apps_and_skill_references() {
     assert_eq!(refs[1]["name"], "notes", "{v}");
     assert_eq!(refs[1]["available"], false, "{v}");
     assert_eq!(refs[1]["unavailable_reason"], "not_in_organization", "{v}");
+    assert_eq!(refs[1]["repo"], json!(null), "{v}");
+    assert_eq!(v["source_name"], "Acme templates", "{v}");
     // The card carries the same availability.
     let (s, v) = ws_get(&w, ws, &owner, "").await;
     assert_eq!(s, 200, "{v}");
@@ -1727,7 +1733,10 @@ async fn the_plan_resolves_apps_and_skill_references() {
     assert_eq!(item["apps"][0]["available"], false, "{v}");
     assert_eq!(item["apps"][0]["skills"], json!([]), "{v}");
     assert_eq!(item["skill_refs"][0]["available"], true, "{v}");
+    assert_eq!(item["skill_refs"][0]["repo"], "git.example/acme/skills", "{v}");
     assert_eq!(item["skill_refs"][1]["available"], false, "{v}");
+    assert_eq!(item["skill_refs"][1]["repo"], json!(null), "{v}");
+    assert_eq!(item["source_name"], "Acme templates", "{v}");
     assert_eq!(item["ready"], false, "{v}");
 
     // The organization-tier skill exists → the reference is available.
@@ -1796,6 +1805,8 @@ async fn the_plan_names_why_an_app_or_a_skill_is_not_available() {
         v["skill_refs"][0]["unavailable_reason"], "library_not_added",
         "{v}"
     );
+    // The repository is named whether the library is added or not.
+    assert_eq!(v["skill_refs"][0]["repo"], "git.example/acme/skills", "{v}");
     assert_eq!(
         v["skill_refs"][1]["unavailable_reason"], "not_in_organization",
         "{v}"
@@ -1807,6 +1818,11 @@ async fn the_plan_names_why_an_app_or_a_skill_is_not_available() {
     assert_eq!(v["ready"], false, "{v}");
     let (_, v) = ws_get(&w, ws, &owner, "").await;
     assert_eq!(v["items"][0]["skill_refs"][0]["available"], false, "{v}");
+    assert_eq!(
+        v["items"][0]["skill_refs"][0]["repo"],
+        "git.example/acme/skills",
+        "{v}"
+    );
 
     // A library that does not carry the skill: skill_not_in_library.
     w.git.add_repo("acme/skills");
@@ -1835,6 +1851,7 @@ async fn the_plan_names_why_an_app_or_a_skill_is_not_available() {
         "{v}"
     );
     assert_eq!(v["skill_refs"][0]["library"], json!(null), "{v}");
+    assert_eq!(v["skill_refs"][0]["repo"], "git.example/acme/skills", "{v}");
 
     // The skill appears at the library's head; any patch forgets the browse cache: available,
     // with the content the plan shows.
@@ -1881,6 +1898,7 @@ async fn the_plan_names_why_an_app_or_a_skill_is_not_available() {
         "{v}"
     );
     assert_eq!(v["skill_refs"][0]["content"], json!(null), "{v}");
+    assert_eq!(v["skill_refs"][0]["repo"], "git.example/acme/skills", "{v}");
     let (_, v) = ws_get(&w, ws, &owner, "").await;
     assert_eq!(v["items"][0]["skill_refs"][0]["available"], false, "{v}");
 
@@ -1989,6 +2007,7 @@ async fn a_library_skill_that_does_not_fit_the_agent_budget_is_over_budget() {
         "{v}"
     );
     assert_eq!(v["skill_refs"][0]["content"], json!(null), "{v}");
+    assert_eq!(v["skill_refs"][0]["repo"], "git.example/acme/skills", "{v}");
     assert_eq!(v["ready"], false, "{v}");
     let (_, v) = ws_get(&w, ws, &owner, "").await;
     assert_eq!(v["items"][0]["skill_refs"][0]["available"], false, "{v}");

@@ -8949,6 +8949,11 @@ export interface components {
             /** @description `library` | `organization`. */
             kind: string;
             name: string;
+            /**
+             * @description The reference's own library address in display form (`host/path`, C-1123's
+             *     normalization); null for an `organization` reference.
+             */
+            repo?: string | null;
             required: boolean;
         };
         ChangeActor: {
@@ -16540,6 +16545,11 @@ export interface components {
             kind: string;
             library?: components["schemas"]["ResolvedLibraryView"] | null;
             name: string;
+            /**
+             * @description The reference's own library address in display form (`host/path`, C-1123's
+             *     normalization); null for an `organization` reference.
+             */
+            repo?: string | null;
             required: boolean;
             /**
              * @description `library_not_added` | `skill_not_in_library` | `library_unreadable` |
@@ -16978,6 +16988,8 @@ export interface components {
              */
             ready: boolean;
             skill_refs: components["schemas"]["CardSkillRef"][];
+            /** @description The source's display name, as the admin sources list shows it (display only, C-1110). */
+            source_name: string;
             summary: string;
             template_id: string;
             version: string;
@@ -17025,6 +17037,8 @@ export interface components {
             readme: string;
             ready: boolean;
             skill_refs: components["schemas"]["SkillRefPlan"][];
+            /** @description The source's display name, as the admin sources list shows it (display only, C-1110). */
+            source_name: string;
             summary: string;
             template_id: string;
             version: string;
