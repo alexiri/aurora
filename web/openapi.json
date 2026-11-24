@@ -1911,7 +1911,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ApproveRequest"
+                "$ref": "#/components/schemas/ApproveTemplateVersionRequest"
               }
             }
           },
@@ -48790,6 +48790,22 @@
         }
       },
       "ApproveRequest": {
+        "type": "object",
+        "required": [
+          "user_code",
+          "workspace_id"
+        ],
+        "properties": {
+          "user_code": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ApproveTemplateVersionRequest": {
         "type": "object",
         "required": [
           "content_sha256"
