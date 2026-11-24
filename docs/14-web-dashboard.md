@@ -2543,6 +2543,7 @@ documents and duplicate keys); no dependency was added. **A purpose template *is
 <handle>/
   agent.yaml                 format, name, purpose?, model (default or a name), may_message_first
   instructions.md            the instructions text
+  avatar.png                 the agent's avatar, when it has one (`avatar.jpg` and `avatar.webp` are read too; at most one, 512 KiB)
   memory/<key>.md            front matter `key`, `updated`, `locked?` (`true` only when locked); then the text
   skills/<name>/SKILL.md     front matter `name`, `use-it-when`; then the body
   automations/<name>.yaml    a schedule or a webhook
@@ -2570,6 +2571,13 @@ enabled: true
 ```
 
 A pending one-time schedule has `cadence: { preset: once, run_at: "2026-12-01T09:00" }` instead of `cron` (the local time, read in `time_zone`).
+
+**The avatar** (owner 2026-11-24) is read with `GET /v1/agents/{agent}/avatar` (the stored 256×256 PNG) and written as
+`avatar.png`; an agent without one writes no file, and one that cannot be read is left out with a line in the dialog. Save as
+template carries it too, so a saved template starts with its agent's face (C-1141 already allows one avatar file). **Import**
+lists **Avatar** in the checklist and sets it with `PUT /v1/agents/{agent}/avatar` (the server re-encodes it; a file it cannot
+decode is one failed line in the report). It is ticked by default only when the agent has no avatar; when it has one, the
+checkbox is unticked and says it replaces the avatar the agent has now.
 
 Never in an export: ids, secrets, webhook addresses, accounts, channels, conversations, the AI key. A skill's other files
 are written beside its `SKILL.md` as stored (read one by one with `GET /v1/skills/{id}/files/{path}`, C-1099; the list is the

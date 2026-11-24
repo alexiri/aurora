@@ -444,7 +444,8 @@ and existing agents are untouched by a waiting, rejected or invalid version.
 
 The easy way to start a template: on an agent you like, use the dashboard's
 **Save as template**. It exports the agent in exactly this format — a zip
-rooted at `<id>/` with a `template.yaml` added. Unzip it into your repository
+rooted at `<id>/` with a `template.yaml` added; the agent's avatar, when it has one, is
+written as `avatar.png`. Unzip it into your repository
 as `<id>/`, adjust `template.yaml` (id, version, inputs, apps), write the
 README, and push. The CI's `check` then tells you what is missing.
 

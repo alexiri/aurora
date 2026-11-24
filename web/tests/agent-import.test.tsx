@@ -38,6 +38,7 @@ function fakeApi() {
   const calls: string[] = [];
   const io: ImportApi = {
     async setInstructions(t) { calls.push(`instructions:${t}`); },
+    async setAvatar(a) { calls.push(`avatar:${a.ext}:${a.bytes.length}`); },
     async createMemory(m) { calls.push(`memory:${m.key}`); },
     async createSkill(s) { calls.push(`skill:${s.name}`); return { id: "sk1" }; },
     async putSkillFile(id, p) { calls.push(`file:${id}/${p}`); },
@@ -48,6 +49,42 @@ function fakeApi() {
   };
   return { calls, io };
 }
+
+describe("the avatar", () => {
+  const withAvatar: AgentExport = { ...exp, avatar: { ext: "png", bytes: new Uint8Array([1, 2, 3]) } };
+
+  it("is set when ticked, before the memories, and counted in the progress", async () => {
+    const { calls, io } = fakeApi();
+    const progress: string[] = [];
+    const r = await runImport(withAvatar, { ...DEFAULT_CHOICES, instructions: false }, none, io, (d, t) => progress.push(`${d}/${t}`));
+    expect(calls.slice(0, 2)).toEqual(["avatar:png:3", "memory:likes-tea"]);
+    expect(r.done[0]).toBe("Avatar");
+    expect(progress.at(-1)).toBe("6/6");
+  });
+
+  it("is left alone when not ticked, or when the export has none", async () => {
+    const a = fakeApi();
+    await runImport(withAvatar, { ...DEFAULT_CHOICES, avatar: false }, none, a.io);
+    expect(a.calls.some((c) => c.startsWith("avatar"))).toBe(false);
+    const b = fakeApi();
+    await runImport(exp, DEFAULT_CHOICES, none, b.io);
+    expect(b.calls.some((c) => c.startsWith("avatar"))).toBe(false);
+  });
+
+  it("is a failure in the report, and the rest goes on", async () => {
+    const { calls, io } = fakeApi();
+    io.setAvatar = async () => {
+      throw new Error("That image could not be used.");
+    };
+    const r = await runImport(withAvatar, DEFAULT_CHOICES, none, io);
+    expect(r.failed[0]).toMatch(/^Avatar: /);
+    expect(calls).toContain("memory:likes-tea");
+  });
+
+  it("is named in the checklist line", () => {
+    expect(summaryLine(withAvatar)).toBe("Instructions · Avatar · 2 memories · 1 skill · 1 schedule · 1 webhook");
+  });
+});
 
 describe("runImport", () => {
   it("creates everything ticked, pauses schedules and webhooks, and returns the new secret", async () => {
@@ -284,6 +321,33 @@ describe("Export and import on the Settings page", () => {
     // The new secret, once.
     expect(await screen.findByTestId("secret-key")).toHaveTextContent("whsec_fresh");
     expect(document.body.textContent).not.toContain("TOKEN");
+  });
+
+  it("offers the avatar: ticked when the agent has none, unticked (and saying it replaces) when it has one", async () => {
+    const withAvatar: AgentExport = { ...exp, avatar: { ext: "png", bytes: new Uint8Array([1, 2, 3]) } };
+    const bytes = exportZip(withAvatar, "daneel").bytes;
+    for (const [url, ticked] of [[null, true], ["/v1/public/avatars/k1", false]] as const) {
+      serve();
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      seedMoreControls(qc, true);
+      const { unmount } = render(
+        <QueryClientProvider client={qc}>
+          <AgentExportImport agent={{ ...(agent as object), avatar_url: url } as never} />
+        </QueryClientProvider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Import into Rex…" }));
+      const dialog = await screen.findByRole("dialog", { name: "Import into Rex" });
+      fireEvent.change(within(dialog).getByLabelText("Aurora export (.zip)"), { target: { files: [file(bytes)] } });
+      expect(await within(dialog).findByTestId("import-summary")).toHaveTextContent("Instructions · Avatar · 2 memories");
+      const box = within(dialog).getByRole("checkbox", { name: /Avatar/ });
+      if (ticked) expect(box).toBeChecked();
+      else {
+        expect(box).not.toBeChecked();
+        expect(within(dialog).getByText("Replaces the avatar this agent has now.")).toBeInTheDocument();
+      }
+      unmount();
+      cleanup();
+    }
   });
 
   it("replaces instructions only when asked", async () => {
