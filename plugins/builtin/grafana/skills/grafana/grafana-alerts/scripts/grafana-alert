@@ -268,7 +268,12 @@ def apply_change(rule, a):
     old = expiry_of(rule)
     if a.expires:
         exp = (today() + dt.timedelta(days=days_of(a.expires))).isoformat()
-        if old and exp > old.isoformat():
+        if old is None:
+            # No readable expiry: setting one may be extending how long the rule lives after all.
+            if not (a.renew and (a.reason or "").strip()):
+                die("the rule has no readable expiry: setting one may extend how long it lives, "
+                    "so pass --renew with --reason")
+        elif exp > old.isoformat():
             if not a.renew:
                 die(f"--expires {a.expires} extends the expiry from {old.isoformat()} to {exp}: "
                     "pass --renew with --reason")
@@ -342,7 +347,7 @@ def main():
     a = ap.parse_args()
     need = {"create": "managed-by folder group title ds expr op threshold for receiver expires",
             "update": "uid managed-by folder", "delete": "uid managed-by folder",
-            "list": "managed-by", "expire": "managed-by"}[a.cmd]
+            "list": "managed-by", "expire": "managed-by folder"}[a.cmd]
     for f in need.split():
         v = a.uid if f == "uid" else getattr(a, f.replace("-", "_") + ("_" if f == "for" else ""))
         if v is None or (f == "uid" and not v):

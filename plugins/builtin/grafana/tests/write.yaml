@@ -165,6 +165,14 @@
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: PUT, url: "https://grafana.example.org/api/v1/provisioning/alert-rules", headers: { content-type: application/json } }
   expect: { app: grafana, no_tool: true }
+- name: "negative update_alert_rule: a whole rule group under a folder selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/folder/night-folder/rule-groups/agent-night"
+    headers: { content-type: application/json }
+    body: '{"title":"p95 over 2s","rules":[]}'
+  expect: { app: grafana, no_tool: true }
 - name: "update_alert_rule: changing one rule shows the rule, the change and the whole shape"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request:
