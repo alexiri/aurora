@@ -72,7 +72,9 @@ fn source_files(dir: &Path) -> Result<Vec<String>> {
 }
 
 /// Regular files below `at`, as archive paths under `prefix`. A symlink or special file is
-/// skipped (the archive refuses links; a skill must be a real file). Depth is bounded.
+/// skipped (the archive refuses links; a skill must be a real file), and so is anything under a
+/// `.github` folder: the package reader drops those silently, so packing them would only make a
+/// digest that never survives the round trip. Depth is bounded.
 fn collect_skill_files(at: &Path, prefix: &str, out: &mut Vec<String>) {
     fn walk(at: &Path, prefix: &str, depth: usize, out: &mut Vec<String>) {
         if depth > 8 {
@@ -84,6 +86,9 @@ fn collect_skill_files(at: &Path, prefix: &str, out: &mut Vec<String>) {
         for e in rd.filter_map(|e| e.ok()) {
             let Ok(ft) = e.file_type() else { continue };
             let name = format!("{prefix}/{}", e.file_name().to_string_lossy());
+            if aurora_core::meta_paths::has_github_segment(&name) {
+                continue;
+            }
             if ft.is_dir() {
                 walk(&e.path(), &name, depth + 1, out);
             } else if ft.is_file() {

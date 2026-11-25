@@ -270,6 +270,47 @@ fn build_keeps_the_executable_bit_of_skill_scripts_in_the_digest() {
     assert_ne!(d1, d2);
 }
 
+/// (lane review 2026-11-25) `build` does not pack `.github` files under `skills/`: the package
+/// reader drops them silently, so packing them would only change the digest without the files
+/// surviving the round trip.
+#[test]
+fn build_skips_github_files_under_skills() {
+    let d = tmp();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/fixtures/fixture-app-skills");
+    let src = d.join("fg");
+    copy_dir(&fixture, &src);
+    std::fs::create_dir_all(src.join("assets")).unwrap();
+    std::fs::write(
+        src.join("assets/icon.png"),
+        aurora_registry::builder::png_stub(64, 64),
+    )
+    .unwrap();
+    std::fs::create_dir_all(src.join("skills/skills-demo/.github/workflows")).unwrap();
+    std::fs::write(
+        src.join("skills/skills-demo/.github/workflows/ci.yml"),
+        b"on: push\n".to_vec(),
+    )
+    .unwrap();
+    let archive = d.join("gh.aurora-plugin");
+    ok(&aurora(&["plugin", "build", s(&src), "--out", s(&archive)]));
+    let bytes = std::fs::read(&archive).unwrap();
+    let p = aurora_registry::Package::read(&bytes, &aurora_registry::Limits::default()).unwrap();
+    assert!(
+        !p.files.keys().any(|f| f.contains(".github")),
+        "{:?}",
+        p.files.keys().collect::<Vec<_>>()
+    );
+    // The package without the dropped files still validates.
+    let v = ok(&aurora(&[
+        "plugin",
+        "validate",
+        s(&archive),
+        "--allow-unsigned",
+    ]));
+    assert!(v.contains("\"ok\": true"), "{v}");
+}
+
 /// (C-1130) A package in the old format validates, with the warning and no error; `docs` lists
 /// the skills of a package that has them.
 #[test]
