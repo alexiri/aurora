@@ -23,7 +23,7 @@ trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR" "$WORK/bin" "$WORK/bodies"
 export STUB_FIX="$FIX" STUB_LOG="$WORK/calls.log" STUB_BODIES="$WORK/bodies"
-unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE STUB_RECORD_RULE
+unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE STUB_RECORD_RULE STUB_MISMATCH_RULE
 
 # The stub: `aurora-agent call grafana <operation> [name=value ...] [--body @file] [--account A] --out FILE`.
 cat > "$WORK/bin/aurora-agent" <<'STUB'
@@ -47,7 +47,7 @@ case "$op" in
   get_current_org) cp "$STUB_FIX/get_current_org.json" "$out" ;;
   list_contact_points) if [ -n "${STUB_NO_CP:-}" ]; then echo '[]' > "$out"; else cp "$STUB_FIX/list_contact_points.json" "$out"; fi ;;
   list_alert_rules) cp "$STUB_FIX/list_alert_rules${STUB_RULES:+-$STUB_RULES}.json" "$out" ;;
-  get_alert_rule) if [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; elif [ -n "${STUB_RECORD_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_record.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
+  get_alert_rule) if [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; elif [ -n "${STUB_RECORD_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_record.json" "$out"; elif [ -n "${STUB_MISMATCH_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_mismatch.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
   list_alert_rule_states) cp "$STUB_FIX/list_alert_rule_states.json" "$out" ;;
   create_alert_rule|update_alert_rule)
     n=$(find "$STUB_BODIES" -type f | wc -l)
@@ -542,6 +542,13 @@ STUB_PERSON_RULE=1 refuse "not managed by 'night'" delete cpu-watch --managed-by
 # extra receiver setting): none of it is sent back
 STUB_RECORD_RULE=1 refuse "a recording rule" update tripwire-p95 --managed-by night \
   --folder night-folder
+
+# the expiry is read from the `expires` label only; the annotation is a copy the script writes the
+# same, so a rule whose two disagree was changed outside the script and is refused
+STUB_MISMATCH_RULE=1 refuse "the expires label (2026-11-20) and the expires annotation (2027-01-01) disagree" \
+  update tripwire-p95 --managed-by night --folder night-folder
+STUB_RULES=mismatch refuse "the expires label (2026-11-20) and the expires annotation (2027-01-01) disagree" \
+  expire --managed-by night --folder night-folder
 
 # update sends the whole changed rule; the read-only fields are stripped
 reset

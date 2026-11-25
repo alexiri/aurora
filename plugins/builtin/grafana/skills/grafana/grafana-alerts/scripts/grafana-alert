@@ -246,12 +246,26 @@ def check_shape(rule):
             "notification policy matches")
 
 
+def expiry_of(rule):
+    """The expiry, read from the `expires` label only; the annotation is a copy for people.
+
+    The script writes both the same, so a rule whose label and annotation disagree was changed
+    outside it and the label may no longer be the truth; such a rule is refused.
+    """
+    lab = (rule.get("labels") or {}).get("expires")
+    ann = (rule.get("annotations") or {}).get("expires")
+    if lab and ann and lab != ann:
+        die(f"the expires label ({clean(lab)}) and the expires annotation ({clean(ann)}) disagree: "
+            "the script writes both, so the rule was changed outside it; fix or delete the rule in "
+            "Grafana")
+    return as_date(lab) if lab else None
+
+
 def apply_change(rule, a):
     """The rule's body with the asked changes; refuses an expiry extension without --renew."""
     check_shape(rule)
     body = {k: v for k, v in rule.items() if k not in STRIP}
-    old = as_date((rule.get("labels") or {}).get("expires")
-                  or (rule.get("annotations") or {}).get("expires"))
+    old = expiry_of(rule)
     if a.expires:
         exp = (today() + dt.timedelta(days=days_of(a.expires))).isoformat()
         if old and exp > old.isoformat():
@@ -294,8 +308,7 @@ def cmd_delete(a):
 def cmd_expire(a):
     rules, now, due = mine(a.managed_by, a.folder), today(), []
     for r in rules:
-        d = as_date((r.get("labels") or {}).get("expires")
-                    or (r.get("annotations") or {}).get("expires"))
+        d = expiry_of(r)
         if d and d < now:
             due.append(r)
     if not due:

@@ -1,0 +1,10 @@
+[
+  {"id": 11, "uid": "tripwire-p95", "title": "p95 over 2s", "folderUID": "night-folder", "ruleGroup": "agent-night", "for": "5m",
+   "labels": {"managed_by": "night", "expires": "2026-11-20", "service": "api"},
+   "annotations": {"summary": "p95 over 2s", "expires": "2027-01-01"}},
+  {"id": 12, "uid": "tripwire-5xx", "title": "5xx rate over 1%", "folderUID": "night-folder", "ruleGroup": "agent-night", "for": "5m",
+   "labels": {"managed_by": "night", "expires": "2027-12-20", "service": "api"},
+   "annotations": {"summary": "5xx rate over 1%", "expires": "2027-12-20"}},
+  {"id": 13, "uid": "cpu-watch", "title": "CPU watch", "folderUID": "ops-folder", "ruleGroup": "ops", "for": "10m",
+   "labels": {"team": "platform"}, "annotations": {"summary": "CPU watch"}}
+]
