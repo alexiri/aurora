@@ -766,11 +766,11 @@ mod tests {
         let nested_github_id = pack::object_id(Kind::Tree, &nested_github);
         let workflows = tree(&[("100644", "ci.yml", b)]);
         let workflows_id = pack::object_id(Kind::Tree, &workflows);
-        let github = tree(&[
+        let dot_github = tree(&[
             ("40000", "workflows", workflows_id),
             ("40000", "skills", nested_github_id),
         ]);
-        let github_id = pack::object_id(Kind::Tree, &github);
+        let github_id = pack::object_id(Kind::Tree, &dot_github);
         let alpha = tree(&[("100644", "SKILL.md", b)]);
         let alpha_id = pack::object_id(Kind::Tree, &alpha);
         let root = tree(&[
@@ -783,7 +783,7 @@ mod tests {
         let p = build(&[
             E::Plain(Kind::Commit, commit),
             E::Plain(Kind::Tree, root),
-            E::Plain(Kind::Tree, github),
+            E::Plain(Kind::Tree, dot_github),
             E::Plain(Kind::Tree, workflows),
             E::Plain(Kind::Tree, nested_github),
             E::Plain(Kind::Tree, alpha),
