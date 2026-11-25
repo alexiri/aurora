@@ -515,6 +515,13 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
     weight: "important",
   },
   "workspace_access.remove": { sentence: (actor, t) => `${actor} removed ${t ?? "a person"} from the workspace`, weight: "important" },
+  "workspace_access.personal_owner": {
+    // (FIX-234 review 4) The system re-bound the person as owner of their personal workspace
+    // when their membership returned (`metadata.from`: the previous role or `none`).
+    sentence: (actor, t, m) =>
+      `${actor} made ${t ?? "a person"} the owner of their personal workspace (previous role: ${typeof m?.from === "string" ? m.from : "none"})`,
+    weight: "important",
+  },
   "workspace_access.suspend": { sentence: (actor, t) => `${actor} suspended ${t ?? "a person"}`, weight: "important" },
   "workspace_access.restore": { sentence: (actor, t) => `${actor} restored ${t ?? "a person"}`, weight: "routine" },
   "workspace.access.grant": {
