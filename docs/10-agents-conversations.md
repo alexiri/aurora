@@ -995,7 +995,9 @@ trailing `.git`, `/-/tree/<ref>/<path>` and `/tree|blob/<ref>/<path>` page forms
 and folder fill `ref` and `path` when those are absent; `http:`, `git:`, ssh, credentials in the address, a
 query or a fragment are refused, 422 `library_url_invalid` with a `reason`). `ref` (branch, tag or commit; default the
 repository's default branch) matches the ref grammar; `path` is the directory that holds the skill directories
-(default the root; at most 4 segments). **A read before saving:** creation reads the repository (discovery,
+(default the root; at most 4 segments). A `.github` folder anywhere in the repository is never a skill
+directory: it is not listed, not read and not counted, and a repository that holds nothing else still
+reports "no skills found". **A read before saving:** creation reads the repository (discovery,
 resolve the ref, list the folder) and fails with a fixed reason if it cannot (422 `library_unreachable`:
 "The repository needs an access token", "The access token was refused", "The repository was not found, or the
 token cannot read it", "The branch or tag was not found", the redirect, size, timeout and address reasons of C-1125);

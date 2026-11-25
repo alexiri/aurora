@@ -176,6 +176,11 @@ async fn read_dir_at(
             if e.kind != "blob" {
                 continue;
             }
+            // A `.github` folder is a repository's own metadata, never template content: its
+            // files are not fetched and not counted (owner request, 2026-11-25).
+            if aurora_core::meta_paths::has_github_segment(&e.path) {
+                continue;
+            }
             // The file cap is enforced before the next blob is fetched: one past the cap
             // proves the tree too large, and no further blob is read (SEC-146).
             if files.len() > limits::TEMPLATE_FILES_MAX {

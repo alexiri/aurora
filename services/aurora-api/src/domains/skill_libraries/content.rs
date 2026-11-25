@@ -314,6 +314,12 @@ pub fn assemble_with(path: &str, entries: &[TreeEntry], file_max: usize) -> Vec<
         if dir.is_empty() {
             continue;
         }
+        // A `.github` folder is never content, at any depth: not a skill directory, not listed,
+        // not counted (owner request, 2026-11-25; the git walk skips it too — this also covers
+        // tree sources that arrive already listed).
+        if aurora_core::meta_paths::has_github_segment(rel) {
+            continue;
+        }
         let is_file = e.kind == "blob";
         let c = dirs.entry(dir.to_owned()).or_insert_with(|| Candidate {
             dir: dir.to_owned(),
@@ -690,6 +696,47 @@ mod tests {
             repo.blob_requests.load(std::sync::atomic::Ordering::SeqCst),
             1
         );
+    }
+
+    /// A `.github` folder anywhere in the tree is not a skill directory: not listed, not a
+    /// problem, not counted (owner request, 2026-11-25).
+    #[test]
+    fn a_github_folder_is_not_a_skill() {
+        let md = |d: &str| format!("---\ndescription: {d}\n---\nBody\n").into_bytes();
+        let entries = vec![
+            TreeEntry {
+                path: "lib/.github/workflows/ci.yml".into(),
+                kind: "blob".into(),
+                mode: "100644".into(),
+                blob: "b1".into(),
+                size: Some(10),
+            },
+            TreeEntry {
+                path: "lib/.github/skills/x/SKILL.md".into(),
+                kind: "blob".into(),
+                mode: "100644".into(),
+                blob: "b2".into(),
+                size: Some(10),
+            },
+            TreeEntry {
+                path: "lib/.github".into(),
+                kind: "tree".into(),
+                mode: "40000".into(),
+                blob: "t1".into(),
+                size: None,
+            },
+            TreeEntry {
+                path: "lib/alpha/SKILL.md".into(),
+                kind: "blob".into(),
+                mode: "100644".into(),
+                blob: "b3".into(),
+                size: Some(md("Alpha").len() as u64),
+            },
+        ];
+        let cands = assemble("lib", &entries);
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].dir, "alpha");
+        assert!(cands[0].problem().is_none());
     }
 
     /// FIX-096: nested aliases multiply (the parser bounds jumps, not the product); they are

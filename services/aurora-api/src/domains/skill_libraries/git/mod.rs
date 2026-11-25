@@ -440,6 +440,11 @@ fn walk(
             if kind == "tree" && depth + 1 > limits::LIBRARY_TREE_DEPTH_MAX {
                 continue;
             }
+            // A repository's `.github` folder (workflows, issue templates) is never content: at
+            // any depth it is not listed, not read and not counted (aurora_core::meta_paths).
+            if e.name == ".github" {
+                continue;
+            }
             path_bytes = path_bytes.saturating_add(full.len());
             if kind == "tree" {
                 path_bytes = path_bytes.saturating_add(full.len());
@@ -748,6 +753,46 @@ mod tests {
             out.iter()
                 .all(|e| e.path.split('/').count() <= limits::LIBRARY_TREE_DEPTH_MAX)
         );
+    }
+
+    /// A repository's `.github` folder is never content: not listed at any depth, next to real
+    /// skills or as the only content (owner request, 2026-11-25).
+    #[test]
+    fn a_github_folder_is_not_listed() {
+        let b = pack::object_id(Kind::Blob, b"x");
+        let inner = tree(&[("100644", "SKILL.md", b)]);
+        let inner_id = pack::object_id(Kind::Tree, &inner);
+        let nested_github = tree(&[("40000", "skills", inner_id)]);
+        let nested_github_id = pack::object_id(Kind::Tree, &nested_github);
+        let workflows = tree(&[("100644", "ci.yml", b)]);
+        let workflows_id = pack::object_id(Kind::Tree, &workflows);
+        let github = tree(&[
+            ("40000", "workflows", workflows_id),
+            ("40000", "skills", nested_github_id),
+        ]);
+        let github_id = pack::object_id(Kind::Tree, &github);
+        let alpha = tree(&[("100644", "SKILL.md", b)]);
+        let alpha_id = pack::object_id(Kind::Tree, &alpha);
+        let root = tree(&[
+            ("40000", ".github", github_id),
+            ("40000", "alpha", alpha_id),
+        ]);
+        let root_id = pack::object_id(Kind::Tree, &root);
+        let commit = format!("tree {}\nauthor x\n\nm\n", pack::hex(&root_id)).into_bytes();
+        let commit_id = pack::object_id(Kind::Commit, &commit);
+        let p = build(&[
+            E::Plain(Kind::Commit, commit),
+            E::Plain(Kind::Tree, root),
+            E::Plain(Kind::Tree, github),
+            E::Plain(Kind::Tree, workflows),
+            E::Plain(Kind::Tree, nested_github),
+            E::Plain(Kind::Tree, alpha),
+            E::Plain(Kind::Tree, inner),
+        ]);
+        let objects = pack::parse(&p, pack::Limits::standard()).unwrap();
+        let out = walk(&objects, &commit_id, "").unwrap();
+        let paths: Vec<&str> = out.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["alpha", "alpha/SKILL.md"]);
     }
 
     /// (SEC-148) The total of the listed paths is capped (wide and not deep).

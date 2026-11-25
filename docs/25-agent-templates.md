@@ -79,6 +79,9 @@ Rules:
   `template.yaml`.** Everything else — the repository README, `docs/`, CI
   files — is ignored. At most 100 templates per source
   (`TEMPLATES_PER_SOURCE_MAX`).
+- **A `.github` folder is never template content.** At any depth — in the
+  source repository or inside a template directory — Aurora skips it:
+  not listed, not counted against the template limits, never an error.
 - **No zip is ever kept in the repository.** Packages are CI artifacts,
   published at the URL the manifest names.
 - Directory names are template ids: lowercase words joined by dashes

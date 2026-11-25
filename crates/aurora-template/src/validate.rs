@@ -110,6 +110,12 @@ pub(crate) fn read_files(
     files: &[TreeFile],
 ) -> Result<TemplateContent, Vec<TemplateProblem>> {
     let mut problems: Vec<TemplateProblem> = Vec::new();
+    // A `.github` folder is never content, at any depth (aurora_core::meta_paths): dropped before
+    // anything is counted or classified, in either read form.
+    let files: Vec<&TreeFile> = files
+        .iter()
+        .filter(|f| !aurora_core::meta_paths::has_github_segment(&f.path))
+        .collect();
     if !meta::id_ok(root_name) {
         problems.push(TemplateProblem::new(
             ProblemCode::TemplateDirName,
@@ -120,7 +126,7 @@ pub(crate) fn read_files(
     let mut seen = BTreeSet::new();
     let mut total = 0usize;
     let mut structural = Vec::new();
-    for f in files {
+    for f in &files {
         let rest = f
             .path
             .strip_prefix(root_name)
@@ -275,7 +281,7 @@ pub(crate) fn read_files(
     let mut helpers_raw: Vec<(String, &TreeFile)> = Vec::new();
     let mut automations_raw: Vec<(String, &TreeFile)> = Vec::new();
     let mut avatars: Vec<(String, &TreeFile)> = Vec::new();
-    for f in files {
+    for f in &files {
         let rel = &f.path[root_name.len() + 1..];
         match rel {
             "template.yaml" | "agent.yaml" | "instructions.md" | "README.md" | "CHANGELOG.md" => {}

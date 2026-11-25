@@ -134,6 +134,11 @@ pub fn read_archive(bytes: &[u8]) -> Result<crate::model::TemplateContent, Vec<T
                 ));
             }
         }
+        // A `.github` folder is never content, at any depth: not inflated, not listed, not
+        // counted toward the unpacked or file caps (aurora_core::meta_paths).
+        if aurora_core::meta_paths::has_github_segment(name) {
+            continue;
+        }
         // Names and modes before anything is inflated (SEC-146).
         if let Some(p) = rel_path_problem(name) {
             problems.push(p);
@@ -373,7 +378,7 @@ mod tests {
     use super::*;
     use crate::hash::content_sha256;
     use crate::model::TemplateContent;
-    use crate::test_fixtures::{TEMPLATE_YAML, sample_files};
+    use crate::test_fixtures::{TEMPLATE_YAML, file, sample_files};
     use flate2::Compression;
     use flate2::write::DeflateEncoder;
     use std::io::Write;
@@ -521,6 +526,41 @@ mod tests {
             ],
             None,
         )
+    }
+
+    /// A `.github` folder in the archive is not content, at any depth: not a problem, not listed,
+    /// not counted (owner request, 2026-11-25).
+    #[test]
+    fn a_github_folder_is_not_content() {
+        let mut files = sample_files();
+        files.push(file("service-monitor/.github/workflows/ci.yml", "on: push"));
+        files.push(file("service-monitor/skills/what-is-on/.github/n.txt", "n"));
+        let from_tree = crate::read_tree("service-monitor", &files).unwrap();
+        assert_eq!(from_tree.skills.len(), 1);
+        assert_eq!(from_tree.skills[0].files.len(), 1);
+        // The zip form agrees (a stored zip like the web export's, with `.github` entries).
+        let bytes = stored_zip(
+            &[
+                ("t/README.md", b"# T\n".as_slice(), 0o100644),
+                (
+                    "t/template.yaml",
+                    TEMPLATE_YAML.replace("service-monitor", "t").as_bytes(),
+                    0o100644,
+                ),
+                ("t/agent.yaml", b"format: 1\nname: T\n".as_slice(), 0o100644),
+                ("t/instructions.md", b"Do the thing.\n".as_slice(), 0o100644),
+                (
+                    "t/.github/workflows/ci.yml",
+                    b"on: push".as_slice(),
+                    0o100644,
+                ),
+                ("t/skills/x/.github/a.txt", b"n".as_slice(), 0o100644),
+            ],
+            Some(0),
+        );
+        let c = read_archive(&bytes).unwrap();
+        assert_eq!(c.meta.id, "t");
+        assert!(c.skills.is_empty());
     }
 
     #[test]
