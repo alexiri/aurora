@@ -6,7 +6,6 @@ import { AgentAvatar } from "@/components/agent-avatar";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ErrorNotice } from "@/components/ui/notice";
 import { StatusDot } from "@/components/ui/status-dot";
 import { FreezeControl } from "@/components/freeze/freeze-panel";
 import { useFreezeAgent, useFreezeAuthority } from "@/lib/api/freeze";

@@ -22,7 +22,7 @@ const now = "2026-11-10T10:00:00Z";
 const mkOrg = (id: string, slug: string, name: string, role = "member") => ({
   id, slug, name, my_role: role, app_posture: "open", external_id: "x", settings: {}, created_at: now, role,
 });
-const mkWs = (id: string, org: string, slug: string, name: string, role = "member", personal_of: { id: string; name: string } | null = null) => ({
+const mkWs = (id: string, org: string, slug: string, name: string, role: string | null = "member", personal_of: { id: string; name: string } | null = null) => ({
   id, org_id: org, slug, name, my_role: role, memory_language: "en", timezone: "UTC", created_at: now, updated_at: now, personal_of,
 });
 

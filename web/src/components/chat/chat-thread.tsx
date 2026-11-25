@@ -156,7 +156,10 @@ export function ChatThread({
     ...(conversation ? automationNotes(conversation) : []),
     // (chat-1) "Archived 19 Nov 2026 · read only"
     ...(conversation?.archived_at ? [`Archived ${DATE.format(new Date(conversation.archived_at))}`, "read only"] : archived ? ["Archived", "read only"] : []),
-    ...(retentionDays ? [`Deleted after ${retentionDays} days without activity`] : []),
+    // (FIX-235) The retention note is the one segment that may drop at xl: with the D-479 line the
+    // meta no longer fits the 64 px header pinned by agent-page-p5, and this segment is the least
+    // of them (not asserted in agent-header-widths' META_CASES).
+    ...(retentionDays ? [{ text: `Deleted after ${retentionDays} days without activity`, className: "xl:hidden" }] : []),
   ];
 
   return (

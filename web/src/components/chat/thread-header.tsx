@@ -27,8 +27,9 @@ export function ThreadHeader({
   visibility?: string;
   /** (FIX-235, D-479) The note's icon: the lock for direct chats, the people icon for the others. */
   visibilityIcon?: "lock" | "people";
-  /** The other meta segments (kind, archived date, retention). */
-  segments: string[];
+  /** The other meta segments (kind, archived date, retention). A segment may carry a class —
+   * the retention one hides at xl to keep the 64 px header (agent-page-p5 pins that height). */
+  segments: (string | { text: string; className?: string })[];
   /** `true` Live, `false` Reconnecting…, `null` no pill (loading or failed). */
   live: boolean | null;
   onBack?: () => void;
@@ -60,25 +61,37 @@ export function ThreadHeader({
           {onBack ? <p className="text-xs text-muted md:hidden">Conversations</p> : null}
         </div>
         {hasMeta ? (
+          // (FIX-235) Flex below xl (gap-separated items, full-width row). At xl the meta shares
+          // the 64 px header with the title, so it flows as inline text instead: an atomic
+          // visibility item would wrap to two rows of its own and push the segments to a third,
+          // overflowing the header (agent-page-p5 pins its height). Whitespace-only text nodes
+          // give the inline spacing; flex layout ignores them (the gap does that job below xl).
           <p
             data-testid="thread-meta"
-            className="order-2 -mx-3 mt-2 flex grow basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 border-y border-line px-3 py-2 text-xs text-muted md:-mx-5 md:-mt-px md:px-5 xl:m-0 xl:w-auto xl:border-0 xl:p-0">
+            className="order-2 -mx-3 mt-2 flex grow basis-full flex-wrap items-center gap-x-1.5 gap-y-0.5 border-y border-line px-3 py-2 text-xs text-muted md:-mx-5 md:-mt-px md:px-5 xl:m-0 xl:block xl:w-auto xl:border-0 xl:p-0">
             {visibility ? (
-              <span className="inline-flex min-w-0 items-start gap-1">
+              <span className="inline-flex min-w-0 items-start gap-1 xl:contents">
                 {visibilityIcon === "people" ? (
-                  <UsersIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0" />
+                  // (FIX-235) At xl the meta is inline text; preflight makes svg a block, which
+                  // would give the icon a line of its own, so it goes back to inline there.
+                  <UsersIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0 xl:inline" />
                 ) : (
-                  <LockIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0" />
+                  <LockIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0 xl:inline" />
                 )}
+                {" "}
                 <span>{visibility}</span>
               </span>
             ) : null}
-            {segments.map((seg, i) => (
-              <span key={seg}>
-                {visibility || i > 0 ? <span aria-hidden="true">· </span> : null}
-                {seg}
-              </span>
-            ))}
+            {visibility ? " " : null}
+            {segments.map((seg, i) => {
+              const text = typeof seg === "string" ? seg : seg.text;
+              return (
+                <span key={text} className={typeof seg === "string" ? undefined : seg.className}>
+                  {visibility || i > 0 ? <span aria-hidden="true">· </span> : null}
+                  {text}
+                </span>
+              );
+            })}
           </p>
         ) : null}
       </div>

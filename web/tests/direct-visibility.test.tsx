@@ -10,7 +10,7 @@ vi.mock("@/lib/chat/use-transcript", () => ({
 }));
 
 const conv = (id: string, kind: string, over: Record<string, unknown> = {}) => ({
-  id, agent_id: "a1", kind, external_ref: id, title: null, direct_user_id: null, direct_user: null, origin_conversation_id: null,
+  id, agent_id: "a1", kind, external_ref: id, title: null, title_source: "auto", direct_user_id: null, direct_user: null, origin_conversation_id: null,
   last_seq: 0, app_turn_streak: 0, app_turn_capped: false, active_turn: null, last_activity_at: null,
   created_at: "2026-01-01T00:00:00Z", ...over,
 });
