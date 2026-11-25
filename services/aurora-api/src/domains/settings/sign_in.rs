@@ -545,6 +545,7 @@ pub async fn check_submitted(
     let Some(list) = values.get(PROVIDERS_KEY).and_then(Value::as_array) else {
         return Ok(());
     };
+    let mut fields = check_personal_targets(state, values).await?;
     let snap = state.settings.snapshot();
     let stored: Vec<Value> = snap
         .stored
@@ -552,7 +553,6 @@ pub async fn check_submitted(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let mut fields = Vec::new();
     for e in list {
         let id = id_of(e);
         let issuer = str_of(e, "issuer");
@@ -590,6 +590,88 @@ pub async fn check_submitted(
 }
 
 // ------------------------------------------------------------------------------ provider test
+
+/// `check_submitted` is the save path's state-aware hook: the discovery checks above, and
+/// (D-486) the rule that no role mapping ever targets a personal workspace. A mapping saved
+/// before the rule is skipped at sign-in, so the save is where it is refused: the dashboard PUT,
+/// the import and the CLI all come through here.
+async fn check_personal_targets(
+    state: &AppState,
+    values: &Map<String, Value>,
+) -> Result<Vec<Value>, ApiError> {
+    let Some(list) = values.get(PROVIDERS_KEY).and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    let mut fields = Vec::new();
+    let mut checked: BTreeMap<(String, String), Option<String>> = BTreeMap::new();
+    for e in list {
+        let id = id_of(e).to_owned();
+        let Some(mappings) = e.get("role_mappings").and_then(Value::as_array) else {
+            continue;
+        };
+        for (j, m) in mappings.iter().enumerate() {
+            let Some(org_slug) = m
+                .get("org")
+                .and_then(|o| o.get("slug"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(workspaces) = m.get("workspaces").and_then(Value::as_array) else {
+                continue;
+            };
+            for (k, w) in workspaces.iter().enumerate() {
+                let Some(ws_slug) = w.get("slug").and_then(Value::as_str) else {
+                    continue;
+                };
+                let name = personal_workspace_name(state, &mut checked, org_slug, ws_slug).await?;
+                if let Some(name) = name {
+                    fields.push(field(
+                        format!("/{PROVIDERS_KEY}/{id}/role_mappings/{j}/workspaces/{k}"),
+                        "role_mapping_personal_workspace",
+                        format!(
+                            "`{}` is a personal workspace: nobody but its person may hold a role \
+                             there, so a role mapping cannot target it.",
+                            name
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(fields)
+}
+
+/// The display name of the personal workspace at `(org_slug, ws_slug)`, or `None` when it is not
+/// one (or does not exist). Cached per save. A DB error here fails the save: the rule must not
+/// silently pass because a read failed.
+async fn personal_workspace_name(
+    state: &AppState,
+    checked: &mut BTreeMap<(String, String), Option<String>>,
+    org_slug: &str,
+    ws_slug: &str,
+) -> Result<Option<String>, ApiError> {
+    let key = (org_slug.to_owned(), ws_slug.to_owned());
+    if let Some(hit) = checked.get(&key) {
+        return Ok(hit.clone());
+    }
+    // The sticky `personal` marker, not the owner id (SEC-79, FIX-097): the same
+    // definition `aurora_db::repo::placement::is_personal` uses.
+    let hit: Option<String> = sqlx::query_scalar(
+        "SELECT w.name FROM workspaces w \
+         JOIN organizations o ON o.id = w.org_id \
+         WHERE o.slug = $1 AND w.slug = $2 \
+           AND (w.personal OR w.personal_owner_user_id IS NOT NULL) \
+         LIMIT 1",
+    )
+    .bind(org_slug)
+    .bind(ws_slug)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| ApiError::internal(format!("checking role mapping targets: {e}")))?;
+    checked.insert(key, hit.clone());
+    Ok(hit)
+}
 
 /// `POST /v1/admin/settings/sign_in/provider-test` body (C-780).
 #[derive(Deserialize, ToSchema)]

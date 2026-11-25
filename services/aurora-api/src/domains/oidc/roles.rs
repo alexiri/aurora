@@ -12,7 +12,7 @@ use crate::domains::scim::gates;
 use aurora_config::OidcProvider;
 use aurora_db::repo::idp_roles::{self as db, RoleRow, org_rank, ws_rank};
 use aurora_db::repo::users::UserRow;
-use aurora_db::repo::{members, notify_auth_revoked, orgs, users, workspaces};
+use aurora_db::repo::{members, notify_auth_revoked, orgs, placement, users, workspaces};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Mutex, OnceLock};
@@ -359,6 +359,19 @@ pub async fn sync(
             continue;
         }
         let ws = ensure_ws(tx, state, org, user.id, w).await?;
+        // (FIX-244) A personal workspace never takes a sign-in role mapping: the mapping
+        // must not hand the owner's workspace to other claim holders, and the owner must
+        // not be overridden by a claim.
+        if placement::is_personal(&mut *tx, ws).await? {
+            tracing::warn!(
+                org = %org,
+                ws = %ws,
+                provider = %p.id,
+                value = %value,
+                "role mapping targets a personal workspace; skipped"
+            );
+            continue;
+        }
         ws_ids.insert((o.clone(), w.clone()), ws);
         apply_ws(tx, p, user.id, org, ws, role, value).await?;
     }
@@ -368,6 +381,18 @@ pub async fn sync(
         if d.workspaces
             .contains_key(&(r.org_slug.clone(), r.slug.clone()))
         {
+            continue;
+        }
+        // (FIX-244) The personal workspace's owner binding is never claim-sourced, but a
+        // mapping that predated this rule could have left one behind: never unbind or
+        // lower it, whatever the claims say.
+        if placement::is_personal(&mut *tx, r.workspace_id).await? {
+            tracing::warn!(
+                org = %r.org_id,
+                ws = %r.workspace_id,
+                provider = %p.id,
+                "sign-in would remove or lower a role in a personal workspace; skipped"
+            );
             continue;
         }
         let Some(row) = db::ws_row(&mut *tx, r.workspace_id, user.id).await? else {
