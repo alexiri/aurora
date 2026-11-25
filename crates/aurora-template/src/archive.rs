@@ -134,18 +134,20 @@ pub fn read_archive(bytes: &[u8]) -> Result<crate::model::TemplateContent, Vec<T
                 ));
             }
         }
-        // A `.github` folder is never content, at any depth: not inflated, not listed, not
-        // counted toward the unpacked or file caps (aurora_core::meta_paths).
-        if aurora_core::meta_paths::has_github_segment(name) {
-            continue;
-        }
-        // Names and modes before anything is inflated (SEC-146).
+        // Names and modes before anything is inflated (SEC-146); the `.github` skip runs after
+        // these checks (as the package reader's does, `package.rs`), so a `.github` name that is
+        // also a bad path (`../x`, another root) is refused instead of silently dropped.
         if let Some(p) = rel_path_problem(name) {
             problems.push(p);
             continue;
         }
         if let Some(p) = root_problem(name, &mut root) {
             problems.push(p);
+            continue;
+        }
+        // A `.github` folder is never content, at any depth: not inflated, not listed, not
+        // counted toward the unpacked or file caps (aurora_core::meta_paths).
+        if aurora_core::meta_paths::has_github_segment(name) {
             continue;
         }
         // The declared sizes are checked before inflation: a 100× ratio is refused (no floor),
@@ -528,39 +530,47 @@ mod tests {
         )
     }
 
-    /// A `.github` folder in the archive is not content, at any depth: not a problem, not listed,
-    /// not counted (owner request, 2026-11-25).
+    /// A `.github` entry that also breaks the path grammar is refused, not silently skipped: the
+    /// skip runs after the path and root checks, as the package reader's does.
     #[test]
-    fn a_github_folder_is_not_content() {
-        let mut files = sample_files();
-        files.push(file("service-monitor/.github/workflows/ci.yml", "on: push"));
-        files.push(file("service-monitor/skills/what-is-on/.github/n.txt", "n"));
-        let from_tree = crate::read_tree("service-monitor", &files).unwrap();
-        assert_eq!(from_tree.skills.len(), 1);
-        assert_eq!(from_tree.skills[0].files.len(), 1);
-        // The zip form agrees (a stored zip like the web export's, with `.github` entries).
-        let bytes = stored_zip(
-            &[
-                ("t/README.md", b"# T\n".as_slice(), 0o100644),
-                (
-                    "t/template.yaml",
-                    TEMPLATE_YAML.replace("service-monitor", "t").as_bytes(),
-                    0o100644,
-                ),
-                ("t/agent.yaml", b"format: 1\nname: T\n".as_slice(), 0o100644),
-                ("t/instructions.md", b"Do the thing.\n".as_slice(), 0o100644),
-                (
-                    "t/.github/workflows/ci.yml",
-                    b"on: push".as_slice(),
-                    0o100644,
-                ),
-                ("t/skills/x/.github/a.txt", b"n".as_slice(), 0o100644),
-            ],
-            Some(0),
+    fn a_github_entry_with_a_bad_path_is_refused() {
+        for name in ["../.github/x", "/abs/.github/x", "otherroot/.github/x"] {
+            let files = vec![tree_file(name, b"x", 0o100644)];
+            assert!(
+                crate::read_tree("service-monitor", &files).is_err(),
+                "{name} was accepted"
+            );
+        }
+        // In the zip form `otherroot` is only a problem once an entry has established the one
+        // root directory, so a valid entry goes first.
+        let yaml = TEMPLATE_YAML.replace("service-monitor", "t");
+        let mut entries: Vec<(&str, &[u8], u32)> = vec![
+            ("t/README.md", b"# T\n".as_slice(), 0o100644),
+            ("t/template.yaml", yaml.as_bytes(), 0o100644),
+            ("t/agent.yaml", b"format: 1\nname: T\n".as_slice(), 0o100644),
+            ("t/instructions.md", b"Do the thing.\n".as_slice(), 0o100644),
+        ];
+        entries.push(("../.github/x", b"x".as_slice(), 0o100644));
+        entries.push(("/abs/.github/x", b"x".as_slice(), 0o100644));
+        entries.push(("otherroot/.github/x", b"x".as_slice(), 0o100644));
+        let bytes = stored_zip(&entries, Some(0));
+        assert!(read_archive(&bytes).is_err());
+    }
+
+    /// A plain `.github` entry is not silently dropped either: the path grammar refuses the
+    /// hidden segment it is, so the packer is told instead of the entry vanishing.
+    #[test]
+    fn a_github_folder_is_refused_as_a_hidden_segment() {
+        let files = vec![tree_file(
+            "service-monitor/.github/workflows/ci.yml",
+            b"on: push",
+            0o100644,
+        )];
+        let errs = crate::read_tree("service-monitor", &files).unwrap_err();
+        assert!(
+            errs.iter().any(|p| p.message.contains("hidden segment")),
+            "{errs:?}"
         );
-        let c = read_archive(&bytes).unwrap();
-        assert_eq!(c.meta.id, "t");
-        assert!(c.skills.is_empty());
     }
 
     #[test]
