@@ -19,6 +19,7 @@ const TYPES = [
   "self_grant",
   "workspace_lifecycle",
   "org_lifecycle",
+  "default_store",
 ];
 const URL_PATTERN = /^\/o\/[A-Za-z0-9._~%/-]+(\?[A-Za-z0-9._~%=&-]*)?$/;
 
@@ -107,6 +108,17 @@ function build(raw) {
           : "Aurora — your workspace changed",
       body: "Open Aurora for details.",
       tag: org ? "aurora-org-lifecycle" : "aurora-workspace-lifecycle",
+      url: URL_PATTERN.test(url) ? url : "/",
+    };
+  }
+  if (data.type === "default_store") {
+    // (FIX-244, D-486) Fixed text; the sentence only when the device turned names on. Never any
+    // secret, endpoint or path.
+    const item = text(data.title, 80);
+    return {
+      title: item ? "Aurora — " + item : "Aurora — the default secret store changed",
+      body: "Open Aurora for details.",
+      tag: "aurora-default-store",
       url: URL_PATTERN.test(url) ? url : "/",
     };
   }

@@ -168,6 +168,17 @@ describe("push service worker", () => {
     expect(stray.options.data.url).toBe("/");
   });
 
+  it("default_store: fixed text, the sentence only when carried (FIX-244, D-486)", async () => {
+    const plain = await push(JSON.stringify({ v: 1, type: "default_store", url: "/" }));
+    expect(plain.title).toBe("Aurora — the default secret store changed");
+    expect(plain.options.body).toBe("Open Aurora for details.");
+    expect(plain.options.tag).toBe("aurora-default-store");
+    const named = await push(
+      JSON.stringify({ v: 1, type: "default_store", url: "/", title: "The default secret store changed" }),
+    );
+    expect(named.title).toBe("Aurora — The default secret store changed");
+  });
+
   it("never shows a field outside the payload contract", async () => {
     const s = await push(
       JSON.stringify({ v: 1, type: "approval.pending", approval_id: "ap-5", title: "SECRET-CANARY", body: "SECRET-CANARY", url: "/o/a/w/b/approvals" }),

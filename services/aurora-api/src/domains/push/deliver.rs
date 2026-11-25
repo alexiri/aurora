@@ -84,6 +84,8 @@ pub enum Kind {
     WorkspaceLifecycle,
     /// (FIX-244, D-486) An organization was deleted, frozen or unfrozen; its owners are told.
     OrgLifecycle,
+    /// (FIX-244, D-486) The instance's default secret store changed; the orgs' owners are told.
+    DefaultStore,
 }
 
 impl Kind {
@@ -102,6 +104,7 @@ impl Kind {
             Self::EmergencyAccess => "emergency_access",
             Self::WorkspaceLifecycle => "workspace_lifecycle",
             Self::OrgLifecycle => "org_lifecycle",
+            Self::DefaultStore => "default_store",
         }
     }
 }

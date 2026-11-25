@@ -357,3 +357,75 @@ async fn scoped(state: &AppState, target: &Target, actor: &AuditActor, action: A
         n.send(state).await;
     }
 }
+
+/// The store's name as the dashboard shows it: the id, the built-in one by its plain name. The
+/// ids are lowercase letters, digits, `_` or `-` — never a secret, an endpoint or a path.
+fn store_name(id: &str) -> String {
+    if id.is_empty() || id == "inline" {
+        "the built-in store".to_owned()
+    } else {
+        name(id)
+    }
+}
+
+/// (FIX-244, D-486) The default secret store changed — an instance-wide setting (there is no
+/// per-organization default), so every organization's effective owners are told who changed it,
+/// when, and from which store to which store. Called after the commit; no secret value, endpoint
+/// or path appears; a failing send is logged and never fails the save.
+pub async fn default_store_changed(state: &AppState, actor: &AuditActor, from: &str, to: &str) {
+    let rows: Vec<(Uuid, String, Option<String>)> = match sqlx::query_as(
+        "SELECT e.user_id, u.email::text, u.timezone \
+         FROM effective_org_members e \
+         JOIN users u ON u.id = e.user_id AND u.disabled_at IS NULL \
+         WHERE e.role = 'owner' AND e.user_id IS DISTINCT FROM $1 \
+         ORDER BY u.display_name, e.user_id",
+    )
+    .bind(actor.id)
+    .fetch_all(&state.pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "default-store notice: reading the recipients failed");
+            return;
+        }
+    };
+    // A person owning several organizations gets one notice, not one per organization.
+    let mut seen = std::collections::BTreeSet::new();
+    let recipients: Vec<(Uuid, String, Option<String>)> = rows
+        .into_iter()
+        .filter(|(id, _, _)| seen.insert(*id))
+        .collect();
+    if recipients.is_empty() {
+        return;
+    }
+    let who = actor_label(&state.pool, actor).await;
+    let subject = "The default secret store changed".to_owned();
+    for (user_id, email, timezone) in &recipients {
+        let text = format!(
+            "{} changed the instance's default secret store at {}. Managed values now go to {} \
+             instead of {}.",
+            who,
+            now_in(timezone.as_deref()),
+            store_name(to),
+            store_name(from),
+        );
+        let mail = Mail::new(
+            email,
+            &subject,
+            &format!("{text}\n\nSign in to Aurora for details."),
+            state.config.external_url.trim_end_matches('/'),
+        );
+        if let Err(e) = state.mailer.send(mail).await {
+            tracing::error!(error = %e, "default-store notice e-mail send failed");
+        }
+        crate::domains::push::deliver::notify_lifecycle(
+            state,
+            Kind::DefaultStore,
+            *user_id,
+            &text,
+            state.config.external_url.trim_end_matches('/'),
+        )
+        .await;
+    }
+}

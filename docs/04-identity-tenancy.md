@@ -1323,7 +1323,12 @@ record and authority).
    `org.freeze|unfreeze` are in the security-critical set (written in the same
    transaction, *Audit*). Each effectively frozen agent's direct conversations get
    a platform `notice` (`code: "agent_frozen"`), and the dashboard shows a banner
-   at the scope.
+   at the scope. (FIX-244, D-486) After the commit the workspace's other own-right owners —
+   or, when there is none, the organization's other effective owners — are told of a
+   freeze or unfreeze of the workspace, and the organization's other effective owners of a
+   freeze or unfreeze of the organization: what happened, who (an instance administrator is
+   not named), when and what it means; never the actor, and a failed send never undoes the
+   freeze.
    (phase 4, P4-PRV-1/2) **Previews** of an effectively frozen agent answer 423 `frozen`, never
    wake or start anything, and their open streams close within `PREVIEW_AUTH_CACHE`; the shares
    and preview sessions are kept (`11 §Port previews`, `§Preview access`).
@@ -1446,12 +1451,17 @@ personal-workspace owners add people this way.
   (FIX-097) The managed secret values of the workspace's secrets, connections and OAuth
   clients are discarded in their store after the commit (`08 §Secret stores`) and the
   gateways are invalidated (`workspace` scope); deleting an **agent** also removes the
-  compiled rules of its grants.
+  compiled rules of its grants. (FIX-244, D-486) The workspace's other own-right owners —
+  or, when there is none, the organization's other effective owners — are told after the
+  commit (the recipients are read before the cascade removes their rows); the notice names
+  what happened, who (an instance administrator is not named) and when, never the actor.
 - **Org deletion**: owner only, typed confirmation; hand-written service deletes
   children in dependency order (including directory groups, SCIM tokens and SCIM links,
   which restrict the organization row), enqueues connector deprovisioning, then deletes
   the org; the managed secret values of every secret, connection and OAuth client of
   the org are discarded after the commit and the gateways invalidated (`org` scope).
+  (FIX-244, D-486) The organization's other effective owners are told after the commit;
+  the notice never names an instance administrator.
   Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
 - **Deletion by an instance admin** (phase 5, P5-ADMDEL, D-234): `DELETE
   /v1/admin/orgs/{org}` and `DELETE /v1/admin/workspaces/{ws}` (C-733) run **the same
