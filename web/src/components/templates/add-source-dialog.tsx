@@ -172,6 +172,11 @@ function Found({ found: f }: { found: TemplateSourcePreview }) {
             <dt className="text-muted @md:w-32 @md:shrink-0">Folder</dt>
             <dd className="min-w-0 text-ink [overflow-wrap:anywhere]">{f.path ? <span className="font-mono text-xs">{f.path}</span> : "Repository root"}</dd>
           </div>
+          {/* Where the templates' packages come from: text, never fetched by the browser (C-1114). */}
+          <div className="@md:flex @md:gap-4">
+            <dt className="text-muted @md:w-32 @md:shrink-0">Packages come from</dt>
+            <dd className="min-w-0 font-mono text-xs text-ink [overflow-wrap:anywhere]">{f.manifest.packages_url}</dd>
+          </div>
         </dl>
       </div>
       <div className="space-y-2">

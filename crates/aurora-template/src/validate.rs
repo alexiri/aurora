@@ -742,7 +742,11 @@ fn parse_skill_md(
     match value.get("use-it-when").and_then(serde_yaml::Value::as_str) {
         Some(w) => {
             let w = clean_text(w);
-            if w.contains('\n') || w.trim().is_empty() {
+            // One line, like the skill service's description rule: `\r` survives
+            // `clean_text` (a control character that is whitespace is kept), so it is
+            // refused explicitly — the stored description must never differ from the
+            // rendered text (it is hashed at create).
+            if w.contains(['\n', '\r']) || w.trim().is_empty() {
                 problems.push(TemplateProblem::new(
                     ProblemCode::TemplateSkillInvalid,
                     format!("{}#/use-it-when", f.path),
@@ -1135,72 +1139,7 @@ fn parse_avatar(
 pub(crate) mod tests {
     use super::*;
     use crate::problem::ProblemCode;
-
-    /// A full valid template used by the render and hash tests too.
-    pub(crate) fn sample_files() -> Vec<TreeFile> {
-        vec![
-            file("service-monitor/template.yaml", TEMPLATE_YAML),
-            file("service-monitor/agent.yaml", AGENT_YAML),
-            file(
-                "service-monitor/instructions.md",
-                "Watch {input.jira_project} tickets and the morning board.\n",
-            ),
-            file(
-                "service-monitor/README.md",
-                "# Service monitor\nFor the service desk.\n",
-            ),
-            file(
-                "service-monitor/memory/service-notes.md",
-                "---\nkey: service-notes\nupdated: 2026-01-01\nlocked: true\n---\n{input.jira_project} is the desk's project.\n",
-            ),
-            file(
-                "service-monitor/skills/what-is-on/SKILL.md",
-                "---\nname: what-is-on\nuse-it-when: The person asks about {input.jira_project}.\n---\nLook at {input.jira_project}.\n",
-            ),
-            exec(
-                "service-monitor/skills/what-is-on/run.sh",
-                "#!/bin/sh\necho run\n",
-            ),
-            file(
-                "service-monitor/helpers/alert-summary.sh",
-                "#!/bin/sh\necho summary\n",
-            ),
-            file(
-                "service-monitor/automations/morning-check.yaml",
-                "kind: schedule\nname: Morning check\nprompt: Check the {input.jira_project} dashboards.\ncadence:\n  cron: \"0 8 * * 1-5\"\nenabled: true\n",
-            ),
-            file(
-                "service-monitor/automations/escalate.yaml",
-                "kind: webhook\nname: Escalate\ninstructions: Page the on-call for {input.jira_project}.\nverification: signed\n",
-            ),
-        ]
-    }
-
-    pub(crate) const TEMPLATE_YAML: &str = "format: 1\nid: service-monitor\nversion: 1.0.0\nname: Service monitor\nsummary: Watches dashboards and tickets.\ninputs:\n  - id: jira_project\n    label: Jira project key\n    pattern: \"^[A-Z][A-Z0-9]+$\"\n";
-
-    pub(crate) const AGENT_YAML: &str =
-        "format: 1\nname: Monitor\npurpose: monitor\nmodel: default\nmay_message_first: false\n";
-
-    fn file(path: &str, text: &str) -> TreeFile {
-        TreeFile {
-            path: path.to_owned(),
-            bytes: text.as_bytes().to_vec(),
-            mode: 0o100644,
-        }
-    }
-
-    fn exec(path: &str, text: &str) -> TreeFile {
-        TreeFile {
-            path: path.to_owned(),
-            bytes: text.as_bytes().to_vec(),
-            mode: 0o100755,
-        }
-    }
-
-    /// The parsed content of [`sample_files`]; the render test reads its fields.
-    pub(crate) fn sample_content() -> TemplateContent {
-        read_tree("service-monitor", &sample_files()).unwrap()
-    }
+    use crate::test_fixtures::{TEMPLATE_YAML, exec, file, sample_files};
 
     #[test]
     fn sample_is_valid() {
@@ -1382,6 +1321,28 @@ pub(crate) mod tests {
             mode: 0o100644,
         });
         assert!(read_tree("service-monitor", &files).is_ok());
+    }
+
+    /// The skill service stores a description only as a single line (it rejects `\r` and
+    /// `\n`); the validator refuses the same at template time, so the stored use-it-when
+    /// never differs from the rendered text (it is hashed at create). A bare `\r` survives
+    /// `clean_text` (a control character that is whitespace is kept) and is refused too.
+    #[test]
+    fn skill_description_is_a_single_line() {
+        for bad in ["\"one\\rtwo\"", "\"one\\r\\ntwo\"", "\"one\\r\""] {
+            let mut files = sample_files();
+            files[5] = file(
+                "service-monitor/skills/what-is-on/SKILL.md",
+                &format!("---\nname: what-is-on\nuse-it-when: {bad}\n---\nbody\n"),
+            );
+            let err = read_tree("service-monitor", &files).unwrap_err();
+            assert!(
+                err.iter()
+                    .any(|p| p.code == ProblemCode::TemplateSkillInvalid
+                        && p.path.contains("#/use-it-when")),
+                "{bad}: {err:?}"
+            );
+        }
     }
 
     #[test]

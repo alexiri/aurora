@@ -941,7 +941,16 @@ Items of every skill route gain `source: null | { kind: "library", library_id|nu
 Instance administrators add template repositories by their https git address (C-1123's parser, the
 skill library's git reader). A check reads the tracked branch, downloads the package every new
 version waits for (`awaiting_package`), and accepts it only when its content equals the source at
-the recorded commit; the version then waits for an admin's approval. The offered version is the
+the recorded commit; the version then waits for an admin's approval. A version still
+`awaiting_package` past `TEMPLATE_PACKAGE_WAIT` from its creation — measured by the database's
+clock, so replica clock skew cannot move the expiry — becomes `invalid` with the reason it last
+failed with, and that version string is never tried again (a new version supersedes it). A
+failure that can resolve on its own is **transient**: the package download (`download_failed`),
+the repository read (`source_unreadable`) and this replica's avatar re-encode
+(`avatar_reencode_failed`). A version whose last reason is transient gets one more retry window
+before it expires, so a network failure in the very last attempt does not retire a version that
+nothing is wrong with; `package_not_found` (the package URL answered 404) and every content
+verdict are not transient. The offered version is the
 newest `approved` while the template is offered (one rule, C-1108). 404 `templates_disabled` on the
 organization and workspace routes while `agents.templates.enabled` is false; the admin routes keep
 working.
@@ -951,7 +960,7 @@ working.
 | Method & path | Auth | Purpose |
 |---|---|---|
 | GET/POST `/v1/admin/agent-template-sources` | S (IA) | list (creation order: the stored manifest, `status`, `check_failed_at`/`reason` (never the token, never a read detail), `last_checked_at`, `next_check_at`, `token_set`/`token_updated_at`) / add `{ url, ref?, path?, token?, token_username?, homepage?, contact?, update_interval? }`: the URL normalized by C-1123 (a page URL fills `ref`/`path` when absent), one read of the repository before saving, the token sealed; 422 `template_url_invalid` (`details.reason` as `library_url_invalid`), 422 `template_unreachable` (sanitized reason), 422 `template_manifest_invalid`, 409 `template_source_exists` (same normalized url + ref + path), 409 `template_source_limit` (`TEMPLATE_SOURCES_MAX`); 429 `rate_limited` (an add is a repository read: 10 preview/add per minute per person); 502 `template_unavailable` when this replica reads too many repositories; audit `agent_template_source.add` (critical; `url`, `ref`, `path`, `token: "set"` when one was given) |
-| POST `/v1/admin/agent-template-sources/preview` | S (IA) | (C-1124's shape) the add body without the label semantics: reads the repository once and answers 200 `AgentTemplateSourcePreview { url, repo, ref, resolved, commit_sha, path, templates: { found, ids }, truncated, suggested_name }`; stores nothing, no audit row; a token in the body is used once; same errors as add; `Cache-Control: no-store` |
+| POST `/v1/admin/agent-template-sources/preview` | S (IA) | (C-1124's shape) the add body without the label semantics: reads the repository once and answers 200 `AgentTemplateSourcePreview { url, repo, ref, resolved, commit_sha, path, manifest: { name, description, packages_url (the manifest's `packages.url` pattern, as text) }, templates: [{ template_id, dir, name, summary, version, state, problems }], truncated }`; stores nothing, no audit row; a token in the body is used once; same errors as add; `Cache-Control: no-store` |
 | GET/PATCH/DELETE `/v1/admin/agent-template-sources/{id}` | S (IA) | one source from the stored rows (never a live read) / patch `{ update_interval?, ref?, path?, token?, token_username?, url? }` — a change of url, ref, path or token re-reads the repository first and on failure the old address parts stay; `token: null` removes it; the `never` interval unschedules; DELETE removes the source with its templates and versions (agents made from them are copies and do not change), the organizations' switches stay; audit `agent_template_source.update`/`remove` (critical) |
 | POST `/v1/admin/agent-template-sources/{id}/check` | S (IA) | "Check now": the full C-1108 path, synchronous, under the same lease as the poll; 409 `template_check_in_progress` when busy; a read failure is a 200 result (`status: "failed"`), not an error |
 | POST `/v1/admin/agent-template-sources/check-all` | S (IA) | every source sequentially; a failing or busy source never blocks the others |

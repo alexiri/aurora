@@ -22,7 +22,7 @@ import type { Agent } from "@/lib/api/queries";
  * helper files. **Save** downloads `<id>-<version>.zip`; it publishes nothing.
  */
 
-type SaveAgent = Pick<Agent, "id" | "name" | "handle" | "brief" | "model_id" | "proactive_messaging" | "org_id" | "workspace_id">;
+type SaveAgent = Pick<Agent, "id" | "name" | "handle" | "brief" | "model_id" | "proactive_messaging" | "org_id" | "workspace_id" | "avatar_url">;
 
 interface Loaded {
   e: AgentExport;

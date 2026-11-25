@@ -8,7 +8,7 @@ use crate::audit::AuditActor;
 use aurora_core::{ApiError, limits::TEMPLATE_LEASE};
 use aurora_db::repo::agent_templates as repo;
 
-use super::check::{CHECK_CONCURRENCY, check_source};
+use super::check::{CHECK_CONCURRENCY, check_source, fail};
 
 /// Starts the poll loop of this replica.
 pub fn spawn(state: AppState) {
@@ -43,7 +43,16 @@ pub async fn poll_once(state: &AppState) -> Result<usize, ApiError> {
             let actor = AuditActor::system("template-source-poll");
             if let Err(e) = check_source(state, &source, &actor).await {
                 tracing::warn!(source = %source.id, error = %e.message(), "template source check failed");
-                super::release(state, &source).await;
+                // The check died without writing its outcome: write the failed outcome
+                // (which releases the lease and applies the failure backoff), so a source
+                // that keeps erroring is not re-claimed on every tick.
+                if let Err(w) = fail(state, &source, e.message()).await {
+                    tracing::error!(
+                        source = %source.id,
+                        error = %w.message(),
+                        "writing the failed check outcome"
+                    );
+                }
             }
         }
     };

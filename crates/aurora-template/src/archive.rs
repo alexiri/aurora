@@ -373,7 +373,7 @@ mod tests {
     use super::*;
     use crate::hash::content_sha256;
     use crate::model::TemplateContent;
-    use crate::validate::tests::{TEMPLATE_YAML, sample_files};
+    use crate::test_fixtures::{TEMPLATE_YAML, sample_files};
     use flate2::Compression;
     use flate2::write::DeflateEncoder;
     use std::io::Write;

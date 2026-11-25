@@ -29,7 +29,7 @@ import { useVerb } from "@/lib/palette-verb";
 
 import { SaveTemplateDialog } from "./save-template";
 
-type ExportAgent = Pick<Agent, "id" | "name" | "handle" | "brief" | "model_id" | "proactive_messaging" | "org_id" | "workspace_id">;
+type ExportAgent = Pick<Agent, "id" | "name" | "handle" | "brief" | "model_id" | "proactive_messaging" | "org_id" | "workspace_id" | "avatar_url">;
 
 /** Hand the zip to the browser as a download. */
 function download(fileName: string, bytes: Uint8Array) {
@@ -158,7 +158,8 @@ function ImportDialog({ agent, onClose }: { agent: ExportAgent; onClose: () => v
       const entries = await readZip(new Uint8Array(await file.arrayBuffer()));
       const e = parseExport(entries);
       setParsed(e);
-      setChoices({ ...DEFAULT_CHOICES, instructions: e.instructions.trim() !== "" });
+      // An avatar the agent already has is replaced only when the person ticks it.
+      setChoices({ ...DEFAULT_CHOICES, instructions: e.instructions.trim() !== "", avatar: e.avatar !== undefined && !agent.avatar_url });
     } catch (e) {
       setProblem(e instanceof ZipError || e instanceof ExportError ? e.message : "This file could not be read as an Aurora agent export.");
     }
@@ -170,7 +171,7 @@ function ImportDialog({ agent, onClose }: { agent: ExportAgent; onClose: () => v
     try {
       const existing = await loadExisting(agent);
       const total = summarize(parsed);
-      setProgress({ done: 0, total: total.memories + total.skills + total.schedules + total.webhooks + 1 });
+      setProgress({ done: 0, total: total.memories + total.skills + total.schedules + total.webhooks + 1 + (total.avatar ? 1 : 0) });
       const r = await runImport(parsed, choices, existing, liveImportApi(agent.id), (done, all) => setProgress({ done, total: all }));
       setReport(r);
       setSecrets(r.secrets);
@@ -184,7 +185,7 @@ function ImportDialog({ agent, onClose }: { agent: ExportAgent; onClose: () => v
 
   const s = parsed ? summarize(parsed) : null;
   const busy = progress !== null;
-  const nothing = !choices.memories && !choices.skills && !choices.schedules && !choices.webhooks && !(choices.instructions && choices.instructionsMode === "replace");
+  const nothing = !choices.memories && !choices.skills && !choices.schedules && !choices.webhooks && !choices.avatar && !(choices.instructions && choices.instructionsMode === "replace");
   return (
     <>
       <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
@@ -244,6 +245,9 @@ function ImportDialog({ agent, onClose }: { agent: ExportAgent; onClose: () => v
                           </div>
                         ) : null}
                       </div>
+                    ) : null}
+                    {s.avatar ? (
+                      <CheckboxField id="imp-avatar" label="Avatar" hint={agent.avatar_url ? "Replaces the avatar this agent has now." : undefined} checked={choices.avatar} onChange={(v) => setChoices({ ...choices, avatar: v })} />
                     ) : null}
                     {s.memories > 0 ? <CheckboxField id="imp-memories" label={`${s.memories} ${s.memories === 1 ? "memory" : "memories"}`} checked={choices.memories} onChange={(v) => setChoices({ ...choices, memories: v })} /> : null}
                     {s.skills > 0 ? <CheckboxField id="imp-skills" label={`${s.skills} ${s.skills === 1 ? "skill" : "skills"}`} checked={choices.skills} onChange={(v) => setChoices({ ...choices, skills: v })} /> : null}

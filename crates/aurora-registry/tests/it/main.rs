@@ -17,5 +17,6 @@ mod own_server;
 mod package_text;
 mod packages;
 mod secret_link;
+mod semver_precedence;
 mod snapshot;
 mod webhook;

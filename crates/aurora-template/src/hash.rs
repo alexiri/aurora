@@ -245,88 +245,8 @@ pub fn skill_ref_key(r: &SkillRef) -> String {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::model::{
-        AppEntry, Automation, Effort, InputDecl, InputKind, MemoryFile, SkillRef, TemplateFile,
-        TemplateMeta, TemplateSkill, TreeFile, Verification,
-    };
-
-    fn meta() -> TemplateMeta {
-        TemplateMeta {
-            format: 1,
-            id: "test".into(),
-            version: "1.0.0".into(),
-            name: "Test".into(),
-            summary: "A test.".into(),
-            min_core: None,
-            effort: Some(Effort::Medium),
-            inputs: vec![InputDecl {
-                id: "jira_project".into(),
-                label: "Jira project key".into(),
-                help: None,
-                kind: InputKind::Text,
-                required: true,
-                pattern: Some("^[A-Z]+$".into()),
-                max_length: Some(20),
-                options: vec![],
-                default: Some("OPS".into()),
-            }],
-            apps: vec![AppEntry::App {
-                app: "atlassian".into(),
-                required: true,
-                level: Level::Ask,
-                tools: None,
-                why: "Tickets.".into(),
-            }],
-            skill_refs: vec![SkillRef::Organization {
-                name: "deploy-checklist".into(),
-                required: false,
-                why: "Expected.".into(),
-            }],
-        }
-    }
-
-    fn content() -> TemplateContent {
-        TemplateContent {
-            meta: meta(),
-            agent_name: "Monitor".into(),
-            may_message_first: false,
-            instructions: "Do the thing.".into(),
-            readme: "# Test\nWhat it does.\n".into(),
-            memories: vec![MemoryFile {
-                key: "notes".into(),
-                content: "Care about weekends.".into(),
-                locked: true,
-            }],
-            skills: vec![TemplateSkill {
-                name: "what-is-on".into(),
-                use_it_when: "The person asks what is on.".into(),
-                body: "Look at the calendar.".into(),
-                files: vec![TemplateFile {
-                    path: "format.py".into(),
-                    bytes: b"print(1)\n".to_vec(),
-                    executable: true,
-                }],
-            }],
-            helpers: vec![TemplateFile {
-                path: "alert-summary.sh".into(),
-                bytes: b"#!/bin/sh\necho hi\n".to_vec(),
-                executable: true,
-            }],
-            automations: vec![
-                Automation::Schedule {
-                    name: "Morning check".into(),
-                    prompt: "Check the dashboards for {input.jira_project}.".into(),
-                    cron: "0 8 * * 1-5".into(),
-                },
-                Automation::Webhook {
-                    name: "Escalate".into(),
-                    instructions: "Page the on-call.".into(),
-                    verification: Verification::Signed,
-                },
-            ],
-            avatar: Some(("avatar.png".into(), vec![0x89, b'P', b'N', b'G'])),
-        }
-    }
+    use crate::model::{Automation, SkillRef, TreeFile, Verification};
+    use crate::test_fixtures::hash_content as content;
 
     #[test]
     fn golden_content_hash() {
@@ -398,8 +318,11 @@ mod tests {
 
     #[test]
     fn ref_keys() {
+        use crate::test_fixtures::{
+            LIBRARY_BARE_CLONE, LIBRARY_BARE_CLONE_KEY, LIBRARY_CLONE, LIBRARY_CLONE_KEY,
+        };
         use aurora_core::git_url;
-        let address = git_url::parse("https://gitlab.cern.ch/agents/skills.git").unwrap();
+        let address = git_url::parse(LIBRARY_CLONE).unwrap();
         let r = SkillRef::Library {
             address,
             ref_: Some("main".into()),
@@ -408,22 +331,16 @@ mod tests {
             required: true,
             why: "why".into(),
         };
-        assert_eq!(
-            skill_ref_key(&r),
-            "library|https://gitlab.cern.ch/agents/skills.git|main|team|incident-writeup"
-        );
+        assert_eq!(skill_ref_key(&r), LIBRARY_CLONE_KEY);
         let bare = SkillRef::Library {
-            address: git_url::parse("https://github.com/a/b.git").unwrap(),
+            address: git_url::parse(LIBRARY_BARE_CLONE).unwrap(),
             ref_: None,
             path: None,
             skill: "x".into(),
             required: false,
             why: "why".into(),
         };
-        assert_eq!(
-            skill_ref_key(&bare),
-            "library|https://github.com/a/b.git|||x"
-        );
+        assert_eq!(skill_ref_key(&bare), LIBRARY_BARE_CLONE_KEY);
         let org = SkillRef::Organization {
             name: "deploy-checklist".into(),
             required: true,

@@ -25,7 +25,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
       # Install the aurora CLI at a pinned version. Either download the release
       # binary (below) or build it:
       #   cargo install --locked aurora-cli --version AURORA_CLI_VERSION
@@ -33,7 +33,7 @@ jobs:
         run: |
           cd /usr/local/bin
           curl -fsSL \
-            "https://github.com/aurora/aurora/releases/download/aurora-cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
+            "https://github.com/alexiri/aurora/releases/download/cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
             -o aurora
           chmod +x aurora
           aurora --version
@@ -54,12 +54,12 @@ jobs:
       group: aurora-templates-publish
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
       - name: Install the aurora CLI
         run: |
           cd /usr/local/bin
           curl -fsSL \
-            "https://github.com/aurora/aurora/releases/download/aurora-cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
+            "https://github.com/alexiri/aurora/releases/download/cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
             -o aurora
           chmod +x aurora
           aurora --version

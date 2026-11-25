@@ -43,7 +43,7 @@ const makeTemplate = (): Template => ({
 const preview = () => ({
   url: "https://github.com/acme/agent-templates.git", repo: "github.com/acme/agent-templates",
   ref: "main", resolved: { kind: "branch", name: "main", default: true }, commit_sha: SHA_B, path: "templates",
-  manifest: { name: "Acme agent templates", description: "The team's agent templates" },
+  manifest: { name: "Acme agent templates", description: "The team's agent templates", packages_url: "https://github.com/acme/agent-templates/releases/download/{version}/{id}-{version}.zip" },
   templates: [{ template_id: "schedule-manager", dir: "templates/schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work", version: "1.1.0", state: "new", problems: [] }],
   truncated: false,
 });

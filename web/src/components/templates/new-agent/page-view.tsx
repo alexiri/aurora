@@ -156,7 +156,9 @@ export function NewAgentFromTemplateView() {
     const body = {
       template_id: templateId,
       version: template.version,
-      content_sha256: template.content_sha256 ?? "",
+      // Create is hidden while the plan has no content hash, so this is always the hash
+      // the reviewed version was stored with — never an empty string.
+      content_sha256: template.content_sha256!,
       name: name.trim(),
       handle: handle.trim() || undefined,
       inputs: values,
@@ -202,6 +204,14 @@ export function NewAgentFromTemplateView() {
         const next = (err.details as { plan?: TemplatePlan } | null)?.plan;
         if (next) qc.setQueryData(workspaceTemplateKeys.plan(wsId, templateId), next);
         setUpdated(true);
+        return;
+      }
+      // A 403 from Create is about the chosen account (the plan only lists the accounts the caller may
+      // give, C-504): it belongs on the Accounts step like the other field errors, where another
+      // account can be chosen. A template without account entries has nothing to choose there.
+      if (err.code === "forbidden" && template.entries.length > 0) {
+        setErrors({ accounts: err.message });
+        setStep("accounts");
         return;
       }
       const fields = (err.details as { fields?: { path: string; message?: string }[] } | null)?.fields ?? [];
@@ -301,6 +311,11 @@ export function NewAgentFromTemplateView() {
               <p>{createError.message}</p>
             </Notice>
           ) : null}
+          {!template.content_sha256 ? (
+            <Notice tone="pending" role="status">
+              <p>The template&apos;s plan has no content hash — open the template again.</p>
+            </Notice>
+          ) : null}
           <ReviewStep plan={template} agentName={agentName} summary={summary} adds={adds} onAddRef={(index, add) => setAdds((s) => ({ ...s, [index]: add }))} errors={errors} />
         </>
       )}
@@ -314,7 +329,7 @@ export function NewAgentFromTemplateView() {
         {step === "accounts" || step === "automations" ? (
           <Button onClick={() => setStep(step === "accounts" ? "automations" : "review")}>Next</Button>
         ) : null}
-        {step === "review" ? (
+        {step === "review" && template.content_sha256 ? (
           <Button onClick={() => void submit()} disabled={create.isPending}>
             {create.isPending ? "Creating…" : "Create"}
           </Button>

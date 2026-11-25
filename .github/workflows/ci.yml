@@ -6,7 +6,7 @@ name: ci
 on:
   push:
     branches: [main, master]
-    tags: ["v*"]   # OPS-020: version tags run the full CI, then publish images
+    tags: ["v*", "cli-v*"]   # OPS-020: v* tags run the full CI, then publish images; cli-v* tags publish the CLI only
   pull_request:
 
 # No workflow-level concurrency group: every push to master gets its own full test run (owner: CI on
@@ -767,3 +767,62 @@ jobs:
           cache-from: type=gha,scope=sandbox
           provenance: mode=max
           sbom: true
+
+  # ---- P6-TPL: the `aurora` CLI as a release binary, so template repositories can run
+  # `aurora template check/pack/list` in their own CI (docs/25-agent-templates.md §Publishing a version).
+  # Version tags only, and only after every check above has passed. The tag must equal the workspace
+  # version (`aurora --version`). A published CLI is never replaced: a rerun that finds the release fails.
+  # Tag `cli-v<version>` (not `v*`, which also publishes the images). Download URL:
+  # https://github.com/<owner>/aurora/releases/download/cli-v<version>/aurora-linux-x86_64
+  cli-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cli-v')
+    needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
+    concurrency: { group: "cli-release-${{ github.ref }}", cancel-in-progress: false }
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with: { targets: wasm32-wasip2 }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with: { shared-key: cli-release, cache-on-failure: true }
+      - name: Build the CLI
+        run: cargo build --release --locked -p aurora-cli
+      - name: Tag matches the binary's version
+        run: |
+          set -eu
+          have="$(target/release/aurora --version | awk '{print $2}')"
+          want="${GITHUB_REF_NAME#cli-v}"
+          if [ "$have" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, but the binary reports version $have: raise [workspace.package] version in Cargo.toml first"
+            exit 1
+          fi
+      - name: Smoke test (the template commands work on a template)
+        run: |
+          set -eu
+          d="$(mktemp -d)"
+          mkdir -p "$d/t"
+          printf 'format: 1\nname: Smoke\nmay_message_first: false\n' > "$d/t/agent.yaml"
+          printf 'format: 1\nid: t\nversion: 1.0.0\nname: Smoke\nsummary: A smoke test.\n' > "$d/t/template.yaml"
+          printf '# Smoke\n\nA smoke test.\n' > "$d/t/README.md"
+          : > "$d/t/instructions.md"
+          target/release/aurora template check "$d/t"
+          target/release/aurora template pack "$d/t" -o "$d/t.zip"
+          target/release/aurora template check "$d/t.zip"
+      - name: Publish the release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::error::release $GITHUB_REF_NAME already exists; a published CLI is never replaced"
+            exit 1
+          fi
+          mkdir -p dist
+          cp target/release/aurora dist/aurora-linux-x86_64
+          (cd dist && sha256sum aurora-linux-x86_64 > aurora-linux-x86_64.sha256)
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/aurora-linux-x86_64 dist/aurora-linux-x86_64.sha256 \
+            --verify-tag --title "Aurora $GITHUB_REF_NAME" --generate-notes $flags

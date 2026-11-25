@@ -464,22 +464,7 @@ async fn start_container() -> anyhow::Result<String> {
     reap_stale_containers().await;
     let name = format!("aurora-testkit-{}", uuid::Uuid::now_v7().simple());
     let run = tokio::process::Command::new("podman")
-        .args([
-            "run",
-            "-d",
-            "--rm",
-            "--name",
-            &name,
-            "-p",
-            "127.0.0.1::5432",
-            "-e",
-            "POSTGRES_USER=aurora",
-            "-e",
-            "POSTGRES_PASSWORD=aurora",
-            "-e",
-            "POSTGRES_DB=postgres",
-            "docker.io/library/postgres:16",
-        ])
+        .args(run_args(&name))
         .output()
         .await
         .context("running podman (is podman installed?)")?;
@@ -511,6 +496,54 @@ async fn start_container() -> anyhow::Result<String> {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     bail!("postgres container {name} did not become ready")
+}
+
+/// The fallback test server image.
+const POSTGRES_IMAGE: &str = "docker.io/library/postgres:16";
+
+/// The image's data directory, which the image declares as a VOLUME
+/// (`podman image inspect docker.io/library/postgres:16`: `PGDATA=/var/lib/postgresql/data`).
+const POSTGRES_PGDATA: &str = "/var/lib/postgresql/data";
+
+/// Arguments for `podman run` of the fallback test server.
+///
+/// `--tmpfs <PGDATA>` mounts the image's VOLUME data directory on a tmpfs, so
+/// podman never creates the anonymous volume it otherwise would — one leaked
+/// volume per test process, which exhausted podman's lock table (Nov 2026).
+/// The data is throwaway, and the tmpfs also makes the tests faster.
+fn run_args(name: &str) -> Vec<String> {
+    vec![
+        "run".into(),
+        "-d".into(),
+        "--rm".into(),
+        "--name".into(),
+        name.into(),
+        "--tmpfs".into(),
+        POSTGRES_PGDATA.into(),
+        "-p".into(),
+        "127.0.0.1::5432".into(),
+        "-e".into(),
+        "POSTGRES_USER=aurora".into(),
+        "-e".into(),
+        "POSTGRES_PASSWORD=aurora".into(),
+        "-e".into(),
+        "POSTGRES_DB=postgres".into(),
+        POSTGRES_IMAGE.into(),
+    ]
+}
+
+/// Arguments for `podman rm` of a stale container. `-v` removes any volume the
+/// container owns with it (e.g. an anonymous one from a run before the tmpfs
+/// change) instead of leaving it behind forever.
+fn reap_args(id: &str) -> Vec<String> {
+    vec![
+        "rm".into(),
+        "-f".into(),
+        "-v".into(),
+        "-t".into(),
+        "1".into(),
+        id.into(),
+    ]
 }
 
 /// Age after which an `aurora-testkit-*` container counts as a leftover: a
@@ -553,7 +586,7 @@ async fn reap_stale_containers() {
             continue;
         }
         if tokio::process::Command::new("podman")
-            .args(["rm", "-f", "-t", "1", id])
+            .args(reap_args(id))
             .output()
             .await
             .is_ok_and(|o| o.status.success())
@@ -597,6 +630,62 @@ impl MockUpstream {
     /// Requests received so far, in arrival order.
     pub async fn received(&self) -> Vec<wiremock::Request> {
         self.server.received_requests().await.unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod container_args_tests {
+    use super::{reap_args, run_args};
+
+    /// The tmpfs mount for the image's data directory must stay in `run_args`:
+    /// the postgres:16 image declares its PGDATA as a VOLUME, so without the
+    /// mount every test process leaks one anonymous podman volume — about
+    /// 1,900 in two days in Nov 2026, which exhausted podman's lock table and
+    /// blocked every test run. A refactor must not silently drop it.
+    #[test]
+    fn run_args_mounts_the_image_data_dir_on_tmpfs() {
+        let args = run_args("aurora-testkit-x");
+        let joined = args.join(" ");
+        assert!(
+            joined.contains("--tmpfs /var/lib/postgresql/data"),
+            "run_args must mount the image's PGDATA on a tmpfs (no anonymous volume), got: {joined}"
+        );
+    }
+
+    #[test]
+    fn run_args_still_runs_the_expected_container() {
+        let args = run_args("aurora-testkit-x");
+        for expected in [
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            "aurora-testkit-x",
+            "-p",
+            "127.0.0.1::5432",
+            "docker.io/library/postgres:16",
+        ] {
+            assert!(
+                args.iter().any(|a| a == expected),
+                "run_args lost `{expected}`: {}",
+                args.join(" ")
+            );
+        }
+    }
+
+    /// `-v` must stay in `reap_args`: without it a reaped container's owned
+    /// volumes (e.g. anonymous ones from runs before the tmpfs change) are
+    /// left behind forever.
+    #[test]
+    fn reap_args_removes_volumes_owned_by_the_container() {
+        let args = reap_args("abc123");
+        for expected in ["rm", "-f", "-v", "-t", "1", "abc123"] {
+            assert!(
+                args.iter().any(|a| a == expected),
+                "reap_args lost `{expected}`: {}",
+                args.join(" ")
+            );
+        }
     }
 }
 

@@ -245,3 +245,12 @@ describe("appAccessRows", () => {
     expect(appAccessRows([{ ...acc("github", "act"), agents: [] }], [], "a1")).toEqual([]);
   });
 });
+
+describe("the avatar in a saved template", () => {
+  it("is written as avatar.png beside agent.yaml, so `aurora template check` finds it", () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    const names = files({ ...exp, avatar: { ext: "png", bytes: png } }).map((f) => f.name);
+    expect(names).toContain("pr-triage/avatar.png");
+    expect(files().map((f) => f.name)).not.toContain("pr-triage/avatar.png");
+  });
+});

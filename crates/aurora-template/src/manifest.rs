@@ -247,32 +247,27 @@ pub fn render_package_url(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-
-    const OK: &str = "api: 1\nrepo:\n  name: CERN agent templates\n  description: Templates maintained by the CERN agent team.\n  homepage: https://example.org/agents\n  contact: mailto:agents@example.org\npackages:\n  url: https://github.com/cern/agent-templates/releases/download/{id}-v{version}/{id}-{version}.zip\n";
+    use crate::test_fixtures::{
+        MANIFEST_GENERIC_RENDERED, MANIFEST_GENERIC_YAML, MANIFEST_OK_RENDERED, MANIFEST_OK_URL,
+        MANIFEST_OK_YAML,
+    };
 
     #[test]
     fn ok_manifest() {
-        let m = parse_manifest(OK.as_bytes()).unwrap();
+        let m = parse_manifest(MANIFEST_OK_YAML.as_bytes()).unwrap();
         assert_eq!(m.api, 1);
         assert_eq!(m.repo.name, "CERN agent templates");
-        assert_eq!(
-            m.packages.url,
-            "https://github.com/cern/agent-templates/releases/download/{id}-v{version}/{id}-{version}.zip"
-        );
+        assert_eq!(m.packages.url, MANIFEST_OK_URL);
         let rendered = render_package_url(&m, "service-monitor", "1.2.3").unwrap();
-        assert_eq!(
-            rendered,
-            "https://github.com/cern/agent-templates/releases/download/service-monitor-v1.2.3/service-monitor-1.2.3.zip"
-        );
+        assert_eq!(rendered, MANIFEST_OK_RENDERED);
     }
 
     #[test]
-    fn gitlab_shape() {
-        let yaml = "api: 1\nrepo:\n  name: n\n  description: d\npackages:\n  url: https://gitlab.example.org/api/v4/projects/42/packages/generic/{id}/{version}/{id}-{version}.zip\n";
-        let m = parse_manifest(yaml.as_bytes()).unwrap();
+    fn generic_packages_shape() {
+        let m = parse_manifest(MANIFEST_GENERIC_YAML.as_bytes()).unwrap();
         assert_eq!(
             render_package_url(&m, "a", "0.1.0").unwrap(),
-            "https://gitlab.example.org/api/v4/projects/42/packages/generic/a/0.1.0/a-0.1.0.zip"
+            MANIFEST_GENERIC_RENDERED
         );
     }
 
@@ -341,7 +336,7 @@ mod tests {
 
     #[test]
     fn rendered_url_checks() {
-        let m = parse_manifest(OK.as_bytes()).unwrap();
+        let m = parse_manifest(MANIFEST_OK_YAML.as_bytes()).unwrap();
         // A very long id pushes the rendered URL over 500 characters.
         let long_id = format!("{}-{}", "a".repeat(64), "b".repeat(430));
         assert_eq!(

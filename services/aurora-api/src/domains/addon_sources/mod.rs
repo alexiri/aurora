@@ -37,7 +37,7 @@ pub use crate::domains::polling::{
 };
 
 /// `(major, minor, patch, is_release)`: the derived tuple order is the semver order.
-type Semver = (u64, u64, u64, bool);
+type Semver = aurora_registry::manifest::SemVer;
 
 fn refused(e: manifest::ManifestError) -> ApiError {
     match e {
@@ -85,7 +85,7 @@ fn semver_of(v: &str) -> Option<Semver> {
 
 /// The newest of `(version, semver)` pairs.
 fn newest(rows: impl Iterator<Item = (String, Semver)>) -> Option<(String, Semver)> {
-    rows.max_by_key(|(_, s)| *s)
+    rows.max_by(|a, b| a.1.cmp(&b.1))
 }
 
 /// Whether this core can run a version that needs `min_core`: `Err("core_too_new")` when not.
@@ -93,8 +93,8 @@ fn core_supports(min_core: Option<&str>) -> Result<(), &'static str> {
     let Some(mc) = min_core.and_then(parse_semver) else {
         return Ok(());
     };
-    let running = parse_semver(env!("CARGO_PKG_VERSION")).unwrap_or((0, 0, 0, true));
-    if (running.0, running.1, running.2) >= (mc.0, mc.1, mc.2) {
+    let running = parse_semver(env!("CARGO_PKG_VERSION")).unwrap_or_default();
+    if running.core >= mc.core {
         Ok(())
     } else {
         Err("core_too_new")
@@ -138,7 +138,7 @@ fn versions_desc(a: &manifest::Addon) -> Vec<(&String, &manifest::AddonVersion, 
         .iter()
         .filter_map(|(k, ver)| semver_of(k).map(|s| (k, ver, s)))
         .collect();
-    v.sort_by_key(|a| std::cmp::Reverse(a.2));
+    v.sort_by(|x, y| y.2.cmp(&x.2));
     v
 }
 
@@ -967,8 +967,10 @@ pub async fn decorate(state: &AppState, items: &mut [PluginPackage]) -> Result<(
                     continue;
                 }
                 if let Some(sv) = semver_of(v) {
-                    let e = listed.entry(a.id.clone()).or_insert(sv);
-                    *e = (*e).max(sv);
+                    let e = listed.entry(a.id.clone()).or_insert(sv.clone());
+                    if sv > *e {
+                        *e = sv;
+                    }
                 }
             }
         }

@@ -444,7 +444,8 @@ and existing agents are untouched by a waiting, rejected or invalid version.
 
 The easy way to start a template: on an agent you like, use the dashboard's
 **Save as template**. It exports the agent in exactly this format — a zip
-rooted at `<id>/` with a `template.yaml` added. Unzip it into your repository
+rooted at `<id>/` with a `template.yaml` added; the agent's avatar, when it has one, is
+written as `avatar.png`. Unzip it into your repository
 as `<id>/`, adjust `template.yaml` (id, version, inputs, apps), write the
 README, and push. The CI's `check` then tells you what is missing.
 
@@ -460,6 +461,12 @@ nothing (the version is already 1.0.0), open a pull request and merge; the
 CI's `check` then tells you what is missing.
 
 ## The CLI
+
+Get the binary from the Aurora repository's releases: the tag `cli-v<version>`
+carries `aurora-linux-x86_64` (built on Ubuntu 24.04, x86-64) and its
+`.sha256`. The release is created by Aurora's CI when a `cli-v<version>` tag
+is pushed, after every check has passed; the tag must equal the workspace
+version. Pin the version in your CI (the reference workflow does).
 
 `aurora template` needs no server and no login:
 

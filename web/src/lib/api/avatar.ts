@@ -28,7 +28,7 @@ export function avatarErrorMessage(err: unknown): string {
 }
 
 /** Raw-body PUT (contract C-41): the bytes are the request body; the server sniffs the type. */
-async function putAvatar(agentId: string, file: File): Promise<AgentDto> {
+export async function putAvatar(agentId: string, file: Blob): Promise<AgentDto> {
   const res = await tracedFetch("/v1/agents/{agent}/avatar", `/v1/agents/${encodeURIComponent(agentId)}/avatar`, {
     method: "PUT",
     credentials: "same-origin",

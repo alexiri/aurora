@@ -57,6 +57,20 @@ pub struct Problem {
     pub message: String,
 }
 
+/// A template's own write failed (a row-level failure, e.g. the database refusing one row):
+/// it becomes that template's problem and its row stays as it is (retried next check) — the
+/// source's other templates are still ingested. A database that is down for everything
+/// still aborts the check at the whole-check writes (the version reads, the final
+/// transaction), so this only ever eats one row's failure.
+fn row_problem(template_id: &str, dir: &str, message: &str) -> Problem {
+    Problem {
+        template_id: Some(template_id.to_owned()),
+        dir: dir.to_owned(),
+        code: "template_not_stored".to_owned(),
+        message: sanitize::one_line(message, 200),
+    }
+}
+
 /// The outcome of one check (C-1108's `CheckResult`, before the route adds `source_id`).
 #[derive(Debug, Clone)]
 pub struct CheckOutcome {
@@ -213,8 +227,8 @@ fn core_supports(min_core: Option<&str>) -> bool {
     let Some(mc) = min_core.and_then(parse_semver) else {
         return true;
     };
-    let running = parse_semver(env!("CARGO_PKG_VERSION")).unwrap_or((0, 0, 0, true));
-    (running.0, running.1, running.2) >= (mc.0, mc.1, mc.2)
+    let running = parse_semver(env!("CARGO_PKG_VERSION")).unwrap_or_default();
+    running.core >= mc.core
 }
 
 /// The origin of the source's stored git address (the token's origin rule). An unparseable
@@ -255,14 +269,23 @@ async fn finish_ok(
     Ok(())
 }
 
-/// Records a failed check: the source keeps serving its last known state, the reason is
-/// stored sanitized (never a token, never credentials) and nothing else changes.
-async fn fail(
+/// Records a failed check — including one that died before writing any outcome (the poll
+/// and the manual checks route an `Err` from [`check_source`] here): the source keeps
+/// serving its last known state, the reason is stored sanitized (never a token, never
+/// credentials), the lease is released and the next check backs off [`FAILURE_BACKOFF`].
+/// A source with no schedule (`never`) keeps having none — the same one-year stand-in the
+/// insert, the interval writes and the success path use — so a failed check never turns a
+/// manual-only source into a scheduled one.
+pub(crate) async fn fail(
     state: &AppState,
     source: &SourceRow,
     reason: &str,
 ) -> Result<CheckOutcome, ApiError> {
     let reason = sanitize::one_line(reason, 200);
+    let next_in_secs = match super::next_in_secs(&source.update_interval, source.id) {
+        Some(_) => FAILURE_BACKOFF,
+        None => YEAR,
+    };
     let mut c = state
         .pool
         .acquire()
@@ -275,7 +298,7 @@ async fn fail(
             owner: source.lease_owner.unwrap_or_default(),
             status: "check_failed",
             reason: Some(reason.clone()),
-            next_in_secs: FAILURE_BACKOFF,
+            next_in_secs,
         },
     )
     .await?;
@@ -286,14 +309,16 @@ async fn fail(
 }
 
 /// Creates or updates a template row from a healthy head (`ok` or `needs_newer_aurora`):
-/// the head's description replaces the stored one, the directory is back. Returns the row id.
+/// the head's description replaces the stored one, the directory is back. Returns the row id,
+/// or `None` when the upsert refused to take the template id from another source (the
+/// ownership race — the caller reports `id_taken`, like the pre-check branch).
 async fn store_head(
     state: &AppState,
     source_id: uuid::Uuid,
     m: &aurora_template::TemplateMeta,
     dir: &str,
     head_state: &str,
-) -> Result<uuid::Uuid, ApiError> {
+) -> Result<Option<uuid::Uuid>, ApiError> {
     let mut c = state
         .pool
         .acquire()
@@ -313,10 +338,36 @@ async fn store_head(
         },
     )
     .await?;
-    Ok(row.id)
+    Ok(row.map(|r| r.id))
 }
 
 // ---- the check ---------------------------------------------------------------------------------
+
+/// Extends the source's lease between the per-template steps (a source with many templates
+/// downloading packages can outlive the 5-minute lease): only the current owner succeeds.
+/// A lost lease means another replica claimed the source while this check ran — it aborts
+/// cleanly; nothing it writes afterwards would be true.
+async fn renew_lease(state: &AppState, source: &SourceRow) -> Result<(), ApiError> {
+    let mut c = state
+        .pool
+        .acquire()
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    let owned = repo::extend_lease(
+        &mut c,
+        source.id,
+        source.lease_owner.unwrap_or_default(),
+        limits::TEMPLATE_LEASE.as_secs_f64(),
+    )
+    .await?;
+    if !owned {
+        return Err(ApiError::conflict(
+            "template_check_in_progress",
+            "The source changed while this check was running.",
+        ));
+    }
+    Ok(())
+}
 
 /// The full check of one source (C-1108). The caller holds the source's lease; every path
 /// here ends in the lease being released with a written outcome.
@@ -381,6 +432,7 @@ pub async fn check_source(
     // (template row id, template id, dir, meta) of the head's healthy templates, for step 4.
     let mut healthy: Vec<(uuid::Uuid, String, String, aurora_template::TemplateMeta)> = Vec::new();
     for d in &read.templates {
+        renew_lease(state, source).await?;
         let (meta, mut ps) = match &d.meta {
             Some(bytes) => match aurora_template::parse_meta(bytes) {
                 Ok(m) => (Some(m), Vec::new()),
@@ -434,7 +486,28 @@ pub async fn check_source(
                 } else {
                     "needs_newer_aurora"
                 };
-                let row = store_head(state, source.id, m, &d.dir, head_state).await?;
+                let row = match store_head(state, source.id, m, &d.dir, head_state).await {
+                    Ok(Some(row)) => row,
+                    // The upsert landed after another source took the id (the pre-check
+                    // above read before that): the id stays where it is.
+                    Ok(None) => {
+                        problems.push(Problem {
+                            template_id: Some(m.id.clone()),
+                            dir: d.dir.clone(),
+                            code: "id_taken".to_owned(),
+                            message: "another source already holds this template id".to_owned(),
+                        });
+                        continue;
+                    }
+                    // This template's row could not be written (a row-level failure). That
+                    // is one template's problem, not the source's: the others are still
+                    // ingested (see [`row_problem`]).
+                    Err(e) => {
+                        tracing::warn!(template = %m.id, error = %e.message(), "template row not stored");
+                        problems.push(row_problem(&m.id, &d.dir, e.message()));
+                        continue;
+                    }
+                };
                 if head_state == "ok" {
                     healthy.push((row, m.id.clone(), d.dir.clone(), m.clone()));
                 }
@@ -446,18 +519,26 @@ pub async fn check_source(
                     .iter()
                     .map(super::dto::TemplateProblemView::from)
                     .collect();
-                let mut c = state
-                    .pool
-                    .acquire()
+                // A failed state write leaves the row as it is (retried next check) and is
+                // one template's problem, not the source's.
+                let write = async {
+                    let mut c = state
+                        .pool
+                        .acquire()
+                        .await
+                        .map_err(aurora_db::DbError::from)?;
+                    repo::set_head_state(
+                        &mut c,
+                        t.id,
+                        "invalid",
+                        Some(&serde_json::to_value(listed).unwrap_or_default()),
+                    )
                     .await
-                    .map_err(aurora_db::DbError::from)?;
-                repo::set_head_state(
-                    &mut c,
-                    t.id,
-                    "invalid",
-                    Some(&serde_json::to_value(listed).unwrap_or_default()),
-                )
-                .await?;
+                };
+                if let Err(e) = write.await {
+                    tracing::warn!(template = %t.template_id, error = %e, "head state not stored");
+                    problems.push(row_problem(&t.template_id, &t.dir, &e.to_string()));
+                }
             }
             _ => {}
         }
@@ -467,12 +548,19 @@ pub async fn check_source(
     for t in &templates {
         let present = head_dirs.contains(&t.dir);
         if present != !t.removed_upstream {
-            let mut c = state
-                .pool
-                .acquire()
-                .await
-                .map_err(aurora_db::DbError::from)?;
-            repo::set_removed_upstream(&mut c, t.id, !present).await?;
+            let write = async {
+                let mut c = state
+                    .pool
+                    .acquire()
+                    .await
+                    .map_err(aurora_db::DbError::from)?;
+                repo::set_removed_upstream(&mut c, t.id, !present).await
+            };
+            // One template's flag write is one template's problem (retried next check).
+            if let Err(e) = write.await {
+                tracing::warn!(template = %t.template_id, error = %e, "removed_upstream not stored");
+                problems.push(row_problem(&t.template_id, &t.dir, &e.to_string()));
+            }
         }
     }
 
@@ -480,6 +568,7 @@ pub async fn check_source(
     // version of that template (any status); nothing stored yet is taken too. Lower is the
     // `version_not_newer` problem, equal is ignored.
     for (row_id, template_id, dir, meta) in &healthy {
+        renew_lease(state, source).await?;
         let newest = versions
             .iter()
             .filter(|v| v.version.agent_template_id == *row_id)
@@ -531,7 +620,12 @@ pub async fn check_source(
                 dir: dir.clone(),
             }),
             Err(aurora_db::DbError::UniqueViolation { .. }) => {}
-            Err(e) => return Err(e.into()),
+            // This version's row could not be recorded: one template's problem, not the
+            // source's — and since nothing was stored, the next check offers it again.
+            Err(e) => {
+                tracing::warn!(template = %template_id, version = %meta.version, error = %e, "version not stored");
+                problems.push(row_problem(template_id, dir, &e.to_string()));
+            }
         }
     }
 
@@ -543,6 +637,7 @@ pub async fn check_source(
         .iter()
         .filter(|v| v.version.status == "awaiting_package")
     {
+        renew_lease(state, source).await?;
         let out = process_awaiting(state, source, token.as_ref(), v).await?;
         match &out {
             StepOut::Left(status, reason, _, _, _, _) => {
@@ -683,10 +778,23 @@ pub async fn check_source(
     })
 }
 
+/// Whether a version's last stay reason is transient: the fetching machinery failed, where
+/// nothing in the repository or the package needs to change for a retry to succeed — the
+/// package download (`download_failed`), the repository read (`source_unreadable`) or this
+/// replica's avatar re-encode (`avatar_reencode_failed`). Such a version gets one more
+/// retry window before it expires (docs/05 §Agent templates). Not transient:
+/// `package_not_found` (the URL answered 404 — the package is not where the manifest
+/// points) and every content verdict, which is `invalid` at once anyway.
+fn is_transient_stay(reason: &str) -> bool {
+    matches!(
+        reason,
+        "download_failed" | "source_unreadable" | "avatar_reencode_failed"
+    )
+}
+
 /// What one `awaiting_package` row did in this check (the write lands in the check's final
 /// transaction). `Left` carries everything the row needs to become `pending_approval` or
-/// `invalid`.
-#[allow(clippy::type_complexity)]
+/// `invalid`.#[allow(clippy::type_complexity)]
 enum StepOut {
     Left(
         /// `pending_approval` | `invalid`.
@@ -710,19 +818,28 @@ async fn process_awaiting(
     v: &repo::SourceVersionRow,
 ) -> Result<StepOut, ApiError> {
     // Step 5, expiry: waited past `TEMPLATE_PACKAGE_WAIT` from `created_at` — invalid with
-    // the reason it last failed with. That version is never tried again.
-    if v.version.created_at
-        + chrono::Duration::from_std(aurora_core::limits::TEMPLATE_PACKAGE_WAIT).unwrap_or_default()
-        <= Utc::now()
-    {
+    // the reason it last failed with. The comparison runs against the database's `now()`
+    // (`repo::package_wait_expired`): the row's `created_at` is the database's clock, and a
+    // replica's clock skew must not move the expiry. A version whose last attempt failed
+    // transiently gets ONE more retry window before it expires (see
+    // [`is_transient_stay`]): a network failure in the very last attempt must not retire a
+    // perfectly good version for good, when an equal version is ignored afterwards and
+    // only a version bump would recover it.
+    let last_reason = v
+        .version
+        .status_reason
+        .clone()
+        .unwrap_or_else(|| "download_failed".to_owned());
+    let wait_secs = aurora_core::limits::TEMPLATE_PACKAGE_WAIT.as_secs() as i64;
+    let windows = if is_transient_stay(&last_reason) {
+        2
+    } else {
+        1
+    };
+    if repo::package_wait_expired(&state.pool, v.version.id, wait_secs * windows).await? {
         return Ok(StepOut::Left(
             "invalid",
-            Some(
-                v.version
-                    .status_reason
-                    .clone()
-                    .unwrap_or_else(|| "download_failed".to_owned()),
-            ),
+            Some(last_reason),
             None,
             None,
             None,
@@ -785,9 +902,15 @@ async fn process_awaiting(
     // `invalid` `template_field` (C-1108 step 6).
     let mut content = content;
     if let Some((name, raw)) = content.avatar.take() {
-        let png = tokio::task::spawn_blocking(move || avatar::reencode(&raw))
-            .await
-            .map_err(|e| ApiError::internal(format!("avatar re-encode join failed: {e}")))?;
+        let png = match tokio::task::spawn_blocking(move || avatar::reencode(&raw)).await {
+            Ok(png) => png,
+            Err(e) => {
+                // The version is fine; this replica could not run the re-encode. Stay and
+                // retry (the reason is stored and becomes the expiry reason, see step 5).
+                tracing::warn!(template = %v.template_id, version = %v.version.version, error = %e, "avatar re-encode join failed");
+                return Ok(StepOut::Stayed(Some("avatar_reencode_failed".into())));
+            }
+        };
         match png {
             Ok(png) => content.avatar = Some((name, png)),
             Err(_) => return Ok(invalid("template_field")),

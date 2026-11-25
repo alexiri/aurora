@@ -2571,6 +2571,7 @@ documents and duplicate keys); no dependency was added. **A purpose template *is
 <handle>/
   agent.yaml                 format, name, purpose?, model (default or a name), may_message_first
   instructions.md            the instructions text
+  avatar.png                 the agent's avatar, when it has one (`avatar.jpg` and `avatar.webp` are read too; at most one, 512 KiB)
   memory/<key>.md            front matter `key`, `updated`, `locked?` (`true` only when locked); then the text
   skills/<name>/SKILL.md     front matter `name`, `use-it-when`; then the body
   automations/<name>.yaml    a schedule or a webhook
@@ -2598,6 +2599,13 @@ enabled: true
 ```
 
 A pending one-time schedule has `cadence: { preset: once, run_at: "2026-12-01T09:00" }` instead of `cron` (the local time, read in `time_zone`).
+
+**The avatar** (owner 2026-11-24) is read with `GET /v1/agents/{agent}/avatar` (the stored 256×256 PNG) and written as
+`avatar.png`; an agent without one writes no file, and one that cannot be read is left out with a line in the dialog. Save as
+template carries it too, so a saved template starts with its agent's face (C-1141 already allows one avatar file). **Import**
+lists **Avatar** in the checklist and sets it with `PUT /v1/agents/{agent}/avatar` (the server re-encodes it; a file it cannot
+decode is one failed line in the report). It is ticked by default only when the agent has no avatar; when it has one, the
+checkbox is unticked and says it replaces the avatar the agent has now.
 
 Never in an export: ids, secrets, webhook addresses, accounts, channels, conversations, the AI key. A skill's other files
 are written beside its `SKILL.md` as stored (read one by one with `GET /v1/skills/{id}/files/{path}`, C-1099; the list is the
@@ -2682,7 +2690,12 @@ offering them again brings them back. When a newer version is offered, the secti
 **About this template** (its README, rendered as C-1116, in a fold), then each part with its state in words and a full
 diff, the checkboxes (ticked for `unchanged_here` and `new`, unticked otherwise; an unreachable new library skill gets
 the "Needs the skill library <repo>" sentence and no checkbox), the inputs needed, and the apps added with **Give
-access** links to the Access tab's journey. **Apply** sends exactly the ticked parts bound to the shown hash (C-1112);
+access** links to the Access tab's journey. The offer lists only instructions, skills, helper files and skills from
+libraries: the newer version's memories, schedules and webhooks are used only when an agent is created and are never
+offered to an existing agent (what it already has stays as it is). The proposed texts are rendered with the agent's
+current name, so renaming <Agent> makes a part that says `{agent.name}` show as changed on the next offer — the diff
+then shows only the name swap — until an apply re-records it with the new name. **Apply** sends exactly the ticked
+parts bound to the shown hash (C-1112);
 a 409 `template_version_changed` closes the dialog, reads the offer again and the section says "This template was
 updated. Check the changes, then apply." **Skip this version** applies with no parts: the provenance moves, nothing
 else changes. **Stop following this template** (with a confirm) forgets the provenance — the helper files and the

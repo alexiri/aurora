@@ -11,6 +11,7 @@ import { nameProblem, ZipError, writeZip, type ZipEntry } from "./zip";
  * <handle>/
  *   agent.yaml            format, name, purpose?, model, may_message_first
  *   instructions.md       the instructions text
+ *   avatar.png|jpg|webp   the agent's avatar, when it has one (at most one, 512 KiB)
  *   memory/<key>.md       front matter `key`, `updated`, `locked?` (true only when locked); then the text
  *   skills/<name>/SKILL.md  front matter `name`, `use-it-when`; then the body (+ the skill's other files)
  *   automations/<name>.yaml  a schedule or a webhook, without address or secret
@@ -54,6 +55,17 @@ export type ExportAutomation =
   // `instructions` is what the agent does when the webhook is called (not a secret); the address and the secret are never carried.
   | { kind: "webhook"; name: string; instructions: string; verification: "signed" | "password" | "none"; enabled: boolean };
 
+/** (C-41, C-1141) The avatar's file type and bytes. The API stores a PNG, so an export from an agent is `png`; a file may carry any of the three. */
+export type AvatarExt = "png" | "jpg" | "webp";
+export interface ExportAvatar {
+  ext: AvatarExt;
+  bytes: Uint8Array;
+}
+
+/** Mirrors `AVATAR_MAX` (512 KiB): the server stays authoritative. */
+export const EXPORT_AVATAR_MAX = 512 * 1024;
+const AVATAR_FILE_RE = /^avatar\.(png|jpg|webp)$/;
+
 export interface AgentExport {
   format: number;
   name: string;
@@ -65,6 +77,8 @@ export interface AgentExport {
   memories: ExportMemory[];
   skills: ExportSkill[];
   automations: ExportAutomation[];
+  /** Written as `avatar.<ext>` only when the agent has one. */
+  avatar?: ExportAvatar;
 }
 
 /** The `agent.yaml` document of an export. */
@@ -109,6 +123,7 @@ export function exportFiles(e: AgentExport, handle: string, now: Date = new Date
   const add = (path: string, text: string | Uint8Array) => files.push({ name: `${root}/${path}`, data: typeof text === "string" ? enc.encode(text) : text });
   add("agent.yaml", stringifyYaml(agentYaml(e)));
   add("instructions.md", e.instructions);
+  if (e.avatar) add(`avatar.${e.avatar.ext}`, e.avatar.bytes);
   // (P6-MEMLOCK, C-1150) `locked: true` only on a locked memory: no line for an unlocked one.
   for (const m of e.memories) add(`memory/${m.key}.md`, frontMatter({ key: m.key, updated: m.updated, ...(m.locked ? { locked: true } : {}) }, m.content));
   for (const s of e.skills) {
@@ -230,6 +245,12 @@ export function parseExport(entries: ZipEntry[]): AgentExport {
   const model = a.model === undefined ? "default" : str(a.model, "a model name or default", "agent.yaml");
   if (a.may_message_first !== undefined && typeof a.may_message_first !== "boolean") throw new ExportError("“agent.yaml”: may_message_first is true or false.");
   const instructionsEntry = byPath.get("instructions.md");
+  // An export carries at most one avatar; its size is checked here, its image by the server on import.
+  const avatarFiles = [...byPath].filter(([p]) => AVATAR_FILE_RE.test(p));
+  if (avatarFiles.length > 1) throw new ExportError("This export has more than one avatar (avatar.png, avatar.jpg, avatar.webp): keep one.");
+  const avatarFile = avatarFiles[0];
+  if (avatarFile && avatarFile[1].data.length > EXPORT_AVATAR_MAX) throw new ExportError(`“${avatarFile[1].name}” is larger than 512 KiB.`);
+  const avatar: ExportAvatar | undefined = avatarFile ? { ext: AVATAR_FILE_RE.exec(avatarFile[0])![1] as AvatarExt, bytes: avatarFile[1].data } : undefined;
 
   const memories: ExportMemory[] = [];
   const skills = new Map<string, ExportSkill>();
@@ -270,6 +291,7 @@ export function parseExport(entries: ZipEntry[]): AgentExport {
     memories: memories.sort((x, y) => x.key.localeCompare(y.key)),
     skills: [...skills.values()].sort((x, y) => x.name.localeCompare(y.name)),
     automations,
+    ...(avatar ? { avatar } : {}),
   };
 }
 

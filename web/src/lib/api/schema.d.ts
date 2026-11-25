@@ -11835,10 +11835,15 @@ export interface components {
             id: string;
             name: string;
         };
-        /** @description The repository part of a manifest (C-1103). */
+        /**
+         * @description The repository part of a manifest (C-1103), with where its packages come from: the URL
+         *     template is plain text for the dialog (never fetched by the browser).
+         */
         ManifestRepoView: {
             description: string;
             name: string;
+            /** @description The manifest's `packages.url` pattern, as text. */
+            packages_url: string;
         };
         Me: {
             /**
