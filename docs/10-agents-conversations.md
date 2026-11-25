@@ -1225,6 +1225,14 @@ possible ("Anyone with the address"). `POST /v1/webhooks/{id}/rotate-secret` mak
 a new one and the old stops working at once. `Webhook.verification` shows the
 effective header and the `format` of its value, so the dashboard can say how to
 call it.
+- `kind: "bearer"` (the password kind) verifies `Authorization: Bearer <secret>`
+instead of a signature; the secret is sealed like any secret, shown once, and
+`rotate-secret` works the same (the old secret stops working at once). Callers
+that cannot produce the signed format should use this kind — Grafana's webhook
+contact point, for example, can send an `Authorization` header but not Aurora's
+`sha256=<hex>` HMAC:
+`curl -X POST "$WEBHOOK_URL" -H "Content-Type: application/json" -H "Authorization: Bearer $SECRET" -d "$BODY"`
+(the card's *How to call it* shows the same recipe for each kind).
 - Disabled or creator lost access (phase 2, RFE-021: for `anchor = workspace`, no
   active owner) → 410 / 403 and a `webhook_deliveries` row.
   (phase 2, RFE-006) Effectively frozen agent → 410 `frozen` and a delivery row
