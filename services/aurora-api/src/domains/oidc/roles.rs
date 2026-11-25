@@ -457,6 +457,19 @@ pub async fn sync(
                 .await?;
             }
         }
+        // (FIX-236, verify LOW-4) A claim that lowers (or removes) the ownership ends the
+        // person's open emergency grants in the same transaction — the window can never
+        // outlive the ownership it was opened under.
+        if loses_owner {
+            crate::domains::emergency_access::service::end_lost_in_tx(
+                tx,
+                &actor(p),
+                r.org_id,
+                user.id,
+            )
+            .await
+            .map_err(api_err)?;
+        }
         notify_auth_revoked(&mut *tx, "user", user.id).await?;
     }
 
@@ -570,6 +583,19 @@ async fn apply_org(
                 base_role: base,
             };
             db::org_write(&mut *tx, org, user, &new).await?;
+            // (FIX-236, verify LOW-4) The claim lowered the effective role away from `owner`:
+            // the open emergency grants end in this transaction (the last-owner guard above
+            // already returned when the lowering is refused).
+            if row.role == "owner" && eff != "owner" {
+                crate::domains::emergency_access::service::end_lost_in_tx(
+                    &mut *tx,
+                    &actor(p),
+                    org,
+                    user,
+                )
+                .await
+                .map_err(api_err)?;
+            }
             if changed {
                 if eff != row.role {
                     notify_auth_revoked(&mut *tx, "user", user).await?;

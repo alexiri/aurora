@@ -1129,3 +1129,88 @@ async fn fix050_admin_overview_lists_ownerless_orgs() {
     assert_eq!(items[0]["members"], 1, "the active non-owner counts");
     assert!(items[0]["created_at"].as_str().is_some(), "{v}");
 }
+
+/// (FIX-236, verify LOW-4) When an IdP claim lowers or removes an owner's role, the sync ends
+/// the person's open emergency grants **in the same transaction** (`access_lost`) — otherwise
+/// the people's banner keeps announcing access the person can no longer use (reads were
+/// already refused; the row stayed open until expiry and blocked a future reopen with 409).
+#[tokio::test]
+async fn a_lowered_or_removed_claim_ends_the_emergency_grants_as_access_lost() {
+    let idp = MockIdp::start().await;
+    set_roles(&idp, E, "s1", json!(["it-ai-team"]));
+    let h = h(&idp, SignupMode::InviteOnly, false).await;
+    let session = sign_in(&h).await.unwrap();
+    assert_eq!(org_role(&h, "it", E).await.as_deref(), Some("owner"));
+    // A second owner keeps the sync away from the last-owner guard.
+    let it: Uuid = sqlx::query_scalar("SELECT id FROM organizations WHERE slug = 'it'")
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let keeper = h.user("keeper@example.com", false).await;
+    h.member(it, keeper, "owner", "active").await;
+
+    // The claim owner opens emergency read access on a workspace of the org.
+    let ws: Uuid = sqlx::query_scalar("SELECT id FROM workspaces WHERE org_id = $1 LIMIT 1")
+        .bind(it)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let (st, _, v) = h
+        .send(
+            Method::POST,
+            &format!("/v1/workspaces/{ws}/emergency-access"),
+            &[
+                ("cookie", session.as_str()),
+                ("origin", crate::common::ORIGIN),
+            ],
+            Some(json!({"reason": "opened under the claim's ownership"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+
+    // The claim drops the org entirely: the sync removes the claim-sourced membership — the
+    // ownership is lost, and the grant must end with it.
+    set_roles(&idp, E, "s1", json!(["aurora-users"]));
+    sign_in(&h).await.unwrap();
+    assert_ne!(org_role(&h, "it", E).await.as_deref(), Some("owner"));
+
+    let (ended, reason): (bool, Option<String>) = sqlx::query_as(
+        "SELECT ended_at IS NOT NULL, end_reason FROM workspace_emergency_access \
+         WHERE workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(reason.as_deref(), Some("access_lost"), "the grant's end");
+    assert!(ended, "the grant is not open any more");
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM audit_log WHERE action = 'workspace.emergency_access.end' \
+             AND metadata->>'end_reason' = 'access_lost'"
+        )
+        .await,
+        1,
+        "the critical end row is in the log"
+    );
+    // The people's banner source: the grant is no longer announced as active.
+    let (keeper_id, keeper_tok) = h.good_session(keeper).await;
+    let (st, _, v) = h
+        .send(
+            Method::GET,
+            &format!("/v1/workspaces/{ws}"),
+            &[
+                ("cookie", crate::common::cookie(&keeper_tok).as_str()),
+                ("origin", crate::common::ORIGIN),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["audience"]["emergency"]["active"], json!(false), "{v}");
+    assert!(
+        !v["audience"]["emergency"]["ended_at"].is_null(),
+        "the banner shows it ended: {v}"
+    );
+}
