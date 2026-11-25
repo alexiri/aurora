@@ -776,6 +776,12 @@ pub async fn patch_member(
         req.status.map(MemberStatus::as_str),
     )
     .await?;
+    // (FIX-234 review 4, D-480) The person is back: bind them as owner of their personal
+    // workspace again when the binding is missing, so the workspace is never left ownerless
+    // while its person was suspended (their access stays gated by the active membership).
+    if req.status == Some(MemberStatus::Active) && cur.status != "active" {
+        aurora_db::repo::placement::rebind_personal_owner(&mut *tx, org_id, target).await?;
+    }
     // (FIX-083) A membership leaving `active` ends the access the IdP's group claim granted,
     // in this transaction; a reactivation does not bring it back, the next sign-in re-syncs.
     if req.status == Some(MemberStatus::Suspended) && cur.status == "active" {

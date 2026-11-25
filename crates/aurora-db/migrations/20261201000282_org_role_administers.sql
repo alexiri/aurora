@@ -11,18 +11,18 @@ SELECT workspace_id, org_id, user_id, role
 -- D-480 (C-1161): the person always owns their personal workspace. Before this migration the
 -- org's admins were the (implicit) owners, and placement could bind the person as member or
 -- approver, so after dropping the implicit role such a workspace would have had no owner at all.
--- For every workspace with a personal owner whose person is an active member of its org:
--- an existing binding of the person is raised to owner and set active (a person's own workspace
--- never suspends them), a missing binding is inserted as owner. Non-personal workspaces and
--- workspaces whose person is not an active member are untouched. Each changed row writes the
--- audit row `workspace_access.personal_owner` (actor `system`, `metadata.from`: the old role or
--- `none`).
+-- For every workspace with a personal owner — whatever the person's org membership status (a
+-- suspended person's binding grants nothing, because own_workspace_access gates every binding
+-- on the active membership; the workspace still keeps its owner, and restoring the membership
+-- re-activates the person's access): an existing binding of the person is raised to owner and
+-- set active (a person's own workspace never suspends them), a missing binding is inserted as
+-- owner. Non-personal workspaces are untouched. Each changed row writes the audit row
+-- `workspace_access.personal_owner` (actor `system`, `metadata.from`: the old role or `none`).
 WITH personal AS (
     SELECT w.id AS workspace_id, w.org_id, w.personal_owner_user_id AS user_id
       FROM workspaces w
       JOIN org_members m ON m.org_id = w.org_id
                         AND m.user_id = w.personal_owner_user_id
-                        AND m.status = 'active'
      WHERE w.personal_owner_user_id IS NOT NULL
 ),
 changed AS (

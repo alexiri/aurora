@@ -1190,3 +1190,94 @@ async fn an_admin_revokes_and_grants_an_org_account_without_own_access() {
         .await;
     assert_eq!((s, code(&v)), (403, "workspace_access_required"), "{v}");
 }
+
+/// (FIX-234 review 4) A suspended person's personal workspace keeps its owner binding (the
+/// migration backfills one regardless of the membership status), the binding grants nothing
+/// while the membership is suspended, and restoring the membership re-activates the person's
+/// access — and re-binds them when the binding is missing entirely.
+#[tokio::test]
+async fn a_suspended_persons_personal_workspace_keeps_its_owner() {
+    let f = owner_case().await;
+    let (ws, bob) = (f.ws, f.bob);
+    f.h.set_member_status(f.org, bob, "suspended").await;
+
+    // The owner binding survives the suspension, but grants nothing: the person has no row in
+    // `own_workspace_access` (every binding is gated on the active membership).
+    let (role, status): (String, String) = sqlx::query_as(
+        "SELECT role, status FROM workspace_access WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(bob)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((role.as_str(), status.as_str()), ("owner", "active"));
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM own_workspace_access WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(bob)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0);
+
+    // Restore the membership: the person has access again, as owner.
+    let uri = format!("/v1/orgs/{}/members/{}", f.org, bob);
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PATCH,
+            &uri,
+            Some(json!({"status": "active"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM own_workspace_access WHERE workspace_id = $1 AND user_id = $2 \
+         AND role = 'owner'",
+    )
+    .bind(ws)
+    .bind(bob)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+
+    // A person whose binding went missing while they were away is re-bound as owner, audited.
+    sqlx::query("DELETE FROM workspace_access WHERE workspace_id = $1 AND user_id = $2")
+        .bind(ws)
+        .bind(bob)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    f.h.set_member_status(f.org, bob, "suspended").await;
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PATCH,
+            &uri,
+            Some(json!({"status": "active"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (role, status): (String, String) = sqlx::query_as(
+        "SELECT role, status FROM workspace_access WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(bob)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((role.as_str(), status.as_str()), ("owner", "active"));
+    let from: Vec<String> = sqlx::query_scalar(
+        "SELECT metadata->>'from' FROM audit_log WHERE action = 'workspace_access.personal_owner' \
+         AND workspace_id = $1 AND target_id = $2 ORDER BY created_at",
+    )
+    .bind(ws)
+    .bind(bob.to_string())
+    .fetch_all(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(from, vec!["none".to_string()], "{from:?}");
+}

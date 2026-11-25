@@ -380,3 +380,93 @@ const PERSONAL_ORGS: &str = "FROM organizations o
     JOIN users u ON u.id = m.user_id AND u.default_org_id = o.id
     WHERE o.name LIKE '%''s org'
       AND (SELECT count(*) FROM org_members x WHERE x.org_id = o.id) = 1";
+
+/// (FIX-234 review 4, D-480, C-1161) The person is (again) an active member of `org`: bind them
+/// as owner of their personal workspace when the binding is missing, and raise and activate a
+/// lower or suspended one — the migration's backfill at restoration time, so a personal
+/// workspace is never left ownerless while its person is away (their access stays gated by the
+/// active membership exactly as for any binding). Writes the audit row
+/// `workspace_access.personal_owner` (actor `system`, `metadata.from`: the old role or `none`)
+/// and answers whether anything changed. Call inside the restoring transaction.
+pub async fn rebind_personal_owner(
+    conn: &mut sqlx::PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<bool, DbError> {
+    let ws: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM workspaces WHERE org_id = $1 AND personal_owner_user_id = $2",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(ws) = ws else {
+        return Ok(false);
+    };
+    let prev: Option<(String, String)> = sqlx::query_as(
+        "SELECT role, status FROM workspace_access WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(user)
+    .fetch_optional(&mut *conn)
+    .await?;
+    match prev {
+        // Already the active owner: nothing to change.
+        Some((r, s)) if r == "owner" && s == "active" => Ok(false),
+        // A lower or suspended binding: raise to owner and set active (a person's own
+        // workspace never suspends them).
+        Some((r, _)) => {
+            sqlx::query(
+                "UPDATE workspace_access SET role = 'owner', status = 'active', updated_at = now()
+                 WHERE workspace_id = $1 AND user_id = $2",
+            )
+            .bind(ws)
+            .bind(user)
+            .execute(&mut *conn)
+            .await?;
+            audit_personal_owner(&mut *conn, org, ws, user, &r).await?;
+            Ok(true)
+        }
+        // No binding at all: insert the owner.
+        None => {
+            sqlx::query(
+                "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'owner')",
+            )
+            .bind(ws)
+            .bind(user)
+            .execute(&mut *conn)
+            .await?;
+            audit_personal_owner(&mut *conn, org, ws, user, "none").await?;
+            Ok(true)
+        }
+    }
+}
+
+async fn audit_personal_owner(
+    conn: &mut sqlx::PgConnection,
+    org: Uuid,
+    ws: Uuid,
+    user: Uuid,
+    from: &str,
+) -> Result<(), DbError> {
+    let metadata = serde_json::json!({ "from": from });
+    super::audit::insert(
+        &mut *conn,
+        &super::audit::NewAudit {
+            org_id: Some(org),
+            workspace_id: Some(ws),
+            actor_kind: "system",
+            actor_id: None,
+            actor_label: "system",
+            action: "workspace_access.personal_owner",
+            target_kind: Some("user"),
+            target_id: Some(&user.to_string()),
+            outcome: "success",
+            source: "system",
+            ip: None,
+            metadata: &metadata,
+        },
+    )
+    .await?;
+    Ok(())
+}

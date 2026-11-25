@@ -56,6 +56,13 @@ const REVIEWED: &[(&str, usize, &str)] = &[
         "account deletion: a workspace someone else is bound to (suspended or not) is kept",
     ),
     (
+        "crates/aurora-db/src/repo/placement.rs",
+        3,
+        "rebind_personal_owner: writes and reads only the person's own binding in their personal \
+         workspace (raise + activate, or insert); it grants nothing beyond the binding, which \
+         own_workspace_access gates on the active membership",
+    ),
+    (
         "crates/aurora-db/src/repo/scim.rs",
         1,
         "counts a group's bindings for the SCIM view",
@@ -64,6 +71,13 @@ const REVIEWED: &[(&str, usize, &str)] = &[
         "crates/aurora-db/src/grants.rs",
         2,
         "the gateway role's SELECT grants",
+    ),
+    (
+        "services/aurora-api/src/domains/groups/service.rs",
+        1,
+        "change_members lists a group's bound workspaces and roles (and the personal marker) to \
+         apply the binding rules; it decides no access — the bindings act through \
+         effective_workspace_access at request time",
     ),
 ];
 

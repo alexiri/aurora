@@ -74,6 +74,8 @@ pub async fn reactivate_membership(
     actor: &AuditActor,
 ) -> Result<(), ApiError> {
     members::update(&mut *conn, org, user, None, Some("active")).await?;
+    // (FIX-234 review 4, D-480) The person is back: their personal workspace keeps its owner.
+    aurora_db::repo::placement::rebind_personal_owner(&mut *conn, org, user).await?;
     notify(conn, org, user).await?;
     let ev = AuditEvent::new(actor.clone(), "member.update", Outcome::Success)
         .org(org)
