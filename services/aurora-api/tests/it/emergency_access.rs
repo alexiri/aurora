@@ -1392,6 +1392,56 @@ async fn the_metadata_responses_carry_no_content() {
 
 // ---------------------------------------------------------------- one workspace
 
+/// (Verify MEDIUM-1) The reopen-in-the-sweep-window path must leave the same audit trail the
+/// sweep would have: the reopen ends the caller's own expired-but-unswept grant in the open
+/// transaction **and writes the critical `workspace.emergency_access.expire` row there**, so
+/// the minute sweep later finds nothing open and the log has open → expire → open.
+#[tokio::test]
+async fn the_reopen_writes_the_expire_audit_row_the_sweep_would_have() {
+    let w = world().await;
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the first, soon expired"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let first: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // Wind the grant past its expiry before the sweep runs (the window CHECK moves `opened_at`
+    // too).
+    sqlx::query(
+        "UPDATE workspace_emergency_access \
+         SET opened_at = now() - interval '1 hour', expires_at = now() - interval '1 second' \
+         WHERE id = $1",
+    )
+    .bind(first)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the reopen in the window"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+
+    // The trail for the opener's grants: open, expire, open — the expire row critical, naming
+    // the ended grant, exactly the sweep's shape.
+    let rows: Vec<(String, Uuid, bool)> = sqlx::query_as(
+        "SELECT action, target_id::uuid, critical FROM audit_log \
+         WHERE workspace_id = $1 \
+           AND action IN ('workspace.emergency_access.open', 'workspace.emergency_access.expire') \
+         ORDER BY id",
+    )
+    .bind(w.ws)
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    let actions: Vec<&str> = rows
+        .iter()
+        .map(|(a, _, _)| a.rsplit('.').next().unwrap())
+        .collect();
+    assert_eq!(actions, vec!["open", "expire", "open"], "{rows:?}");
+    assert_eq!(rows[1].1, first, "the expire row targets the ended grant");
+    assert!(rows[1].2, "the expire row is critical");
+}
+
 #[tokio::test]
 async fn the_grant_covers_one_workspace_only() {
     let w = world().await;

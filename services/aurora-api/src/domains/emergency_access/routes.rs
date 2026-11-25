@@ -6,7 +6,7 @@ use super::dto::{
     EmergencyAccess, EmergencyAccessBy, EmergencyAccessWorkspace, OpenEmergencyAccessRequest,
 };
 use crate::app::AppState;
-use crate::audit::{self, AuditEvent};
+use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::emergency_access::notify;
 use crate::http::apilimit::{Charge, Spec};
 use crate::http::auth::{Caller, SessionCaller};
@@ -151,10 +151,27 @@ async fn open_emergency_access(
     let expires_at = Utc::now() + Duration::hours(hours);
     let id = aurora_core::ids::new_id();
     let mut tx = audit::begin(&s).await?;
-    // (Review LOW-10) The reopen-in-the-sweep-window case: end the caller's own expired-but-
-    // unswept row here, so the insert cannot trip the partial unique index; a truly concurrent
-    // open (two racing requests) still hits it and maps to the same conflict.
-    repo::expire_own_stale(&mut tx, ws, c.user_id).await?;
+    // (Review LOW-10, verify MEDIUM-1) The reopen-in-the-sweep-window case: end the caller's
+    // own expired-but-unswept row here, so the insert cannot trip the partial unique index; a
+    // truly concurrent open (two racing requests) still hits it and maps to the same conflict.
+    // The ended grants get the sweep's critical expire rows in THIS transaction — the audit
+    // log must show open → expire → open even when the reopen beats the sweep.
+    let stale = repo::expire_own_stale(&mut tx, ws, c.user_id).await?;
+    for r in &stale {
+        let ev = AuditEvent::new(
+            AuditActor::system("emergency-access-expiry"),
+            "workspace.emergency_access.expire",
+            Outcome::Success,
+        )
+        .org(r.org_id)
+        .workspace(r.workspace_id)
+        .target("workspace_emergency_access", r.id)
+        .metadata(serde_json::json!({
+            "opener": r.user_id,
+            "expires_at": r.expires_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        }));
+        audit::insert_tx(&mut tx, &ev).await?;
+    }
     let row = repo::open(&mut tx, id, w.org_id, ws, c.user_id, &reason, expires_at)
         .await
         .map_err(|e| match e {
