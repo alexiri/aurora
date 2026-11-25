@@ -248,6 +248,11 @@ pub struct Workspace {
     /// they hold no active grant.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emergency_reader_id: Option<Uuid>,
+    /// (FIX-236, verify LOW-2) The caller's OWN active grant's expiry — what their reader
+    /// banner counts down (`audience.emergency` may be another owner's newest grant); `null`
+    /// when they hold no active grant. Never set for an API key: keys cannot use a grant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emergency_reader_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     /// (FIX-234, C-1162) Who the workspace's people are; present on `GET /v1/workspaces/{ws}`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audience: Option<WorkspaceAudience>,
@@ -281,6 +286,7 @@ impl Workspace {
             administers,
             emergency_reader: false,
             emergency_reader_id: None,
+            emergency_reader_expires_at: None,
             audience: None,
             frozen: None,
             contacts: None,

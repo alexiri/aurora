@@ -14174,6 +14174,13 @@ export interface components {
                 /** @description (FIX-236, C-1165) True while the caller holds an active emergency read access here. */
                 emergency_reader: boolean;
                 /**
+                 * Format: date-time
+                 * @description (FIX-236, verify LOW-2) The caller's OWN active grant's expiry — what their reader
+                 *     banner counts down (`audience.emergency` may be another owner's newest grant); `null`
+                 *     when they hold no active grant. Never set for an API key: keys cannot use a grant.
+                 */
+                emergency_reader_expires_at?: string | null;
+                /**
                  * Format: uuid
                  * @description (FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id
                  *     their reader banner's "End now" ends, never another owner's newest grant; `null` when
@@ -18097,6 +18104,13 @@ export interface components {
             effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
             /** @description (FIX-236, C-1165) True while the caller holds an active emergency read access here. */
             emergency_reader: boolean;
+            /**
+             * Format: date-time
+             * @description (FIX-236, verify LOW-2) The caller's OWN active grant's expiry — what their reader
+             *     banner counts down (`audience.emergency` may be another owner's newest grant); `null`
+             *     when they hold no active grant. Never set for an API key: keys cannot use a grant.
+             */
+            emergency_reader_expires_at?: string | null;
             /**
              * Format: uuid
              * @description (FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id

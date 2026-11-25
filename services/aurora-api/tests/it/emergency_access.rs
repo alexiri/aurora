@@ -1392,6 +1392,109 @@ async fn the_metadata_responses_carry_no_content() {
 
 // ---------------------------------------------------------------- one workspace
 
+/// (Verify LOW-2a) With two grants active the reader banner must show the caller's OWN expiry,
+/// not the newest grant's (`audience.emergency` may belong to another owner). The workspace
+/// answer carries the own grant's `emergency_reader_expires_at` — the same grant "End now"
+/// ends (`emergency_reader_id`).
+#[tokio::test]
+async fn the_workspace_answer_names_the_callers_own_grant_expiry() {
+    let w = world().await;
+    let (s, v) = w
+        .open(
+            &w.opener_tok,
+            json!({"reason": "the opener's own grant", "hours": 1}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let first: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let first_expires = v["expires_at"].as_str().unwrap().to_owned();
+    // The second owner opens the NEWEST grant: `audience.emergency` shows this one.
+    let (s, v) = w
+        .open(
+            &w.other_tok,
+            json!({"reason": "the other owner's grant", "hours": 4}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let second_expires = v["expires_at"].as_str().unwrap().to_owned();
+    assert_ne!(first_expires, second_expires);
+
+    let (s, v) = w
+        .call(
+            &w.opener_tok,
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["emergency_reader"], json!(true), "{v}");
+    assert_eq!(v["emergency_reader_id"], json!(first.to_string()), "{v}");
+    assert_eq!(
+        v["emergency_reader_expires_at"],
+        json!(first_expires),
+        "the OWN grant's expiry, never the newest one's: {v}"
+    );
+    assert_eq!(
+        v["audience"]["emergency"]["expires_at"],
+        json!(second_expires)
+    );
+}
+
+/// (Verify LOW-2b) `emergency_reader*` is the SESSION caller's answer: an API key of the same
+/// user can never use the grant (keys read with their own access only), so the key's workspace
+/// answer keeps the flag false and carries no grant id or expiry.
+#[tokio::test]
+async fn an_api_key_of_the_grant_holder_is_not_announced_an_emergency_reader() {
+    let w = world().await;
+    // The person: a workspace member who also becomes an org owner and opens a grant — a caller
+    // with own access AND a grant (the HIGH-3 case).
+    sqlx::query("UPDATE org_members SET role = 'owner' WHERE org_id = $1 AND user_id = $2")
+        .bind(w.org)
+        .bind(w.person)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w
+        .open(&w.person_tok, json!({"reason": "the member-owner's grant"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let grant: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    seed_key(&w.h, w.org, Some(w.ws), w.person, "auk_wskey-token").await;
+
+    // The session: announced, with their own grant.
+    let (s, v) = w
+        .call(
+            &w.person_tok,
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["emergency_reader"], json!(true), "{v}");
+    assert_eq!(v["emergency_reader_id"], json!(grant.to_string()), "{v}");
+    assert_eq!(
+        v["emergency_reader_expires_at"],
+        json!(v["audience"]["emergency"]["expires_at"]),
+        "their own grant is the newest one here"
+    );
+
+    // The key of the same user: the flag stays false, no grant rides on it.
+    let (s, _, v) =
+        w.h.send(
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            &[("authorization", &bearer("auk_wskey-token"))],
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["emergency_reader"], json!(false), "{v}");
+    assert!(v["emergency_reader_id"].is_null(), "{v}");
+    assert!(v["emergency_reader_expires_at"].is_null(), "{v}");
+}
+
 /// (Verify MEDIUM-1) The reopen-in-the-sweep-window path must leave the same audit trail the
 /// sweep would have: the reopen ends the caller's own expired-but-unswept grant in the open
 /// transaction **and writes the critical `workspace.emergency_access.expire` row there**, so

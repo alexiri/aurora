@@ -66477,6 +66477,14 @@
                   "type": "boolean",
                   "description": "(FIX-236, C-1165) True while the caller holds an active emergency read access here."
                 },
+                "emergency_reader_expires_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "(FIX-236, verify LOW-2) The caller's OWN active grant's expiry — what their reader\nbanner counts down (`audience.emergency` may be another owner's newest grant); `null`\nwhen they hold no active grant. Never set for an API key: keys cannot use a grant."
+                },
                 "emergency_reader_id": {
                   "type": [
                     "string",
@@ -78982,6 +78990,14 @@
           "emergency_reader": {
             "type": "boolean",
             "description": "(FIX-236, C-1165) True while the caller holds an active emergency read access here."
+          },
+          "emergency_reader_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "(FIX-236, verify LOW-2) The caller's OWN active grant's expiry — what their reader\nbanner counts down (`audience.emergency` may be another owner's newest grant); `null`\nwhen they hold no active grant. Never set for an API key: keys cannot use a grant."
           },
           "emergency_reader_id": {
             "type": [
