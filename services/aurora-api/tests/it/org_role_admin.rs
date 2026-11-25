@@ -448,6 +448,14 @@ async fn self_grant_rules() {
             .any(|m| m.to == "bob@x.io" && m.body.contains("gave themselves member access to")),
         "{mail:?}"
     );
+    // (FIX-234 review 5) The sentence names the actor by display name, never the e-mail.
+    let m = mail.iter().find(|m| m.to == "bob@x.io").unwrap();
+    assert!(
+        m.body
+            .starts_with("U (admin) gave themselves member access to"),
+        "{m:?}"
+    );
+    assert!(!m.body.contains("admin@x.io"), "{m:?}");
 
     // A group the admin belongs to counts as a self-grant too (`via: "group"`).
     let (s, v) = f

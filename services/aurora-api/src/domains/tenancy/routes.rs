@@ -863,28 +863,13 @@ async fn put_access(
     }
     audit::commit_critical(tx, &ev).await?;
     if self_grant {
-        let org_role = authz::effective_org_role(&s.pool, c.user_id, a.org_id)
-            .await?
-            .map(|r| r.as_str())
-            .unwrap_or("admin")
-            .to_owned();
-        // The caller is an org admin, so `orgs::get` (member view) finds the org.
-        let org_row = aurora_db::repo::orgs::get(&s.pool, a.org_id, c.user_id)
-            .await?
-            .ok_or_else(|| ApiError::not_found("Organization not found."))?;
-        let ws_row = workspaces::get(&s.pool, ws)
-            .await?
-            .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
-        crate::domains::tenancy::self_grant::notify(
+        // (FIX-234 review 5) The notice names the actor by their display name, never the
+        // e-mail — `notify_for_user` resolves it like the other notices.
+        crate::domains::tenancy::self_grant::notify_for_user(
             &s,
             a.org_id,
             ws,
-            &org_row.slug,
-            &ws_row.slug,
-            &ws_row.name,
-            c.user_id,
-            &c.email,
-            &org_role,
+            &c,
             req.role.as_str(),
         )
         .await?;
