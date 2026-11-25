@@ -146,15 +146,14 @@ async fn actor_label(pool: &PgPool, actor: &AuditActor) -> String {
     if actor.kind == "instance_admin" {
         return "an instance administrator".to_owned();
     }
-    if let Some(id) = actor.id {
-        if let Ok((n,)) =
+    if let Some(id) = actor.id
+        && let Ok((n,)) =
             sqlx::query_as::<_, (String,)>("SELECT display_name FROM users WHERE id = $1")
                 .bind(id)
                 .fetch_one(pool)
                 .await
-        {
-            return name(&n);
-        }
+    {
+        return name(&n);
     }
     tracing::warn!("lifecycle notice: the actor's display name is unavailable");
     "an administrator".to_owned()
