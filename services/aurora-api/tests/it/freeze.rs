@@ -5,6 +5,7 @@
 
 use crate::common::*;
 use crate::hosted::{Live, Rig, rig};
+use aurora_api::domains::auth::mail::{Mail, MailError, Mailer};
 use http::Method;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -669,4 +670,183 @@ async fn frozen_records_name_the_person_beside_the_label() {
         .await;
     assert_eq!(s, 200, "{v}");
     person(&v["items"][0]["frozen"], w.ia, "Ida Instance", "ia@x.io");
+}
+
+/// (FIX-244, D-486) A freeze or unfreeze of a workspace or organization tells the owners after
+/// the commit — the workspace's other own-right owners (else the org's other effective owners),
+/// the organization's other effective owners — never the actor, never an ordinary member, and an
+/// org admin only when they are an owner. The body names the actor by display name (an instance
+/// administrator is never named), never an e-mail address. Only a real change sends: an
+/// idempotent re-freeze and an authority-refused unfreeze send nothing.
+#[tokio::test]
+async fn freezes_and_unfreezes_tell_the_owners_and_only_them() {
+    let w = world().await;
+    // A second owner of the org who also holds the workspace in their own right, with display
+    // names the bodies can be asserted on.
+    let peer = w.r.h.user("po@x.io", false).await;
+    w.r.h.member(w.r.org, peer, "owner", "active").await;
+    w.r.h.bind_ws(w.r.ws, peer, "owner").await;
+    for (id, name) in [
+        (w.ws_owner, "Walt Owner"),
+        (peer, "Pia Owner"),
+        (w.org_owner, "Olive Owner"),
+    ] {
+        sqlx::query("UPDATE users SET display_name = $2 WHERE id = $1")
+            .bind(id)
+            .bind(name)
+            .execute(w.r.h.pool())
+            .await
+            .unwrap();
+    }
+    let ws_uri = format!("/v1/workspaces/{}", w.r.ws);
+    let org_uri = format!("/v1/orgs/{}", w.r.org);
+    let new_mail = |h: &Harness, before: usize| h.mail.sent()[before..].to_vec();
+
+    // The workspace owner freezes their workspace: the other own-right owner is told — the org
+    // owner (no binding of their own) is not, the ordinary member neither.
+    let mut before = w.r.h.mail.sent().len();
+    let (s, v) = w.freeze(w.ws_owner, &ws_uri).await;
+    assert_eq!(s, 200, "{v}");
+    let mail = new_mail(&w.r.h, before);
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, ["po@x.io"], "only the other owner: {tos:?}");
+    let m = &mail[0];
+    assert!(m.subject.contains("was frozen"), "{m:?}");
+    assert!(
+        m.body.contains("Walt Owner froze the workspace") && m.body.contains(" at "),
+        "{m:?}"
+    );
+    assert!(
+        m.body
+            .contains("No one can run its agents until it is unfrozen."),
+        "{m:?}"
+    );
+    assert!(
+        !m.body.contains('@'),
+        "no e-mail address in the body: {m:?}"
+    );
+
+    // The same freeze again (idempotent, `unchanged`) sends nothing.
+    let (s, v) = w.freeze(w.ws_owner, &ws_uri).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["outcome"], json!("unchanged"), "{v}");
+    assert_eq!(w.r.h.mail.sent().len(), before + 1, "no second notice");
+
+    // The unfreeze by the other owner: the freezer is told.
+    before = w.r.h.mail.sent().len();
+    let (s, v) = w.unfreeze(peer, &ws_uri).await;
+    assert_eq!(s, 200, "{v}");
+    let mail = new_mail(&w.r.h, before);
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, ["wso@x.io"], "{tos:?}");
+    let m = &mail[0];
+    assert!(
+        m.body
+            .contains("Pia Owner lifted the freeze of the workspace")
+            && m.body.contains("Its agents can run again."),
+        "{m:?}"
+    );
+    assert!(!m.body.contains('@'), "{m:?}");
+
+    // The org owner freezes the organization: the other effective owner is told; the workspace
+    // owner (a plain org member) is not.
+    before = w.r.h.mail.sent().len();
+    let (s, v) = w.freeze(w.org_owner, &org_uri).await;
+    assert_eq!(s, 200, "{v}");
+    let mail = new_mail(&w.r.h, before);
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, ["po@x.io"], "{tos:?}");
+    let m = &mail[0];
+    assert!(
+        m.body.contains("Olive Owner froze the organization")
+            && m.body
+                .contains("No one can run agents in any of its workspaces until it is unfrozen."),
+        "{m:?}"
+    );
+    assert!(!m.body.contains('@'), "{m:?}");
+
+    // An instance administrator's freeze: every owner is told, and the actor is "an instance
+    // administrator", never a name.
+    before = w.r.h.mail.sent().len();
+    let admin_uri = format!("/v1/admin/orgs/{}", w.r.org);
+    let (s, v) = w.freeze(w.ia, &admin_uri).await;
+    assert_eq!(s, 200, "{v}");
+    let mail = new_mail(&w.r.h, before);
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert!(
+        tos.contains(&"oo@x.io") && tos.contains(&"po@x.io"),
+        "every owner but the actor: {tos:?}"
+    );
+    assert!(!tos.contains(&"ia@x.io"), "{tos:?}");
+    let m = mail.iter().find(|m| m.to == "po@x.io").unwrap();
+    assert!(
+        m.body
+            .contains("an instance administrator froze the organization"),
+        "{m:?}"
+    );
+    assert!(!m.body.contains("ia@x.io"), "{m:?}");
+
+    // A lower authority cannot lift it: the action is refused, the transaction rolls back, and
+    // nothing is sent.
+    let before = w.r.h.mail.sent().len();
+    let (s, v) = w.unfreeze(peer, &org_uri).await;
+    assert_eq!(
+        (s, v["error"]["code"].as_str()),
+        (403, Some("freeze_authority_insufficient")),
+        "{v}"
+    );
+    assert_eq!(
+        w.r.h.mail.sent().len(),
+        before,
+        "a refused unfreeze sends nothing"
+    );
+}
+
+/// A mailer that records every attempt and fails them all: the "failing recipient" of the
+/// notice rules (the calendar suite's FailMailer pattern, made observable).
+struct RecordingFailMailer(std::sync::Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl Mailer for RecordingFailMailer {
+    async fn send(&self, m: Mail) -> Result<(), MailError> {
+        self.0.lock().unwrap().push(m.to);
+        Err(MailError("smtp down".into()))
+    }
+}
+
+/// (FIX-244, D-486) A failing recipient does not stop the others and never fails the action:
+/// every recipient's send is attempted, the freeze commits, and the pushes (the other channel)
+/// still carry the notice.
+#[tokio::test]
+async fn a_failing_recipient_does_not_stop_the_others_and_the_freeze_still_commits() {
+    let mut w = world().await;
+    let peer = w.r.h.user("po@x.io", false).await;
+    w.r.h.member(w.r.org, peer, "owner", "active").await;
+    let attempts = std::sync::Arc::new(RecordingFailMailer(std::sync::Mutex::new(Vec::new())));
+    w.r.h.state =
+        w.r.h
+            .state
+            .clone()
+            .with_mailer(std::sync::Arc::clone(&attempts) as std::sync::Arc<dyn Mailer>);
+    w.r.h.app = test_router(w.r.h.state.clone());
+
+    let (s, v) = w
+        .freeze(w.org_owner, &format!("/v1/orgs/{}", w.r.org))
+        .await;
+    assert_eq!(s, 200, "{v}: the freeze stands, the notices are logged");
+    // The freeze committed.
+    let frozen: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM organizations WHERE id = $1 AND frozen_at IS NOT NULL",
+    )
+    .bind(w.r.org)
+    .fetch_one(w.r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(frozen, 1, "the freeze row stands");
+    // Every recipient was attempted (one failing recipient did not stop the others); the
+    // actor is not among them.
+    let mut tos = attempts.0.lock().unwrap().clone();
+    tos.sort_unstable();
+    tos.dedup();
+    assert_eq!(tos, ["po@x.io"], "every owner but the actor: {tos:?}");
 }

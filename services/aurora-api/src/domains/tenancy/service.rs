@@ -519,6 +519,15 @@ pub async fn delete_org(
     let mut dep = deprovision::prepare(state, Scope::Org(org_id)).await?;
     let mut refs = Vec::new();
     let mut token_discards = crate::domains::user_tokens::custody::Discards::default();
+    // (FIX-244) The org's owners are read before the cascade removes their rows; the notice goes
+    // after the commit. A failing lookup means no notice, never a failed delete.
+    let notice = crate::domains::lifecycle_notices::prepare_org(
+        state,
+        org_id,
+        &ev.actor,
+        crate::domains::lifecycle_notices::Action::Deleted,
+    )
+    .await;
     let done = async {
         let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
         dep.enqueue(&mut tx).await?;
@@ -546,6 +555,9 @@ pub async fn delete_org(
     dep.committed(state).await;
     token_discards.run(state).await;
     discard_managed(state, refs).await;
+    if let Some(n) = notice {
+        n.send(state).await;
+    }
     Ok(())
 }
 
@@ -559,6 +571,16 @@ pub async fn delete_workspace(
     ev: &crate::audit::AuditEvent,
 ) -> Result<(), ApiError> {
     let mut del = WorkspaceDeletion::prepare(state, ws).await?;
+    // (FIX-244) The workspace's owners are read before the cascade removes their rows; the
+    // notice goes after the commit. A failing lookup means no notice, never a failed delete.
+    let notice = crate::domains::lifecycle_notices::prepare_workspace(
+        state,
+        org_id,
+        ws,
+        &ev.actor,
+        crate::domains::lifecycle_notices::Action::Deleted,
+    )
+    .await;
     let done = async {
         let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
         del.run(&mut tx, org_id, ws).await?;
@@ -570,6 +592,9 @@ pub async fn delete_workspace(
         return Err(e);
     }
     del.committed(state).await;
+    if let Some(n) = notice {
+        n.send(state).await;
+    }
     Ok(())
 }
 

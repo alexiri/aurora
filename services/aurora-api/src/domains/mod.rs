@@ -38,6 +38,7 @@ pub mod hosted;
 pub mod instance;
 pub mod invitations;
 pub mod keys;
+pub mod lifecycle_notices;
 pub mod llm;
 pub mod me;
 pub mod memory;

@@ -150,6 +150,24 @@ describe("push service worker", () => {
     expect(stray.options.data.url, "a path outside Aurora becomes the home page").toBe("/");
   });
 
+  it("workspace_lifecycle and org_lifecycle: fixed text, the sentence only when carried (FIX-244, D-486)", async () => {
+    const ws = await push(JSON.stringify({ v: 1, type: "workspace_lifecycle", url: "/o/acme/w/main" }));
+    expect(ws.title).toBe("Aurora — your workspace changed");
+    expect(ws.options.body).toBe("Open Aurora for details.");
+    expect(ws.options.tag).toBe("aurora-workspace-lifecycle");
+    expect(ws.options.data.url).toBe("/o/acme/w/main");
+    const org = await push(JSON.stringify({ v: 1, type: "org_lifecycle", url: "/o/acme" }));
+    expect(org.title).toBe("Aurora — your organization changed");
+    expect(org.options.tag).toBe("aurora-org-lifecycle");
+    expect(org.options.data.url).toBe("/o/acme");
+    const named = await push(
+      JSON.stringify({ v: 1, type: "workspace_lifecycle", url: "/o/acme/w/main", title: "Workspace Main was frozen" }),
+    );
+    expect(named.title).toBe("Aurora — Workspace Main was frozen");
+    const stray = await push(JSON.stringify({ v: 1, type: "org_lifecycle", url: "https://evil.example/x" }));
+    expect(stray.options.data.url).toBe("/");
+  });
+
   it("never shows a field outside the payload contract", async () => {
     const s = await push(
       JSON.stringify({ v: 1, type: "approval.pending", approval_id: "ap-5", title: "SECRET-CANARY", body: "SECRET-CANARY", url: "/o/a/w/b/approvals" }),

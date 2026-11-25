@@ -17,6 +17,8 @@ const TYPES = [
   "app_setup_declined",
   "schedule_answer",
   "self_grant",
+  "workspace_lifecycle",
+  "org_lifecycle",
 ];
 const URL_PATTERN = /^\/o\/[A-Za-z0-9._~%/-]+(\?[A-Za-z0-9._~%=&-]*)?$/;
 
@@ -89,6 +91,22 @@ function build(raw) {
       title: item ? "Aurora — " + item : "Aurora — a scheduled task has an answer for you",
       body: "Open the conversation to read it.",
       tag: "aurora-schedule",
+      url: URL_PATTERN.test(url) ? url : "/",
+    };
+  }
+  if (data.type === "workspace_lifecycle" || data.type === "org_lifecycle") {
+    // (FIX-244, D-486) Fixed text; the sentence only when the device turned names on. Never any
+    // content: what happened and to what, and nothing more.
+    const item = text(data.title, 80);
+    const org = data.type === "org_lifecycle";
+    return {
+      title: item
+        ? "Aurora — " + item
+        : org
+          ? "Aurora — your organization changed"
+          : "Aurora — your workspace changed",
+      body: "Open Aurora for details.",
+      tag: org ? "aurora-org-lifecycle" : "aurora-workspace-lifecycle",
       url: URL_PATTERN.test(url) ? url : "/",
     };
   }
