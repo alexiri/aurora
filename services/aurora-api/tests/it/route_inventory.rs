@@ -343,6 +343,11 @@ struct World {
     fx: permission_matrix::Fx,
     h: Harness,
     admin_tok: String,
+    /// The second member's session: a workspace owner (own `can_use`), used to prove the
+    /// creator routes DO return content to a caller with own access.
+    author_tok: String,
+    /// That member's id (the owner-phase creator PUTs reassign to them).
+    author: Uuid,
     group: Uuid,
     conn: Uuid,
     schedule: Uuid,
@@ -429,18 +434,26 @@ async fn seed_world() -> World {
             &author_tok,
             Method::POST,
             &format!("/v1/agents/{agent}/schedules"),
-            Some(json!({"name": "s", "prompt": "p", "cron": "0 * * * *"})),
+            Some(json!({"name": "s", "prompt": "MATRIX-schedule-prompt-content", "cron": "0 * * * *"})),
         )
         .await;
     assert!((200..300).contains(&sc), "{sv}");
     let schedule: Uuid = sv["id"].as_str().unwrap().parse().unwrap();
+    // A run whose outcome text carries a marker: `last_result` is built from the run row, so
+    // the creator route's response carries it unless the content is stripped.
+    sqlx::query("INSERT INTO schedule_runs (id, schedule_id, outcome, fired_at) VALUES ($1, $2, 'MATRIX-run-result-content', now())")
+        .bind(Uuid::now_v7())
+        .bind(schedule)
+        .execute(h.pool())
+        .await
+        .unwrap();
 
     let (sc, sv) = h
         .call_tok(
             &author_tok,
             Method::POST,
             &format!("/v1/agents/{agent}/webhooks"),
-            Some(json!({"name": "w", "instructions": "i"})),
+            Some(json!({"name": "w", "instructions": "MATRIX-webhook-instructions-content"})),
         )
         .await;
     assert!((200..300).contains(&sc), "{sv}");
@@ -515,6 +528,8 @@ async fn seed_world() -> World {
         },
         h,
         admin_tok,
+        author_tok,
+        author,
         group,
         conn,
         schedule,
@@ -525,6 +540,9 @@ async fn seed_world() -> World {
             "MATRIX-message-content".into(),
             "MATRIX-memory-content".into(),
             "MATRIX-secret-content".into(),
+            "MATRIX-schedule-prompt-content".into(),
+            "MATRIX-run-result-content".into(),
+            "MATRIX-webhook-instructions-content".into(),
         ],
     }
 }
@@ -673,6 +691,67 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
     }
     // The walk must actually have exercised the administered surface.
     assert!(rows.len() >= 25, "{} administer rows", rows.len());
+
+    // (FIX-234 review round 3) The creator routes are the one administer pair whose response
+    // can carry content. The binding-less administrator gets the shape with the content
+    // stripped; a caller with own `can_use` (the owner here) gets it whole.
+    let (s, v) =
+        w.h.call_tok(
+            &w.admin_tok,
+            Method::PUT,
+            &format!("/v1/schedules/{}/creator", w.schedule),
+            Some(json!({"user_id": w.author})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["prompt"], json!(""), "the prompt is content: {v}");
+    assert_eq!(v["last_result"], json!(null), "{v}");
+    let (s, v) =
+        w.h.call_tok(
+            &w.author_tok,
+            Method::PUT,
+            &format!("/v1/schedules/{}/creator", w.schedule),
+            // The victim's binding was removed by the walk's DELETE; the owner is an active
+            // member who can use the workspace.
+            Some(json!({"user_id": w.author})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["prompt"], "MATRIX-schedule-prompt-content",
+        "the owner (own can_use) keeps the prompt: {v}"
+    );
+    assert!(
+        v["last_result"].is_string(),
+        "the owner keeps the newest run's result: {v}"
+    );
+    let (s, v) =
+        w.h.call_tok(
+            &w.admin_tok,
+            Method::PUT,
+            &format!("/v1/webhooks/{}/creator", w.webhook),
+            Some(json!({"user_id": w.author})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["instructions"],
+        json!(""),
+        "the instructions are content: {v}"
+    );
+    let (s, v) =
+        w.h.call_tok(
+            &w.author_tok,
+            Method::PUT,
+            &format!("/v1/webhooks/{}/creator", w.webhook),
+            Some(json!({"user_id": w.author})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        v["instructions"], "MATRIX-webhook-instructions-content",
+        "the owner keeps the instructions: {v}"
+    );
 
     for (m, p) in own_rows {
         let uri = format!("/v1{}", permission_matrix::fill(p, &w.fx));

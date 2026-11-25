@@ -325,5 +325,16 @@ async fn reassign_creator(
     )
     .await?;
     tx.commit().await.map_err(DbError::from)?;
-    Ok(Json(service::get(&s, id).await?.into()))
+    // (FIX-234 review round 3, C-1160) An administerer without own access gets the response
+    // shape with the content emptied: `instructions` is the text a person wrote, and an
+    // administer route never returns content (the verification view is a static recipe and the
+    // prefixes are metadata). A caller with own `can_use` keeps everything.
+    let own_can_use = aurora_db::authz::own_access(&s.pool, c.user_id, agent.workspace_id)
+        .await?
+        .is_some();
+    let mut webhook: Webhook = service::get(&s, id).await?.into();
+    if !own_can_use {
+        webhook.instructions = String::new();
+    }
+    Ok(Json(webhook))
 }

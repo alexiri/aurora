@@ -428,7 +428,31 @@ async fn reassign_creator(
     )
     .await?;
     tx.commit().await.map_err(DbError::from)?;
+    let own_can_use = aurora_db::authz::own_access(&s.pool, c.user_id, agent.workspace_id)
+        .await?
+        .is_some();
     let mut out = vec![Schedule::from(service::get(&s.pool, id).await?)];
     redact_all(&c, &s, &mut out).await?;
-    Ok(Json(out.remove(0)))
+    let out = out.remove(0);
+    // (FIX-234 review round 3, C-1160) An administerer without own access gets the response
+    // shape with the content emptied: the prompt and gate text a person wrote, the provenance
+    // conversation and the newest run's output are content, and an administer route never
+    // returns content. A caller with own `can_use` keeps everything.
+    Ok(Json(if own_can_use {
+        out
+    } else {
+        strip_schedule_content(out)
+    }))
+}
+
+/// The content fields of a `Schedule` (see `reassign_creator`): emptied for a caller without
+/// own `can_use`; the response shape is unchanged (the web discards this body anyway).
+fn strip_schedule_content(mut s: Schedule) -> Schedule {
+    s.prompt = String::new();
+    s.gate_command = None;
+    s.gate_description = None;
+    s.origin_conversation_id = None;
+    s.conversation_hidden = true;
+    s.last_result = None;
+    s
 }
