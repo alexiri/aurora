@@ -607,6 +607,16 @@ async fn speaker_binding_follows_can_use() {
         .execute(p)
         .await
         .unwrap();
+    // An org role grants no workspace right (D-477): the org owner speaks as a workspace owner
+    // through an own binding; the org admin has none and so no `can_use`.
+    sqlx::query(
+        "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'owner')",
+    )
+    .bind(w.ws)
+    .bind(w.owner)
+    .execute(p)
+    .await
+    .unwrap();
     speaker_cred(p, hosted, "auc_bound", "context", w.bound).await;
     speaker_cred(p, hosted, "auc_owner", "context", w.owner).await;
     speaker_cred(p, hosted, "auc_admin", "context", w.admin).await;
@@ -622,7 +632,11 @@ async fn speaker_binding_follows_can_use() {
     };
     assert_eq!(speaker("auc_bound").await, Some(w.bound));
     assert_eq!(speaker("auc_owner").await, Some(w.owner));
-    assert_eq!(speaker("auc_admin").await, Some(w.admin));
+    assert_eq!(
+        speaker("auc_admin").await,
+        None,
+        "an org role is not can_use"
+    );
     assert_eq!(speaker("auc_unbound").await, None, "no can_use");
     assert_eq!(speaker("auc_suspended").await, None, "suspended member");
     assert_eq!(speaker("auc_byo").await, None, "BYO context");
