@@ -257,7 +257,9 @@ function OrgRole({ g, orgId }: { g: Group; orgId: string }) {
         </Field>
         <p className="text-sm text-ink-2">
           {g.org_role
-            ? `Members of this group act as ${g.org_role} in the whole organization, including every workspace.`
+            ? g.org_role === "admin"
+              ? "Members of this group administer every workspace of the organization (an organization role grants no workspace access)."
+              : "Members of this group are members of the organization."
             : "No organization role. Owner can never be given to a group."}
         </p>
         <ErrorNotice error={patch.error} />
@@ -265,7 +267,7 @@ function OrgRole({ g, orgId }: { g: Group; orgId: string }) {
           open={pending !== null}
           onOpenChange={(o) => !o && setPending(null)}
           title="Make this group Admin?"
-          description="Every member of this group will own every workspace in the organization and can manage groups."
+          description="Every member of this group will administer every workspace of the organization and can manage groups. An organization role grants no workspace access."
           confirmLabel="Make Admin"
           danger
           busy={patch.isPending}

@@ -27,7 +27,8 @@ use uuid::Uuid;
 pub struct SetupView {
     pub org: Uuid,
     pub workspace: Option<Uuid>,
-    /// The caller is an organization owner or admin (an implicit owner of every workspace).
+    /// The caller is an organization owner or admin (their role gives `can_administer` of
+    /// every workspace of the organization, D-477: no workspace right, FIX-234).
     pub org_admin: bool,
 }
 

@@ -655,7 +655,8 @@ async fn org_role_mapping_and_effective_role_in_me() {
     let f = fx().await;
     let g = f.create("admins", json!({"org_role": "admin"})).await;
     assert_eq!(f.add(g, f.plain.id).await.0, 200);
-    // an effective admin may manage groups and owns every workspace
+    // an effective admin may manage groups and administers every workspace (D-477: no
+    // workspace right — the workspace GET is on the administer list)
     assert_eq!(f.ws_status(&f.plain).await, 200);
     let (s, _) = f
         .call(

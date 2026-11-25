@@ -1635,7 +1635,9 @@ every other topic is owners/admins and is not listed for a member.)
   limit shown; read-only with the note "Managed by your identity provider" for SCIM
   groups and, for sign-in-linked groups (D-156), "Members come from your sign-in provider
   (claim value `…`)" with each member's last sync time), **Org role** (None / Member / Admin, never Owner, with the sentence "Members of
-  this group act as <role> in the whole organization, including every workspace" and a
+  this group administer every workspace of the organization (an organization role grants no
+  workspace access)" for Admin and "Members of this group are members of the organization" for
+  Member, and a
   confirm dialog when set to Admin) and **Workspace access** (workspaces and roles bound
   to the group, the same selector as the workspace Access section). Deleting a group
   opens the impact dialog first. Owners and admins manage; a workspace owner without
