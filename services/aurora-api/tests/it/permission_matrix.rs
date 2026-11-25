@@ -33,7 +33,7 @@ use uuid::Uuid;
 // ---- principals ------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum P {
+pub(crate) enum P {
     Anon,
     /// Org owner (session).
     Owner,
@@ -1671,19 +1671,21 @@ fn want(g: G, so: bool, p: P) -> Want {
 // ---- seeding and requests --------------------------------------------------
 
 #[derive(Clone)]
-enum Auth {
+pub(crate) enum Auth {
     Anon,
     Cookie(String),
     Bearer(String),
 }
 
-struct Fx {
-    org: Uuid,
-    ws: Uuid,
-    agent: Uuid,
+/// The seeded ids the body/fill helpers interpolate (`route_inventory.rs`'s behavioural test
+/// reuses them — one seeding, one body table).
+pub(crate) struct Fx {
+    pub org: Uuid,
+    pub ws: Uuid,
+    pub agent: Uuid,
     /// Active member bound to `ws` as member, used as the `{user}` target of DELETE/PATCH.
-    victim: Uuid,
-    auth: HashMap<P, Auth>,
+    pub victim: Uuid,
+    pub(crate) auth: HashMap<P, Auth>,
 }
 
 /// Seed one org with every principal. Uses the API to create the org so the default agent exists.
@@ -1884,7 +1886,7 @@ fn seeded(path: &str) -> bool {
         .all(|n| matches!(*n, "org" | "ws" | "agent" | "user"))
 }
 
-fn fill(path: &str, fx: &Fx) -> String {
+pub(crate) fn fill(path: &str, fx: &Fx) -> String {
     let mut out = String::new();
     let mut rest = path;
     while let Some(i) = rest.find('{') {
@@ -1924,7 +1926,13 @@ fn norm(path: &str) -> String {
 /// authorization outcome (not a 400/422) is what is observed. Routes whose request type has only
 /// optional fields accept `{}`. Values need not be *semantically* acceptable: the handler may
 /// still answer 4xx (404 unknown id, 409, 422) after authorization, which counts as allowed.
-fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
+pub(crate) fn body_for(method: &str, path: &str, fx: &Fx) -> Value {
+    // Route_inventory's behavioural test layers its overrides on top (`body_with_overrides`);
+    // permission_matrix calls this directly.
+    body_for_inner(method, path, fx)
+}
+
+fn body_for_inner(method: &str, path: &str, fx: &Fx) -> Value {
     match (method, path) {
         // (P5-UX-5) one exact address; an authorized owner gets a 200, anyone else a refusal before the body is read.
         ("POST", "/v1/workspaces/{ws}/access/by-email") => {

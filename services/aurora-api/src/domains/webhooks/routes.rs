@@ -300,13 +300,20 @@ async fn reassign_creator(
     Path(id): Path<Uuid>,
     Json(req): Json<ReassignCreatorRequest>,
 ) -> Result<Json<Webhook>, ApiError> {
-    let (row, a) = authorized(&c, &s, id).await?;
-    c.administer(&s, a.workspace_id).await?;
+    // (FIX-234 review, C-1160) `can_administer` per docs/04: an org owner/admin reassigns the
+    // creator without own access, so the load must not go through `Caller::workspace` (the
+    // agent is loaded plainly and its workspace administered instead). The new creator still
+    // needs own `can_use` — checked by the reassignment and again at every fire.
+    let row = service::get(&s, id).await?;
+    let agent = agents::get(&s.pool, row.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    let a = c.administer(&s, agent.workspace_id).await?;
     let actor = AuditActor::from_caller(&c);
     let acting = Acting {
         actor: &actor,
         org: a.org_id,
-        workspace: a.workspace_id,
+        workspace: agent.workspace_id,
     };
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     auto::reassign_webhook(

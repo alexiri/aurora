@@ -829,8 +829,9 @@ async fn the_access_report_lists_every_gap_and_writes_nothing() {
 // ---------------------------------------------------------------- review fixes
 
 /// The acme app's package manifest: tools `list_items`, `get_item` (read) and `create_item`
-/// (write) so grant bodies can name real tools.
-const YAML: &str = r#"package: { id: acme, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }
+/// (write) so grant bodies can name real tools. (`route_inventory.rs`'s behavioural walk
+/// installs it too — one registry, one manifest.)
+pub(crate) const YAML: &str = r#"package: { id: acme, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }
 permissions:
   token_hosts: [accounts.example.com]
 apps:
