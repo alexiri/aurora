@@ -1674,6 +1674,18 @@
       "user_id",
       "workspace_id"
     ],
+    "workspace_emergency_access": [
+      "end_reason",
+      "ended_at",
+      "ended_by",
+      "expires_at",
+      "id",
+      "opened_at",
+      "org_id",
+      "reason",
+      "user_id",
+      "workspace_id"
+    ],
     "workspace_pending_access": [
       "email_normalized",
       "expires_at",
@@ -3374,6 +3386,18 @@
       "status": "text not null",
       "user_id": "uuid",
       "workspace_id": "uuid"
+    },
+    "workspace_emergency_access": {
+      "end_reason": "text null",
+      "ended_at": "timestamptz null",
+      "ended_by": "uuid null",
+      "expires_at": "timestamptz not null",
+      "id": "uuid not null",
+      "opened_at": "timestamptz not null",
+      "org_id": "uuid not null",
+      "reason": "text not null",
+      "user_id": "uuid not null",
+      "workspace_id": "uuid not null"
     },
     "workspace_pending_access": {
       "email_normalized": "text not null",

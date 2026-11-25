@@ -207,6 +207,21 @@ owner cannot be demoted or removed).
 | invited_by | uuid FK→users (set null) | the owner who added it |
 | expires_at | timestamptz not null | `created_at + PENDING_ACCESS_TTL` (30 days); an index on it serves the sweeper |
 
+### `workspace_emergency_access`
+(phase 5, FIX-236, D-478, C-1164, SEC-154; migration `20261201000283_workspace_emergency_access.sql`) One organization owner's emergency read access (break-glass) to one workspace of their organization, with a reason, for 1–24 hours. **Active** means `ended_at IS NULL AND expires_at > now()`, evaluated on every use — never cached, never only by the sweep. Rows are kept 400 days for the history views, then the nightly sweep deletes them; the audit rows stay under the audit's own retention. The gateway role gets nothing on this table.
+| Column | Type | Notes |
+|---|---|---|
+| id | uuid pk | |
+| org_id | uuid not null FK→organizations (cascade) | the workspace's organization; index `(org_id, opened_at DESC)` |
+| workspace_id | uuid not null FK→workspaces (cascade) | the one workspace the grant covers; index `(workspace_id, opened_at DESC)` |
+| user_id | uuid not null FK→users (cascade) | the opener; partial unique `(workspace_id, user_id) WHERE ended_at IS NULL` — one active grant per (workspace, person), which serializes two owners opening at once (the loser gets 409) |
+| reason | text not null CHECK `char_length(reason) BETWEEN 10 AND 500` | why; sanitized at the route, carried in the notifications and the audit row |
+| opened_at | timestamptz not null default now() | index (plain, for the 400-day retention sweep) |
+| expires_at | timestamptz not null | `opened_at + hours` (1–24); partial index `WHERE ended_at IS NULL` serves the minute expiry job; CHECK `expires_at > opened_at` |
+| ended_at | timestamptz null | set by an early end, the expiry job or the access-lost hook |
+| ended_by | uuid FK→users (set null) | who ended it early; null for `expired` and `access_lost` |
+| end_reason | text null CHECK in (`ended`,`expired`,`access_lost`) | null while active; CHECK: `ended_at` and `end_reason` are null or set together |
+
 ### `groups`
 (phase 4, P4-GRP-1, D-130) Directory groups: flat, per org (`04 §Groups`). A table with no rows changes nothing about the access law.
 | Column | Type | Notes |
