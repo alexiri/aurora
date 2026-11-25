@@ -34,7 +34,7 @@ function desktop() {
 }
 
 const pane = (props: Record<string, unknown> = {}) =>
-  wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} agent={{ id: "a1", name: "Daneel", handle: "daneel", brief: "Triage the team's pull requests." }} audience={{ people: 2, owners: [{ id: "u9", display_name: "Ada Lovelace" }], owners_total: 1 }} myRole="owner" readerId="u9" {...props} />);
+  wrap(<ChatPane agentId="a1" wsId="w" base="/o/x/w/y" convId="c1" direct={null} agent={{ id: "a1", name: "Daneel", handle: "daneel", brief: "Triage the team's pull requests." }} audience={{ people: 2, owners: [{ id: "u9", display_name: "Ada Lovelace" }], owners_total: 1, emergency_active_more: 0 }} myRole="owner" readerId="u9" {...props} />);
 
 describe("the retention tooltip on the visibility line (retention-tooltip)", () => {
   it("focus opens the tooltip, the note is the line's description, Escape and blur close it", () => {
