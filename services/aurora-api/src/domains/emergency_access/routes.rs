@@ -41,11 +41,11 @@ const REASON_MAX: usize = 500;
 const OPEN_PER_HOUR: u32 = 30;
 
 fn reason_invalid(msg: &str) -> ApiError {
-    ApiError::invalid_field("Invalid request.", "/reason", msg)
+    ApiError::unprocessable("reason_invalid", msg)
 }
 
 fn hours_invalid(msg: &str) -> ApiError {
-    ApiError::invalid_field("Invalid request.", "/hours", msg)
+    ApiError::unprocessable("hours_invalid", msg)
 }
 
 /// 403 `org_owner_required`: an org admin, a member, or an instance admin who is not an org
@@ -110,7 +110,7 @@ async fn open_emergency_access(
     State(s): State<AppState>,
     Path(ws): Path<Uuid>,
     Json(req): Json<OpenEmergencyAccessRequest>,
-) -> Result<Json<EmergencyAccess>, ApiError> {
+) -> Result<(StatusCode, Json<EmergencyAccess>), ApiError> {
     let w = ws_row(&s, ws).await?;
     // Owner means the effective org role `owner` (D-478(a)); an org admin, a member and an
     // instance admin who is not an org owner get 403 `org_owner_required`.
@@ -141,7 +141,7 @@ async fn open_emergency_access(
     }
     let reason = sanitize::one_line(&req.reason, REASON_MAX);
     let chars = reason.chars().count();
-    if chars < REASON_MIN || chars > REASON_MAX {
+    if !(REASON_MIN..=REASON_MAX).contains(&chars) {
         return Err(reason_invalid("must be 10 to 500 characters"));
     }
     let hours = req.hours.unwrap_or(DEFAULT_HOURS);
@@ -170,7 +170,7 @@ async fn open_emergency_access(
         .fetch_one(&s.pool)
         .await
         .map_err(DbError::from)?;
-    Ok(Json(row_of(row, w.name, by_name)))
+    Ok((StatusCode::CREATED, Json(row_of(row, w.name, by_name))))
 }
 
 /// Fire the opening notices; every failure is logged (the grant stands).
@@ -231,14 +231,15 @@ async fn end_emergency_access(
     let row = repo::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Emergency access not found."))?;
-    if row.user_id != c.user_id {
-        if member_role(&s, c.user_id, row.org_id).await? != OrgRole::Owner {
-            return Err(org_owner_required());
-        }
+    if row.user_id != c.user_id && member_role(&s, c.user_id, row.org_id).await? != OrgRole::Owner {
+        return Err(org_owner_required());
     }
     let mut tx = audit::begin(&s).await?;
     // Lock so two enders cannot race; already-ended rows answer idempotently with no new row.
-    let current = repo::lock(&mut tx, id).await?.expect("row just read");
+    // The row was just read, so the lock's None is unreachable — but panic-free all the same.
+    let current = repo::lock(&mut tx, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Emergency access not found."))?;
     if repo::end(&mut tx, id, Some(c.user_id), repo::END_ENDED).await? {
         let ev = AuditEvent::by(&c, "workspace.emergency_access.end")
             .org(current.org_id)
@@ -259,7 +260,9 @@ async fn end_emergency_access(
         .fetch_one(&s.pool)
         .await
         .map_err(DbError::from)?;
-    let ended = repo::get(&s.pool, id).await?.expect("row just ended");
+    let ended = repo::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Emergency access not found."))?;
     Ok(Json(row_of(ended, ws_name, by_name)))
 }
 

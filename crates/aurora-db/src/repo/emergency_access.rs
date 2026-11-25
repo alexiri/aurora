@@ -153,7 +153,7 @@ pub async fn list_for_workspace<'e, E: PgExecutor<'e>>(
     before: Option<(DateTime<Utc>, Uuid)>,
 ) -> Result<Vec<ListRow>, DbError> {
     Ok(sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(format!(
-        "SELECT e.{COLS_LIST}, w.name AS workspace_name, u.display_name AS by_display_name \
+        "SELECT {COLS_LIST}, w.name AS workspace_name, u.display_name AS by_display_name \
          FROM workspace_emergency_access e \
          JOIN workspaces w ON w.id = e.workspace_id \
          JOIN users u ON u.id = e.user_id \
@@ -177,7 +177,7 @@ pub async fn list_for_org<'e, E: PgExecutor<'e>>(
     before: Option<(DateTime<Utc>, Uuid)>,
 ) -> Result<Vec<ListRow>, DbError> {
     Ok(sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(format!(
-        "SELECT e.{COLS_LIST}, w.name AS workspace_name, u.display_name AS by_display_name \
+        "SELECT {COLS_LIST}, w.name AS workspace_name, u.display_name AS by_display_name \
          FROM workspace_emergency_access e \
          JOIN workspaces w ON w.id = e.workspace_id \
          JOIN users u ON u.id = e.user_id \
@@ -201,7 +201,7 @@ pub async fn latest_banner<'e, E: PgExecutor<'e>>(
     ws: Uuid,
 ) -> Result<Option<ListRow>, DbError> {
     Ok(sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(format!(
-        "SELECT e.{COLS_LIST}, w.name AS workspace_name, u.display_name AS by_display_name \
+        "SELECT {COLS_LIST}, w.name AS workspace_name, u.display_name AS by_display_name \
          FROM workspace_emergency_access e \
          JOIN workspaces w ON w.id = e.workspace_id \
          JOIN users u ON u.id = e.user_id \

@@ -128,19 +128,22 @@ pub async fn record_emergency_view(
 }
 
 /// [`record_emergency_view`] for a caller known only as an audit actor (the timeline's feed).
+/// Every failure here is the record failing — the read is refused with 503
+/// `audit_unavailable` (C-1165: not best-effort like `conversation.owner_view`).
 pub async fn record_emergency_view_actor(
     state: &AppState,
     actor: &AuditActor,
     row: &ConversationRow,
     grant: &EmergencyGrant,
 ) -> Result<(), ApiError> {
-    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let refuse = |_| crate::audit::unavailable();
+    let mut tx = state.pool.begin().await.map_err(refuse)?;
     let actor_id = actor.id.unwrap_or(Uuid::nil());
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!("emergency_view:{}:{}", actor_id, row.id))
         .execute(&mut *tx)
         .await
-        .map_err(DbError::from)?;
+        .map_err(refuse)?;
     let seen: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM audit_log WHERE workspace_id = $1 AND actor_id = $2
            AND action = 'conversation.emergency_view' AND target_id = $3
@@ -151,7 +154,7 @@ pub async fn record_emergency_view_actor(
     .bind(row.id.to_string())
     .fetch_one(&mut *tx)
     .await
-    .map_err(DbError::from)?;
+    .map_err(refuse)?;
     if !seen {
         let ev = AuditEvent::new(
             actor.clone(),
@@ -166,9 +169,11 @@ pub async fn record_emergency_view_actor(
             "emergency_access": grant.id(),
             "direct_user_id": row.direct_user_id,
         }));
-        crate::audit::insert_tx(&mut tx, &ev).await?;
+        crate::audit::insert_tx(&mut tx, &ev)
+            .await
+            .map_err(|_| crate::audit::unavailable())?;
     }
-    tx.commit().await.map_err(DbError::from)?;
+    tx.commit().await.map_err(refuse)?;
     Ok(())
 }
 
