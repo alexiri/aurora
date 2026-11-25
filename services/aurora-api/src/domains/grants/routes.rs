@@ -6,7 +6,7 @@ use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use aurora_core::ApiError;
-use aurora_db::repo::{connections, gateway, grants};
+use aurora_db::repo::{gateway, grants};
 use axum::extract::State;
 use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -234,16 +234,17 @@ async fn delete_connection_grant(
     State(state): State<AppState>,
     Path((agent, conn)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
-    let (a, auth) = service::visible_agent(&caller, &state, agent).await?;
     // (FIX-234, C-1160) An organization's account is administered by its org owners and admins;
-    // they remove a grant without own access to the agent's workspace. A workspace's connection
-    // needs own `can_own`.
-    let org_scope = connections::get(&state.pool, conn)
-        .await?
-        .is_some_and(|c| c.org_id == a.org_id && c.workspace_id.is_none());
+    // they remove a grant without own access to the agent's workspace (the incident-response
+    // path). A workspace's connection needs own `can_own`.
+    let (a, auth, org_scope) =
+        service::agent_for_connection_grant(&caller, &state, agent, conn, true).await?;
     if !org_scope {
+        let auth = auth.ok_or_else(|| ApiError::internal("own access missing"))?;
         require_own(&auth)?;
-    } else if !auth.can_own() {
+    } else if !auth.as_ref().is_some_and(|a| a.can_own()) {
+        // No own owner access here: the helper proved the org-administer exception, and a
+        // visible non-owner still names the org's owners/admins.
         caller.org(&state, a.org_id).await?.require_admin()?;
     }
     service::revoke_connection(&state, &caller, &a, conn).await?;

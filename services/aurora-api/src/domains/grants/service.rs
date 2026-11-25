@@ -31,6 +31,49 @@ pub async fn visible_agent(
     Ok((row, auth))
 }
 
+/// The agent of a connection-grant change (SEC-77). Own access keeps its old errors (404
+/// invisible, `workspace_mismatch`, 403 `workspace_access_required`) — except (FIX-234 review,
+/// C-1160) an organization-scope connection's grants are administered by its org's owners and
+/// admins without own access to the agent's workspace (the incident-response path). Returns the
+/// agent, the caller's own access when it has one, and whether the connection is
+/// organization-scoped. `administer` says the route may use that exception; a workspace key
+/// keeps its own error (`Caller::org` never speaks for it).
+pub async fn agent_for_connection_grant(
+    caller: &Caller,
+    state: &AppState,
+    agent_id: Uuid,
+    connection_id: Uuid,
+    administer: bool,
+) -> Result<(AgentRow, Option<aurora_db::authz::WorkspaceAuth>, bool), ApiError> {
+    let agent = agents::get(&state.pool, agent_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    let org_scope = connections::get(&state.pool, connection_id)
+        .await?
+        .is_some_and(|c| c.workspace_id.is_none() && c.org_id == agent.org_id);
+    match caller.workspace(state, agent.workspace_id).await {
+        Ok(auth) => Ok((agent, Some(auth), org_scope)),
+        Err(e)
+            if administer
+                && org_scope
+                && !matches!(
+                    &caller.principal,
+                    crate::http::auth::Principal::ApiKey {
+                        workspace_id: Some(_),
+                        ..
+                    }
+                ) =>
+        {
+            if caller.org(state, agent.org_id).await?.role.is_admin() {
+                Ok((agent, None, org_scope))
+            } else {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Where a grant write comes from (FIX-020, D-137, SEC-77). Both go through the same function
 /// and the same checks; they differ only in what happens to a grant that already exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -750,12 +793,13 @@ pub async fn grant_connection_in_tx(
     origin: Origin,
     administer: bool,
 ) -> Result<Written<ConnectionGrant>, ApiError> {
-    let (agent, auth) = visible_agent(caller, state, agent_id).await?;
+    let (agent, auth, _) =
+        agent_for_connection_grant(caller, state, agent_id, connection_id, administer).await?;
     grant_connection_in_tx_for_agent(
         tx,
         state,
         &agent,
-        &auth,
+        auth.as_ref(),
         caller,
         connection_id,
         req,
@@ -774,7 +818,7 @@ pub async fn grant_connection_in_tx_for_agent(
     tx: &mut audit::Tx,
     state: &AppState,
     agent: &AgentRow,
-    auth: &aurora_db::authz::WorkspaceAuth,
+    auth: Option<&aurora_db::authz::WorkspaceAuth>,
     caller: &Caller,
     connection_id: Uuid,
     req: PutConnectionGrant,
@@ -784,6 +828,7 @@ pub async fn grant_connection_in_tx_for_agent(
     // (FIX-234, C-1160) `administer` is passed only for an org-scope connection granted by its
     // org owners/admins (the credential-side bulk route); every other path needs own `can_own`.
     if !administer {
+        let auth = auth.ok_or_else(|| ApiError::internal("own access missing"))?;
         crate::http::auth::require_own(auth)?;
     }
     write_connection_grant(

@@ -937,7 +937,7 @@ async fn create_in_tx(
             tx,
             state,
             &agent,
-            auth,
+            Some(auth),
             caller,
             a.connection_id,
             a.grant.clone(),

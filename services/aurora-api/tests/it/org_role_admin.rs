@@ -820,6 +820,32 @@ async fn the_access_report_lists_every_gap_and_writes_nothing() {
 
 // ---------------------------------------------------------------- review fixes
 
+/// The acme app's package manifest: tools `list_items`, `get_item` (read) and `create_item`
+/// (write) so grant bodies can name real tools.
+const YAML: &str = r#"package: { id: acme, version: 1.0.0, contract: 1, min_core: 0.1.0, publisher: acme, name: P }
+permissions:
+  token_hosts: [accounts.example.com]
+apps:
+  - about: { id: acme_app, name: Acme, description: D, category: dev }
+    credentials: [ { name: api_token, secret: true } ]
+    connect:
+      - id: api_key
+        kind: fields
+        fields: [ { name: api_token, label: T, type: secret, required: true } ]
+    tools:
+      read:
+        items:
+          - { id: list_items, name: List, host: api.acme.example, path: /items, methods: [GET] }
+          - { id: get_item, name: Get, host: api.acme.example, path: "/items/*", methods: [GET] }
+      write:
+        items:
+          - { id: create_item, name: Create, host: api.acme.example, path: /items, methods: [POST] }
+    hosts:
+      - match: { host: "api.acme.example" }
+        inject:
+          - bearer: "{credentials.api_token}"
+"#;
+
 /// (FIX-234 review 1a) Adding yourself to a group ALREADY bound to a workspace is a self-grant,
 /// exactly like binding the group after joining it: an API key is refused (`session_required`),
 /// a session writes the critical `workspace_access.self_grant` row (`via: "group"`) and tells the
@@ -1054,4 +1080,113 @@ async fn an_administrator_unbinds_a_group_without_own_access() {
         )
         .await;
     assert_eq!((s, code(&v)), (403, "personal_workspace_owner_only"), "{v}");
+}
+
+/// (FIX-234 review 3) An organization account's grants are its org's owners/admins (C-1160): an
+/// administrator without own access revokes a grant of an org-scope connection (the
+/// incident-response path, audited) and grants it in bulk; a workspace-scoped connection stays
+/// own `can_own`, and the administrator still cannot read the agent itself.
+#[tokio::test]
+async fn an_admin_revokes_and_grants_an_org_account_without_own_access() {
+    let f = owner_case().await;
+    // The app's catalogue: without a registered package every grant is `custom_only` with an
+    // empty tool list (SEC-67), so the bulk grant below needs the acme app registered.
+    crate::plugins_lifecycle::setup(&f.h)
+        .await
+        .install(YAML)
+        .await;
+    // An org-scope connection (workspace_id NULL) with a `full` grant on Bob's agent.
+    let conn = Uuid::now_v7();
+    sqlx::query("INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref) VALUES ($1,$2,NULL,'acme_app','acme','1.0.0','c','active','x')")
+        .bind(conn)
+        .bind(f.org)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')")
+        .bind(Uuid::now_v7())
+        .bind(f.ws)
+        .bind(f.agent)
+        .bind(conn)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+
+    // Reading the agent itself stays refused: the administrator manages, but is not a person.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::GET,
+            &format!("/v1/agents/{}", f.agent),
+            None,
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "workspace_access_required"), "{v}");
+
+    // Revoke the grant: 204, the grant row is gone, audited on the agent.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::DELETE,
+            &format!("/v1/agents/{}/grants/connections/{}", f.agent, conn),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM grants WHERE agent_id = $1 AND connection_id = $2",
+    )
+    .bind(f.agent)
+    .bind(conn)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0);
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'grant.delete' AND target_id = $1",
+    )
+    .bind(f.agent.to_string())
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+
+    // Grant it again in bulk: the credential-side route of the org's account.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/connections/{}/grants", conn),
+            Some(json!({"agent_ids": [f.agent], "mode": "custom", "allow_tools": ["create_item"]})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM grants WHERE agent_id = $1 AND connection_id = $2 AND mode = 'custom'",
+    )
+    .bind(f.agent)
+    .bind(conn)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+
+    // A workspace-scoped connection stays own `can_own`: the same administrator is refused.
+    sqlx::query("INSERT INTO grants (id, workspace_id, agent_id, connection_id, mode) VALUES ($1,$2,$3,$4,'full')")
+        .bind(Uuid::now_v7())
+        .bind(f.ws)
+        .bind(f.agent)
+        .bind(f.conn)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::DELETE,
+            &format!("/v1/agents/{}/grants/connections/{}", f.agent, f.conn),
+            None,
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "workspace_access_required"), "{v}");
 }
