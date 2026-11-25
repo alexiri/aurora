@@ -503,6 +503,12 @@ impl Stream {
             .iter()
             .filter_map(|r| feed.request_event(r))
             .collect();
+        // (FIX-236, C-1165, review HIGH) The record before the content, like the list endpoint:
+        // `rows_of_turns` records what it let through, but the single calls, the loaded rows
+        // (approvals, runs, deliveries, …) and the request events only queued their
+        // conversations — a failed audit write fails the build, and the stream resyncs instead
+        // of delivering content it could not record.
+        feed.record_emergency_views().await?;
         Ok((items, requests))
     }
 

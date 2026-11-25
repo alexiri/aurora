@@ -995,6 +995,111 @@ async fn the_stream_omits_rows_the_reader_may_not_see() {
     );
 }
 
+/// (FIX-236 review, HIGH) The stream records the emergency reader's views **before** the content:
+/// when the audit write fails, the SSE stream delivers no row from a conversation the reader could
+/// not otherwise see (the list endpoint refuses with 503; the stream must not hand out content it
+/// could not record), and once the fault is gone the row arrives and the view is recorded.
+#[tokio::test]
+async fn the_stream_records_emergency_views_before_the_content() {
+    let f = fx().await;
+    let h = &f.h;
+    let app = test_router(h.state.clone());
+    let uri = format!("/v1/agents/{}/timeline/stream", f.agent);
+
+    // An org owner who is not a workspace member opens emergency read access (the grant needs an
+    // org owner without own-right access); their stream now sees Bob's direct chat.
+    let er = h.user("er@x.io", false).await;
+    h.member(f.org, er, "owner", "active").await;
+    let (_, er_tok) = h.good_session(er).await;
+    let er_c = cookie(&er_tok);
+    let (s, v) = h
+        .call(
+            &er_c,
+            Method::POST,
+            &format!("/v1/workspaces/{}/emergency-access", f.ws),
+            Some(json!({"reason": "the stream record test"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, mut body) = open(&app, &uri, &er_c).await;
+    assert_eq!(s, 200);
+    let two = Duration::from_secs(2);
+
+    // The recording is not best-effort: a failed audit write must not let the content through.
+    sqlx::query(
+        "CREATE FUNCTION audit_critical_fail() RETURNS trigger AS $$ BEGIN \
+         RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql",
+    )
+    .execute(h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER audit_critical_fail BEFORE INSERT ON audit_log FOR EACH ROW \
+         WHEN (NEW.critical) EXECUTE FUNCTION audit_critical_fail()",
+    )
+    .execute(h.pool())
+    .await
+    .unwrap();
+
+    // A held approval in Bob's direct chat (the gateway's NOTIFY): the stream may not push it.
+    let a = approval(h, &f, Some(f.direct), None, "docs.example.org", 0.0).await;
+    bus::notify(
+        h.pool(),
+        Channel::Approval,
+        &json!({"id": a, "workspace_id": f.ws, "event": "created"}),
+    )
+    .await
+    .unwrap();
+    let id = format!("approval:{a}");
+    let t = read_until(&mut body, two, |s| has_row(s, &id, "waiting")).await;
+    assert!(
+        !has_row(&t, &id, "waiting"),
+        "content without the record: {t}"
+    );
+    assert!(
+        t.contains("event: resync"),
+        "the stream asks for a resync: {t}"
+    );
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view'",
+    )
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0, "nothing was recorded, so nothing was shown");
+
+    // With the fault gone the next change rebuilds: the row arrives, the view is recorded first.
+    sqlx::query("DROP TRIGGER audit_critical_fail ON audit_log")
+        .execute(h.pool())
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION audit_critical_fail")
+        .execute(h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE approvals SET status = 'denied', decided_at = now() WHERE id = $1")
+        .bind(a)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    bus::notify(
+        h.pool(),
+        Channel::Approval,
+        &json!({"id": a, "workspace_id": f.ws, "event": "decided"}),
+    )
+    .await
+    .unwrap();
+    let t = read_until(&mut body, two, |s| has_row(s, &id, "done")).await;
+    assert!(has_row(&t, &id, "done"), "{t}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view'",
+    )
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert!(n >= 1, "the view is recorded: {n}");
+}
+
 /// Revoking the reader's access ends the stream; the sixth stream of a person is 429; an API key
 /// is refused (session only).
 #[tokio::test]

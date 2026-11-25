@@ -270,7 +270,9 @@ impl<'a> Feed<'a> {
 
     /// (FIX-236, C-1165) The emergency reader's record for every conversation this feed let
     /// through, written before the response body (a failed write fails the read with 503).
-    async fn record_emergency_views(&self) -> Result<(), ApiError> {
+    /// `pub(crate)`: the stream's `build` calls it too, before its content leaves the server
+    /// (review HIGH: the SSE stream records before it delivers, like the list endpoint).
+    pub(crate) async fn record_emergency_views(&self) -> Result<(), ApiError> {
         let grant = match &self.viewer.auth {
             ReadAuth::Emergency(g) => g,
             ReadAuth::Own(_) => return Ok(()),
