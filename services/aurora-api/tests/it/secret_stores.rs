@@ -1218,7 +1218,7 @@ async fn the_default_store_change_tells_the_org_owners_and_only_them() {
     assert!(
         m.body
             .contains("an instance administrator changed the instance's default secret store")
-            && m.body.contains("go to mem instead of inline"),
+            && m.body.contains("go to mem instead of the built-in store"),
         "who (the actor never named), from which store to which: {m:?}"
     );
     assert!(
