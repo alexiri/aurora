@@ -144,7 +144,11 @@ apps:
           # route on, or notification settings beyond the receiver. `allow_keys` is the
           # script's own top-level key list: the receiver's parser matches key names without
           # case and keeps the last match, so any other key (and any spelling that folds onto
-          # a known one) is refused even when the check would not read it.
+          # a known one) is refused even when the check would not read it. Every `data` step
+          # is the `{refId, datasourceUid, queryType, relativeTimeRange, model}` object the
+          # script sends, and the steps after the first are the server's own `__expr__` steps
+          # (its reduce and threshold): a step that queries a data source of its own — a
+          # second SQL query the approval card does not show — is refused.
           - id: create_alert_rule
             description: "Creates a Grafana-managed alert rule from the three-step query model the grafana-alerts script builds."
             name: Create an alert rule
@@ -160,6 +164,10 @@ apps:
                 notification_settings: [receiver]
               exact_len:
                 data: 3
+              entry_keys:
+                data: [refId, datasourceUid, queryType, relativeTimeRange, model]
+              entry_value:
+                data: { from: 1, key: datasourceUid, value: __expr__ }
           - id: update_alert_rule
             description: "Changes one Grafana-managed alert rule the agent manages (sends the whole rule the grafana-alerts script read and changed)."
             name: Change an alert rule
@@ -175,6 +183,10 @@ apps:
                 notification_settings: [receiver]
               exact_len:
                 data: 3
+              entry_keys:
+                data: [refId, datasourceUid, queryType, relativeTimeRange, model]
+              entry_value:
+                data: { from: 1, key: datasourceUid, value: __expr__ }
           - { id: delete_alert_rule, description: "Deletes one Grafana-managed alert rule the agent manages.", name: Delete an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [DELETE] }
     approvals:
       create_annotation:

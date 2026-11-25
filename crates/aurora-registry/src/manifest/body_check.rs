@@ -28,6 +28,27 @@ pub struct BodyCheck {
     /// run another query the approval card does not show).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exact_len: BTreeMap<String, u32>,
+    /// A key whose value must be an array whose every entry is an object with no keys but the
+    /// listed ones (every `data` step is a `{refId, datasourceUid, queryType,
+    /// relativeTimeRange, model}` object; a raw query bolted onto a step is refused).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entry_keys: BTreeMap<String, Vec<String>>,
+    /// A key whose value must be an array whose entries, from the `from`-th on, carry `key`
+    /// with exactly this value (the three-step query model: step one queries the agent's data
+    /// source, the reduce and threshold steps after it are the receiver's own `__expr__` steps,
+    /// which run no query of their own).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entry_value: BTreeMap<String, EntryValue>,
+}
+
+/// An entry rule of [`BodyCheck::entry_value`]: from the `from`-th entry of the array on
+/// (0 counts entries from the first), every entry carries `key` with exactly `value`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryValue {
+    pub from: u32,
+    pub key: String,
+    pub value: serde_json::Value,
 }
 
 impl BodyCheck {
@@ -51,12 +72,16 @@ impl BodyCheck {
             self.refuse_keys.len()
                 + self.allow_keys.len()
                 + self.only_keys.len()
-                + self.exact_len.len(),
+                + self.exact_len.len()
+                + self.entry_keys.len()
+                + self.entry_value.len(),
         );
         known.extend(self.refuse_keys.iter().map(String::as_str));
         known.extend(self.allow_keys.iter().map(String::as_str));
         known.extend(self.only_keys.keys().map(String::as_str));
         known.extend(self.exact_len.keys().map(String::as_str));
+        known.extend(self.entry_keys.keys().map(String::as_str));
+        known.extend(self.entry_value.keys().map(String::as_str));
         let mut hit: Option<(&String, &str)> = None;
         for k in obj.keys() {
             if let Some(same) = known.iter().find(|s| fold(s) == fold(k) && **s != *k) {
@@ -95,6 +120,61 @@ impl BodyCheck {
                     ));
                 }
                 _ => return Some(format!("the body has no `{k}` array")),
+            }
+        }
+        for (k, allowed) in &self.entry_keys {
+            match obj.get(k) {
+                None => {}
+                Some(serde_json::Value::Array(a)) => {
+                    for (i, e) in a.iter().enumerate() {
+                        let Some(o) = e.as_object() else {
+                            return Some(format!("`{k}`[{i}] must be a JSON object"));
+                        };
+                        if let Some((extra, same)) = o.keys().find_map(|x| {
+                            allowed
+                                .iter()
+                                .find(|a| fold(a) == fold(x) && *a != x)
+                                .map(|a| (x, a.as_str()))
+                        }) {
+                            return Some(format!(
+                                "`{k}`[{i}] carries `{extra}`, which the receiver reads as `{same}` (key names match without case): spell it `{same}`"
+                            ));
+                        }
+                        if let Some(extra) = o.keys().find(|x| !allowed.contains(x)) {
+                            return Some(format!(
+                                "`{k}`[{i}] carries `{extra}`, which this tool never sets (allowed: {})",
+                                allowed.join(", ")
+                            ));
+                        }
+                    }
+                }
+                Some(_) => return Some(format!("`{k}` must be a JSON array")),
+            }
+        }
+        for (k, ev) in &self.entry_value {
+            match obj.get(k) {
+                None => {}
+                Some(serde_json::Value::Array(a)) => {
+                    for (i, e) in a
+                        .iter()
+                        .enumerate()
+                        .skip(usize::try_from(ev.from).unwrap_or(usize::MAX))
+                    {
+                        if e.get(&ev.key).is_some_and(|v| v == &ev.value) {
+                            continue;
+                        }
+                        let actual = e
+                            .get(&ev.key)
+                            .map(|v| format!("`{key}: {v}`", key = ev.key))
+                            .unwrap_or_else(|| format!("no `{}`", ev.key));
+                        return Some(format!(
+                            "`{k}`[{i}] carries {actual}: every step after the first carries `{key}: {value}` (the receiver runs it itself; only the first step queries a data source)",
+                            key = ev.key,
+                            value = ev.value
+                        ));
+                    }
+                }
+                Some(_) => return Some(format!("`{k}` must be a JSON array")),
             }
         }
         for (k, allowed) in &self.only_keys {
@@ -152,6 +232,12 @@ mod tests {
                 "notification_settings"
             ],
             "exact_len": { "data": 3 },
+            "entry_keys": {
+                "data": ["refId", "datasourceUid", "queryType", "relativeTimeRange", "model"]
+            },
+            "entry_value": {
+                "data": { "from": 1, "key": "datasourceUid", "value": "__expr__" }
+            },
             "only_keys": {
                 "labels": ["managed_by", "expires", "service"],
                 "annotations": ["summary", "expires"],
@@ -161,6 +247,29 @@ mod tests {
         .unwrap()
     }
 
+    /// One `data` step the way the script's builder sends it: the first step queries the named
+    /// data source, the steps after it are the receiver's own reduce and threshold steps.
+    fn step(ref_id: &str, ds: &str) -> Value {
+        let mut s = json!({
+            "refId": ref_id, "datasourceUid": ds, "queryType": "",
+            "relativeTimeRange": { "from": 300, "to": 0 },
+        });
+        if ds == "__expr__" {
+            s["model"] = json!({ "expression": ref_id, "type": "reduce", "refId": ref_id });
+        } else {
+            s["model"] = json!({ "expr": "up", "instant": true, "refId": ref_id });
+        }
+        s
+    }
+
+    fn steps() -> Vec<Value> {
+        vec![
+            step("A", "prom-main"),
+            step("B", "__expr__"),
+            step("C", "__expr__"),
+        ]
+    }
+
     #[test]
     fn the_scripts_bodies_pass() {
         let c = check();
@@ -168,7 +277,7 @@ mod tests {
             "orgID": 1, "title": "p95", "ruleGroup": "g", "folderUID": "f",
             "condition": "C", "for": "300s", "noDataState": "NoData",
             "execErrState": "Error", "isPaused": false,
-            "data": [ {"refId": "A"}, {"refId": "B"}, {"refId": "C"} ],
+            "data": steps(),
             "labels": { "managed_by": "night", "expires": "2026-12-09" },
             "annotations": { "summary": "p95" },
             "notification_settings": { "receiver": "oncall" }
@@ -187,7 +296,7 @@ mod tests {
                 "orgID": 1, "title": "p95", "ruleGroup": "g", "folderUID": "f",
                 "condition": "C", "for": "300s", "noDataState": "NoData",
                 "execErrState": "Error", "isPaused": false,
-                "data": [ {}, {}, {} ],
+                "data": steps(),
                 "labels": { "managed_by": "night" },
                 "annotations": { "summary": "p95" },
                 "notification_settings": { "receiver": "oncall" }
@@ -277,7 +386,7 @@ mod tests {
                 .unwrap()
                 .contains("`data` has 4 entries")
         );
-        let b = br#"{"data":[{},{},{}],"labels":{},"annotations":{},"notification_settings":{},"labels":{"severity":"page"}}"#;
+        let b = br#"{"data":[{"refId":"A","datasourceUid":"prom"},{"refId":"B","datasourceUid":"__expr__"},{"refId":"C","datasourceUid":"__expr__"}],"labels":{},"annotations":{},"notification_settings":{},"labels":{"severity":"page"}}"#;
         assert!(
             c.violation(b, false)
                 .unwrap()
@@ -288,10 +397,6 @@ mod tests {
     #[test]
     fn every_denied_shape_is_named() {
         let c = check();
-        let base = serde_json::to_vec(&json!({
-            "data": [ {}, {}, {} ], "labels": {}, "notification_settings": { "receiver": "r" }
-        }))
-        .unwrap();
         // A recording rule.
         let b = serde_json::to_vec(&json!({
             "record": { "expr": "x" }, "data": [ {}, {}, {} ]
@@ -314,7 +419,7 @@ mod tests {
         );
         // A label a notification policy routes on.
         let b = serde_json::to_vec(&json!({
-            "data": [ {}, {}, {} ], "labels": { "managed_by": "n", "severity": "page" }
+            "data": steps(), "labels": { "managed_by": "n", "severity": "page" }
         }))
         .unwrap();
         assert!(
@@ -324,7 +429,7 @@ mod tests {
         );
         // A receiver setting the script never sets.
         let b = serde_json::to_vec(&json!({
-            "data": [ {}, {}, {} ],
+            "data": steps(),
             "notification_settings": { "receiver": "r", "mute_time_intervals": ["nights"] }
         }))
         .unwrap();
@@ -333,7 +438,93 @@ mod tests {
                 .unwrap()
                 .contains("`notification_settings` carries `mute_time_intervals`")
         );
-        let _ = base;
+    }
+
+    #[test]
+    fn a_step_after_the_first_queries_no_data_source() {
+        let c = check();
+        // A second SQL step inside the three-step shape: the entry count is right, the step's
+        // data source is not the receiver's own expression engine.
+        let mut data = steps();
+        data[1] = json!({
+            "refId": "B", "datasourceUid": "sql-main", "queryType": "",
+            "relativeTimeRange": { "from": 300, "to": 0 },
+            "model": { "rawSql": "select 1", "refId": "B" }
+        });
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("datasourceUid"), "{why}");
+        assert!(why.contains("__expr__"), "{why}");
+        // The threshold step too.
+        let mut data = steps();
+        data[2] = json!({
+            "refId": "C", "datasourceUid": "loki-main", "queryType": "",
+            "relativeTimeRange": { "from": 300, "to": 0 },
+            "model": { "refId": "C" }
+        });
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        assert!(c.violation(b.as_slice(), false).is_some());
+        // A step after the first that carries no data source at all.
+        let mut data = steps();
+        data[1].as_object_mut().unwrap().remove("datasourceUid");
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        assert!(
+            c.violation(b.as_slice(), false)
+                .unwrap()
+                .contains("datasourceUid")
+        );
+        // The first step is the agent's own data source: any uid there is the declared shape.
+        let b = serde_json::to_vec(&json!({ "data": [step("A", "postgres-logs"), step("B", "__expr__"), step("C", "__expr__")] }))
+            .unwrap();
+        assert_eq!(c.violation(b.as_slice(), false), None);
+    }
+
+    #[test]
+    fn every_data_step_is_the_shape_the_script_sends() {
+        let c = check();
+        // An entry that is not an object.
+        let b = serde_json::to_vec(&json!({ "data": ["x", {}, {}] })).unwrap();
+        assert!(
+            c.violation(b.as_slice(), false)
+                .unwrap()
+                .contains("`data`[0] must be a JSON object")
+        );
+        // An entry key the script never sets.
+        let mut data = steps();
+        data[1]
+            .as_object_mut()
+            .unwrap()
+            .insert("rawSql".into(), json!("select 1"));
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        assert!(
+            c.violation(b.as_slice(), false)
+                .unwrap()
+                .contains("`data`[1] carries `rawSql`")
+        );
+        // A key the receiver's parser folds onto a checked entry key.
+        let mut data = steps();
+        data[2]
+            .as_object_mut()
+            .unwrap()
+            .insert("RefId".into(), json!("C"));
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        assert!(
+            c.violation(b.as_slice(), false)
+                .unwrap()
+                .contains("`RefId`")
+        );
+        // Not an array: refused. (`exact_len` would name the missing array first on the
+        // shared check, so this one carries only the entry rules.)
+        let entry_only: BodyCheck =
+            serde_json::from_value(json!({ "entry_keys": { "data": ["a"] } })).unwrap();
+        let b = serde_json::to_vec(&json!({ "data": "x" })).unwrap();
+        assert!(
+            entry_only
+                .violation(b.as_slice(), false)
+                .unwrap()
+                .contains("`data` must be a JSON array")
+        );
+        assert!(c.violation(b"{}", true).is_some());
     }
 
     #[test]
@@ -353,14 +544,14 @@ mod tests {
                 .contains("no `data`")
         );
         // A key of the wrong kind under `only_keys`.
-        let b = serde_json::to_vec(&json!({ "data": [ {}, {}, {} ], "labels": "x" })).unwrap();
+        let b = serde_json::to_vec(&json!({ "data": steps(), "labels": "x" })).unwrap();
         assert!(
             c.violation(b.as_slice(), false)
                 .unwrap()
                 .contains("`labels` must be a JSON object")
         );
         // Absent `only_keys` members are allowed (the script sets `service` only when given).
-        let b = serde_json::to_vec(&json!({ "data": [ {}, {}, {} ] })).unwrap();
+        let b = serde_json::to_vec(&json!({ "data": steps() })).unwrap();
         assert_eq!(c.violation(b.as_slice(), false), None);
     }
 }

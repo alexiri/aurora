@@ -240,6 +240,16 @@
     headers: { content-type: application/json }
     body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A"},{"refId":"B"},{"refId":"C"},{"refId":"D","datasourceUid":"sql-main","model":{"rawSql":"select 1"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"notification_settings":{"receiver":"oncall"}}'
   expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+# The entry count is right, but the reduce step queries its own SQL data source instead of being
+# the receiver's own expression step: the steps after the first are the server's `__expr__` ones.
+- name: "refused create_alert_rule: the reduce step queries its own SQL data source"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"expr":"up"}},{"refId":"B","datasourceUid":"sql-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"rawSql":"select 1"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"expression":"B"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
 - name: "refused update_alert_rule: a label a notification policy could route on"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request:

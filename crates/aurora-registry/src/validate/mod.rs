@@ -1530,6 +1530,62 @@ fn method_rules(cx: &mut Ctx<'_>) {
                             );
                         }
                     }
+                    for (k, allowed) in &bc.entry_keys {
+                        name!("entry_keys", k);
+                        if allowed.is_empty() {
+                            cx.v(
+                                "body_check_entry_keys",
+                                &format!("{bp}/entry_keys/{k}"),
+                                format!(
+                                    "tool `{}`: `entry_keys.{k}` allows at least one key",
+                                    it.id
+                                ),
+                            );
+                        }
+                        if allowed.len() > 16 {
+                            cx.v(
+                                "body_check_entry_keys",
+                                &format!("{bp}/entry_keys/{k}"),
+                                format!(
+                                    "tool `{}`: `entry_keys.{k}` allows at most 16 keys",
+                                    it.id
+                                ),
+                            );
+                        }
+                        for a in allowed {
+                            name!("entry_keys", a);
+                        }
+                    }
+                    for (k, ev) in &bc.entry_value {
+                        name!("entry_value", k);
+                        name!("entry_value", &ev.key);
+                        if ev.from > 64 {
+                            cx.v(
+                                "body_check_entry_value",
+                                &format!("{bp}/entry_value/{k}/from"),
+                                format!("tool `{}`: `entry_value.{k}.from` is at most 64", it.id),
+                            );
+                        }
+                        if ev.value.is_object() || ev.value.is_array() {
+                            cx.v(
+                                "body_check_entry_value",
+                                &format!("{bp}/entry_value/{k}/value"),
+                                format!(
+                                    "tool `{}`: `entry_value.{k}.value` is a scalar the body must carry exactly",
+                                    it.id
+                                ),
+                            );
+                        } else if ev.value.to_string().len() > 64 {
+                            cx.v(
+                                "body_check_entry_value",
+                                &format!("{bp}/entry_value/{k}/value"),
+                                format!(
+                                    "tool `{}`: `entry_value.{k}.value` is at most 64 characters of JSON",
+                                    it.id
+                                ),
+                            );
+                        }
+                    }
                 }
             }
         }
