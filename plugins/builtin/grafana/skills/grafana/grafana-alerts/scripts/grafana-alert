@@ -225,8 +225,30 @@ def read_managed(a):
     return rule
 
 
+SHAPE_LABELS = {"managed_by", "expires", "service"}
+SHAPE_ANNOTATIONS = {"summary", "expires"}
+
+
+def check_shape(rule):
+    """Refuses a rule that left the shape the script builds; such a rule is never resent."""
+    why = ("record" in rule and "a recording rule (`record`)"
+           or len(rule.get("data") or []) != 3
+           and "not the script's one query with its reduce and threshold"
+           or set(rule.get("notification_settings") or {}) - {"receiver"}
+           and "a notification_settings key other than receiver"
+           or set(rule.get("labels") or {}) - SHAPE_LABELS
+           and "a label other than managed_by, expires and service"
+           or set(rule.get("annotations") or {}) - SHAPE_ANNOTATIONS
+           and "an annotation other than summary and expires")
+    if why:
+        die(f"the rule carries {why}: the script resends only the shape it builds — a second query "
+            "or a recording rule would run on every evaluation, and another label could be what a "
+            "notification policy matches")
+
+
 def apply_change(rule, a):
     """The rule's body with the asked changes; refuses an expiry extension without --renew."""
+    check_shape(rule)
     body = {k: v for k, v in rule.items() if k not in STRIP}
     old = as_date((rule.get("labels") or {}).get("expires")
                   or (rule.get("annotations") or {}).get("expires"))
@@ -250,6 +272,8 @@ def apply_change(rule, a):
     if a.receiver:
         check_receiver(a.receiver)
         body.setdefault("notification_settings", {})["receiver"] = a.receiver
+    if not (body.get("notification_settings") or {}).get("receiver"):
+        die("the rule names no receiver: pass --receiver with a contact point a person made")
     return body
 
 

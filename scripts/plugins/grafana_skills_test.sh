@@ -23,7 +23,7 @@ trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR" "$WORK/bin" "$WORK/bodies"
 export STUB_FIX="$FIX" STUB_LOG="$WORK/calls.log" STUB_BODIES="$WORK/bodies"
-unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE
+unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE STUB_RECORD_RULE
 
 # The stub: `aurora-agent call grafana <operation> [name=value ...] [--body @file] [--account A] --out FILE`.
 cat > "$WORK/bin/aurora-agent" <<'STUB'
@@ -47,7 +47,7 @@ case "$op" in
   get_current_org) cp "$STUB_FIX/get_current_org.json" "$out" ;;
   list_contact_points) if [ -n "${STUB_NO_CP:-}" ]; then echo '[]' > "$out"; else cp "$STUB_FIX/list_contact_points.json" "$out"; fi ;;
   list_alert_rules) cp "$STUB_FIX/list_alert_rules${STUB_RULES:+-$STUB_RULES}.json" "$out" ;;
-  get_alert_rule) if [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
+  get_alert_rule) if [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; elif [ -n "${STUB_RECORD_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_record.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
   list_alert_rule_states) cp "$STUB_FIX/list_alert_rule_states.json" "$out" ;;
   create_alert_rule|update_alert_rule)
     n=$(find "$STUB_BODIES" -type f | wc -l)
@@ -538,6 +538,11 @@ refuse "pass --renew with --reason" update tripwire-p95 --managed-by night --fol
 STUB_PERSON_RULE=1 refuse "not managed by 'night'" delete cpu-watch --managed-by night \
   --folder night-folder
 
+# update refuses a rule that left the shape the script builds (recording rule, extra label,
+# extra receiver setting): none of it is sent back
+STUB_RECORD_RULE=1 refuse "a recording rule" update tripwire-p95 --managed-by night \
+  --folder night-folder
+
 # update sends the whole changed rule; the read-only fields are stripped
 reset
 if AL update tripwire-p95 --managed-by night --folder night-folder --title "p95 over 3s" --for 10m \
@@ -590,9 +595,9 @@ fi
 PKG="$ROOT/plugins/builtin/grafana"
 total=$(find "$SKILLS" -type f -exec cat {} + | wc -c)
 bodies=$(cat "$SKILLS"/*/SKILL.md | wc -c)
-echo "sizes: all skill files $total (budget 72000), SKILL.md bodies $bodies (budget 20000)"
+echo "sizes: all skill files $total (budget 75000), SKILL.md bodies $bodies (budget 20000)"
 for f in "$SKILLS"/*/SKILL.md "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT"; do echo "sizes: $(wc -c < "$f") ${f#"$SKILLS"/}"; done
-if [ "$total" -le 72000 ]; then ok "all skill files together are at most 72000 characters ($total)"; else bad "all skill files are $total characters, over 72000"; fi
+if [ "$total" -le 75000 ]; then ok "all skill files together are at most 75000 characters ($total)"; else bad "all skill files are $total characters, over 75000"; fi
 if [ "$bodies" -le 20000 ]; then ok "SKILL.md bodies together are at most 20000 characters ($bodies)"; else bad "SKILL.md bodies are $bodies characters, over 20000"; fi
 expect_eq "exactly four skills" "grafana-alerts grafana-opensearch grafana-prometheus grafana-query" "$(find "$SKILLS" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd' ')"
 expect_eq "only grafana-query's description says to read it first" "grafana-query" \

@@ -85,9 +85,9 @@ These are separate permissions and are held for approval:
   (Elasticsearch, OpenSearch, SQL). On a SQL data source the statement runs as that data source's
   database user, so give SQL data sources read-only database users.
 - **Create, change or delete an alert rule** (`POST /api/v1/provisioning/alert-rules`, `PUT` and
-  `DELETE …/alert-rules/<uid>`): the approval shows the whole rule — title, folder, group, the
-  `for` duration, the condition's expression, the receiver, the labels and the expiry. See
-  *Alert rules* below.
+  `DELETE …/alert-rules/<uid>`): the approval shows the rule the script builds — title, folder,
+  group, the data source and query, the comparison and threshold, the `for` duration, the states,
+  the labels and annotations each under its name, and the receiver. See *Alert rules* below.
 
 ## Alert rules
 
@@ -111,11 +111,17 @@ Viewer plus one folder's Edit the agent can only touch rules in the folder a per
    folder permissions decide where a rule may live, not Aurora.
 
 A rule an agent makes carries a `managed_by` label (which agent left it) and an `expires` label and
-annotation, and the app's helper script builds the rule and refuses to touch rules without its own
-label — but the script is help, not enforcement. The enforcement is the approval card (every write
-shows the whole rule) and the folder permission above. Rules made by an agent appear in the Grafana
-UI like any rule: people can edit and delete them, and the app sends a provenance header so Grafana
-does not lock them against editing.
+annotation, and the app's helper script builds the rule, refuses to touch rules without its own
+label or outside its folder, and refuses to change a rule that left the shape it builds — a
+recording rule (`record`), a second query, a label or annotation other than `managed_by`,
+`expires`, `service` and `summary`, or a receiver setting other than `receiver`. The script is the
+only supported way to write a rule. The approval card shows that shape field by field, but its
+template cannot print a map's keys: a body built by hand could carry fields — a recording rule, a
+second query on a SQL data source, a label a notification policy matches — that no card field
+would show. So the enforcement is layered: the script's refusals, the person's approval, the
+folder permission above, and Grafana's own rule permissions. Rules made by an agent appear in the
+Grafana UI like any rule: people can edit and delete them, and the app sends a provenance header
+so Grafana does not lock them against editing.
 
 Where a rule's notifications go — the contact point and the notification policy tree — stays with
 people: no tool creates or changes a contact point, notification policy, mute timing or
