@@ -1183,3 +1183,109 @@ async fn fix082_an_admin_cannot_activate_or_set_pending_and_may_remove() {
     assert_eq!(s, 204);
     assert_eq!(membership(&fx.h, fx.org, person.user_id).await, None);
 }
+
+/// (FIX-234 review round 3, D-480/C-1161) The groups follow the link on a move, but a group
+/// bound to a personal workspace keeps its person-only rule: the move skips it (logged)
+/// instead of failing the user's sync; a group bound to no personal workspace still follows.
+#[tokio::test]
+async fn a_link_move_skips_groups_bound_to_a_personal_workspace() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("pw-move@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let link: Uuid = sid.parse().unwrap();
+    let placeholder = fx.aurora_user(&sid).await;
+
+    // The person (an org admin: group membership is an organization act) and their personal
+    // workspace; the person binds one group to it and adds the placeholder themself.
+    let person = fx.h.user("pw-move-person@x.io", false).await;
+    fx.h.member(fx.org, person, "admin", "active").await;
+    let ws = fx.h.workspace_owned_by(fx.org, person).await;
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2, personal = true WHERE id = $1")
+        .bind(ws)
+        .bind(person)
+        .execute(fx.h.pool())
+        .await
+        .unwrap();
+    for name in ["mv-free", "mv-bound"] {
+        let (s, _, v) = fx
+            .scim(
+                Method::POST,
+                "/scim/v2/Groups",
+                // A fresh group may carry its members: the placeholder is in both before the
+                // personal binding exists (the /v1 member writes refuse a SCIM-managed group).
+                Some(json!({
+                    "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+                    "displayName": name,
+                    "members": [{"value": &sid}],
+                })),
+            )
+            .await;
+        assert_eq!(s, 201, "{v}");
+    }
+    let groups: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM groups WHERE org_id = $1 AND source = 'scim' ORDER BY name",
+    )
+    .bind(fx.org)
+    .fetch_all(fx.h.pool())
+    .await
+    .unwrap();
+    let [free, bound] = groups[..] else {
+        panic!("expected the two groups");
+    };
+    let (_, tok) = fx.h.good_session(person).await;
+    let (s, v) =
+        fx.h.call_tok(
+            &tok,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/groups/{bound}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The placeholder is a member of both groups (the SCIM create carried them).
+    for g in [free, bound] {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM group_members WHERE group_id = $1 AND user_id = $2",
+        )
+        .bind(g)
+        .bind(placeholder)
+        .fetch_one(fx.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(n, 1, "the placeholder is in the group");
+    }
+
+    // The move: the link is renamed onto an existing member's address.
+    let target = fx.h.user("pw-move-real@x.io", false).await;
+    fx.h.member(fx.org, target, "member", "active").await;
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(patch_user_name("pw-move-real@x.io")),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(link_user(&fx.h, link).await, target, "the link moved");
+    let in_group = |g: Uuid, user: Uuid| {
+        let p = fx.h.pool();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM group_members WHERE group_id = $1 AND user_id = $2",
+            )
+            .bind(g)
+            .bind(user)
+            .fetch_one(p)
+            .await
+            .unwrap()
+        }
+    };
+    // The unbound group followed the link; the personal-bound group was skipped.
+    assert_eq!(in_group(free, target).await, 1, "the free group followed");
+    assert_eq!(
+        in_group(bound, target).await,
+        0,
+        "the personal-bound group was skipped"
+    );
+    assert_eq!(in_group(bound, placeholder).await, 0, "the old member left");
+}

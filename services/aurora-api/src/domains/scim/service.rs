@@ -6,6 +6,7 @@ use super::auth::OrgScim;
 use super::error::{ScimError, ScimResult};
 use aurora_core::limits;
 use aurora_core::sanitize;
+use aurora_db::DbError;
 use chrono::Utc;
 use uuid::Uuid;
 
@@ -225,6 +226,42 @@ pub fn refused_attr(body: &serde_json::Value, attrs: &[&'static str]) -> Option<
         }
     }
     None
+}
+
+/// (FIX-234 review round 3, D-480/C-1161) The personal-workspace rule for SCIM membership
+/// adds: a group bound to a personal workspace takes members only from that workspace's
+/// person — an IdP driving the sync does not become the person. Answers `Some(first_name)`
+/// (of the person of the first personal workspace the group is bound to) when any user in
+/// `users` would be added there without being that person. Groups bound only to shared
+/// workspaces are unaffected: membership driven by the organization's identity provider or
+/// SCIM is trusted there (C-1161).
+pub async fn personal_add_refusal(
+    exec: &mut sqlx::PgConnection,
+    group: Uuid,
+    users: &[Uuid],
+) -> Result<Option<String>, DbError> {
+    let people: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT w.personal_owner_user_id \
+         FROM group_workspace_access b JOIN workspaces w ON w.id = b.workspace_id \
+         WHERE b.group_id = $1 AND w.personal_owner_user_id IS NOT NULL",
+    )
+    .bind(group)
+    .fetch_all(&mut *exec)
+    .await?;
+    let Some(&person) = people.iter().find(|p| users.iter().any(|u| u != *p)) else {
+        return Ok(None);
+    };
+    let (display,): (String,) = sqlx::query_as("SELECT display_name FROM users WHERE id = $1")
+        .bind(person)
+        .fetch_one(&mut *exec)
+        .await?;
+    Ok(Some(
+        display
+            .split_whitespace()
+            .next()
+            .unwrap_or("the workspace's person")
+            .to_owned(),
+    ))
 }
 
 #[cfg(test)]

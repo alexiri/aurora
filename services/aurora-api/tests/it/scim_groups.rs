@@ -647,3 +647,111 @@ async fn group_patch_and_delete_queue_behind_the_org_lock() {
         assert_eq!(s.as_u16(), want, "{label}: {v}");
     }
 }
+
+/// (FIX-234 review round 3, D-480/C-1161) A group bound to a personal workspace keeps the
+/// person-only rule through SCIM: an add of anyone but that person refuses the whole atomic
+/// change (403), an add of the person stands; a group bound only to shared workspaces (or to
+/// none) stays trusted to the IdP.
+#[tokio::test]
+async fn scim_cannot_add_to_a_group_bound_to_a_personal_workspace() {
+    let fx = ScimFx::new().await;
+    // The person, their personal workspace and a linked member the IdP wants in the group.
+    let person = fx.h.user("pw-person@x.io", false).await;
+    fx.h.member(fx.org, person, "member", "active").await;
+    let ws = fx.h.workspace_owned_by(fx.org, person).await;
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2, personal = true WHERE id = $1")
+        .bind(ws)
+        .bind(person)
+        .execute(fx.h.pool())
+        .await
+        .unwrap();
+    let carol = fx.provision_ok("pw-carol@x.io").await;
+    let carol_sid = carol["id"].as_str().unwrap().to_owned();
+    let carol_id = fx.aurora_user(&carol_sid).await;
+
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            GROUPS,
+            Some(json!({"schemas": [GROUP_SCHEMA], "displayName": "pw-bound"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let gid: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+
+    // The person binds the group to their personal workspace (C-1161: an add is the person's).
+    let (_, tok) = fx.h.good_session(person).await;
+    let (s, v) =
+        fx.h.call_tok(
+            &tok,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/groups/{gid}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // PATCH adding the linked member: the whole atomic change is refused.
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{GROUPS}/{gid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    {"op": "add", "path": "members", "value": [{"value": &carol_sid}]},
+                ],
+            })),
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    assert!(
+        v["detail"]
+            .as_str()
+            .unwrap()
+            .contains("can add people to their personal workspace"),
+        "{v}"
+    );
+    let added: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM group_members WHERE group_id = $1 AND user_id = $2",
+    )
+    .bind(gid)
+    .bind(carol_id)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(added, 0, "nothing was added");
+
+    // PUT replacing the members: the same refusal.
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{GROUPS}/{gid}"),
+            Some(json!({
+                "schemas": [GROUP_SCHEMA],
+                "displayName": "pw-bound",
+                "members": [{"value": &carol_sid}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+
+    // Adding the person themself stands: the person alone fills their personal workspace.
+    let mine = fx.provision_ok("pw-person@x.io").await;
+    let person_sid = mine["id"].as_str().unwrap().to_owned();
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{GROUPS}/{gid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    {"op": "add", "path": "members", "value": [{"value": &person_sid}]},
+                ],
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let person_id = fx.aurora_user(&person_sid).await;
+    assert_eq!(person_id, person, "the link adopted the person's account");
+}

@@ -194,6 +194,18 @@ pub async fn create_group(
         ensure_member_limit(&mut *tx, org.org_id, *uid).await?;
     }
     let id = ids::new_id();
+    // (FIX-234 review round 3, D-480/C-1161) A fresh group has no workspace bindings, so this
+    // cannot refuse today; it stands guard so the personal-workspace rule (only the person
+    // adds people to their personal workspace) holds if create ever gains bindings. The
+    // member-replace path below enforces it for real.
+    if let Some(first) = service::personal_add_refusal(&mut tx, id, &user_ids)
+        .await
+        .map_err(db)?
+    {
+        return Err(ScimError::forbidden(format!(
+            "Only {first} can add people to their personal workspace."
+        )));
+    }
     grepo::insert(
         &mut tx,
         id,
@@ -554,15 +566,28 @@ async fn apply_group_change(
             .await
             .map_err(db)?;
     }
-    let mut added = Vec::new();
+    let added: Vec<Uuid> = target
+        .iter()
+        .filter(|u| !before.contains(u))
+        .copied()
+        .collect();
+    // (FIX-234 review round 3, D-480/C-1161) The change is atomic, so a group bound to a
+    // personal workspace refuses the whole request when an add would hand its bindings to
+    // someone who is not that workspace's person (the IdP is not the person; a group bound
+    // only to shared workspaces stays trusted to the IdP).
+    if let Some(first) = service::personal_add_refusal(&mut tx, id, &added)
+        .await
+        .map_err(db)?
+    {
+        return Err(ScimError::forbidden(format!(
+            "Only {first} can add people to their personal workspace."
+        )));
+    }
     let mut removed = Vec::new();
-    for u in &target {
-        if !before.contains(u) {
-            grepo::add_member(&mut tx, id, org.org_id, *u, "scim", None)
-                .await
-                .map_err(db)?;
-            added.push(*u);
-        }
+    for u in &added {
+        grepo::add_member(&mut tx, id, org.org_id, *u, "scim", None)
+            .await
+            .map_err(db)?;
     }
     for u in &before {
         if !target.contains(u) {

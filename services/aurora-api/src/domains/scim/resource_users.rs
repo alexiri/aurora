@@ -1443,6 +1443,21 @@ async fn move_link(
     .map_err(db)?;
     // The link's SCIM groups follow it.
     for g in &moved_groups {
+        // (FIX-234 review round 3, D-480/C-1161) The groups follow the link, but a group
+        // bound to a personal workspace keeps its person-only rule: the IdP is not the
+        // person, so the add is skipped (logged) instead of failing the whole user sync —
+        // the person can still add the member through Aurora.
+        if service::personal_add_refusal(&mut *tx, *g, &[to])
+            .await
+            .map_err(db)?
+            .is_some()
+        {
+            tracing::warn!(
+                group = %g,
+                "scim: link move skipped a group bound to a personal workspace (only its person adds people there)"
+            );
+            continue;
+        }
         let in_groups = groups::groups_of_user_count(&mut *tx, org, to)
             .await
             .map_err(db)?;
