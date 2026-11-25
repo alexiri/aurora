@@ -250,20 +250,23 @@ pub async fn expire_due(tx: &mut PgConnection) -> Result<Vec<EmergencyRow>, DbEr
     )
 }
 
-/// End every active grant `user` opened, with `access_lost` (C-1164: the opener stopped being an
-/// active org owner). Returns the rows it ended, so the caller writes the audit rows in the
-/// **same transaction** as the membership change.
+/// End every active grant `user` opened **in `org`**, with `access_lost` (C-1164: the opener
+/// stopped being an active org owner there; review MEDIUM-5: scoped by org — losing ownership
+/// in one organization never ends grants in another). Returns the rows it ended, so the caller
+/// writes the audit rows in the **same transaction** as the membership change.
 pub async fn end_lost_for_user(
     tx: &mut PgConnection,
+    org: Uuid,
     user: Uuid,
 ) -> Result<Vec<EmergencyRow>, DbError> {
     Ok(
         sqlx::query_as::<_, EmergencyRow>(sqlx::AssertSqlSafe(format!(
             "UPDATE workspace_emergency_access \
          SET ended_at = now(), ended_by = NULL, end_reason = '{END_ACCESS_LOST}' \
-         WHERE user_id = $1 AND ended_at IS NULL \
+         WHERE org_id = $1 AND user_id = $2 AND ended_at IS NULL \
          RETURNING {COLS}"
         )))
+        .bind(org)
         .bind(user)
         .fetch_all(&mut *tx)
         .await?,

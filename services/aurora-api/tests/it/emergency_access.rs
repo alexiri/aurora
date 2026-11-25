@@ -900,6 +900,64 @@ async fn reads_under_a_new_grant_record_again_even_within_the_hour() {
     assert_eq!(n, 1, "a fresh row under grant B, not the deduped old one");
 }
 
+/// (Review MEDIUM-5) Losing ownership in ONE organization ends only that organization's grants:
+/// `end_lost_for_user` is scoped by org, and the audit rows stay in the right org.
+#[tokio::test]
+async fn losing_ownership_in_one_org_ends_only_that_orgs_grants() {
+    let w = world().await;
+    // The opener is an owner of a second organization too, and opened a grant there as well.
+    let org2 = w.h.org().await;
+    let ws_in2 = w.h.workspace(org2).await;
+    w.h.member(org2, w.opener, "owner", "active").await;
+    w.h.member(org2, w.other, "owner", "active").await;
+    let (s, v) =
+        w.h.call_tok(
+            &w.opener_tok,
+            Method::POST,
+            &format!("/v1/workspaces/{ws_in2}/emergency-access"),
+            Some(json!({"reason": "the second org's incident"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    // And a grant in the first org.
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the first org's incident"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+
+    // The second org lowers the opener to member: only that org's grant ends.
+    let (s, v) =
+        w.h.call_tok(
+            &w.other_tok,
+            Method::PATCH,
+            &format!("/v1/orgs/{org2}/members/{}", w.opener),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    let (org2_lost, org2_reason): (Option<bool>, Option<String>) = sqlx::query_as(
+        "SELECT ended_at IS NOT NULL, end_reason FROM workspace_emergency_access \
+         WHERE workspace_id = $1",
+    )
+    .bind(ws_in2)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(org2_lost, Some(true), "the second org's grant ended");
+    assert_eq!(org2_reason.as_deref(), Some("access_lost"));
+    let (org1_lost, org1_reason): (Option<bool>, Option<String>) = sqlx::query_as(
+        "SELECT ended_at IS NOT NULL, end_reason FROM workspace_emergency_access \
+         WHERE workspace_id = $1",
+    )
+    .bind(w.ws)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(org1_lost, Some(false), "the first org's grant is untouched");
+    assert_eq!(org1_reason, None);
+}
+
 /// (Review MEDIUM-4) A live conversation stream keeps recording: when the hour window rolls
 /// over, the resync tick writes a fresh `emergency_view` row — 24 hours of live reading leave
 /// more than the one row from the open.

@@ -40,9 +40,10 @@ pub async fn expire_due(s: &crate::app::AppState) -> Result<usize, ApiError> {
 pub async fn end_lost_in_tx(
     tx: &mut sqlx::PgConnection,
     actor: &AuditActor,
+    org: Uuid,
     user: Uuid,
 ) -> Result<(), ApiError> {
-    let rows = repo::end_lost_for_user(tx, user).await?;
+    let rows = repo::end_lost_for_user(tx, org, user).await?;
     for r in &rows {
         let ev = AuditEvent::new(
             actor.clone(),

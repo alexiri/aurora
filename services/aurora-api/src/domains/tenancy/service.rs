@@ -780,7 +780,8 @@ pub async fn patch_member(
     // (FIX-236, C-1164) An active owner losing owner status (role lowered or suspended) ends
     // the emergency read access they opened, in this transaction, with one audit row per grant.
     if cur.role == "owner" && cur.status == "active" && loses_owner {
-        crate::domains::emergency_access::service::end_lost_in_tx(&mut tx, actor, target).await?;
+        crate::domains::emergency_access::service::end_lost_in_tx(&mut tx, actor, org_id, target)
+            .await?;
     }
     // (FIX-234 review 4, D-480) The person is back: bind them as owner of their personal
     // workspace again when the binding is missing, so the workspace is never left ownerless
@@ -889,7 +890,8 @@ pub async fn remove_member(
     // (FIX-236, C-1164) A removed active owner loses the emergency read access they opened,
     // in this transaction, with one audit row per grant.
     if cur.role == "owner" && cur.status == "active" {
-        crate::domains::emergency_access::service::end_lost_in_tx(&mut tx, actor, target).await?;
+        crate::domains::emergency_access::service::end_lost_in_tx(&mut tx, actor, org_id, target)
+            .await?;
     }
     // (FIX-108) The removal is remembered, so JIT provisioning never restores the membership.
     members::record_removal(&mut *tx, org_id, target).await?;
