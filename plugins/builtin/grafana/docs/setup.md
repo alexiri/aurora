@@ -100,7 +100,10 @@ Keep the service account's role **Viewer** and give it **Edit on one folder** â€
 for the agent, and no other. The role matters: by default Grafana's Editors can edit every folder,
 so an Editor token is not narrowed by Edit permission on one folder, and its raw writes could
 still change or delete people's rules anywhere. A Viewer has no edit anywhere by default, so with
-Viewer plus one folder's Edit the agent can only touch rules in the folder a person gave it:
+Viewer plus one folder's Edit the agent can only touch rules in the folder a person gave it. This
+rests on Grafana's folder permissions working as documented and has **not yet been verified on a
+live Grafana server**; before you rely on it, do step 3 below on your own server and try one
+create from the agent.
 
 1. In Grafana open *Dashboards* and choose *New folder*; name it for the agent, for example
    "night agent". Give **each agent its own folder**: two agents sharing one folder could change
