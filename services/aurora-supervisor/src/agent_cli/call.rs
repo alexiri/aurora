@@ -307,7 +307,7 @@ fn next_link(h: &str) -> Option<String> {
 }
 
 /// (lane review 2026-11-25) Response projection: reduce a response to the operation's `project`
-/// paths, so an object that carries settings (Grafana contact points) shows only its identifying
+/// paths, so an object that carries settings (contact points) shows only its identifying
 /// fields. Every item at `items_path` — or the response itself when the operation names no items
 /// path — keeps only the values the paths select. `None` when the response is not JSON, the items
 /// path is not in it, or an item is not an object: the caller fails instead of showing more than
@@ -878,12 +878,12 @@ mod tests {
     #[test]
     fn projection_keeps_only_the_declared_paths() {
         let project = ["$.name".to_owned(), "$.type".to_owned()];
-        let body = br#"[{"name":"slack","type":"slack","settings":{"url":"https://x","token":"s"}},
+        let body = br#"[{"name":"hook","type":"hook","settings":{"url":"https://x","token":"s"}},
             {"name":"mail","type":"email","settings":{"addresses":["a@b"]}}]"#;
         let out = project_bytes(body, None, &project).unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&out).unwrap(),
-            json!([{"name": "slack", "type": "slack"}, {"name": "mail", "type": "email"}])
+            json!([{"name": "hook", "type": "hook"}, {"name": "mail", "type": "email"}])
         );
         // A nested path becomes nested keys; a path the item lacks is absent.
         let nested = ["$.name".to_owned(), "$.settings.url".to_owned()];

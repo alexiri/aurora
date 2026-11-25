@@ -426,7 +426,7 @@ pub const HOOK_FETCH_MAX: u32 = 16;
 pub const HOOK_FETCH_RESPONSE_MAX: usize = MIB;
 pub const HOOK_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 pub const SUMMARY_TITLE_MAX: usize = 120;
-/// max summary fields (20: the grafana alert-rule cards show the script's fixed rule shape field
+/// max summary fields (20: the alert-rule cards show the script's fixed rule shape field
 /// by field, one field per key, because the card cannot print a map's keys).
 pub const SUMMARY_FIELDS_MAX: u32 = 20;
 pub const SUMMARY_VALUE_MAX: usize = 200;

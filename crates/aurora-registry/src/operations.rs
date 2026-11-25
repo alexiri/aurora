@@ -37,7 +37,7 @@ pub struct Operation {
     /// (lane review 2026-11-25) Response projection: only these `$`-paths of every item at the
     /// items path stay in the answer the agent sees (plain `.name` segments, no wildcards). The
     /// `aurora-agent call` output and saved file are filtered; used so an operation that reads
-    /// objects with settings (Grafana contact points) returns only identifying fields.
+    /// objects with settings (contact points) returns only identifying fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

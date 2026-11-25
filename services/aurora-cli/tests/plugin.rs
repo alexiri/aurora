@@ -289,7 +289,7 @@ fn build_skips_github_files_under_skills() {
     std::fs::create_dir_all(src.join("skills/skills-demo/.github/workflows")).unwrap();
     std::fs::write(
         src.join("skills/skills-demo/.github/workflows/ci.yml"),
-        b"on: push\n".to_vec(),
+        b"on: push\n",
     )
     .unwrap();
     let archive = d.join("gh.aurora-plugin");
