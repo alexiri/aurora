@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeftIcon, LockIcon, UsersIcon } from "@/components/ui/icons";
+import { InfoTip } from "@/components/ui/popover";
+import { useMediaQuery } from "@/lib/use-media-query";
 
 /**
  * The thread header: a 44 px back button on phones, the title, one muted meta line (visibility, kind, archived date,
@@ -12,11 +14,16 @@ import { ArrowLeftIcon, LockIcon, UsersIcon } from "@/components/ui/icons";
  * Below 1280 px the meta line has its own full-width row under the title row: the title row is 64 px, so the row's border
  * stays level with the status panel's header (P5-POLISH-6), and the whole line (the privacy note, "Archived … · read only")
  * wraps there in full, so nothing needs a hover. From 1280 px it sits under the title, inside the 64 px header.
+ *
+ * (retention-tooltip) When the org has a retention window, the note ("Deleted after N days without activity") stays
+ * inline below 1280 px; from 1280 px it is the visibility line's tooltip (hover, focus or tap opens it), so the line
+ * still fits the pinned 64 px header (agent-page-p5) and desktop never loses the note.
  */
 export function ThreadHeader({
   title,
   visibility,
   visibilityIcon = "lock",
+  retention,
   segments,
   live,
   onBack,
@@ -27,6 +34,8 @@ export function ThreadHeader({
   visibility?: string;
   /** (FIX-235, D-479) The note's icon: the lock for direct chats, the people icon for the others. */
   visibilityIcon?: "lock" | "people";
+  /** (retention-tooltip) The retention note; from 1280 px the visibility line's tooltip, below it the inline segment. */
+  retention?: string;
   /** The other meta segments (kind, archived date, retention). A segment may carry a class —
    * the retention one hides at xl to keep the 64 px header (agent-page-p5 pins that height). */
   segments: (string | { text: string; className?: string })[];
@@ -36,6 +45,9 @@ export function ThreadHeader({
   actions?: ReactNode;
 }) {
   const hasMeta = !!visibility || segments.length > 0;
+  // (retention-tooltip) The tooltip exists only from 1280 px: below it the note stays an inline segment, and the
+  // visibility line stays the plain text it is today (one `matchMedia`-only decision, never duplicated markup).
+  const xl = useMediaQuery("(min-width: 1280px)");
   return (
     <header
       className={
@@ -79,7 +91,15 @@ export function ThreadHeader({
                   <LockIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0 xl:inline" />
                 )}
                 {" "}
-                <span>{visibility}</span>
+                {retention && xl ? (
+                  // (retention-tooltip) The line itself carries the note: focus or tap it and the retention
+                  // window shows as its tooltip (its accessible description), Escape or blur closes.
+                  <InfoTip note={retention} testId="retention-tip">
+                    {visibility}
+                  </InfoTip>
+                ) : (
+                  <span>{visibility}</span>
+                )}
               </span>
             ) : null}
             {visibility ? " " : null}
