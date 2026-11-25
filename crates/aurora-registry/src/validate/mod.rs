@@ -1415,6 +1415,31 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         );
                     }
                 }
+                // (lane review 2026-11-25) A `project` selects named fields of every answer
+                // item: plain `$`-paths only (no wildcards, no filters), at most 8.
+                if let Some(project) = &it.project {
+                    let pp = format!("/tools/{gname}/items/{j}/project");
+                    if project.is_empty() || project.len() > 8 {
+                        cx.v(
+                            "tool_project",
+                            &pp,
+                            format!("tool `{}`: `project` holds 1 to 8 paths", it.id),
+                        );
+                    }
+                    for p in project {
+                        match crate::library::JsonPath::parse(p) {
+                            Ok(path) if path.simple() => {}
+                            _ => cx.v(
+                                "tool_project",
+                                &pp,
+                                format!(
+                                    "tool `{}`: `{p}` is not a plain `$`-path of member names",
+                                    it.id
+                                ),
+                            ),
+                        }
+                    }
+                }
                 // A `body_check` only ever refuses, and its key names are quoted in the
                 // refusal message, so they are plain identifiers and the lists stay small.
                 if let Some(bc) = &it.body_check {

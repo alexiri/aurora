@@ -188,6 +188,9 @@ struct Hook {
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
     /// Injected values placed in the URL (FIX-104).
     echo: Vec<Vec<u8>>,
+    /// (lane review 2026-11-25) The matched tool's response projection: every answer is
+    /// reduced to these `$`-paths on the response path, for every caller.
+    project: Option<Vec<String>>,
     /// (P4-LLM-1, C-808) `(provider, endpoint id)` of an injected LLM key: the response is classified for the
     /// request log and `aurora_gateway_llm_upstream_total`.
     llm: Option<(String, String)>,
@@ -231,6 +234,10 @@ impl Hook {
 impl PostHook for Hook {
     fn echo_needles(&self) -> Vec<Vec<u8>> {
         self.echo.clone()
+    }
+
+    fn response_project(&self) -> Option<&[String]> {
+        self.project.as_deref()
     }
 
     fn wire_context(&self) -> crate::wire::Decided {
@@ -2001,6 +2008,14 @@ impl PolicyHandler {
                     query.as_deref(),
                 )
             };
+            // (lane review 2026-11-25) A tool that declares a response projection has every
+            // answer reduced to the projected paths on the response path, for every caller:
+            // the answer must arrive readable, so the request asks for no compressed encoding
+            // (an upstream that compresses anyway is withheld, never streamed unchecked).
+            let project = tool.and_then(|t| t.project.clone());
+            if project.is_some() {
+                headers.remove("accept-encoding");
+            }
             let hook = self.hook(
                 &rv,
                 ctx,
@@ -2009,6 +2024,7 @@ impl PolicyHandler {
                 passthrough,
                 None,
                 echo,
+                project,
             );
             let retry = match (pre, &self.tokens, &registry) {
                 (Some((h0, q0)), Some(t), Some(l)) => Some(Box::new(StaleRetry {
@@ -2175,6 +2191,7 @@ impl PolicyHandler {
                 false,
                 backstop,
                 echo,
+                None,
             );
             hook.llm = llm;
             return Outcome::Forward(PreparedRequest {
@@ -2204,6 +2221,7 @@ impl PolicyHandler {
             passthrough,
             None,
             Vec::new(),
+            None,
         );
         Outcome::Forward(PreparedRequest {
             scheme,
@@ -2772,6 +2790,7 @@ impl PolicyHandler {
         passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
         echo: Vec<Vec<u8>>,
+        project: Option<Vec<String>>,
     ) -> Box<Hook> {
         let links = self.links(rv);
         // (C-959) A refusal that knows the agent (every request has one) carries the journey's
@@ -2803,6 +2822,7 @@ impl PolicyHandler {
             app,
             backstop,
             echo,
+            project,
         })
     }
 }

@@ -585,6 +585,24 @@ impl Proxy {
                     }
                 }
             }
+            // (lane review 2026-11-25) A tool that declares a response projection has every
+            // answer reduced to the projected paths, here too (the retried answer is the
+            // caller's answer).
+            if let Some(h) = &hook
+                && let Some(paths) = h.response_project()
+                && resp.status().is_success()
+            {
+                resp = match project_response(paths, resp).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        wire.replaced("response_projection");
+                        if let Some(h) = hook {
+                            h.on_error(&e);
+                        }
+                        return guidance::response(&e);
+                    }
+                };
+            }
             if let Some(h) = hook
                 && let Some(replacement) = h.on_response(resp.status(), resp.headers())
             {
@@ -636,7 +654,7 @@ impl Proxy {
     /// 14-15. guidance replacement, request log, upgrade bridging, response hygiene.
     async fn finish(
         &self,
-        mut resp: Response<hyper::body::Incoming>,
+        resp: Response<hyper::body::Incoming>,
         hook: Option<Box<dyn crate::pipeline::PostHook>>,
         response_headers: http::HeaderMap,
         upgrade_fut: Option<hyper::upgrade::OnUpgrade>,
@@ -682,6 +700,30 @@ impl Proxy {
             hygiene::strip_hop_by_hop(checked.headers_mut());
             return checked;
         }
+        let (parts, inc) = resp.into_parts();
+        let mut resp = Response::from_parts(
+            parts,
+            inc.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync(),
+        );
+        // (lane review 2026-11-25) A tool that declares a response projection has every answer
+        // reduced to the projected paths for every caller, here on the response path: the body
+        // is buffered up to `PROJECT_BODY_MAX`, parsed and rewritten; anything else is
+        // withheld instead of forwarded.
+        if let Some(h) = &hook
+            && let Some(paths) = h.response_project()
+            && resp.status().is_success()
+        {
+            resp = match project_response(paths, resp).await {
+                Ok(r) => r,
+                Err(e) => {
+                    wire.replaced("response_projection");
+                    if let Some(h) = hook {
+                        h.on_error(&e);
+                    }
+                    return guidance::response(&e);
+                }
+            };
+        }
         if let Some(h) = hook
             && let Some(replacement) = h.on_response(resp.status(), resp.headers())
         {
@@ -725,13 +767,127 @@ impl Proxy {
             return Response::from_parts(p, empty_body());
         }
         hygiene::strip_hop_by_hop(resp.headers_mut());
-        resp.map(|b| b.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync())
+        resp
     }
 }
 
 /// Bytes of a response body searched for an injected value (docs/17 SEC-01); what follows is
 /// streamed on unchecked.
 const ECHO_BODY_CHECK: usize = 64 * 1024;
+
+/// Bytes of a response body the gateway buffers whole to apply a tool's response projection;
+/// a longer answer is withheld (fail closed), never streamed unchecked.
+const PROJECT_BODY_MAX: usize = 1024 * 1024;
+
+/// (lane review 2026-11-25) A tool that declares a response projection has every answer
+/// reduced to the projected `$`-paths for every caller, here on the response path (the agent
+/// CLI reduces what it saves and prints the same way): the body is buffered up to
+/// `PROJECT_BODY_MAX`, parsed and rewritten; anything else — truncated, not JSON, not the
+/// projected shape — withholds the answer instead of forwarding what the tool's description
+/// says never reaches the caller.
+async fn project_response(
+    paths: &[String],
+    resp: Response<Body>,
+) -> Result<Response<Body>, ApiError> {
+    let withheld = || {
+        ApiError::new(
+            http::StatusCode::BAD_GATEWAY,
+            "tool_response_unprojectable",
+            "The tool's answer could not be reduced to the fields the tool shows, so it was withheld.",
+        )
+    };
+    let (mut parts, body) = resp.into_parts();
+    let (prefix, truncated, _) = crate::decide::buffer_prefix(body, PROJECT_BODY_MAX).await;
+    if truncated {
+        return Err(withheld());
+    }
+    let Ok(mut doc) = serde_json::from_slice::<serde_json::Value>(&prefix) else {
+        return Err(withheld());
+    };
+    let projected = match &mut doc {
+        serde_json::Value::Array(items) => {
+            let kept: Option<Vec<serde_json::Value>> =
+                items.iter_mut().map(|i| project_item(i, paths)).collect();
+            kept.map(serde_json::Value::Array)
+        }
+        _ => project_item(&mut doc, paths),
+    };
+    let Some(projected) = projected else {
+        return Err(withheld());
+    };
+    let Ok(bytes) = serde_json::to_vec(&projected) else {
+        return Err(withheld());
+    };
+    parts.headers.remove(http::header::CONTENT_LENGTH);
+    parts.headers.remove(http::header::TRANSFER_ENCODING);
+    Ok(Response::from_parts(parts, crate::full_body(bytes)))
+}
+
+/// Of `item`, keep only the values `paths` select, arranged as the paths name them (a nested
+/// path becomes nested keys); a path the item does not have is simply absent. `None` when
+/// `item` is not an object.
+fn project_item(item: &mut serde_json::Value, paths: &[String]) -> Option<serde_json::Value> {
+    item.as_object()?;
+    let mut out = serde_json::Map::new();
+    for p in paths {
+        let keys = path_keys(p)?;
+        if let Some(v) = select_at(item, &keys) {
+            set_at(&mut out, &keys, v.clone());
+        }
+    }
+    Some(serde_json::Value::Object(out))
+}
+/// The plain member names of a projection path (`$.a.b` → `["a", "b"]`); `None` when the path
+/// is anything else (the manifest's schema keeps wildcards out; fail closed regardless).
+fn path_keys(p: &str) -> Option<Vec<&str>> {
+    let mut rest = p.strip_prefix('$')?;
+    let mut keys = Vec::new();
+    while let Some(r) = rest.strip_prefix('.') {
+        let end = r.find(['.', '[']).unwrap_or(r.len());
+        let name = &r[..end];
+        if name.is_empty() {
+            return None;
+        }
+        keys.push(name);
+        rest = &r[end..];
+    }
+    (!keys.is_empty() && rest.is_empty()).then_some(keys)
+}
+
+/// The value `keys` select of `v`, if all of them are there.
+fn select_at<'a>(v: &'a serde_json::Value, keys: &[&str]) -> Option<&'a serde_json::Value> {
+    let mut cur = v;
+    for k in keys {
+        cur = cur.get(*k)?;
+    }
+    Some(cur)
+}
+
+/// Set `v` into `out` at `keys` (nested keys make nested objects).
+fn set_at(
+    out: &mut serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+    v: serde_json::Value,
+) {
+    let Some(last) = keys.last() else {
+        return;
+    };
+    let mut cur = out;
+    for k in &keys[..keys.len() - 1] {
+        let next = cur
+            .entry((*k).to_owned())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if !next.is_object() {
+            *next = serde_json::Value::Object(serde_json::Map::new());
+        }
+        cur = match next {
+            serde_json::Value::Object(m) => m,
+            // Cannot happen: the line above made it an object.
+            _ => return,
+        };
+    }
+    cur.insert((*last).to_owned(), v);
+}
 
 /// (FIX-104, SEC-01) 502 `upstream_echoed_credential` when the response headers or the first
 /// 64 KiB of its body carry one of `needles`; otherwise the response with its body intact.

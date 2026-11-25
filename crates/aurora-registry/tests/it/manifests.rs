@@ -32,6 +32,16 @@ fn minimal_parses() {
     assert!(v.is_empty(), "{v:#?}");
 }
 
+// (lane review 2026-11-25) A `project` of plain `$`-paths is a valid tool field.
+#[test]
+fn a_tool_project_of_plain_paths_is_valid() {
+    let v = run(&METHODS.replace(
+        "connect_methods: [token] }",
+        "connect_methods: [token], project: [\"$.name\", \"$.type\"] }",
+    ));
+    assert!(v.is_empty(), "{v:#?}");
+}
+
 #[test]
 fn invalid_fixtures_yield_expected_code() {
     let table: &[(&str, &str)] = &[
@@ -454,6 +464,35 @@ fn connect_method_rules_reject_each_invalid_case() {
                 "connect_methods: [token], body_check: { exact_len: { data: 0 } } }",
             ),
             "body_check_exact_len",
+        ),
+        // (lane review 2026-11-25) A `project` selects named fields of every answer item:
+        // plain `$`-paths only, at most 8.
+        (
+            "a project with a wildcard path",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], project: [\"$.a[*].b\"] }",
+            ),
+            "tool_project",
+        ),
+        (
+            "a project with an empty path list",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], project: [] }",
+            ),
+            "tool_project",
+        ),
+        (
+            "a project with more than eight paths",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                &format!(
+                    "connect_methods: [token], project: [{}] }}",
+                    (0..9).map(|i| format!("\"$.k{i}\"")).collect::<Vec<_>>().join(", ")
+                ),
+            ),
+            "tool_project",
         ),
         // (P5-POLISH-3, C-1031) The package text for people has limits.
         (

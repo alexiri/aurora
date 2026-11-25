@@ -1011,6 +1011,13 @@ pub struct ToolItem {
     /// `decrypt=true` on contact points). Absent = the query is not checked.
     #[serde(default, skip_serializing_if = "is_false")]
     pub refuse_query: bool,
+    /// (lane review 2026-11-25) Response projection: of every item of the tool's JSON array
+    /// answer (or of the object itself) only these `$`-paths stay, applied by the gateway on
+    /// the response path for every caller; an answer that is not JSON in the projected shape
+    /// is withheld. The agent CLI reduces what it saves and prints the same way. Absent = the
+    /// answer is forwarded as it arrived (and no change to the package's snapshot hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<Vec<String>>,
 }
 
 /// (P5-TOOLASK, C-1042) The values of a tool's `approval`; only `ask` exists.

@@ -299,6 +299,17 @@ A request without a query string is unaffected. Absent = the query is not checke
 to the package's snapshot hash). Built-in user: `grafana` (1.7.0: `list_contact_points`, whose
 endpoint would answer `decrypt=true` with the contact points' settings and secrets).
 
+**Response projection (`project: [$-paths]`).** A tool whose answer is a JSON array of objects
+with settings may declare the `$`-paths every item keeps (plain member names, 1 to 8, at most 8
+segments — no wildcards, no filters); the gateway reduces every answer to those paths on the
+response path, for every caller: the body is buffered whole (at most 1 MiB), parsed and
+rewritten, and an answer that is truncated, not JSON or not in the projected shape is withheld
+with `502 tool_response_unprojectable` instead of forwarded. The agent CLI reduces what it saves
+and prints the same way. Absent = the answer is forwarded as it arrived (and no change to the
+package's snapshot hash). Built-in user: `grafana` (1.8.0: `list_contact_points`, whose answer
+keeps only each contact point's name and type, so the endpoint's settings and secrets reach no
+caller, raw send or CLI call alike).
+
 `scopes: []` with `default_scopes: []` is valid: the authorization request then carries no `scope`
 parameter and the connection has no scopes (FIX-133: a **GitHub App's user authorization**, whose
 permissions come from the app's registration, is the package's `oauth_app` method, with its own

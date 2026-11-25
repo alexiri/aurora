@@ -116,7 +116,11 @@ apps:
           - { id: list_silences, description: "Lists silences in Grafana's Alertmanager.", name: List silences, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [GET] }
           # `refuse_query`: the tool declares no query parameters, and the endpoint would answer
           # a `decrypt=true` parameter with the contact points' settings and secrets.
-          - { id: list_contact_points, description: "Lists the contact points (notification destinations) by name and type; only those two fields are returned, their settings and secrets never reach the agent.", name: List contact points, host: "{instance}", path: /api/v1/provisioning/contact-points, methods: [GET], refuse_query: true }
+          # `project`: every answer item keeps only its name and type — the gateway reduces the
+          # answer on the response path for every caller (the agent CLI reduces what it saves
+          # and prints the same way), so the endpoint's settings (e-mail addresses, URLs) and
+          # secrets reach no caller, raw send or CLI call alike.
+          - { id: list_contact_points, description: "Lists the contact points (notification destinations) by name and type; only those two fields are returned, their settings and secrets never reach the agent.", name: List contact points, host: "{instance}", path: /api/v1/provisioning/contact-points, methods: [GET], refuse_query: true, project: ["$.name", "$.type"] }
           # Annotations.
           - { id: list_annotations, description: "Lists annotations (deployments, incidents, notes) in a time range.", name: List annotations, host: "{instance}", path: /api/annotations, methods: [GET] }
           # Grafana's own UI reads Prometheus, Loki, OpenSearch and SQL data through this POST, and
