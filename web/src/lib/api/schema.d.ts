@@ -18107,6 +18107,12 @@ export interface components {
          */
         WorkspaceAudience: {
             emergency?: components["schemas"]["WorkspaceAudienceEmergency"] | null;
+            /**
+             * Format: int64
+             * @description (FIX-236, review HIGH-1) How many OTHER emergency grants are active right now besides
+             *     `emergency` — two simultaneous openers are both announced.
+             */
+            emergency_active_more: number;
             /** @description The own-right owners: at most 5, the caller first if an owner, then by display name. */
             owners: components["schemas"]["WorkspaceAudienceOwner"][];
             /**

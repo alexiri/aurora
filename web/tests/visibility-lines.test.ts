@@ -12,6 +12,7 @@ const audience = (people: number, owners: [string, string][], ownersTotal = owne
   people,
   owners: owners.map(([id, display_name]) => ({ id, display_name })),
   owners_total: ownersTotal,
+  emergency_active_more: 0,
 });
 
 const base = {

@@ -295,10 +295,15 @@ pub struct WorkspaceAudience {
     pub owners: Vec<WorkspaceAudienceOwner>,
     /// How many own-right owners the workspace has.
     pub owners_total: i64,
-    /// (FIX-236, C-1165) The newest emergency access that is active or ended within the last
-    /// 7 days — the workspace's banner for its people; `null` when there is none to show.
+    /// (FIX-236, C-1165) The newest **active** emergency access when any is active (review
+    /// HIGH-1: an owner's open access is never hidden behind another owner's newer, ended one),
+    /// else the newest that ended within the last 7 days — the workspace's banner for its
+    /// people; `null` when there is none to show.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emergency: Option<WorkspaceAudienceEmergency>,
+    /// (FIX-236, review HIGH-1) How many **other** emergency grants are active right now besides
+    /// `emergency` — two simultaneous openers are both announced.
+    pub emergency_active_more: i64,
 }
 
 /// (FIX-236, C-1165) `audience.emergency`: who opened emergency read access, why and until

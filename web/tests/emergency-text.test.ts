@@ -48,6 +48,17 @@ describe("emergencyPeopleBannerText", () => {
     );
   });
 
+  // (FIX-236, review HIGH-1) Two simultaneous openers are both announced: the newest active by
+  // name, the other by count.
+  it("active with another active grant: along with K more organization owners", () => {
+    expect(emergencyPeopleBannerText(grant(), 1)).toBe(
+      "Ada Lovelace, an organization owner, has emergency read access to this workspace until 18:00, along with 1 more organization owner. Reason: Legal hold on the account's records.",
+    );
+    expect(emergencyPeopleBannerText(grant(), 2)).toBe(
+      "Ada Lovelace, an organization owner, has emergency read access to this workspace until 18:00, along with 2 more organization owners. Reason: Legal hold on the account's records.",
+    );
+  });
+
   it("a name is never shown raw", () => {
     const text = emergencyPeopleBannerText(grant({ by: { id: "u1", display_name: "Ann <b> & Co" } }));
     expect(text).toContain("Ann <b> & Co");

@@ -559,6 +559,76 @@ async fn a_personal_workspace_tells_its_person() {
     assert!(!person_mail.body.contains('@'), "{}", person_mail.body);
 }
 
+/// (Review HIGH-1) The people's banner shows ACTIVE access whenever any grant is active: an
+/// owner's open grant may not be hidden behind another owner's newer, already-ended one, and two
+/// simultaneous active grants are both announced (the newest active one by name, the other by
+/// count).
+#[tokio::test]
+async fn the_peoples_banner_shows_active_access_even_when_a_newer_grant_ended() {
+    let w = world().await;
+    // Owner A opens for 24 hours.
+    let (s, v) = w
+        .open(
+            &w.opener_tok,
+            json!({"reason": "owner A opens for a long day"}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let a_grant: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // Owner B opens after A and ends theirs at once.
+    let (s, v) = w
+        .open(&w.other_tok, json!({"reason": "owner B opens and ends"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let b_grant: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = w
+        .call(
+            &w.other_tok,
+            Method::POST,
+            &format!("/v1/emergency-access/{b_grant}/end"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // The banner is A's ACTIVE grant, not B's newer ended one.
+    let (s, v) = w
+        .call(
+            &w.person_tok,
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["audience"]["emergency"]["id"], json!(a_grant), "{v}");
+    assert_eq!(v["audience"]["emergency"]["active"], json!(true), "{v}");
+    assert_eq!(v["audience"]["emergency_active_more"], json!(0), "{v}");
+
+    // A third owner opens too: both active grants are announced — the newest active by name,
+    // the other by count.
+    let third = w.h.user("third@x.io", false).await;
+    w.h.member(w.org, third, "owner", "active").await;
+    let (_, third_tok) = w.h.good_session(third).await;
+    let (s, v) = w
+        .open(&third_tok, json!({"reason": "owner C opens after A"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let c_grant: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = w
+        .call(
+            &w.person_tok,
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["audience"]["emergency"]["id"], json!(c_grant), "{v}");
+    assert_eq!(v["audience"]["emergency"]["active"], json!(true), "{v}");
+    assert_eq!(v["audience"]["emergency_active_more"], json!(1), "{v}");
+}
+
 // ---------------------------------------------------------------- recorded
 
 #[tokio::test]

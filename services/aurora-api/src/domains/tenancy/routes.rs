@@ -588,27 +588,35 @@ async fn workspace_audience(
         owners.insert(0, me);
     }
     owners.truncate(5);
-    // (FIX-236, C-1165) The banner: the newest emergency access that is active or ended within
-    // the last 7 days; every caller who gets `audience` sees it.
+    // (FIX-236, C-1165, review HIGH-1) The banner: the newest ACTIVE emergency access when any
+    // is active, else the newest ended within the last 7 days; every caller who gets `audience`
+    // sees it, and simultaneous active grants are all announced.
     let emergency = aurora_db::repo::emergency_access::latest_banner(&s.pool, ws)
         .await?
-        .map(|r| WorkspaceAudienceEmergency {
-            id: r.row.id,
-            by: WorkspaceAudienceOwner {
-                id: r.row.user_id,
-                display_name: r.by_display_name,
-            },
-            reason: r.row.reason,
-            opened_at: r.row.opened_at,
-            expires_at: r.row.expires_at,
-            ended_at: r.row.ended_at,
-            active: r.row.ended_at.is_none() && r.row.expires_at > chrono::Utc::now(),
+        .map(|(r, more)| {
+            (
+                WorkspaceAudienceEmergency {
+                    id: r.row.id,
+                    by: WorkspaceAudienceOwner {
+                        id: r.row.user_id,
+                        display_name: r.by_display_name,
+                    },
+                    reason: r.row.reason,
+                    opened_at: r.row.opened_at,
+                    expires_at: r.row.expires_at,
+                    ended_at: r.row.ended_at,
+                    active: r.row.ended_at.is_none() && r.row.expires_at > chrono::Utc::now(),
+                },
+                more,
+            )
         });
+    let emergency_active_more = emergency.as_ref().map_or(0, |(_, more)| *more);
     Ok(WorkspaceAudience {
         people,
         owners,
         owners_total,
-        emergency,
+        emergency: emergency.map(|(e, _)| e),
+        emergency_active_more,
     })
 }
 

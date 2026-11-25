@@ -44,12 +44,17 @@ export function emergencySpanText(from: string, to: string | null | undefined): 
 
 /**
  * The workspace people's banner (brief 3), while it is active and for 7 days after it ends
- * ("has … until" / "had … from–to").
+ * ("has … until" / "had … from–to"). `activeMore` is how many OTHER emergency grants are active
+ * right now (review HIGH-1: two simultaneous openers are both announced).
  */
-export function emergencyPeopleBannerText(e: WorkspaceEmergency): string {
+export function emergencyPeopleBannerText(e: WorkspaceEmergency, activeMore = 0): string {
   const name = personName(e.by.display_name);
+  const more =
+    activeMore > 0
+      ? `, along with ${activeMore} more organization owner${activeMore === 1 ? "" : "s"}`
+      : "";
   if (e.active) {
-    return `${name}, an organization owner, has emergency read access to this workspace until ${formatTime(e.expires_at)}. Reason: ${e.reason}.`;
+    return `${name}, an organization owner, has emergency read access to this workspace until ${formatTime(e.expires_at)}${more}. Reason: ${e.reason}.`;
   }
   return `${name}, an organization owner, had emergency read access from ${emergencySpanText(e.opened_at, e.ended_at)}. Reason: ${e.reason}.`;
 }

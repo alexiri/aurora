@@ -37,12 +37,18 @@ function ReaderBanner({ expiresAt, emergencyId }: { expiresAt: string; emergency
 }
 
 /** The people's banner: who opened it, why and until when; "Dismiss" remembers, per person and per grant. */
-function PeopleBanner({ emergency }: { emergency: WorkspaceEmergency }) {
+function PeopleBanner({
+  emergency,
+  activeMore,
+}: {
+  emergency: WorkspaceEmergency;
+  activeMore: number;
+}) {
   const [dismissed, setDismissed] = useState(() => emergencyDismissed(emergency.id));
   if (dismissed) return null;
   return (
     <Notice tone="pending" role="note" className="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="emergency-people-banner">
-      <p className="min-w-0 flex-1">{emergencyPeopleBannerText(emergency)}</p>
+      <p className="min-w-0 flex-1">{emergencyPeopleBannerText(emergency, activeMore)}</p>
       <Button
         type="button"
         variant="ghost"
@@ -73,5 +79,5 @@ export function EmergencyBanners() {
     // The active grant's id is the one in `audience.emergency` (C-1165: the newest active-or-recent row).
     return emergency ? <ReaderBanner expiresAt={emergency.expires_at} emergencyId={emergency.id} /> : null;
   }
-  return emergency ? <PeopleBanner emergency={emergency} /> : null;
+  return emergency ? <PeopleBanner emergency={emergency} activeMore={w.audience?.emergency_active_more ?? 0} /> : null;
 }

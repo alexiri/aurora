@@ -28,6 +28,7 @@ const audience = (emergency: WorkspaceAudience["emergency"]) => ({
   people: 2,
   owners: [{ id: "u1", display_name: "Ada Lovelace" }],
   owners_total: 1,
+  emergency_active_more: 0,
   emergency,
 });
 

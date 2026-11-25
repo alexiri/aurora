@@ -79040,19 +79040,25 @@
         "required": [
           "people",
           "owners",
-          "owners_total"
+          "owners_total",
+          "emergency_active_more"
         ],
         "properties": {
           "emergency": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/WorkspaceAudienceEmergency",
-                "description": "(FIX-236, C-1165) The newest emergency access that is active or ended within the last\n7 days — the workspace's banner for its people; `null` when there is none to show."
+                "description": "(FIX-236, C-1165, review HIGH-1) The newest ACTIVE emergency access when any is active — an owner's\nopen access is never hidden behind another owner's newer, ended one — else the newest that\nended within the last 7 days; the workspace's banner for its people; `null` when there is\nnone to show."
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "emergency_active_more": {
+            "type": "integer",
+            "format": "int64",
+            "description": "(FIX-236, review HIGH-1) How many OTHER emergency grants are active right now besides\n`emergency` — two simultaneous openers are both announced."
           },
           "owners": {
             "type": "array",

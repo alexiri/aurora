@@ -193,25 +193,43 @@ pub async fn list_for_org<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// The newest grant of the workspace that is active or ended within the last 7 days — the
-/// banner's `audience.emergency` (C-1165), with the opener's display name (never their e-mail).
-/// `None` when the workspace has none to show.
-pub async fn latest_banner<'e, E: PgExecutor<'e>>(
+/// The banner's `audience.emergency` (C-1165, review HIGH-1): the newest **active** grant of the
+/// workspace whenever any is active (an owner's open access may never be hidden behind another
+/// owner's newer, already-ended one), else the newest grant that ended within the last 7 days —
+/// with the opener's display name (never their e-mail). Also returns how many **other** grants
+/// are active right now, so two simultaneous openers are both announced. `None` when the
+/// workspace has nothing to show.
+pub async fn latest_banner<'e, E: PgExecutor<'e> + Copy>(
     exec: E,
     ws: Uuid,
-) -> Result<Option<ListRow>, DbError> {
-    Ok(sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(format!(
+) -> Result<Option<(ListRow, i64)>, DbError> {
+    let row = sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS_LIST}, w.name AS workspace_name, u.display_name AS by_display_name \
          FROM workspace_emergency_access e \
          JOIN workspaces w ON w.id = e.workspace_id \
          JOIN users u ON u.id = e.user_id \
          WHERE e.workspace_id = $1 \
            AND (e.ended_at IS NULL OR e.ended_at > now() - interval '7 days') \
-         ORDER BY e.opened_at DESC, e.id DESC LIMIT 1"
+         ORDER BY (e.ended_at IS NULL AND e.expires_at > now()) DESC, e.opened_at DESC, e.id DESC \
+         LIMIT 1"
     )))
     .bind(ws)
     .fetch_optional(exec)
-    .await?)
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    // The other grants active right now (all of them when the shown row is the ended fallback:
+    // there are none then, or the active-first ordering would have shown one).
+    let more: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM workspace_emergency_access \
+         WHERE workspace_id = $1 AND ended_at IS NULL AND expires_at > now() AND id <> $2",
+    )
+    .bind(ws)
+    .bind(row.row.id)
+    .fetch_one(exec)
+    .await?;
+    Ok(Some((row, more)))
 }
 
 /// The minute expiry job (C-1164): every grant whose `expires_at` passed while still open gets
