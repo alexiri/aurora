@@ -79,6 +79,13 @@ const REVIEWED: &[(&str, usize, &str)] = &[
          apply the binding rules; it decides no access — the bindings act through \
          effective_workspace_access at request time",
     ),
+    (
+        "services/aurora-api/src/domains/scim/service.rs",
+        1,
+        "personal_add_refusal reads a group's bound workspaces for the personal marker to apply \
+         the binding rules (D-480/C-1161); it decides no access — it only refuses or skips an \
+         SCIM add, and the bindings act through effective_workspace_access at request time",
+    ),
 ];
 
 fn root() -> PathBuf {
