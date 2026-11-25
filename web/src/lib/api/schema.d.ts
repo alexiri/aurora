@@ -7324,7 +7324,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List a workspace's skills (workspace tier). */
+        /**
+         * List a workspace's skills (workspace tier). The list is a C-1165 read (review LOW-9):
+         *     `ReadAuth` — the emergency reader reads it too; the create stays `can_own`.
+         */
         get: operations["listWorkspaceSkills"];
         put?: never;
         /** Create a workspace-tier skill (`can_own`, org owners/admins included); 409 `skill_exists`. */
