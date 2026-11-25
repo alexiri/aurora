@@ -117,6 +117,24 @@ describe("Workspace manage page (FIX-235, D-477)", () => {
     expect(notice).not.toHaveTextContent("In an emergency");
   });
 
+  // (FIX-236, review LOW-11, D-470) The open entry only where it can succeed: not for a
+  // workspace owner (the API refuses with 409 already_has_access) and not while the caller
+  // already holds an active grant (409 emergency_access_active).
+  it("an org owner who is a workspace owner is not offered the emergency read", async () => {
+    serve({}, { my_role: "owner" });
+    wrap(<WorkspaceManage />);
+    // A workspace owner gets no manage notice; wait for the people table instead.
+    await screen.findByText("Carol");
+    expect(screen.queryByRole("button", { name: "Open emergency read access…" })).toBeNull();
+  });
+
+  it("an org owner who already holds the grant is not offered the emergency read", async () => {
+    serve({}, { emergency_reader: true, emergency_reader_id: "e1" });
+    wrap(<WorkspaceManage />);
+    await screen.findByTestId("manage-notice");
+    expect(screen.queryByRole("button", { name: "Open emergency read access…" })).toBeNull();
+  });
+
   it("Add yourself asks first, says what it does, and PUTs the chosen role", async () => {
     const calls = serve();
     wrap(<WorkspaceManage />);

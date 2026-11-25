@@ -48,6 +48,14 @@ describe("emergencyPeopleBannerText", () => {
     );
   });
 
+  // (FIX-236, review LOW-11) An expired grant the minute sweep has not ended yet: `ended_at` is
+  // still null, and the span must fall back to `expires_at` — never "from 14:00 to 14:00".
+  it("expired but not yet swept: the span ends at expires_at, not at the open time", () => {
+    expect(emergencyPeopleBannerText(grant({ active: false, ended_at: null }))).toBe(
+      "Ada Lovelace, an organization owner, had emergency read access from 14:00 to 18:00. Reason: Legal hold on the account's records.",
+    );
+  });
+
   // (FIX-236, review HIGH-1) Two simultaneous openers are both announced: the newest active by
   // name, the other by count.
   it("active with another active grant: along with K more organization owners", () => {

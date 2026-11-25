@@ -56,7 +56,7 @@ export function emergencyPeopleBannerText(e: WorkspaceEmergency, activeMore = 0)
   if (e.active) {
     return `${name}, an organization owner, has emergency read access to this workspace until ${formatTime(e.expires_at)}${more}. Reason: ${e.reason}.`;
   }
-  return `${name}, an organization owner, had emergency read access from ${emergencySpanText(e.opened_at, e.ended_at)}. Reason: ${e.reason}.`;
+  return `${name}, an organization owner, had emergency read access from ${emergencySpanText(e.opened_at, e.ended_at ?? e.expires_at)}. Reason: ${e.reason}.`;
 }
 
 /** The chat's extra visibility line (brief 4, D-479's table). */

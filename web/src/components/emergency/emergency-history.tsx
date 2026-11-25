@@ -28,7 +28,9 @@ function EmergencyRow({ row, workspaceName }: { row: EmergencyAccessRow; workspa
         </p>
         <p className="text-sm text-ink-2">Reason: {row.reason}</p>
         <p className="text-xs text-muted">
-          From {emergencySpanText(row.opened_at, row.ended_at)}
+          {/* (FIX-236, review LOW-11) An expired-not-yet-swept row has `ended_at: null`; the
+              span falls back to `expires_at` instead of repeating the open time. */}
+          From {emergencySpanText(row.opened_at, row.ended_at ?? row.expires_at)}
           {row.active ? null : <> · {emergencyEndText(row)}</>}
         </p>
       </div>
