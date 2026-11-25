@@ -398,6 +398,68 @@ pub async fn change_members(
     let mut count = repo::member_count(&mut *tx, id).await?;
     let add: BTreeSet<Uuid> = add.iter().copied().collect();
     let remove: BTreeSet<Uuid> = remove.iter().copied().collect();
+    // (FIX-234 review, C-1160/C-1161) A group ALREADY bound to workspaces hands its bindings to
+    // everyone added here, so the same rules as binding a workspace apply before any change:
+    // a group bound to a personal workspace only takes people from its person, and an
+    // administrator adding *themselves* to a workspace role they do not already hold in their
+    // own right is a self-grant (session, critical row, notice) — the same law as
+    // `put_binding` and the workspace's People routes.
+    let mut self_grants: Vec<(Uuid, String)> = Vec::new();
+    if !add.is_empty() {
+        let bindings: Vec<(Uuid, String, Option<Uuid>)> = sqlx::query_as(
+            "SELECT b.workspace_id, b.role, w.personal_owner_user_id \
+             FROM group_workspace_access b JOIN workspaces w ON w.id = b.workspace_id \
+             WHERE b.group_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(DbError::from)?;
+        let rank = |r: Option<&str>| match r {
+            Some("member") => Some(1u8),
+            Some("approver") => Some(2),
+            Some("owner") => Some(3),
+            _ => None,
+        };
+        for (ws, role, person) in &bindings {
+            if let Some(person) = person {
+                if c.user_id != *person {
+                    return Err(
+                        crate::domains::tenancy::service::personal_workspace_owner_only(
+                            &crate::domains::tenancy::service::person_first_name(s, *person)
+                                .await?,
+                        ),
+                    );
+                }
+            }
+            let own_rank = aurora_db::repo::workspaces::get_access(&mut *tx, *ws, c.user_id)
+                .await?
+                .and_then(|r| rank(Some(r.role.as_str())));
+            if add.contains(&c.user_id)
+                && !repo::is_member(&mut *tx, id, c.user_id).await?
+                && rank(Some(role.as_str())).unwrap_or(0) > own_rank.unwrap_or(0)
+            {
+                if !c.is_session() {
+                    return Err(ApiError::new(
+                        http::StatusCode::FORBIDDEN,
+                        "session_required",
+                        "Adding yourself to a workspace needs a signed-in session, not an API key.",
+                    ));
+                }
+                self_grants.push((*ws, role.clone()));
+            }
+        }
+        for (ws, role) in &self_grants {
+            // The critical set covers the membership change; the self-grant row rides the same
+            // transaction as its own insert (as the People routes write it).
+            let ev = event(c, "workspace_access.self_grant")
+                .org(g.org_id)
+                .workspace(*ws)
+                .target("group", id)
+                .metadata(json!({"role": role, "via": "group"}));
+            audit::insert_tx(&mut tx, &ev).await?;
+        }
+    }
     for u in &remove {
         if repo::remove_member(&mut tx, id, *u).await? {
             count -= 1;
@@ -453,6 +515,10 @@ pub async fn change_members(
         return Ok(result);
     }
     audit::commit_critical_many(tx, &evs).await?;
+    // The self-grant notices, after the change committed (C-1161).
+    for (ws, role) in &self_grants {
+        crate::domains::tenancy::self_grant::notify_for_user(s, g.org_id, *ws, c, role).await?;
+    }
     Ok(result)
 }
 

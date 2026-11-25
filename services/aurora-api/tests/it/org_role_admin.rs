@@ -817,3 +817,171 @@ async fn the_access_report_lists_every_gap_and_writes_nothing() {
     let after = counts(f.h.pool()).await;
     assert_eq!(before, after);
 }
+
+// ---------------------------------------------------------------- review fixes
+
+/// (FIX-234 review 1a) Adding yourself to a group ALREADY bound to a workspace is a self-grant,
+/// exactly like binding the group after joining it: an API key is refused (`session_required`),
+/// a session writes the critical `workspace_access.self_grant` row (`via: "group"`) and tells the
+/// workspace's other owners — and the access is real afterwards.
+#[tokio::test]
+async fn change_members_self_grant_rules_on_an_already_bound_group() {
+    let f = owner_case().await;
+    // A shared workspace Bob owns in his own right: the notice's recipient.
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "bound-g"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let g: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // Bind first, join second (the unsafe order the reviews found). The admin is not yet a
+    // member, so the binding itself is no self-grant.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/groups/{g}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'workspace_access.self_grant' \
+         AND workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0);
+
+    // An API key is refused: joining a bound group is a self-grant and needs a session.
+    let (s, _, v) =
+        f.h.send(
+            Method::PUT,
+            &format!("/v1/groups/{g}/members/{}", f.admin),
+            &[("authorization", &f.admin_org_key), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!((s.as_u16(), code(&v)), (403, "session_required"), "{v}");
+
+    // By session: allowed, the critical row and the notice to Bob.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/groups/{g}/members/{}", f.admin),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT target_id::text, metadata->>'via' FROM audit_log \
+         WHERE action = 'workspace_access.self_grant' AND workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_all(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![(g.to_string(), "group".into())], "{rows:?}");
+    let mail = f.h.mail.sent();
+    assert!(
+        mail.iter()
+            .any(|m| m.to == "bob@x.io" && m.body.contains("gave themselves member access to")),
+        "{mail:?}"
+    );
+
+    // The access is real: the group now carries the admin into the workspace as `member`.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["my_role"], "member", "{v}");
+}
+
+/// (FIX-234 review 1b) A group bound to a PERSONAL workspace: only its person adds people to it,
+/// by any caller — an administrator adding anyone (even the person) is 403
+/// `personal_workspace_owner_only`, the person themselves succeeds, and a plain member without
+/// admin rights is unaffected.
+#[tokio::test]
+async fn change_members_into_a_group_bound_to_a_personal_workspace() {
+    let f = owner_case().await;
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "personal-g"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let g: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // The person binds the group to their personal workspace (C-1161: an add is the person's).
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{}/access/groups/{g}", f.ws),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    let carol = f.h.user("carol-r1@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+
+    // The person is an org admin too (group membership is an organization act — a plain member
+    // could not add anyone to any group); the personal-workspace rule is what else binds them.
+    sqlx::query("UPDATE org_members SET role = 'admin' WHERE org_id = $1 AND user_id = $2")
+        .bind(f.org)
+        .bind(f.bob)
+        .execute(f.h.pool())
+        .await
+        .unwrap();
+
+    // An administrator adding anyone — another member or the person — is refused.
+    for target in [carol, f.bob] {
+        let (s, v) = f
+            .call(
+                &f.admin_cookie,
+                Method::PUT,
+                &format!("/v1/groups/{g}/members/{target}"),
+                None,
+            )
+            .await;
+        assert_eq!((s, code(&v)), (403, "personal_workspace_owner_only"), "{v}");
+    }
+
+    // The person themselves can.
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::PUT,
+            &format!("/v1/groups/{g}/members/{carol}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // A plain member without admin rights is unaffected (still refuses to edit membership).
+    let (s, v) =
+        f.h.call_tok(
+            &f.h.good_session(carol).await.1,
+            Method::PUT,
+            &format!("/v1/groups/{g}/members/{}", f.bob),
+            None,
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
+}
