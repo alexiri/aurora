@@ -41,6 +41,26 @@ pub const END_ACCESS_LOST: &str = "access_lost";
 /// Insert one grant. The caller has already refused a second active one (409
 /// `emergency_access_active`); the partial unique index backs that up.
 #[allow(clippy::too_many_arguments)]
+/// (Review LOW-10) End the caller's own expired-but-unswept grants on the workspace, inside the
+/// open transaction: the minute sweep (`expire_due`) runs on its own schedule, so for up to a
+/// minute after `expires_at` the stale row still holds the partial unique index and a reopen
+/// would fail with a generic conflict. This gives it exactly the sweep's shape (`ended_at =
+/// expires_at`, `end_reason = 'expired'`); the caller's own audit-less sweep of their own stale
+/// row rides in the open's transaction, which writes its own audit row.
+pub async fn expire_own_stale(tx: &mut PgConnection, ws: Uuid, user: Uuid) -> Result<u64, DbError> {
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE workspace_emergency_access \
+         SET ended_at = expires_at, ended_by = NULL, end_reason = '{END_EXPIRED}' \
+         WHERE workspace_id = $1 AND user_id = $2 \
+           AND ended_at IS NULL AND expires_at <= now()"
+    )))
+    .bind(ws)
+    .bind(user)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected())
+}
+
 pub async fn open(
     tx: &mut PgConnection,
     id: Uuid,

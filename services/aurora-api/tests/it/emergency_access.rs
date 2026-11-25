@@ -968,6 +968,56 @@ async fn every_content_read_is_recorded_before_the_body() {
     assert_eq!(n, 2, "the new hour's row");
 }
 
+/// (Review LOW-10) Reopening within the 60 s between `expires_at` passing and the minute sweep:
+/// the caller's own expired-but-unswept row would trip the partial unique index with a generic
+/// error — the open ends it (the same shape the sweep gives it) and answers 201.
+#[tokio::test]
+async fn reopening_after_expiry_within_the_sweep_window_is_201_not_a_conflict() {
+    let w = world().await;
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the first, soon expired"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let first: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // Wind `expires_at` back: use already refuses it, but the sweep has not ended the row yet
+    // (`opened_at` moves too: the window CHECK needs expires_at > opened_at).
+    sqlx::query("UPDATE workspace_emergency_access \
+                 SET opened_at = now() - interval '1 hour', expires_at = now() - interval '1 second' \
+                 WHERE id = $1")
+        .bind(first)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the reopen in the window"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let second: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    assert_ne!(first, second);
+
+    // The stale row got the sweep's shape (ended at its expiry, reason `expired`), the new one
+    // is the only active grant.
+    let (ended, reason): (Option<chrono::DateTime<chrono::Utc>>, Option<String>) =
+        sqlx::query_as("SELECT ended_at, end_reason FROM workspace_emergency_access WHERE id = $1")
+            .bind(first)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(reason.as_deref(), Some("expired"), "{v}");
+    assert!(ended.is_some());
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM workspace_emergency_access \
+         WHERE workspace_id = $1 AND user_id = $2 AND ended_at IS NULL",
+    )
+    .bind(w.ws)
+    .bind(w.opener)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "exactly one active grant");
+}
+
 /// (Review MEDIUM-4) The dedup is per grant: after end-and-reopen within the hour, reads under
 /// the NEW grant record again, attributed to the new grant — never silently skipped or
 /// attributed to the old one.
@@ -1422,10 +1472,15 @@ async fn ending_is_owner_only_idempotent_and_critical() {
         )
         .await;
     assert_eq!(s, 201, "{v}");
-    assert!(
-        w.h.mail.sent().len() > before,
-        "the new grant notifies again"
-    );
+    // The notices leave from a spawned task after the commit (review MEDIUM-6): poll.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while w.h.mail.sent().len() <= before {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the new grant notifies again"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 #[tokio::test]

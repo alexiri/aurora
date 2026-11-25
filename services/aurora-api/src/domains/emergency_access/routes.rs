@@ -151,7 +151,19 @@ async fn open_emergency_access(
     let expires_at = Utc::now() + Duration::hours(hours);
     let id = aurora_core::ids::new_id();
     let mut tx = audit::begin(&s).await?;
-    let row = repo::open(&mut tx, id, w.org_id, ws, c.user_id, &reason, expires_at).await?;
+    // (Review LOW-10) The reopen-in-the-sweep-window case: end the caller's own expired-but-
+    // unswept row here, so the insert cannot trip the partial unique index; a truly concurrent
+    // open (two racing requests) still hits it and maps to the same conflict.
+    repo::expire_own_stale(&mut tx, ws, c.user_id).await?;
+    let row = repo::open(&mut tx, id, w.org_id, ws, c.user_id, &reason, expires_at)
+        .await
+        .map_err(|e| match e {
+            DbError::UniqueViolation { .. } => ApiError::conflict(
+                "emergency_access_active",
+                "You already have emergency read access open on this workspace.",
+            ),
+            e => e.into(),
+        })?;
     let ev = AuditEvent::by(&c, "workspace.emergency_access.open")
         .org(w.org_id)
         .workspace(ws)
