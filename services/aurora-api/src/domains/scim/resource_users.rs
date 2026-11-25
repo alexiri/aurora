@@ -425,7 +425,7 @@ pub async fn create_user(
                 // (FIX-234 verify 4, D-480) The link may re-add a person an administrator
                 // removed: bind them as the owner of their personal workspace again (a no-op
                 // without one; a suspended membership stays ownerless until reactivation).
-                aurora_db::repo::placement::rebind_personal_owner(&mut *tx, org.org_id, user_id)
+                aurora_db::repo::placement::rebind_personal_owner(&mut tx, org.org_id, user_id)
                     .await
                     .map_err(db)?;
             }

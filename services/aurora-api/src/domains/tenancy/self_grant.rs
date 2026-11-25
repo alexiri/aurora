@@ -94,6 +94,7 @@ fn people_link(external_url: &str, org_slug: &str, ws_slug: &str) -> String {
 
 /// Tell the owners. Fire-and-forget per recipient (a failed send is logged, as in the other
 /// notifiers); called after the self-grant's transaction committed.
+#[allow(clippy::too_many_arguments)]
 pub async fn notify(
     state: &AppState,
     org: Uuid,

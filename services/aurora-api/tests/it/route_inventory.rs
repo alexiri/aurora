@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! (FIX-234, C-1160) The route inventory. Every workspace-, agent-, connection-, schedule- and
 //! webhook-scoped route of the OpenAPI document must be classified: either it accepts
 //! `can_administer` (the C-1160 administer list) or it needs the caller's own access
@@ -643,7 +644,7 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
     let mut pending: Option<Uuid> = None;
     // GETs of the administer walk run before the by-email write creates the pending row.
     for (m, p) in &rows {
-        let uri = uri_for(&m, p, &w, &mut pending);
+        let uri = uri_for(m, p, &w, &mut pending);
         // DELETE /workspaces/{ws} carries the typed confirmation.
         let write = m.eq_ignore_ascii_case("post")
             || m.eq_ignore_ascii_case("put")

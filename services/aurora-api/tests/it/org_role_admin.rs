@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! SEC-153's proving tests for FIX-234 (D-477, C-1160, C-1161, D-480): an organization role
 //! administers workspaces, it does not use them.
 //!

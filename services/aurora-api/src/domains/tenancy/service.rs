@@ -627,6 +627,7 @@ const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
 /// invalidations (gateway identities of the person, open streams) and the critical audit row.
 /// The same status again is a no-op without audit. A personal workspace's person can never be
 /// suspended there — the person included (D-480).
+#[allow(clippy::too_many_arguments)]
 pub async fn set_access_status(
     state: &AppState,
     org: Uuid,
@@ -780,7 +781,7 @@ pub async fn patch_member(
     // workspace again when the binding is missing, so the workspace is never left ownerless
     // while its person was suspended (their access stays gated by the active membership).
     if req.status == Some(MemberStatus::Active) && cur.status != "active" {
-        aurora_db::repo::placement::rebind_personal_owner(&mut *tx, org_id, target).await?;
+        aurora_db::repo::placement::rebind_personal_owner(&mut tx, org_id, target).await?;
     }
     // (FIX-083) A membership leaving `active` ends the access the IdP's group claim granted,
     // in this transaction; a reactivation does not bring it back, the next sign-in re-syncs.

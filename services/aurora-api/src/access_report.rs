@@ -104,21 +104,42 @@ pub struct Report {
     pub orgs: Vec<OrgReport>,
 }
 
+/// The raw rows of the item queries: tall enough that clippy wants a name for them.
+type OwnerlessRow = (
+    Uuid,
+    String,
+    String,
+    Option<Uuid>,
+    Option<Uuid>,
+    Option<String>,
+    Option<String>,
+);
+type AutomationRow = (
+    Uuid,
+    String,
+    Uuid,
+    String,
+    Uuid,
+    String,
+    String,
+    Option<Uuid>,
+    Option<String>,
+);
+type OrgKeyRow = (
+    Uuid,
+    String,
+    Uuid,
+    String,
+    Option<chrono::DateTime<chrono::Utc>>,
+);
+
 /// The workspaces of `org` with no active own-right owner (item 1), with the person of a
 /// personal workspace and their binding role.
 async fn ownerless(
     conn: &mut sqlx::PgConnection,
     org: Uuid,
 ) -> Result<Vec<OwnerlessWorkspace>, ApiError> {
-    let rows: Vec<(
-        Uuid,
-        String,
-        String,
-        Option<Uuid>,
-        Option<Uuid>,
-        Option<String>,
-        Option<String>,
-    )> = sqlx::query_as(
+    let rows: Vec<OwnerlessRow> = sqlx::query_as(
         "SELECT w.id, w.name, w.slug, w.personal_owner_user_id, p.id, p.display_name, \
              (SELECT o.role FROM own_workspace_access o \
               WHERE o.workspace_id = w.id AND o.user_id = w.personal_owner_user_id) \
@@ -158,17 +179,7 @@ async fn failing_automations(
     // `creator` anchor: the creator has no binding at all in the agent's workspace (no own
     // `can_use`). A null creator lacks `can_use` trivially. `workspace` anchor: the workspace
     // has no active own-right owner.
-    let schedules: Vec<(
-        Uuid,
-        String,
-        Uuid,
-        String,
-        Uuid,
-        String,
-        String,
-        Option<Uuid>,
-        Option<String>,
-    )> = sqlx::query_as(
+    let schedules: Vec<AutomationRow> = sqlx::query_as(
         "SELECT s.id, s.name, a.id, a.name, w.id, w.name, s.anchor, s.creator_user_id, \
              u.display_name \
              FROM schedules s \
@@ -188,17 +199,7 @@ async fn failing_automations(
     .fetch_all(&mut *conn)
     .await
     .map_err(DbError::from)?;
-    let webhooks: Vec<(
-        Uuid,
-        String,
-        Uuid,
-        String,
-        Uuid,
-        String,
-        String,
-        Option<Uuid>,
-        Option<String>,
-    )> = sqlx::query_as(
+    let webhooks: Vec<AutomationRow> = sqlx::query_as(
         "SELECT v.id, v.name, a.id, a.name, w.id, w.name, v.anchor, v.creator_user_id, \
              u.display_name \
              FROM webhooks v \
@@ -360,7 +361,7 @@ async fn channel_ties(
 /// least one *shared* workspace of the org (item 4; personal workspaces are the person's alone
 /// under D-480/C-1161 and cannot be fixed by adding the creator, so they are not listed).
 async fn org_keys(conn: &mut sqlx::PgConnection, org: Uuid) -> Result<Vec<OrgKey>, ApiError> {
-    let rows: Vec<(Uuid, String, Uuid, String, Option<chrono::DateTime<chrono::Utc>>)> =
+    let rows: Vec<OrgKeyRow> =
         sqlx::query_as(
             "SELECT k.id, k.display_prefix, k.user_id, u.display_name, k.last_used_at \
              FROM api_keys k \

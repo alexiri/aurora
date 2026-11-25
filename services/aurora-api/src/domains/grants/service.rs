@@ -783,6 +783,7 @@ fn app_not_found() -> ApiError {
 /// THE authorization path of a connection grant (SEC-77; see [`grant_secret_in_tx`]): agent
 /// visible and `can_own`, connection live in the agent's workspace or org, the grant body
 /// valid (07 §Grants), then write, compile and invalidate in `tx`.
+#[allow(clippy::too_many_arguments)]
 pub async fn grant_connection_in_tx(
     tx: &mut audit::Tx,
     state: &AppState,

@@ -422,15 +422,14 @@ pub async fn change_members(
             _ => None,
         };
         for (ws, role, person) in &bindings {
-            if let Some(person) = person {
-                if c.user_id != *person {
-                    return Err(
-                        crate::domains::tenancy::service::personal_workspace_owner_only(
-                            &crate::domains::tenancy::service::person_first_name(s, *person)
-                                .await?,
-                        ),
-                    );
-                }
+            if let Some(person) = person
+                && c.user_id != *person
+            {
+                return Err(
+                    crate::domains::tenancy::service::personal_workspace_owner_only(
+                        &crate::domains::tenancy::service::person_first_name(s, *person).await?,
+                    ),
+                );
             }
             let own_rank = aurora_db::repo::workspaces::get_access(&mut *tx, *ws, c.user_id)
                 .await?
