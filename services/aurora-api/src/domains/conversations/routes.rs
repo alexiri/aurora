@@ -681,10 +681,10 @@ impl Stream_ {
     /// client's reconnect is then refused until the audit writes again, so content never flows
     /// unrecorded. Returns false when the stream must close.
     async fn ensure_recorded(&mut self) -> bool {
-        if let WindowState::Reader(until) = self.window {
-            if tokio::time::Instant::now() < until {
-                return true;
-            }
+        if let WindowState::Reader(until) = self.window
+            && tokio::time::Instant::now() < until
+        {
+            return true;
         }
         match service::emergency_view_window(&self.s, self.user, self.conv).await {
             Ok(service::EmergencyViewWindow::NotReader) => {
