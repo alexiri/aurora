@@ -72,7 +72,8 @@ async fn sec10_token_is_hash_only_and_never_logged() {
     let member = h.user("m@x.io", false).await;
     h.member(org, owner, "owner", "active").await;
     h.member(org, member, "member", "active").await;
-    let ws = h.workspace(org).await;
+    // An org role administers but does not use a workspace: the key is made by a real owner.
+    let ws = h.workspace_owned_by(org, owner).await;
     let (_, owner_tok) = h.good_session(owner).await;
     let (_, member_tok) = h.good_session(member).await;
     let u = format!("/v1/workspaces/{ws}/api-keys");

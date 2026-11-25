@@ -1195,7 +1195,7 @@ async fn a_lowered_or_removed_claim_ends_the_emergency_grants_as_access_lost() {
         "the critical end row is in the log"
     );
     // The people's banner source: the grant is no longer announced as active.
-    let (keeper_id, keeper_tok) = h.good_session(keeper).await;
+    let (_, keeper_tok) = h.good_session(keeper).await;
     let (st, _, v) = h
         .send(
             Method::GET,
