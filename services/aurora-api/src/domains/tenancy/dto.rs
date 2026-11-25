@@ -241,6 +241,8 @@ pub struct Workspace {
     /// (FIX-234, C-1160) The caller manages this workspace through their organization role
     /// (own-right `owner` there or an active org owner/admin) but may hold no own access.
     pub administers: bool,
+    /// (FIX-236, C-1165) True while the caller holds an active emergency read access here.
+    pub emergency_reader: bool,
     /// (FIX-234, C-1162) Who the workspace's people are; present on `GET /v1/workspaces/{ws}`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audience: Option<WorkspaceAudience>,
@@ -272,6 +274,7 @@ impl Workspace {
             effective_byo_posture: None,
             my_role,
             administers,
+            emergency_reader: false,
             audience: None,
             frozen: None,
             contacts: None,
@@ -292,9 +295,26 @@ pub struct WorkspaceAudience {
     pub owners: Vec<WorkspaceAudienceOwner>,
     /// How many own-right owners the workspace has.
     pub owners_total: i64,
+    /// (FIX-236, C-1165) The newest emergency access that is active or ended within the last
+    /// 7 days — the workspace's banner for its people; `null` when there is none to show.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emergency: Option<WorkspaceAudienceEmergency>,
 }
 
-#[derive(Serialize, ToSchema)]
+/// (FIX-236, C-1165) `audience.emergency`: who opened emergency read access, why and until
+/// when. Metadata only; the reason is the opener's own sanitized words.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WorkspaceAudienceEmergency {
+    pub id: Uuid,
+    pub by: WorkspaceAudienceOwner,
+    pub reason: String,
+    pub opened_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub active: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct WorkspaceAudienceOwner {
     pub id: Uuid,
     pub display_name: String,

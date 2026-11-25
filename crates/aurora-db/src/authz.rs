@@ -561,7 +561,12 @@ impl ReadAuth {
     /// `can_see_conversation` through a `ReadAuth` (D-478(b): the emergency reader reads what an
     /// owner reads — every conversation of the workspace, direct ones included). Own access
     /// keeps its own rule.
-    pub fn can_see_conversation(&self, user: Uuid, kind: &str, direct_user_id: Option<Uuid>) -> bool {
+    pub fn can_see_conversation(
+        &self,
+        user: Uuid,
+        kind: &str,
+        direct_user_id: Option<Uuid>,
+    ) -> bool {
         match self {
             Self::Own(a) => can_see_conversation(a, user, kind, direct_user_id),
             Self::Emergency(_) => true,
@@ -598,15 +603,17 @@ pub async fn emergency_reader<'e, E: PgExecutor<'e>>(
     .bind(user)
     .fetch_optional(exec)
     .await?;
-    Ok(row.map(|(id, org_id, workspace_id, reason, opened_at, expires_at)| EmergencyGrant {
-        id,
-        org_id,
-        workspace_id,
-        user_id: user,
-        reason,
-        opened_at,
-        expires_at,
-    }))
+    Ok(row.map(
+        |(id, org_id, workspace_id, reason, opened_at, expires_at)| EmergencyGrant {
+            id,
+            org_id,
+            workspace_id,
+            user_id: user,
+            reason,
+            opened_at,
+            expires_at,
+        },
+    ))
 }
 
 /// Org of a workspace regardless of caller (for key confinement checks).

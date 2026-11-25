@@ -78,6 +78,8 @@ pub enum Kind {
     ScheduleAnswer,
     /// (FIX-234, C-1161) An administrator gave themselves workspace access; the owners are told.
     SelfGrant,
+    /// (FIX-236, D-478(c), C-1165) An org owner opened emergency read access to a workspace.
+    EmergencyAccess,
 }
 
 impl Kind {
@@ -93,6 +95,7 @@ impl Kind {
             Self::AdminAttention => "admin_attention",
             Self::ScheduleAnswer => "schedule_answer",
             Self::SelfGrant => "self_grant",
+            Self::EmergencyAccess => "emergency_access",
         }
     }
 }
@@ -243,6 +246,39 @@ pub async fn notify_self_grant(state: &AppState, user: Uuid, title: &str, href: 
         return 0;
     };
     send_all(state, &devices, |s| self_grant_message(s, title, href)).await
+}
+
+/// (FIX-236, D-478(c), C-1165) One push per device of `user` for an emergency-access notice.
+pub async fn notify_emergency_access(
+    state: &AppState,
+    user: Uuid,
+    title: &str,
+    href: &str,
+) -> usize {
+    if !state.push.enabled {
+        return 0;
+    }
+    let Ok(devices) = deliverable(state, user).await else {
+        return 0;
+    };
+    send_all(state, &devices, |s| {
+        emergency_access_message(s, title, href)
+    })
+    .await
+}
+
+/// (FIX-236) The payload of one emergency-access notice push.
+pub fn emergency_access_message(sub: &SubRow, title: &str, href: &str) -> Result<Message, String> {
+    let mut v = json!({ "v": 1, "type": Kind::EmergencyAccess.type_str(), "url": href });
+    if sub.show_details {
+        v["title"] = json!(sanitize::one_line(title, 2 * NAME_MAX));
+    }
+    finish_message(
+        v,
+        PUSH_TTL_MAX.as_secs(),
+        "normal",
+        topic(sub.id, href.as_bytes()),
+    )
 }
 
 /// The dashboard path of a conversation: the agent page with `?c=` (D-102).

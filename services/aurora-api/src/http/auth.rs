@@ -157,11 +157,13 @@ impl Caller {
         }
         match authz::workspace_access(&state.pool, self.user_id, ws).await? {
             Some(a) => Ok(ReadAuth::Own(a)),
-            None if authz::can_administer(&state.pool, self.user_id, ws).await? => Err(ApiError::new(
-                StatusCode::FORBIDDEN,
-                "workspace_access_required",
-                "You manage this workspace but you are not one of its people.",
-            )),
+            None if authz::can_administer(&state.pool, self.user_id, ws).await? => {
+                Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "workspace_access_required",
+                    "You manage this workspace but you are not one of its people.",
+                ))
+            }
             None => Err(not_found_ws()),
         }
     }
