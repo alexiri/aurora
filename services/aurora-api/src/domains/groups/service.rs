@@ -623,8 +623,10 @@ pub async fn delete_binding(
     ws: Uuid,
     group: Uuid,
 ) -> Result<(), ApiError> {
-    let a = c.workspace(s, ws).await?;
-    crate::http::auth::require_own(&a)?;
+    // (FIX-234 review, C-1160/C-1161) Removing a group binding is `can_administer` — also in a
+    // personal workspace (only an add or a raise there is its person's) — so an org owner or
+    // admin without a binding unbinds.
+    let a = c.administer(s, ws).await?;
     let g = repo::get(&s.pool, group).await?;
     if g.as_ref().is_some_and(|g| g.org_id != a.org_id) {
         return Err(group_not_found());

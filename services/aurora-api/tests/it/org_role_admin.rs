@@ -985,3 +985,73 @@ async fn change_members_into_a_group_bound_to_a_personal_workspace() {
         .await;
     assert_eq!((s, code(&v)), (403, "forbidden"), "{v}");
 }
+
+/// (FIX-234 review 2) Removing a group binding stays with `can_administer` (C-1160/C-1161): an
+/// org administrator without any binding unbinds a group (audited) — and still cannot ADD one
+/// to a personal workspace (C-1161: an add or a raise is the person's).
+#[tokio::test]
+async fn an_administrator_unbinds_a_group_without_own_access() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "unbind-g"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let g: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // Bob (the workspace's own-right owner) binds the group.
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/groups/{g}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // The administrator has no binding in the workspace and still removes the binding.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::DELETE,
+            &format!("/v1/workspaces/{ws}/access/groups/{g}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM group_workspace_access WHERE group_id = $1 AND workspace_id = $2",
+    )
+    .bind(g)
+    .bind(ws)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0);
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'group_access.remove' \
+         AND workspace_id = $1 AND target_id = $2",
+    )
+    .bind(ws)
+    .bind(g.to_string())
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+
+    // Adding a binding to a personal workspace is still the person's alone (C-1161).
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{}/access/groups/{g}", f.ws),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (403, "personal_workspace_owner_only"), "{v}");
+}
