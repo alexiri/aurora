@@ -81,6 +81,9 @@ pub struct Operation {
     pub pagination: Option<Pagination>,
     #[serde(default)]
     pub items: Option<String>,
+    /// (lane review 2026-11-25) Response projection: only these `$`-paths stay in the answer.
+    #[serde(default)]
+    pub project: Option<Vec<String>>,
     #[serde(default)]
     pub tool: Option<String>,
     #[serde(default)]

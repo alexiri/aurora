@@ -400,9 +400,10 @@
       "id": "list_contact_points",
       "method": "GET",
       "path": "/api/v1/provisioning/contact-points",
-      "summary": "Contact points (notification destinations) by name; Grafana redacts the settings' secrets",
+      "summary": "Contact points (notification destinations) by name and type; settings and secrets never reach the agent",
       "tags": ["alerting"],
       "items": "$",
+      "project": ["$.name", "$.type"],
       "tool": "list_contact_points"
     },
     {

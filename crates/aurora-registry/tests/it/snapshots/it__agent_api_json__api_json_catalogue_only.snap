@@ -1,6 +1,6 @@
 ---
 source: crates/aurora-registry/tests/it/agent_api_json.rs
-assertion_line: 84
+assertion_line: 121
 expression: "api(None, &a)"
 ---
 {
@@ -35,6 +35,7 @@ expression: "api(None, &a)"
       "pagination": null,
       "params": [],
       "path": "/v1/things",
+      "project": null,
       "source": "catalogue",
       "summary": "List things",
       "tags": [],
@@ -54,6 +55,7 @@ expression: "api(None, &a)"
       "pagination": null,
       "params": [],
       "path": "/v1/things/*",
+      "project": null,
       "source": "catalogue",
       "summary": "Get a thing",
       "tags": [],
@@ -73,6 +75,7 @@ expression: "api(None, &a)"
       "pagination": null,
       "params": [],
       "path": "/v1/things",
+      "project": null,
       "source": "catalogue",
       "summary": "Make a thing",
       "tags": [],

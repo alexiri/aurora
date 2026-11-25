@@ -285,6 +285,12 @@ Rules (linter, violation codes `agent_operations_*`; the file is rejected as a w
   restricted grammar of `09 §3.4 library` (anchored, no recursive descent, no filters).
 - **`items`** (optional): the JSON path of the list in a response (`$` for a top-level array),
   used for previews and for joining pages (§10a).
+- **`project`** (optional, 1 to 8 `$`-paths of plain `.name` segments, `agent_operations_project`):
+  response projection. The agent's `call` answer — printed preview and saved file — keeps only the
+  values these paths select from every item at `items_path` (or from the response itself when
+  there is none), so an operation that reads objects with settings returns only identifying
+  fields; a nested path makes nested keys. An answer that does not fit this shape fails with an
+  upstream error instead of passing through, and a path an item lacks is simply absent.
 - **`tool`** (optional): the catalogue tool id the operation belongs to, when the author wants to
   state it; it MUST exist in the app's catalogue (`agent_operations_tool`). Absent → the
   renderer computes it (§5.4).

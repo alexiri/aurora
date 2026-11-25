@@ -51,6 +51,7 @@ fn codes_for(ops: &str) -> Vec<&'static str> {
 fn a_valid_operations_file_has_no_violations() {
     let full = op(
         ",\"tags\":[\"things\"],\"host\":\"api.example.test\",\"items\":\"$.data\",\"tool\":\"list_things\",\
+         \"project\":[\"$.name\",\"$.type\"],\
          \"params\":[{\"name\":\"q\",\"in\":\"query\",\"type\":\"string\",\"enum\":[\"a\",\"b\"],\"default\":\"a\"},\
          {\"name\":\"X-Trace\",\"in\":\"header\",\"type\":\"string\"},\
          {\"name\":\"tags\",\"in\":\"query\",\"type\":\"array\"}],\
@@ -204,6 +205,21 @@ fn every_violation_code_is_reachable() {
             "items json path",
             one(&op(",\"items\":\"$[?(@.a)]\"")),
             "agent_operations_json_path",
+        ),
+        (
+            "project json path",
+            one(&op(",\"project\":[\"$.a[*].name\"]")),
+            "agent_operations_project",
+        ),
+        (
+            "project whole item",
+            one(&op(",\"project\":[\"$\"]")),
+            "agent_operations_project",
+        ),
+        (
+            "project empty",
+            one(&op(",\"project\":[]")),
+            "agent_operations_project",
         ),
         (
             "tool",

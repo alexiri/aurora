@@ -60,6 +60,19 @@ fn parse(path: &str) -> Option<Vec<Step>> {
     Some(steps)
 }
 
+/// The plain `.name` keys of `path`, or `None` when the path has any other step (`[index]`, a
+/// bracketed name the linter would have refused).
+#[must_use]
+pub fn keys(path: &str) -> Option<Vec<String>> {
+    parse(path)?
+        .into_iter()
+        .map(|s| match s {
+            Step::Key(k) => Some(k),
+            Step::Index(_) => None,
+        })
+        .collect()
+}
+
 /// The value at `path`, or `None` when the path is not in the grammar or does not exist.
 #[must_use]
 pub fn get<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
@@ -68,6 +81,19 @@ pub fn get<'a>(v: &'a Value, path: &str) -> Option<&'a Value> {
         cur = match s {
             Step::Key(k) => cur.get(k)?,
             Step::Index(n) => cur.get(n)?,
+        };
+    }
+    Some(cur)
+}
+
+/// The value at `path` mutably, or `None` when the path is not in the grammar or does not exist.
+#[must_use]
+pub fn get_mut<'a>(v: &'a mut Value, path: &str) -> Option<&'a mut Value> {
+    let mut cur = v;
+    for s in parse(path)? {
+        cur = match s {
+            Step::Key(k) => cur.get_mut(k.as_str())?,
+            Step::Index(n) => cur.get_mut(n)?,
         };
     }
     Some(cur)
@@ -88,5 +114,21 @@ mod tests {
         assert_eq!(get(&v, "$..id"), None);
         assert_eq!(get(&v, "$.data[*]"), None);
         assert_eq!(get(&v, "data"), None);
+    }
+
+    #[test]
+    fn keys_are_the_plain_name_steps() {
+        assert_eq!(keys("$.a.b"), Some(vec!["a".into(), "b".into()]));
+        assert_eq!(keys("$.a[0]"), None);
+        assert_eq!(keys("$"), Some(vec![]));
+        assert_eq!(keys("$..a"), None);
+    }
+
+    #[test]
+    fn get_mut_writes_through_the_path() {
+        let mut v = json!({"data": [{"id": 1}]});
+        *get_mut(&mut v, "$.data[0].id").unwrap() = json!(2);
+        assert_eq!(get(&v, "$.data[0].id"), Some(&json!(2)));
+        assert!(get_mut(&mut v, "$.nope").is_none());
     }
 }

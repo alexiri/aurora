@@ -64,7 +64,8 @@ Reading is allowed by default:
 - Loki through the proxy, `GET` only: `loki/api/v1/query`, `query_range`, `labels`,
   `label/<name>/values` and `series`;
 - Grafana alert rules and their state, Alertmanager alerts and silences, annotations, and contact
-  points' names (Grafana redacts a contact point's secrets, and the agents never see them).
+  points' names and types (a contact point's settings and secrets never reach the agents: the list
+  operation returns those two fields only).
 
 Every request must match one of these tools or one of the held ones below, whatever permission the
 agent has, full access included. Every other request is blocked, and the token is never sent with it:
@@ -92,8 +93,8 @@ These are separate permissions and are held for approval:
 ## Alert rules
 
 Agents can create, change and delete Grafana-managed alert rules and list the contact points the
-server has (names only, never their secrets). Reading rules, their state and alerts works with
-Viewer.
+server has (names and types only, never their settings or secrets). Reading rules, their state and
+alerts works with Viewer.
 
 Keep the service account's role **Viewer** and give it **Edit on one folder** — the folder named
 for the agent, and no other. The role matters: by default Grafana's Editors can edit every folder,
@@ -125,7 +126,8 @@ so Grafana does not lock them against editing.
 
 Where a rule's notifications go — the contact point and the notification policy tree — stays with
 people: no tool creates or changes a contact point, notification policy, mute timing or
-notification template, and agents can only read contact points' names, to check that the receiver a
+notification template, and agents can only read contact points' names and types (their settings and
+secrets are not returned at all), to check that the receiver a
 rule names exists. *Send alerts to an agent* below walks through making one.
 
 Each rule is one query Grafana evaluates on its group's interval for as long as it exists, so every

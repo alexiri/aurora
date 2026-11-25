@@ -114,7 +114,7 @@ apps:
           - { id: get_alert_rule, description: "Reads one Grafana-managed alert rule's definition.", name: Get an alert rule definition, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [GET] }
           - { id: list_alerts, description: "Lists the alerts in Grafana's Alertmanager: firing, silenced or inhibited.", name: List alerts, host: "{instance}", path: /api/alertmanager/grafana/api/v2/alerts, methods: [GET] }
           - { id: list_silences, description: "Lists silences in Grafana's Alertmanager.", name: List silences, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [GET] }
-          - { id: list_contact_points, description: "Lists the contact points (notification destinations) by name; Grafana redacts their settings' secrets.", name: List contact points, host: "{instance}", path: /api/v1/provisioning/contact-points, methods: [GET] }
+          - { id: list_contact_points, description: "Lists the contact points (notification destinations) by name and type; only those two fields are returned, their settings and secrets never reach the agent.", name: List contact points, host: "{instance}", path: /api/v1/provisioning/contact-points, methods: [GET] }
           # Annotations.
           - { id: list_annotations, description: "Lists annotations (deployments, incidents, notes) in a time range.", name: List annotations, host: "{instance}", path: /api/annotations, methods: [GET] }
           # Grafana's own UI reads Prometheus, Loki, OpenSearch and SQL data through this POST, and

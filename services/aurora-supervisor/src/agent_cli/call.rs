@@ -306,6 +306,63 @@ fn next_link(h: &str) -> Option<String> {
     })
 }
 
+/// (lane review 2026-11-25) Response projection: reduce a response to the operation's `project`
+/// paths, so an object that carries settings (Grafana contact points) shows only its identifying
+/// fields. Every item at `items_path` — or the response itself when the operation names no items
+/// path — keeps only the values the paths select. `None` when the response is not JSON, the items
+/// path is not in it, or an item is not an object: the caller fails instead of showing more than
+/// the operation declared.
+fn project_bytes(bytes: &[u8], items_path: Option<&str>, project: &[String]) -> Option<Vec<u8>> {
+    let mut doc = serde_json::from_slice::<Value>(bytes).ok()?;
+    if let Some(p) = items_path {
+        let t = jsonpath::get_mut(&mut doc, p)?;
+        let projected = project_value(t, project)?;
+        *t = projected;
+    } else {
+        doc = project_value(&doc, project)?;
+    }
+    serde_json::to_vec(&doc).ok()
+}
+
+/// Project an array item by item; anything else is projected itself.
+fn project_value(v: &Value, project: &[String]) -> Option<Value> {
+    match v {
+        Value::Array(items) => {
+            let kept: Option<Vec<Value>> = items.iter().map(|i| project_item(i, project)).collect();
+            Some(Value::Array(kept?))
+        }
+        v => project_item(v, project),
+    }
+}
+
+/// Of `item`, keep only the values `project` selects, arranged as the paths name them; a path the
+/// item does not have is simply absent. `None` when `item` is not an object.
+fn project_item(item: &Value, project: &[String]) -> Option<Value> {
+    item.as_object()?;
+    let mut out = Value::Object(serde_json::Map::new());
+    for p in project {
+        if let Some(v) = jsonpath::get(item, p) {
+            set_at(&mut out, p, v.clone());
+        }
+    }
+    Some(out)
+}
+
+/// Set `v` into `out` at the plain keys of `path` (nested keys make nested objects).
+fn set_at(out: &mut Value, path: &str, v: Value) {
+    let Some(keys) = jsonpath::keys(path) else {
+        return;
+    };
+    let Some(last) = keys.last() else {
+        return;
+    };
+    let mut cur = out;
+    for k in &keys[..keys.len() - 1] {
+        cur = &mut cur[k.as_str()];
+    }
+    cur[last.as_str()] = v;
+}
+
 /// The gateway's error envelope (`06 §Errors`): exactly `{"error":{"code","message"[,"details"]}}`.
 fn gateway_refusal(status: u16, body: &[u8]) -> Option<(String, String, Option<Value>)> {
     if status < 400 {
@@ -713,7 +770,7 @@ async fn call_doc(
         }
     }
     let first = first.ok_or_else(|| Outcome::fail(EXIT_UPSTREAM, "no response"))?;
-    let (bytes, json_ok): (Vec<u8>, bool) = if opts.all && joinable {
+    let (mut bytes, json_ok): (Vec<u8>, bool) = if opts.all && joinable {
         let b = serde_json::to_vec(&Value::Array(joined)).unwrap_or_default();
         (b, true)
     } else {
@@ -722,6 +779,24 @@ async fn call_doc(
             !first.cut && serde_json::from_slice::<Value>(&first.body).is_ok(),
         )
     };
+    // (lane review 2026-11-25) An operation may project its answer to declared `$`-paths; what is
+    // saved and printed is the reduced answer, and anything that does not fit the declared shape
+    // fails instead of passing the whole object through.
+    if let Some(project) = op.and_then(|o| o.project.as_deref()) {
+        // With `--all` the joined pages are already the items themselves.
+        let items = if opts.all && joinable {
+            None
+        } else {
+            items_path.as_deref()
+        };
+        let Some(projected) = project_bytes(&bytes, items, project) else {
+            return Err(Outcome::fail(
+                EXIT_UPSTREAM,
+                "the response is not the shape the operation projects; nothing shown",
+            ));
+        };
+        bytes = projected;
+    }
     if first.cut && !opts.all {
         notes.push(format!(
             "the response was cut at {AGENT_CLI_SAVE_MAX} bytes"
@@ -778,6 +853,7 @@ async fn call_doc(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn next_link_is_read_from_a_link_header() {
@@ -797,5 +873,39 @@ mod tests {
         );
         assert!(gateway_refusal(403, br#"{"error":"nope"}"#).is_none());
         assert!(gateway_refusal(500, br#"{"message":"upstream"}"#).is_none());
+    }
+
+    #[test]
+    fn projection_keeps_only_the_declared_paths() {
+        let project = ["$.name".to_owned(), "$.type".to_owned()];
+        let body = br#"[{"name":"slack","type":"slack","settings":{"url":"https://x","token":"s"}},
+            {"name":"mail","type":"email","settings":{"addresses":["a@b"]}}]"#;
+        let out = project_bytes(body, None, &project).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&out).unwrap(),
+            json!([{"name": "slack", "type": "slack"}, {"name": "mail", "type": "email"}])
+        );
+        // A nested path becomes nested keys; a path the item lacks is absent.
+        let nested = ["$.name".to_owned(), "$.settings.url".to_owned()];
+        let out = project_bytes(br#"{"name":"n","settings":{"url":"u"}}"#, None, &nested).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&out).unwrap(),
+            json!({"name": "n", "settings": {"url": "u"}})
+        );
+    }
+
+    #[test]
+    fn projection_follows_the_items_path_and_fails_closed() {
+        let project = ["$.id".to_owned()];
+        let body = br#"{"data": [{"id": 1, "secret": "s"}], "next": "c2"}"#;
+        let out = project_bytes(body, Some("$.data"), &project).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&out).unwrap(),
+            json!({"data": [{"id": 1}], "next": "c2"})
+        );
+        // No items path in the response, a non-object item, not JSON: fail, never passthrough.
+        assert!(project_bytes(br#"{"other": []}"#, Some("$.data"), &project).is_none());
+        assert!(project_bytes(br#"[1, 2]"#, None, &project).is_none());
+        assert!(project_bytes(b"<html>", None, &project).is_none());
     }
 }

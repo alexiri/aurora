@@ -110,6 +110,14 @@ apps:
           - { label: A1, source: path, segment: 1 }
           - { label: A1, source: path, segment: 1 }
           - { label: A1, source: path, segment: 1 }
+          - { label: A2, source: path, segment: 2 }
+          - { label: A3, source: path, segment: 3 }
+          - { label: A4, source: path, segment: 3 }
+          - { label: A5, source: path, segment: 3 }
+          - { label: A6, source: path, segment: 3 }
+          - { label: A7, source: path, segment: 3 }
+          - { label: A8, source: path, segment: 3 }
+          - { label: A9, source: path, segment: 3 }
           - { label: Op, source: body, steps: [ { graphql: operation_name } ] }
         link: "https://mail.google.com/mail/u/0/#inbox"
         summarize: hook
