@@ -437,6 +437,20 @@ fn execute(
         }
         return Ok(obs);
     }
+    // A tool that declares no query parameters refuses any query string before any rule,
+    // approval or injection: a parameter could make the answer carry what the tool's
+    // description says never reaches the agent.
+    if tool.is_some_and(|t| t.refuse_query) && query.as_deref().is_some_and(|q| !q.is_empty()) {
+        if let Some(o) = obs.as_object_mut() {
+            o.insert(
+                "refused".into(),
+                json!({ "code": "tool_query_refused",
+                        "message":
+                            "This tool sends no query parameters: repeat the request without the query string." }),
+            );
+        }
+        return Ok(obs);
+    }
     // The instance guard refused: nothing is injected (compared against `expect.refused`).
     if let Some(r) = refusal {
         if let Some(o) = obs.as_object_mut() {

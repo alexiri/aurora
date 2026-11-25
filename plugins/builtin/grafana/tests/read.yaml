@@ -270,6 +270,16 @@
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/contact-points", headers: { content-type: application/json } }
   expect: { app: grafana, no_tool: true }
+# The tool declares no query parameters: the endpoint would answer a decrypt=true parameter
+# with the contact points' settings and secrets, so any query string is refused.
+- name: "refused list_contact_points: a decrypt=true query parameter"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/v1/provisioning/contact-points?decrypt=true" }
+  expect: { app: grafana, tool: list_contact_points, refused: tool_query_refused }
+- name: "refused list_contact_points: any other query parameter too"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/v1/provisioning/contact-points?page=2" }
+  expect: { app: grafana, tool: list_contact_points, refused: tool_query_refused }
 - name: "list_annotations: GET /api/annotations in a time range"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/annotations?from=1763643600000&to=1763650800000&dashboardUID=api-overview" }

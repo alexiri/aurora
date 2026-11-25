@@ -1005,6 +1005,12 @@ pub struct ToolItem {
     /// body check (and no change to the package's snapshot hash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_check: Option<BodyCheck>,
+    /// The tool declares no query parameters: a request that carries a query string is
+    /// refused before any rule, approval or injection (a parameter could make the answer
+    /// carry what the tool's description says never reaches the agent, Grafana's
+    /// `decrypt=true` on contact points). Absent = the query is not checked.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub refuse_query: bool,
 }
 
 /// (P5-TOOLASK, C-1042) The values of a tool's `approval`; only `ask` exists.

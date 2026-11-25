@@ -285,6 +285,14 @@ characters, the lists are small (`refuse_keys` at most 8, `only_keys` at most 8 
 Additive in contract 1. Built-in user: `grafana` (1.7.0: the alert-rule tools refuse a body the
 grafana-alerts script cannot build).
 
+**No query parameters (`refuse_query: true`).** A read tool that serves only a fixed path may
+declare that it sends no query parameters; the gateway then refuses any request on the tool that
+carries a query string with `tool_query_refused`, before any rule, approval or injection — a
+parameter could make the answer carry what the tool's description says never reaches the agent.
+A request without a query string is unaffected. Absent = the query is not checked (and no change
+to the package's snapshot hash). Built-in user: `grafana` (1.7.0: `list_contact_points`, whose
+endpoint would answer `decrypt=true` with the contact points' settings and secrets).
+
 `scopes: []` with `default_scopes: []` is valid: the authorization request then carries no `scope`
 parameter and the connection has no scopes (FIX-133: a **GitHub App's user authorization**, whose
 permissions come from the app's registration, is the package's `oauth_app` method, with its own

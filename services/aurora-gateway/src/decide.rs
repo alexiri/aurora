@@ -1423,6 +1423,17 @@ impl PolicyHandler {
             );
             return Outcome::Respond(self.refuse(ctx, &err, "tool_body_refused"));
         }
+        // A tool that declares no query parameters refuses any query string before any rule,
+        // approval or injection: a parameter could make the answer carry what the tool's
+        // description says never reaches the agent.
+        if tool.is_some_and(|t| t.refuse_query) && query.as_deref().is_some_and(|q| !q.is_empty()) {
+            let err = ApiError::new(
+                StatusCode::FORBIDDEN,
+                "tool_query_refused",
+                "This tool sends no query parameters: repeat the request without the query string.",
+            );
+            return Outcome::Respond(self.refuse(ctx, &err, "tool_query_refused"));
+        }
         // (P5-MODELS-2, C-880) The model the request asks for, read the way the allow-list check reads it
         // (same body prefix); logged for every request with an injected key on a governed LLM endpoint.
         if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
