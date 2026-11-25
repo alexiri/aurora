@@ -847,13 +847,28 @@ async fn every_content_read_is_recorded_before_the_body() {
     .await
     .unwrap();
     assert_eq!(n, 1, "deduplicated once per actor, conversation and hour");
-    let exp: (String,) = sqlx::query_as(
-        "SELECT metadata::text FROM audit_log WHERE action = 'conversation.export' \
-         ORDER BY created_at DESC LIMIT 1",
-    )
-    .fetch_one(w.h.pool())
-    .await
-    .unwrap();
+    // The export's audit row is best-effort (`audit::record` spawns it): poll briefly instead
+    // of assuming it landed before the response returned (as `until_notices` does).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let exp: (String,) = loop {
+        match sqlx::query_as::<_, (String,)>(
+            "SELECT metadata::text FROM audit_log WHERE action = 'conversation.export' \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        {
+            Ok(row) => break row,
+            Err(sqlx::Error::RowNotFound) => {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "the export audit row never arrived"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            Err(e) => panic!("reading the export audit row failed: {e}"),
+        }
+    };
     assert!(
         exp.0.contains("\"via\": \"emergency\""),
         "the export records via: emergency: {}",
