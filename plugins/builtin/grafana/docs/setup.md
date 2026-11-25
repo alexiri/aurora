@@ -122,7 +122,11 @@ recording rule (`record`), a second query, a label or annotation other than `man
 only supported way to write a rule. The approval card shows that shape field by field, but its
 template cannot print a map's keys: a body built by hand could carry fields — a recording rule, a
 second query on a SQL data source, a label a notification policy matches — that no card field
-would show. So the enforcement is layered: the script's refusals, the person's approval, the
+would show. The gateway's shape check reads the keys and steps the script sends, but does not
+require the `managed_by` label itself: a hand-built body that keeps the shape while dropping the
+label is approved and sent as the card shows it, so the person approving and the folder permission
+above are what keep a rule attributable to its agent. So the enforcement is layered: the script's
+refusals, the person's approval, the
 folder permission above, and Grafana's own rule permissions. Rules made by an agent appear in the
 Grafana UI like any rule: people can edit and delete them, and the app sends a provenance header
 so Grafana does not lock them against editing.
