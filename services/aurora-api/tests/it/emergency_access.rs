@@ -923,6 +923,31 @@ async fn every_content_read_is_recorded_before_the_body() {
     // The grant itself survived (the refusal is the read's, not the grant's).
     assert!(w.grant_id().await != Uuid::nil());
 
+    // (Review LOW-8) The same refusal on the attachment download: 503 `audit_unavailable`,
+    // never disguised as a missing attachment (404) — and the bytes never leave.
+    let (s, bytes) = raw(
+        &w.h,
+        Method::GET,
+        &format!("/v1/attachments/{att}/content"),
+        &[
+            ("cookie", cookie(&w.opener_tok).as_str()),
+            ("origin", ORIGIN),
+        ],
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(
+        s,
+        503,
+        "the audit refusal is not a 404: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    assert!(
+        !String::from_utf8_lossy(&bytes).contains("hello attachment"),
+        "no bytes: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+
     // With the fault gone the same read succeeds and records.
     sqlx::query("DROP TRIGGER audit_critical_fail ON audit_log")
         .execute(w.h.pool())
