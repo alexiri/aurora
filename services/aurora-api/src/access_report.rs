@@ -107,7 +107,7 @@ pub struct Report {
 /// The workspaces of `org` with no active own-right owner (item 1), with the person of a
 /// personal workspace and their binding role.
 async fn ownerless(
-    pool: &aurora_db::PgPool,
+    conn: &mut sqlx::PgConnection,
     org: Uuid,
 ) -> Result<Vec<OwnerlessWorkspace>, ApiError> {
     let rows: Vec<(
@@ -130,7 +130,7 @@ async fn ownerless(
              ORDER BY w.slug",
     )
     .bind(org)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(DbError::from)?;
     Ok(rows
@@ -152,7 +152,7 @@ async fn ownerless(
 
 /// Enabled schedules and webhooks whose fire-time authority will fail (item 2).
 async fn failing_automations(
-    pool: &aurora_db::PgPool,
+    conn: &mut sqlx::PgConnection,
     org: Uuid,
 ) -> Result<Vec<FailingAutomation>, ApiError> {
     // `creator` anchor: the creator has no binding at all in the agent's workspace (no own
@@ -185,7 +185,7 @@ async fn failing_automations(
              ORDER BY s.name",
     )
     .bind(org)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(DbError::from)?;
     let webhooks: Vec<(
@@ -215,7 +215,7 @@ async fn failing_automations(
              ORDER BY v.name",
     )
     .bind(org)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(DbError::from)?;
     let mut out: Vec<FailingAutomation> = schedules
@@ -257,7 +257,10 @@ async fn failing_automations(
 /// Channel objects that tie a person to an agent of a workspace they have no own access to
 /// (item 3): space bindings (`bound_by`), DM defaults and direct thread links (the linked
 /// person, via `user_links`).
-async fn channel_ties(pool: &aurora_db::PgPool, org: Uuid) -> Result<Vec<ChannelTie>, ApiError> {
+async fn channel_ties(
+    conn: &mut sqlx::PgConnection,
+    org: Uuid,
+) -> Result<Vec<ChannelTie>, ApiError> {
     let bindings: Vec<(String, Uuid, String, Uuid, String, Uuid, String)> = sqlx::query_as(
         "SELECT b.space_label, a.id, a.name, w.id, w.name, p.id, p.display_name \
          FROM space_bindings b \
@@ -270,7 +273,7 @@ async fn channel_ties(pool: &aurora_db::PgPool, org: Uuid) -> Result<Vec<Channel
                                WHERE o.workspace_id = w.id AND o.user_id = b.bound_by_user_id)",
     )
     .bind(org)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(DbError::from)?;
     let dms: Vec<(String, Uuid, String, Uuid, String, Uuid, String)> = sqlx::query_as(
@@ -288,7 +291,7 @@ async fn channel_ties(pool: &aurora_db::PgPool, org: Uuid) -> Result<Vec<Channel
                            WHERE o.workspace_id = w.id AND o.user_id = p.id)",
     )
     .bind(org)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(DbError::from)?;
     let threads: Vec<(String, Uuid, String, Uuid, String, Uuid, String)> = sqlx::query_as(
@@ -308,7 +311,7 @@ async fn channel_ties(pool: &aurora_db::PgPool, org: Uuid) -> Result<Vec<Channel
                            WHERE o.workspace_id = w.id AND o.user_id = p.id)",
     )
     .bind(org)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(DbError::from)?;
     let mut out: Vec<ChannelTie> = bindings
@@ -356,7 +359,7 @@ async fn channel_ties(pool: &aurora_db::PgPool, org: Uuid) -> Result<Vec<Channel
 /// Live `auo_` org keys whose creator — an effective org owner/admin — has no own access to at
 /// least one *shared* workspace of the org (item 4; personal workspaces are the person's alone
 /// under D-480/C-1161 and cannot be fixed by adding the creator, so they are not listed).
-async fn org_keys(pool: &aurora_db::PgPool, org: Uuid) -> Result<Vec<OrgKey>, ApiError> {
+async fn org_keys(conn: &mut sqlx::PgConnection, org: Uuid) -> Result<Vec<OrgKey>, ApiError> {
     let rows: Vec<(Uuid, String, Uuid, String, Option<chrono::DateTime<chrono::Utc>>)> =
         sqlx::query_as(
             "SELECT k.id, k.display_prefix, k.user_id, u.display_name, k.last_used_at \
@@ -373,7 +376,7 @@ async fn org_keys(pool: &aurora_db::PgPool, org: Uuid) -> Result<Vec<OrgKey>, Ap
              ORDER BY k.display_prefix",
         )
         .bind(org)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await
         .map_err(DbError::from)?;
     Ok(rows
@@ -392,7 +395,7 @@ async fn org_keys(pool: &aurora_db::PgPool, org: Uuid) -> Result<Vec<OrgKey>, Ap
 
 /// Open approvals in workspaces with no own-right decider (item 5).
 async fn undecidable(
-    pool: &aurora_db::PgPool,
+    conn: &mut sqlx::PgConnection,
     org: Uuid,
 ) -> Result<Vec<UndecidableApproval>, ApiError> {
     let rows: Vec<(
@@ -415,7 +418,7 @@ async fn undecidable(
              ORDER BY ap.deadline",
     )
     .bind(org)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(DbError::from)?;
     Ok(rows
@@ -437,9 +440,22 @@ async fn undecidable(
 
 /// The report over every organization (read-only; nothing is written).
 pub async fn run(state: &AppState) -> Result<Report, ApiError> {
+    // (FIX-234 review 7) The whole report runs in one `READ ONLY` transaction: a write added
+    // inside any helper makes PostgreSQL reject the statement instead of silently committing.
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(DbError::from)?;
+    run_in(&mut tx).await
+}
+
+/// The report over an already-open transaction. Callers must have put it in `READ ONLY` (as
+/// [`run`] does); the helpers are plain SELECTs and write nothing.
+pub async fn run_in(conn: &mut sqlx::PgConnection) -> Result<Report, ApiError> {
     let orgs: Vec<(Uuid, String, String)> =
         sqlx::query_as("SELECT id, slug, name FROM organizations ORDER BY slug")
-            .fetch_all(&state.pool)
+            .fetch_all(&mut *conn)
             .await
             .map_err(DbError::from)?;
     let mut out = Vec::new();
@@ -448,11 +464,11 @@ pub async fn run(state: &AppState) -> Result<Report, ApiError> {
             org_id,
             org_slug,
             org_name,
-            ownerless: ownerless(&state.pool, org_id).await?,
-            failing_automations: failing_automations(&state.pool, org_id).await?,
-            channel_ties: channel_ties(&state.pool, org_id).await?,
-            org_keys: org_keys(&state.pool, org_id).await?,
-            undecidable: undecidable(&state.pool, org_id).await?,
+            ownerless: ownerless(conn, org_id).await?,
+            failing_automations: failing_automations(conn, org_id).await?,
+            channel_ties: channel_ties(conn, org_id).await?,
+            org_keys: org_keys(conn, org_id).await?,
+            undecidable: undecidable(conn, org_id).await?,
         });
     }
     Ok(Report { orgs: out })

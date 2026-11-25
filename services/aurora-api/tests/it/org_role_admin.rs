@@ -826,6 +826,36 @@ async fn the_access_report_lists_every_gap_and_writes_nothing() {
     assert_eq!(before, after);
 }
 
+/// (FIX-234 review 7) The report's transaction is enforced read-only: the report itself runs
+/// inside it and a write added there is rejected by PostgreSQL instead of committing.
+#[tokio::test]
+async fn the_access_reports_transaction_rejects_writes() {
+    let f = owner_case().await;
+    let mut tx = f.h.pool().begin().await.unwrap();
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    // The report itself is all SELECTs, so it completes inside the read-only transaction.
+    let report = aurora_api::access_report::run_in(&mut tx).await.unwrap();
+    assert!(
+        report.orgs.iter().any(|o| o.org_id == f.org),
+        "{:?}",
+        report.orgs.iter().map(|o| o.org_id).collect::<Vec<_>>()
+    );
+    // A write in the same transaction fails.
+    let err =
+        sqlx::query("INSERT INTO workspaces (id, org_id, name, slug) VALUES ($1, $2, 'x', 'x')")
+            .bind(Uuid::now_v7())
+            .bind(f.org)
+            .execute(&mut *tx)
+            .await;
+    assert!(
+        err.is_err(),
+        "a write inside the report's READ ONLY transaction must fail"
+    );
+}
+
 // ---------------------------------------------------------------- review fixes
 
 /// The acme app's package manifest: tools `list_items`, `get_item` (read) and `create_item`
