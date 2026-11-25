@@ -24,7 +24,8 @@ the gateway's network policy).
 2. Choose the role. The connect window shows what to pick for the access you chose:
    - **Viewer**: search and read dashboards and folders, run queries on the data sources Viewers may
      query, read alert rules, alerts, silences and annotations.
-   - **Editor**: the same, plus saving dashboards, adding annotations and creating or ending silences.
+   - **Editor**: the same, plus saving dashboards, adding annotations, creating or ending silences
+     and creating, changing and deleting alert rules.
      Reading a dashboard's saved versions also needs edit permission on that dashboard.
    Folder and data source permissions narrow both roles further. Do not give the service account the
    Admin role: agents do not need it.
@@ -59,7 +60,8 @@ Reading is allowed by default:
   `metadata`, `rules`, `alerts` and `query_exemplars`;
 - Loki through the proxy, `GET` only: `loki/api/v1/query`, `query_range`, `labels`,
   `label/<name>/values` and `series`;
-- Grafana alert rules and their state, Alertmanager alerts and silences, annotations.
+- Grafana alert rules and their state, Alertmanager alerts and silences, annotations, and contact
+  points' names (Grafana redacts a contact point's secrets, and the agents never see them).
 
 Every request must match one of these tools or one of the held ones below, whatever permission the
 agent has, full access included. Every other request is blocked, and the token is never sent with it:
@@ -79,12 +81,50 @@ These are separate permissions and are held for approval:
   first query (PromQL, SQL or other). Agents use it for data sources without a proxy tool
   (Elasticsearch, OpenSearch, SQL). On a SQL data source the statement runs as that data source's
   database user, so give SQL data sources read-only database users.
+- **Create, change or delete an alert rule** (`POST /api/v1/provisioning/alert-rules`, `PUT` and
+  `DELETE …/alert-rules/<uid>`): the approval shows the whole rule — title, folder, group, the
+  `for` duration, the condition's expression, the receiver, the labels and the expiry. See
+  *Alert rules* below.
+
+## Alert rules
+
+With an **Editor** token, agents can create, change and delete Grafana-managed alert rules and
+list the contact points the server has (names only, never their secrets). Reading rules, their
+state and alerts works with Viewer.
+
+Where a rule may live is decided by Grafana's folder permissions, not by Aurora. Create a folder
+for the agent's rules and give the service account **Edit on that one folder only** — Grafana
+checks rule permissions per folder, so the agent can then only touch rules in the folder a person
+gave it, and everyone else's rules stay out of its reach:
+
+1. In Grafana open *Dashboards* and choose *New folder*; name it for the agent, for example
+   "night agent".
+2. Open the folder, choose *Permissions*, *Add a permission*, pick the service account and give it
+   **Edit**.
+
+A rule an agent makes carries a `managed_by` label (which agent left it) and an `expires` label and
+annotation, and the app's helper script builds the rule and refuses to touch rules without its own
+label — but the script is help, not enforcement. The enforcement is the approval card (every write
+shows the whole rule) and the folder permission above. Rules made by an agent appear in the Grafana
+UI like any rule: people can edit and delete them, and the app sends a provenance header so Grafana
+does not lock them against editing.
+
+Where a rule's notifications go — the contact point and the notification policy tree — stays with
+people: no tool creates or changes a contact point, notification policy, mute timing or
+notification template, and agents can only read contact points' names, to check that the receiver a
+rule names exists.
+
+Each rule is one query Grafana evaluates on its group's interval for as long as it exists, so every
+rule costs evaluation time. Agent rules carry an expiry (at most 30 days) and the helper script
+caps how many it manages, but a person can delete an expired or unwanted rule in the Grafana UI at
+any time.
 
 ## Limits
 
 - Never available as tools: creating service accounts or their tokens, API keys, user and
   organization administration, creating, changing or deleting data sources (they hold the backends'
-  credentials), deleting dashboards, and installing plugins.
+  credentials), deleting dashboards, installing plugins, and creating or changing contact points,
+  notification policies, mute timings or notification templates.
 - Not included: Grafana's newer `/apis/…` API, folders and dashboard permissions, playlists,
   library panels, reports, OnCall and Incident, and other data source proxy paths.
 - Other sign-in methods are not offered: a person's password (most servers use single sign-on),

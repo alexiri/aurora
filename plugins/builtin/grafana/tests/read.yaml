@@ -234,9 +234,9 @@
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/v1/provisioning/alert-rules" }
   expect: { app: grafana, tool: list_alert_rules }
-- name: "negative list_alert_rules: creating an alert rule (POST) selects no tool"
+- name: "negative list_alert_rules: creating at a rule's own path (POST with a uid) selects no tool"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
-  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/alert-rules" }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/alert-rules/rule-high-errors" }
   expect: { app: grafana, no_tool: true }
 - name: "get_alert_rule: GET /api/v1/provisioning/alert-rules/<uid>"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
@@ -261,6 +261,14 @@
 - name: "negative list_silences: an external Alertmanager's silences select no tool"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/alertmanager/am-main/api/v2/silences" }
+  expect: { app: grafana, no_tool: true }
+- name: "list_contact_points: GET /api/v1/provisioning/contact-points"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: GET, url: "https://grafana.example.org/api/v1/provisioning/contact-points" }
+  expect: { app: grafana, tool: list_contact_points }
+- name: "negative list_contact_points: writing a contact point selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/contact-points", headers: { content-type: application/json } }
   expect: { app: grafana, no_tool: true }
 - name: "list_annotations: GET /api/annotations in a time range"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }

@@ -1,0 +1,4 @@
+[
+  {"id": 1, "uid": "cp-oncall", "name": "oncall", "type": "email"},
+  {"id": 2, "uid": "cp-night", "name": "nightmanager", "type": "webhook"}
+]

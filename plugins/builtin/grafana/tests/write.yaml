@@ -103,3 +103,94 @@
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/silence/silence-fixture-1" }
   expect: { app: grafana, no_tool: true }
+- name: "create_alert_rule: a new rule is held for approval with its whole shape"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-09","service":"api"},"annotations":{"summary":"p95 over 2s","expires":"2026-12-09"},"notification_settings":{"receiver":"oncall"}}'
+  expect:
+    app: grafana
+    tool: create_alert_rule
+    summary:
+      title: "create an alert rule"
+      fields:
+        Title: "p95 over 2s"
+        Folder: "night-folder"
+        Group: "agent-night"
+        Evaluate for: "300s"
+        Condition: "max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))"
+        Receiver: "oncall"
+        Labels: "2026-12-09, night, api"
+        Expires: "2026-12-09"
+    upstream:
+      url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+      headers: { authorization: "Bearer tok-fixture-1", x-disable-provenance: "true" }
+- name: "negative create_alert_rule: a contact point write (another provisioning path) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/contact-points"
+    headers: { content-type: application/json }
+    body: '{"name":"oncall","type":"email"}'
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_alert_rule: a notification policy write selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/policies", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_alert_rule: a mute timing write selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/mute-timings", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_alert_rule: a notification template write selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/templates", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_alert_rule: the Alertmanager config route selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/alertmanager/grafana/config/api/v1/alerts", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative update_alert_rule: the rule collection itself (no uid) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://grafana.example.org/api/v1/provisioning/alert-rules", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "update_alert_rule: changing one rule shows the rule, the change and the whole shape"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect:
+    app: grafana
+    tool: update_alert_rule
+    summary:
+      title: "change an alert rule"
+      fields:
+        Rule: "tripwire-p95"
+        Title: "p95 over 3s"
+        Folder: "night-folder"
+        Group: "agent-night"
+        Evaluate for: "600s"
+        Condition: "max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))"
+        Receiver: "nightmanager"
+        Labels: "2026-12-02, night, api"
+        Expires: "2026-12-02"
+    upstream:
+      url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+      headers: { authorization: "Bearer tok-fixture-1", x-disable-provenance: "true" }
+- name: "delete_alert_rule: deleting one rule shows the rule and carries the provenance header"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95" }
+  expect:
+    app: grafana
+    tool: delete_alert_rule
+    summary: { title: "delete an alert rule", fields: { Rule: "tripwire-p95" } }
+    upstream:
+      url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+      headers: { authorization: "Bearer tok-fixture-1", x-disable-provenance: "true" }
+- name: "negative delete_alert_rule: the rule collection itself selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/v1/provisioning/alert-rules" }
+  expect: { app: grafana, no_tool: true }

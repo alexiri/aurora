@@ -1,0 +1,7 @@
+{"data": {"groups": [
+  {"name": "agent-night", "interval": 60, "rules": [
+    {"uid": "tripwire-p95", "title": "p95 over 2s", "state": "normal", "lastEvaluation": "2026-11-25T03:00:00Z"},
+    {"uid": "tripwire-5xx", "title": "5xx rate over 1%", "state": "firing", "lastEvaluation": "2026-11-25T03:00:00Z", "alerts": [{"activeAt": "2026-11-25T01:12:00Z"}]}
+  ]},
+  {"name": "fast", "interval": 10, "rules": []}
+]}}

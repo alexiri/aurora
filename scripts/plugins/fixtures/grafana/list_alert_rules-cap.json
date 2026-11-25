@@ -1,0 +1,12 @@
+[
+  {"id": 21, "uid": "cap-1", "title": "cap 1", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 22, "uid": "cap-2", "title": "cap 2", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 23, "uid": "cap-3", "title": "cap 3", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 24, "uid": "cap-4", "title": "cap 4", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 25, "uid": "cap-5", "title": "cap 5", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 26, "uid": "cap-6", "title": "cap 6", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 27, "uid": "cap-7", "title": "cap 7", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 28, "uid": "cap-8", "title": "cap 8", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 29, "uid": "cap-9", "title": "cap 9", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}},
+  {"id": 30, "uid": "cap-10", "title": "cap 10", "folderUID": "night-folder", "ruleGroup": "agent-night", "labels": {"managed_by": "night", "expires": "2026-12-01"}}
+]

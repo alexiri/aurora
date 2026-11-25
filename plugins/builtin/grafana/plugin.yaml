@@ -1,17 +1,17 @@
 package:
   id: grafana
-  version: 1.5.1
+  version: 1.6.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: Grafana
-  description: Dashboards, folders, annotations and alerting on your own Grafana server, and queries on Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through Grafana's query API, connected with a service account token; saving dashboards, annotations and silences are approved
+  description: Dashboards, folders, annotations and alerting on your own Grafana server, and queries on Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through Grafana's query API, connected with a service account token; saving dashboards, annotations, silences and alert rules in one folder are approved
   homepage: https://grafana.com
 apps:
   - about:
       id: grafana
       name: Grafana
-      description: Search dashboards, read panels and alerts, and query Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through your Grafana server; annotate, save dashboards and silence alerts when you allow it
+      description: Search dashboards, read panels and alerts, and query Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through your Grafana server; annotate, save dashboards, silence alerts and manage alert rules in one folder when you allow it
       summary: Dashboards, metrics, logs and alerts on your Grafana server.
       first_prompt: "Which Grafana alerts are firing right now, and since when?"
       category: monitoring
@@ -20,7 +20,7 @@ apps:
       api_docs: https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/api-legacy/
       api_spec: https://raw.githubusercontent.com/grafana/grafana/main/public/openapi3.json
       connect_note:
-        text: "An administrator registers your Grafana server first (Self-hosted apps). Create a service account in Grafana (Administration, Users and access, Service accounts) and add a token. The service account's role and the folder and data source permissions decide what agents can see: Viewer is enough to read and query, Editor is needed to save dashboards, add annotations and silence alerts. A service account belongs to one Grafana organization. Queries run as the service account, and data sources should use read-only database users (Grafana's advice for SQL data sources): a query on a SQL or InfluxDB data source whose database user can write could change data."
+        text: "An administrator registers your Grafana server first (Self-hosted apps). Create a service account in Grafana (Administration, Users and access, Service accounts) and add a token. The service account's role and the folder and data source permissions decide what agents can see: Viewer is enough to read and query, Editor is needed to save dashboards, add annotations, silence alerts and write alert rules (for rules, give the account Edit on one folder only; the app's setup text has the steps). A service account belongs to one Grafana organization. Queries run as the service account, and data sources should use read-only database users (Grafana's advice for SQL data sources): a query on a SQL or InfluxDB data source whose database user can write could change data."
         url: https://grafana.com/docs/grafana/latest/administration/service-accounts/
     instances:
       label: Grafana server
@@ -61,6 +61,14 @@ apps:
       - match: { host: "{instance}", path_prefix: /api/ }
         inject:
           - bearer: "{credentials.access_token}"
+          # Grafana marks a rule written through its provisioning API as provisioned, which locks
+          # it in Grafana's UI; this header makes rules the agent writes editable by people. Only
+          # Grafana's alerting-provisioning endpoints read it, and the catalogue below offers the
+          # agent no provisioning writes except the three alert-rule tools, so a host-wide header
+          # is as scoped as a per-operation one would be. The manifest has no per-operation
+          # inject (docs/09 §5), and the linter forbids the agent from sending a header the
+          # manifest injects, so agents cannot switch it off.
+          - header: { name: X-Disable-Provenance, value: "true" }
     # (Security review of P5-GRAFANA, 2026-11-21) Every request must match a tool below, under a
     # `full` grant too: Grafana's data source proxy forwards any method and path to the backend
     # with Grafana's own credentials, and the token's Grafana role does not limit that, so an
@@ -106,6 +114,7 @@ apps:
           - { id: get_alert_rule, description: "Reads one Grafana-managed alert rule's definition.", name: Get an alert rule definition, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [GET] }
           - { id: list_alerts, description: "Lists the alerts in Grafana's Alertmanager: firing, silenced or inhibited.", name: List alerts, host: "{instance}", path: /api/alertmanager/grafana/api/v2/alerts, methods: [GET] }
           - { id: list_silences, description: "Lists silences in Grafana's Alertmanager.", name: List silences, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [GET] }
+          - { id: list_contact_points, description: "Lists the contact points (notification destinations) by name; Grafana redacts their settings' secrets.", name: List contact points, host: "{instance}", path: /api/v1/provisioning/contact-points, methods: [GET] }
           # Annotations.
           - { id: list_annotations, description: "Lists annotations (deployments, incidents, notes) in a time range.", name: List annotations, host: "{instance}", path: /api/annotations, methods: [GET] }
           # Grafana's own UI reads Prometheus, Loki, OpenSearch and SQL data through this POST, and
@@ -118,6 +127,14 @@ apps:
           - { id: update_dashboard, description: "Creates a dashboard or saves a new version of one.", name: Save a dashboard, host: "{instance}", path: /api/dashboards/db, methods: [POST] }
           - { id: create_silence, description: "Silences matching alerts in Grafana's Alertmanager for a time, or changes a silence.", name: Silence alerts, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [POST] }
           - { id: delete_silence, description: "Ends a silence in Grafana's Alertmanager.", name: End a silence, host: "{instance}", path: "/api/alertmanager/grafana/api/v2/silence/*", methods: [DELETE] }
+          # (D-484) Alert rules the agent manages: built by the grafana-alerts skill's script with
+          # a managed_by label and an expiry. Nothing here touches contact points, notification
+          # policies, mute timings or templates: those routes select no tool and stay refused.
+          # The legacy provisioning API is the one every supported Grafana serves (checked against
+          # v13.3.1, where the /apis/… replacement is deprecating it; older servers have only it).
+          - { id: create_alert_rule, description: "Creates a Grafana-managed alert rule from the three-step query model the grafana-alerts script builds.", name: Create an alert rule, host: "{instance}", path: /api/v1/provisioning/alert-rules, methods: [POST] }
+          - { id: update_alert_rule, description: "Changes one Grafana-managed alert rule the agent manages (sends the whole rule).", name: Change an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [PUT] }
+          - { id: delete_alert_rule, description: "Deletes one Grafana-managed alert rule the agent manages.", name: Delete an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [DELETE] }
     approvals:
       create_annotation:
         title: add an annotation
@@ -151,6 +168,33 @@ apps:
         title: end a silence
         fields:
           - { label: Silence, source: path, segment: 7 }
+      create_alert_rule:
+        title: create an alert rule
+        fields:
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Folder, source: body, steps: [ { json: /folderUID } ] }
+          - { label: Group, source: body, steps: [ { json: /ruleGroup } ] }
+          - { label: Evaluate for, source: body, steps: [ { json: /for } ] }
+          - { label: Condition, source: body, steps: [ { json: /data/0/model/expr } ] }
+          - { label: Receiver, source: body, steps: [ { json: /notification_settings/receiver } ] }
+          - { label: Labels, source: body, steps: [ { json: "/labels/*" } ] }
+          - { label: Expires, source: body, steps: [ { json: "/annotations/expires" } ] }
+      update_alert_rule:
+        title: change an alert rule
+        fields:
+          - { label: Rule, source: path, segment: 5 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Folder, source: body, steps: [ { json: /folderUID } ] }
+          - { label: Group, source: body, steps: [ { json: /ruleGroup } ] }
+          - { label: Evaluate for, source: body, steps: [ { json: /for } ] }
+          - { label: Condition, source: body, steps: [ { json: /data/0/model/expr } ] }
+          - { label: Receiver, source: body, steps: [ { json: /notification_settings/receiver } ] }
+          - { label: Labels, source: body, steps: [ { json: "/labels/*" } ] }
+          - { label: Expires, source: body, steps: [ { json: "/annotations/expires" } ] }
+      delete_alert_rule:
+        title: delete an alert rule
+        fields:
+          - { label: Rule, source: path, segment: 5 }
       query_datasources:
         title: run a data source query
         fields:
@@ -169,4 +213,8 @@ apps:
         list_datasources or in a dashboard's panels. The data source proxy GET tools (prometheus_*,
         loki_*) are a fallback: a 3xx from them means use query_datasources. Keep time ranges and
         steps small; send only read statements.
+        To leave a Grafana alert rule, read the grafana-alerts skill and use its script: never
+        create, change or delete a rule without the script's managed_by label and expiry, and
+        never name a contact point that list_contact_points does not show. There is no tool for
+        contact points, notification policies, mute timings or templates: a person makes those.
       operations: operations.json

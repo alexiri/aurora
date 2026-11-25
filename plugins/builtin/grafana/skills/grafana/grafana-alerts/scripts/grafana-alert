@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""grafana-alert: managed Grafana alert rules; see SKILL.md. Exit: 0 ok, 1 call failed, 2 usage."""
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+TIMEOUT = 300
+UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+ACCOUNT = None
+FOLDER_CAP, SERVICE_CAP = 10, 5
+MIN_EVAL_S, MIN_FOR_S = 60, 120
+STRIP = ("id", "updated", "updatedBy", "created", "createdBy", "version", "provenance", "metadata")
+
+
+def clean(v):
+    """Text safe to print: control characters (terminal escapes) are replaced."""
+    return CTRL.sub("?", str(v))
+
+
+def die(msg, code=2):
+    print(f"grafana-query: {clean(msg)}", file=sys.stderr)
+    sys.exit(code)
+
+
+def tmp_dir():
+    d = os.path.join(os.environ.get("TMPDIR") or "/tmp", "aurora-agent")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    return d
+
+
+def mktemp(suffix):
+    fd, path = tempfile.mkstemp(prefix="grafana-query-", suffix=suffix, dir=tmp_dir())
+    os.close(fd)
+    return os.path.abspath(path)
+
+
+def agent(operation, *args, body=None):
+    """One `aurora-agent call grafana` (argument list, no shell). Returns (ok, parsed JSON or None, text)."""
+    out = mktemp(".json")
+    cmd = ["aurora-agent", "call", "grafana", operation, *args]
+    if body is not None:
+        cmd += ["--body", "@" + body]
+    if ACCOUNT:
+        cmd += ["--account", ACCOUNT]
+    cmd += ["--out", out]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT)
+        text = (r.stdout + r.stderr).strip()
+        data = None
+        if r.returncode == 0:
+            try:
+                with open(out, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError) as e:
+                return False, None, f"the answer could not be read: {e}"
+        return r.returncode == 0, data, text
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, None, f"aurora-agent: {e}"
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
+
+
+def parse_step(s):
+    m = re.fullmatch(r"(\d+)([smhdw])", s or "")
+    if not m or int(m.group(1)) == 0:
+        die(f"bad step {s!r}: use a number and s, m, h, d or w, such as 30s or 5m")
+    return int(m.group(1)) * UNIT_S[m.group(2)]
+
+
+def send(op, body, *args):
+    path = None
+    if body is not None:
+        path = mktemp(".json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(body, f)
+    try:
+        ok, data, text = agent(op, *args, body=path)
+    finally:
+        if path:
+            os.unlink(path)
+    if not ok:
+        die(f"{op} failed: {text or 'no answer'}", 1)
+    return data
+
+
+def today():
+    return dt.datetime.now(dt.timezone.utc).date()
+
+
+def as_date(s):
+    try:
+        return dt.date.fromisoformat(str(s or ""))
+    except ValueError:
+        return None
+
+
+def days_of(s):
+    m = re.fullmatch(r"(\d+)d", s or "")
+    if not m or not 1 <= int(m.group(1)) <= 30:
+        die("--expires is 1d to 30d")
+    return int(m.group(1))
+
+
+def check_expr(expr):
+    w = max((int(m.group(1)) * UNIT_S[m.group(2)]
+             for m in re.compile(r"\[(\d+)([smhdw])\]").finditer(expr)), default=0)
+    if w < 300:
+        die("the expression needs a range of at least 5 minutes, such as [5m]: one-sample "
+            "comparisons alert on peaks shorter than the step")
+    return w
+
+
+def mine(label, folder=None):
+    data = send("list_alert_rules", None)
+    if not isinstance(data, list):
+        die("list_alert_rules did not answer a list", 1)
+    return [r for r in data if isinstance(r, dict)
+            and (r.get("labels") or {}).get("managed_by") == label
+            and (not folder or r.get("folderUID") == folder)]
+
+
+def check_receiver(name):
+    data = send("list_contact_points", None)
+    names = sorted({c.get("name") for c in data if isinstance(c, dict) and c.get("name")}) \
+        if isinstance(data, list) else []
+    if name not in names:
+        die(f"no contact point named {name!r}; a person makes contact points")
+
+
+def check_ds(ds):
+    data = send("list_datasources", None)
+    types = {d.get("uid"): d.get("type") for d in data if isinstance(d, dict)} \
+        if isinstance(data, list) else {}
+    if types.get(ds) != "prometheus":
+        die(f"--ds {ds} is a {types.get(ds) or 'unknown'} data source: the rule is one Prometheus "
+            "query, no SQL or Loki data source, and no second query")
+
+
+def group_interval(folder, group):
+    data = send("list_alert_rule_states", None, f"folder_uid={folder}")
+    for g in ((data or {}).get("data") or {}).get("groups") or []:
+        if isinstance(g, dict) and g.get("name") == group:
+            return g.get("interval")
+
+
+def steps(ds, expr, w, op, thr):
+    """The three-step query model: one data source query, reduce last, threshold."""
+    def step(ref, dsu, model):
+        return {"refId": ref, "datasourceUid": dsu, "queryType": "",
+                "relativeTimeRange": {"from": w, "to": 0}, "model": model}
+    def cond(ref, ty, params):
+        return {"evaluator": {"params": params, "type": ty}, "operator": {"type": "and"},
+                "query": {"params": [ref]}, "reducer": {"params": [], "type": "last"},
+                "type": "query"}
+    x = {"type": "__expr__", "uid": "__expr__"}
+    q = {"editorMode": "code", "expr": expr, "instant": True, "legendFormat": "__auto",
+         "refId": "A"}
+    return [step("A", ds, q),
+            step("B", "__expr__", {"conditions": [cond("B", "gt", [])], "datasource": x,
+                                   "expression": "A", "reducer": "last", "refId": "B",
+                                   "type": "reduce"}),
+            step("C", "__expr__", {"conditions": [cond("C", op, [thr])], "datasource": x,
+                                   "expression": "B", "refId": "C", "type": "threshold"})]
+
+
+def cmd_create(a):
+    if not a.title or CTRL.search(a.title):
+        die("--title is one line of text")
+    w = check_expr(a.expr)
+    for_s = parse_step(a.for_)
+    if for_s < MIN_FOR_S:
+        die(f"--for is at least 2 minutes (got {a.for_})")
+    exp = (today() + dt.timedelta(days=days_of(a.expires))).isoformat()
+    check_ds(a.ds)
+    check_receiver(a.receiver)
+    rules = mine(a.managed_by, a.folder)
+    if len(rules) >= FOLDER_CAP:
+        have = ", ".join(f"{r.get('uid')} ({r.get('title')})" for r in rules)
+        die(f"{a.managed_by} already manages {FOLDER_CAP} rules in folder {a.folder}: expire or "
+            f"delete one first. Managed: {have}")
+    if a.service and len([r for r in rules
+                          if (r.get("labels") or {}).get("service") == a.service]) >= SERVICE_CAP:
+        die(f"service {a.service} already has {SERVICE_CAP} managed rules here: expire or delete one")
+    gi = group_interval(a.folder, a.group)
+    if gi is not None and gi < MIN_EVAL_S:
+        die(f"rule group {a.group} evaluates every {gi}s: managed rules evaluate no more often "
+            "than every minute")
+    labels = {"managed_by": a.managed_by, "expires": exp}
+    if a.service:
+        labels["service"] = a.service
+    body = {"orgID": send("get_current_org", None)["id"], "title": a.title, "ruleGroup": a.group,
+            "folderUID": a.folder, "condition": "C",
+            "data": steps(a.ds, a.expr, w, a.op, a.threshold), "for": f"{for_s}s",
+            "noDataState": "NoData", "execErrState": "Error", "isPaused": False, "labels": labels,
+            "annotations": {"summary": a.title, "expires": exp},
+            "notification_settings": {"receiver": a.receiver}}
+    if a.print_body:
+        print("# body: " + json.dumps(body, separators=(",", ":")))
+    r = send("create_alert_rule", body)
+    print(f"created {clean(a.title)!r} (uid {clean(r.get('uid')) if isinstance(r, dict) else '?'}), "
+          f"expires {exp}; held for approval")
+
+
+def read_managed(a):
+    """The rule behind a.uid; refuses anything this agent does not manage."""
+    if not UID_RE.match(a.uid or "") or len(a.uid) > 40:
+        die("the rule uid is 1 to 40 letters, digits, dashes or underscores")
+    rule = send("get_alert_rule", None, f"uid={a.uid}")
+    if not isinstance(rule, dict) or (rule.get("labels") or {}).get("managed_by") != a.managed_by:
+        die(f"rule {a.uid} is missing or not managed by {a.managed_by!r}: a rule without the "
+            "agent's managed_by label belongs to a person")
+    if rule.get("folderUID") != a.folder:
+        die(f"rule {a.uid} is in folder {clean(rule.get('folderUID'))}, not {a.folder}: the agent "
+            "only touches rules in its own folder")
+    return rule
+
+
+def apply_change(rule, a):
+    """The rule's body with the asked changes; refuses an expiry extension without --renew."""
+    body = {k: v for k, v in rule.items() if k not in STRIP}
+    old = as_date((rule.get("labels") or {}).get("expires")
+                  or (rule.get("annotations") or {}).get("expires"))
+    if a.expires:
+        exp = (today() + dt.timedelta(days=days_of(a.expires))).isoformat()
+        if old and exp > old.isoformat():
+            if not a.renew:
+                die(f"--expires {a.expires} extends the expiry from {old.isoformat()} to {exp}: "
+                    "pass --renew with --reason")
+            if not (a.reason or "").strip():
+                die("--renew needs --reason: why the rule should live longer")
+        rule.setdefault("labels", {})["expires"] = exp
+        if "expires" in (rule.get("annotations") or {}):
+            rule["annotations"]["expires"] = exp
+    if a.title:
+        body["title"] = body.setdefault("annotations", {})["summary"] = a.title
+    if a.for_:
+        if parse_step(a.for_) < MIN_FOR_S:
+            die(f"--for is at least 2 minutes (got {a.for_})")
+        body["for"] = f"{parse_step(a.for_)}s"
+    if a.receiver:
+        check_receiver(a.receiver)
+        body.setdefault("notification_settings", {})["receiver"] = a.receiver
+    return body
+
+
+def cmd_update(a):
+    rule = read_managed(a)
+    send("update_alert_rule", apply_change(rule, a), f"uid={a.uid}")
+    print(f"changed {clean(rule.get('title'))!r} (uid {a.uid}); held for approval")
+
+
+def cmd_delete(a):
+    rule = read_managed(a)
+    print(f"deleting {clean(rule.get('title'))!r} (uid {a.uid}, expires "
+          f"{clean((rule.get('labels') or {}).get('expires'))})")
+    send("delete_alert_rule", None, f"uid={a.uid}")
+    print(f"deleted {a.uid}; the delete was held for approval")
+
+
+def cmd_expire(a):
+    rules, now, due = mine(a.managed_by, a.folder), today(), []
+    for r in rules:
+        d = as_date((r.get("labels") or {}).get("expires")
+                    or (r.get("annotations") or {}).get("expires"))
+        if d and d < now:
+            due.append(r)
+    if not due:
+        print(f"nothing expired: {len(rules)} managed rule(s), none past its expiry")
+        return 0
+    for r in due:
+        print(f"deleting {clean(r.get('title'))!r} (uid {clean(r.get('uid'))}, expired "
+              f"{clean((r.get('labels') or {}).get('expires'))})")
+        send("delete_alert_rule", None, f"uid={r.get('uid')}")
+    print(f"{len(due)} deleted, {len(rules) - len(due)} left; each delete was held for approval")
+
+
+def cmd_list(a):
+    print("uid\ttitle\tgroup\texpiry")
+    for r in mine(a.managed_by, a.folder):
+        print("\t".join(clean(x) for x in (r.get("uid"), r.get("title"), r.get("ruleGroup"),
+              (r.get("labels") or {}).get("expires") or "?")))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="grafana-alert")
+    ap.add_argument("cmd", choices=("create", "list", "update", "delete", "expire"))
+    ap.add_argument("uid", nargs="?")
+    for f in ("--managed-by --folder --group --title --ds --expr --op --threshold --for --receiver "
+              "--expires --service --print-body --renew --reason").split():
+        d = f[2:].replace("-", "_") + ("_" if f == "--for" else "")
+        kw = ({"action": "store_true"} if f in ("--print-body", "--renew") else
+              {"type": float} if f == "--threshold" else
+              {"choices": ("gt", "lt")} if f == "--op" else {})
+        ap.add_argument(f, dest=d, **kw)
+    a = ap.parse_args()
+    need = {"create": "managed-by folder group title ds expr op threshold for receiver expires",
+            "update": "uid managed-by folder", "delete": "uid managed-by folder",
+            "list": "managed-by", "expire": "managed-by"}[a.cmd]
+    for f in need.split():
+        v = a.uid if f == "uid" else getattr(a, f.replace("-", "_") + ("_" if f == "for" else ""))
+        if v is None or (f == "uid" and not v):
+            die(f"{a.cmd} needs --{f}")
+    sys.exit({"create": cmd_create, "list": cmd_list, "update": cmd_update,
+              "delete": cmd_delete, "expire": cmd_expire}[a.cmd](a))
+
+
+if __name__ == "__main__":
+    main()
