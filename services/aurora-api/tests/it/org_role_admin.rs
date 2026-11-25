@@ -11,6 +11,7 @@
 //! - `Workspace` GET by an administrator: `my_role` null, `administers: true`, `audience`.
 
 use crate::common::*;
+use aurora_api::domains::auth::mail::{Mail, MailError, Mailer};
 use aurora_db::repo::gateway;
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -530,6 +531,89 @@ async fn self_grant_rules() {
     .unwrap();
     assert_eq!(n, 0);
     assert_eq!(f.h.mail.sent().len(), before);
+}
+
+struct FailMailer;
+
+#[async_trait::async_trait]
+impl Mailer for FailMailer {
+    async fn send(&self, _: Mail) -> Result<(), MailError> {
+        Err(MailError("smtp down".into()))
+    }
+}
+
+/// (FIX-234 review round 3) A failing self-grant notice after the commit must not turn the
+/// change into an error: the change answers 200, the member is in and the critical audit row
+/// stands; only the notice is lost (logged).
+#[tokio::test]
+async fn a_failing_self_grant_notice_keeps_the_group_change() {
+    let mut f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::POST,
+            &format!("/v1/orgs/{}/groups", f.org),
+            Some(json!({"name": "notice-g"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let g: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    // The group is bound with `member` before the admin belongs to it: the binding itself is
+    // no self-grant (the admin is not a member yet), the add below is.
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/workspaces/{ws}/access/groups/{g}"),
+            Some(json!({"role": "member"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    // The failing mailer (the calendar suite's FailMailer pattern); the router serves from the
+    // state, so it is rebuilt with it.
+    f.h.state =
+        f.h.state
+            .clone()
+            .with_mailer(std::sync::Arc::new(FailMailer));
+    f.h.app = test_router(f.h.state.clone());
+
+    // The admin adds themselves: a self-grant (session, critical row, notice) — and the
+    // notice's mail fails.
+    let before = f.h.mail.sent().len();
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/groups/{g}/members/{}", f.admin),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM group_members WHERE group_id = $1 AND user_id = $2",
+    )
+    .bind(g)
+    .bind(f.admin)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "the change committed");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'workspace_access.self_grant' \
+         AND workspace_id = $1 AND metadata->>'via' = 'group'",
+    )
+    .bind(ws)
+    .fetch_one(f.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "the critical audit row stands");
+    assert_eq!(
+        f.h.mail.sent().len(),
+        before,
+        "the failing mailer sent nothing"
+    );
 }
 
 /// The admin's own setups stop: a creator-anchored schedule of an admin without own access is

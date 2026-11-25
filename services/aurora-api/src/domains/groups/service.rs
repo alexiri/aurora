@@ -515,9 +515,19 @@ pub async fn change_members(
         return Ok(result);
     }
     audit::commit_critical_many(tx, &evs).await?;
-    // The self-grant notices, after the change committed (C-1161).
+    // The self-grant notices, after the change committed (C-1161). A notice failure (a failing
+    // e-mail, or a lookup that lost its subject) must not turn the committed change into an
+    // error response: like the other self-grant paths, log it and let the change stand.
     for (ws, role) in &self_grants {
-        crate::domains::tenancy::self_grant::notify_for_user(s, g.org_id, *ws, c, role).await?;
+        if let Err(e) =
+            crate::domains::tenancy::self_grant::notify_for_user(s, g.org_id, *ws, c, role).await
+        {
+            tracing::warn!(
+                error = %e,
+                workspace = %ws,
+                "self-grant notice after the group change failed; the change stands"
+            );
+        }
     }
     Ok(result)
 }
