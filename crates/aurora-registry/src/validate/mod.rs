@@ -1455,6 +1455,16 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         }
                         name!("refuse_keys", k);
                     }
+                    if bc.allow_keys.len() > 16 {
+                        cx.v(
+                            "body_check_allow_keys",
+                            &format!("{bp}/allow_keys"),
+                            format!("tool `{}`: `allow_keys` holds at most 16 keys", it.id),
+                        );
+                    }
+                    for k in &bc.allow_keys {
+                        name!("allow_keys", k);
+                    }
                     if bc.only_keys.len() > 8 {
                         cx.v(
                             "body_check_only_keys",

@@ -1,6 +1,6 @@
 package:
   id: grafana
-  version: 1.7.0
+  version: 1.8.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -137,7 +137,10 @@ apps:
           # `body_check` mirrors the grafana-alerts script's rule shape, so a body the script
           # cannot build is refused before anything else sees it: a recording rule, a second
           # data step (a query no approval card shows), a label a notification policy could
-          # route on, or notification settings beyond the receiver.
+          # route on, or notification settings beyond the receiver. `allow_keys` is the
+          # script's own top-level key list: the receiver's parser matches key names without
+          # case and keeps the last match, so any other key (and any spelling that folds onto
+          # a known one) is refused even when the check would not read it.
           - id: create_alert_rule
             description: "Creates a Grafana-managed alert rule from the three-step query model the grafana-alerts script builds."
             name: Create an alert rule
@@ -146,6 +149,7 @@ apps:
             methods: [POST]
             body_check:
               refuse_keys: [record]
+              allow_keys: [orgID, title, ruleGroup, folderUID, condition, data, for, noDataState, execErrState, isPaused, labels, annotations, notification_settings]
               only_keys:
                 labels: [managed_by, expires, service]
                 annotations: [summary, expires]
@@ -160,6 +164,7 @@ apps:
             methods: [PUT]
             body_check:
               refuse_keys: [record]
+              allow_keys: [orgID, title, ruleGroup, folderUID, condition, data, for, noDataState, execErrState, isPaused, labels, annotations, notification_settings, uid]
               only_keys:
                 labels: [managed_by, expires, service]
                 annotations: [summary, expires]

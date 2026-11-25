@@ -256,3 +256,30 @@
     headers: { content-type: application/json }
     body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall","mute_time_intervals":["nights"]}}'
   expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+# A receiver's parser matches key names without case and keeps the last match: the same body
+# under another spelling of a known key would become the checked key to it, so every spelling
+# is refused, and only the keys the grafana-alert script sends are accepted at all.
+- name: "refused create_alert_rule: key names the receiver folds onto the script's (Data, Record, Labels)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main"},{"refId":"B","datasourceUid":"__expr__"},{"refId":"C","datasourceUid":"__expr__"}],"Data":[{"refId":"A"},{"refId":"B"},{"refId":"C"},{"refId":"D","datasourceUid":"sql-main","model":{"rawSql":"select 1"}}],"Record":{"from":"A"},"Labels":{"severity":"page"},"Notification_Settings":{"receiver":"oncall"},"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a top-level key the script never sends"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"},"uid":"tripwire-p95"}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: a long-s spelling of a checked key"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"Notification_ſettings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
