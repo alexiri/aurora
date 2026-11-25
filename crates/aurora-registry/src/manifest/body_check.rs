@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BodyCheck {
-    /// Top-level keys the body must not carry (Grafana's `record` makes the rule a recording
+    /// Top-level keys the body must not carry (a `record` key makes the rule a recording
     /// rule: it runs on every evaluation).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refuse_keys: Vec<String>,

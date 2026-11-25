@@ -1007,7 +1007,7 @@ pub struct ToolItem {
     pub body_check: Option<BodyCheck>,
     /// The tool declares no query parameters: a request that carries a query string is
     /// refused before any rule, approval or injection (a parameter could make the answer
-    /// carry what the tool's description says never reaches the agent, Grafana's
+    /// carry what the tool's description says never reaches the agent, an alert server's
     /// `decrypt=true` on contact points). Absent = the query is not checked.
     #[serde(default, skip_serializing_if = "is_false")]
     pub refuse_query: bool,
