@@ -95,6 +95,7 @@ export function ChatTab({
   audience = null,
   myRole = null,
   readerId = null,
+  emergency = false,
   terminalAvailable = false,
   sshAvailable = false,
   onNavigate,
@@ -113,6 +114,8 @@ export function ChatTab({
   audience?: WorkspaceAudience | null;
   myRole?: string | null;
   readerId?: string | null;
+  /** (FIX-236, C-1165) The caller reads through emergency access: every action in the panel is hidden. */
+  emergency?: boolean;
   /** The Terminal page is available (the Computer part offers it). */
   terminalAvailable?: boolean;
   /** (P4-SSH-2, C-795) The SSH page is available (the Computer part links to it). */
@@ -342,14 +345,15 @@ export function ChatTab({
           <ChevronRightIcon aria-hidden="true" width={16} height={16} />
         </button>
       ) : null}
-      <StatusSheet ctx={ctx} open={statusSheetOpen} onOpenChange={(o) => onStatusSheetOpenChange?.(o)} />
-      <NewChatVerb run={newChat} />
+      {/* (FIX-236) Emergency access: no status sheet and no rail — both carry actions (Stop, Open computer), and nothing may act. */}
+      {emergency ? null : <StatusSheet ctx={ctx} open={statusSheetOpen} onOpenChange={(o) => onStatusSheetOpenChange?.(o)} />}
+      {emergency ? null : <NewChatVerb run={newChat} />}
     <ChatPanel
       threadOpen={threadOpen}
       listWide={!!submitted}
       onKeyDown={panelKey}
       railExpanded={railExpanded}
-      rail={(overlay) => <StatusRail ctx={ctx} expanded={railExpanded} onExpandedChange={setRailExpanded} overlay={overlay} />}
+      rail={emergency ? undefined : (overlay) => <StatusRail ctx={ctx} expanded={railExpanded} onExpandedChange={setRailExpanded} overlay={overlay} />}
       list={
         <ConversationList
           className="flex-1"
@@ -360,9 +364,9 @@ export function ChatTab({
           selectedAutomationId={conv?.automation?.id ?? null}
           agentId={agentId}
           agentName={agent?.name}
-          onNewChat={newChat}
+          onNewChat={emergency ? undefined : newChat}
           newChatBusy={newChatBusy}
-          newChatError={newChatError}
+          newChatError={emergency ? null : newChatError}
           onGone={(id) => {
             if (id === convId) done();
           }}
@@ -431,6 +435,7 @@ export function ChatTab({
             audience={audience}
             myRole={myRole}
             readerId={readerId}
+            emergency={emergency}
             onGone={done}
             onBack={() => {
               setListShown(true);

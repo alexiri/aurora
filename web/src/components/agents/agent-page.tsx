@@ -109,7 +109,9 @@ export function AgentPage() {
 
   const byo = agent.kind === "byo";
   const chip = agentChip(agent);
-  const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled, ssh: sshEnabled, owner: workspace.data?.my_role === "owner" };
+  // (FIX-236, C-1165) Emergency read access: the pages narrow to what may be read, and nothing acts.
+  const emergency = workspace.data?.emergency_reader === true;
+  const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled, ssh: sshEnabled, owner: workspace.data?.my_role === "owner", emergency };
   const tab = resolvePage(requestedTab, availability);
   // The viewer's altitude leaves pages out of the navigation; the open page stays listed (a direct `?tab=` still opens).
   const sections = availableSections(availability, altitude.allows, tab);
@@ -196,7 +198,7 @@ export function AgentPage() {
           </div>
         </div>
         <div className="order-2 flex shrink-0 items-center gap-2 xl:order-3">
-          {chatPage ? (
+          {chatPage && !emergency ? (
             <Button type="button" variant="outline" size="sm" className="min-h-11 md:hidden" onClick={() => setStatusOpen(true)}>
               Status
             </Button>
@@ -215,7 +217,7 @@ export function AgentPage() {
         {/* (access-3) The one action for "Can't answer: no AI key" (give it the Company key, add a key, or ask an admin) on its
             own row under the name and state, so the name is never pushed out at 1256 and nothing runs under Status at 390.
             Empty (no row) unless the agent cannot answer. */}
-        {byo || !wsId ? null : (
+        {byo || !wsId || emergency ? null : (
           <div className="order-3 w-full min-w-0 max-w-full basis-full empty:hidden xl:order-4">
             <AnswerFixAction agentId={agent.id} agentName={agent.name} wsId={wsId} base={base} />
           </div>
@@ -294,6 +296,7 @@ export function AgentPage() {
               audience={workspace.data?.audience ?? null}
               myRole={workspace.data?.my_role ?? null}
               readerId={me.data?.user.id ?? null}
+              emergency={emergency}
               terminalAvailable={terminalEnabled}
               sshAvailable={sshEnabled && !byo}
               onNavigate={choosePage}
@@ -301,8 +304,8 @@ export function AgentPage() {
               onStatusSheetOpenChange={setStatusOpen}
             />
           ) : null}
-          {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} agentName={agent.name} memoryLanguage={workspace.data?.memory_language} /> : null}
-          {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} agentName={agent.name} /> : null}
+          {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} agentName={agent.name} memoryLanguage={workspace.data?.memory_language} readOnly={emergency} /> : null}
+          {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} agentName={agent.name} readOnly={emergency} /> : null}
           {tab === "evals" && !byo ? <EvalsTab agentId={agent.id} frozen={agent.frozen !== null} canOwn={canOwn} defaultTimezone={workspace.data?.timezone} /> : null}
           {/* (P5-REFINE-14) Schedules, Webhooks and Channels are one page; the old ids open it filtered to their kind. */}
           {tab === "automations" && !byo && workspace.data ? (
@@ -337,6 +340,7 @@ export function AgentPage() {
               agent={agent}
               wsId={wsId!}
               saveState={{ bar: instructionsBar, sig: instructionsSig, setSig: setInstructionsSig }}
+              readOnly={emergency}
             /> : null}
           {tab === "access" && workspace.data ? (
             <AccessTab agentId={agent.id} agentName={agent.name} wsId={wsId!} orgId={workspace.data.org_id} canOwn={canOwn} hosted={!byo} base={base} agentBase={`${base}/agents/${agent.handle}`} />

@@ -129,9 +129,19 @@ export interface PageAvailability {
   ssh?: boolean;
   /** (D-447) The viewer owns the workspace: Manage (Pause, Export and import, Delete) is theirs; absent means no. */
   owner?: boolean;
+  /**
+   * (FIX-236, C-1165) The viewer reads through emergency access: Chat, the Settings pages they may
+   * read (Instructions, Memory, Skills) and the Automations lists stay; Computer, Apps & access,
+   * Manage, Tests and Other agents do not.
+   */
+  emergency?: boolean;
 }
 
+/** The pages emergency read access may open (C-1165's route list, as pages). */
+const EMERGENCY_PAGES: readonly AgentPageId[] = ["chat", "instructions", "memory", "skills", "automations", "schedules", "webhooks", "channels"];
+
 export function isPageAvailable(page: AgentPageId, av: PageAvailability): boolean {
+  if (av.emergency) return EMERGENCY_PAGES.includes(page);
   if (page === "manage") return av.owner === true;
   if (av.byo) return page === "instructions" || page === "connect" || page === "access";
   if (page === "connect") return false;

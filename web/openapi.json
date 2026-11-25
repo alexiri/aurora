@@ -22448,6 +22448,90 @@
         ]
       }
     },
+    "/v1/emergency-access/{id}/end": {
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "End emergency read access early (C-1164): the opener, or any active org owner of the\norganization, in a session. Idempotent: a grant that already ended answers 200 with the row.",
+        "operationId": "endEmergencyAccess",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Emergency access id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmergencyAccess"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/eval-questions/{id}": {
       "get": {
         "tags": [
@@ -29825,6 +29909,113 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/orgs/{org}/emergency-access": {
+      "get": {
+        "tags": [
+          "orgs"
+        ],
+        "summary": "The organization's emergency access history (`GET /v1/orgs/{org}/emergency-access`): org\nowners and admins (C-1164). Metadata only, newest first, paged.",
+        "operationId": "listOrgEmergencyAccess",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "org",
+            "in": "path",
+            "description": "Organization id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_EmergencyAccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -39066,7 +39257,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "Get a workspace: the caller's own access answers in full; an administrator without own\naccess gets the metadata, `contacts` and `audience` (C-1160, C-1162).",
+        "summary": "Get a workspace: the caller's own access answers in full; an emergency reader (C-1165) and\nan administrator without own access (C-1160, C-1162) get the metadata, `contacts` and\n`audience` — the emergency reader with `emergency_reader: true` and their own-right role\n(usually none).",
         "operationId": "getWorkspace",
         "parameters": [
           {
@@ -39319,7 +39510,7 @@
         "tags": [
           "workspaces"
         ],
-        "summary": "List the workspace's access bindings (`can_administer`, C-1160; the rows are the bindings in\none's own right — since FIX-234 there are no implicit rows).",
+        "summary": "List the workspace's access bindings (`can_administer`, C-1160; the rows are the bindings in\none's own right — since FIX-234 there are no implicit rows). Emergency read access (C-1165)\nalso reads the workspace's people.",
         "operationId": "listAccess",
         "parameters": [
           {
@@ -42336,6 +42527,231 @@
           },
           {
             "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/workspaces/{ws}/emergency-access": {
+      "get": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "The workspace's emergency access history (`GET /v1/workspaces/{ws}/emergency-access`): any\ncaller with own access or `can_administer` (C-1164). Metadata only, newest first, paged.",
+        "operationId": "listWorkspaceEmergencyAccess",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1..=200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque cursor from a previous response's `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_EmergencyAccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Open emergency read access on a workspace (C-1164): a **session** of an active effective org\nowner of the workspace's organization, with a reason (10–500 characters) and 1–24 hours\n(default 4). The critical audit row `workspace.emergency_access.open` commits with the grant;\nthe notices (C-1165) go out after the commit and never fail it.",
+        "operationId": "openEmergencyAccess",
+        "parameters": [
+          {
+            "name": "ws",
+            "in": "path",
+            "description": "Workspace id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenEmergencyAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmergencyAccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
           }
         ]
       }
@@ -54356,6 +54772,90 @@
           }
         }
       },
+      "EmergencyAccess": {
+        "type": "object",
+        "description": "One emergency access row (C-1164). `active` is `ended_at IS NULL AND expires_at > now()`,\nevaluated at answer time.",
+        "required": [
+          "id",
+          "workspace",
+          "by",
+          "reason",
+          "opened_at",
+          "expires_at",
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "by": {
+            "$ref": "#/components/schemas/EmergencyAccessBy"
+          },
+          "end_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/EmergencyAccessWorkspace"
+          }
+        }
+      },
+      "EmergencyAccessBy": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "EmergencyAccessWorkspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
       "EndpointRoleWarning": {
         "type": "object",
         "description": "(P5-POLISH-3, D-385, C-1034) A role an endpoint leaves unset (or not allowed), for the endpoint's row in\nAdministration › AI models.",
@@ -60410,6 +60910,26 @@
           }
         }
       },
+      "OpenEmergencyAccessRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "hours": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How long it stays open, in hours: 1–24 (default 4). It can never be extended (D-478(d)):\na new grant is opened instead, and that notifies again."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the access is needed; 10–500 characters (C-1164)."
+          }
+        }
+      },
       "OpenLanePosture": {
         "type": "string",
         "description": "Open-lane posture (RFE-003), ordered by strictness\n(`enabled` < `allowlist_only` < `disabled`).",
@@ -63173,6 +63693,75 @@
           }
         }
       },
+      "Page_EmergencyAccess": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One emergency access row (C-1164). `active` is `ended_at IS NULL AND expires_at > now()`,\nevaluated at answer time.",
+              "required": [
+                "id",
+                "workspace",
+                "by",
+                "reason",
+                "opened_at",
+                "expires_at",
+                "active"
+              ],
+              "properties": {
+                "active": {
+                  "type": "boolean"
+                },
+                "by": {
+                  "$ref": "#/components/schemas/EmergencyAccessBy"
+                },
+                "end_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "ended_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time"
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "opened_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "workspace": {
+                  "$ref": "#/components/schemas/EmergencyAccessWorkspace"
+                }
+              }
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "Page_EvalRun": {
         "type": "object",
         "required": [
@@ -65831,6 +66420,7 @@
                 "timezone",
                 "memory_language",
                 "administers",
+                "emergency_reader",
                 "created_at",
                 "updated_at"
               ],
@@ -65882,6 +66472,10 @@
                       "type": "null"
                     }
                   ]
+                },
+                "emergency_reader": {
+                  "type": "boolean",
+                  "description": "(FIX-236, C-1165) True while the caller holds an active emergency read access here."
                 },
                 "frozen": {
                   "oneOf": [
@@ -78324,6 +78918,7 @@
           "timezone",
           "memory_language",
           "administers",
+          "emergency_reader",
           "created_at",
           "updated_at"
         ],
@@ -78375,6 +78970,10 @@
                 "type": "null"
               }
             ]
+          },
+          "emergency_reader": {
+            "type": "boolean",
+            "description": "(FIX-236, C-1165) True while the caller holds an active emergency read access here."
           },
           "frozen": {
             "oneOf": [
@@ -78444,6 +79043,17 @@
           "owners_total"
         ],
         "properties": {
+          "emergency": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceAudienceEmergency",
+                "description": "(FIX-236, C-1165) The newest emergency access that is active or ended within the last\n7 days — the workspace's banner for its people; `null` when there is none to show."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "owners": {
             "type": "array",
             "items": {
@@ -78460,6 +79070,48 @@
             "type": "integer",
             "format": "int64",
             "description": "Distinct active people with access in their own right."
+          }
+        }
+      },
+      "WorkspaceAudienceEmergency": {
+        "type": "object",
+        "description": "(FIX-236, C-1165) `audience.emergency`: who opened emergency read access, why and until\nwhen. Metadata only; the reason is the opener's own sanitized words.",
+        "required": [
+          "id",
+          "by",
+          "reason",
+          "opened_at",
+          "expires_at",
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "by": {
+            "$ref": "#/components/schemas/WorkspaceAudienceOwner"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "opened_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string"
           }
         }
       },

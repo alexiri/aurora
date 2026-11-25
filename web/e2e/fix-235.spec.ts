@@ -14,7 +14,7 @@ const json = (body: unknown) => ({ status: 200, contentType: "application/json",
 const NOW = new Date().toISOString();
 
 /** `my_role: null` everywhere the viewer's own access is read: the session, the resolve, the workspace, the org list. */
-const managed = { ...ws, my_role: null, administers: true, audience: { people: 2, owners: [{ id: id(99), display_name: "Ada Lovelace" }], owners_total: 1 } };
+const managed = { ...ws, my_role: null, administers: true, audience: { people: 2, owners: [{ id: id(99), display_name: "Ada Lovelace" }], owners_total: 1, emergency: null } };
 
 /** The Overview's workspace row (the org agents' row links to the manage page too). */
 const row = (page: Page) => page.getByRole("link", { name: "Main workspace Manage" });
@@ -70,7 +70,7 @@ test.describe("the admin's journey (FIX-235, D-477)", () => {
 
 const ANN = { id: id(100), display_name: "Ann Appleton" };
 // The reader (Ada, id 99) holds no own access beyond membership: the owners are two other people.
-const memberAudience = { people: 3, owners: [{ id: id(98), display_name: "Grace Hopper" }, ANN], owners_total: 2 };
+const memberAudience = { people: 3, owners: [{ id: id(98), display_name: "Grace Hopper" }, ANN], owners_total: 2, emergency: null };
 
 test.describe("the member's visibility line (FIX-235, D-479)", () => {
   test("a member's own chat names the workspace's people and its owners", async ({ page }) => {

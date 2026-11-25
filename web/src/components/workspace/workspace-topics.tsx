@@ -13,6 +13,7 @@ import { AuditTab } from "@/components/settings/audit-tab";
 import { DangerTab } from "@/components/settings/danger-tab";
 import { GeneralTab } from "@/components/settings/general-tab";
 import { KeysTab } from "@/components/settings/keys-tab";
+import { EmergencyHistory } from "@/components/emergency/emergency-history";
 import { ErrorState, Loading } from "@/components/states";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { PageHeader } from "@/components/ui/page-header";
@@ -80,7 +81,8 @@ export function WorkspaceInternetAccessPage() {
 function PeopleBody({ w, org, ws, addOpen }: { w: Workspace; org: string; ws: string; addOpen: boolean }) {
   const list = useWorkspaces(w.org_id);
   const personal = !!w.personal_of || !!list.data?.items.find((x) => x.id === w.id)?.personal_of;
-  // (P5-POLISH-11, D6) **Add people** is on the header's line.
+  const emergency = w.emergency_reader === true;
+  // (P5-POLISH-11, D6) **Add people** is on the header's line; emergency read access changes nothing here, so it stands down.
   return (
     <div className="space-y-4">
       <PageHeader
@@ -88,15 +90,19 @@ function PeopleBody({ w, org, ws, addOpen }: { w: Workspace; org: string; ws: st
         description="Who can use this workspace."
         className="mb-2"
         actions={
-          <AddPeople
-            wsId={w.id}
-            orgId={w.org_id}
-            workspacePath={wsRoutes(org, ws).base}
-            initiallyOpen={addOpen}
-          />
+          emergency ? null : (
+            <AddPeople
+              wsId={w.id}
+              orgId={w.org_id}
+              workspacePath={wsRoutes(org, ws).base}
+              initiallyOpen={addOpen}
+            />
+          )
         }
       />
-      <AccessTab wsId={w.id} orgId={w.org_id} canOwn personal={personal} people={{ workspacePath: wsRoutes(org, ws).base, initiallyOpen: addOpen }} />
+      <AccessTab wsId={w.id} orgId={w.org_id} canOwn={!emergency} personal={personal} people={emergency ? undefined : { workspacePath: wsRoutes(org, ws).base, initiallyOpen: addOpen }} />
+      {/* (FIX-236, C-1164) The workspace's emergency history stands under the people; the owner sees it, and so does the emergency reader (it is about what they are doing). */}
+      <EmergencyHistory wsId={w.id} />
     </div>
   );
 }
@@ -108,7 +114,7 @@ export function WorkspacePeoplePage() {
   return (
     <WorkspaceGate>
       {(w, org, ws) =>
-        w.my_role === "owner" ? (
+        w.my_role === "owner" || w.emergency_reader === true ? (
           <PeopleBody w={w} org={org} ws={ws} addOpen={addOpen} />
         ) : (
           <ErrorState error={forbiddenError(whoCanFromContacts("workspace_owner", w.contacts, "view_this"))} />

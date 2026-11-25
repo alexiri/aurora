@@ -15,7 +15,7 @@ export const later = new Date(Date.now() + 3_600_000).toISOString();
 export const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 export const org = { id: id(1), slug: "acme", name: "Acme Labs", my_role: "owner", app_posture: "open", external_id: "x", settings: { previews_enabled: true }, created_at: now };
-export const ws = { id: id(2), org_id: id(1), slug: "main", name: "Main workspace", my_role: "owner", administers: true, memory_language: "en", timezone: "UTC", created_at: now, updated_at: now, audience: { people: 2, owners: [{ id: id(99), display_name: "Ada Lovelace" }], owners_total: 1 } };
+export const ws = { id: id(2), org_id: id(1), slug: "main", name: "Main workspace", my_role: "owner", administers: true, memory_language: "en", timezone: "UTC", created_at: now, updated_at: now, emergency_reader: false, audience: { people: 2, owners: [{ id: id(99), display_name: "Ada Lovelace" }], owners_total: 1, emergency: null } };
 export const agent = {
   id: id(11), org_id: id(1), workspace_id: id(2), handle: "daneel", name: "Daneel", kind: "hosted", is_default: true,
   avatar_url: null, brief: "Triage the team's pull requests and issues.", harness: null, model_provider: null, model_endpoint_id: null, model_id: null,
