@@ -444,7 +444,9 @@ async fn opening_notifies_the_people_and_the_other_owners_with_the_banner_set() 
     let grant: Uuid = v["id"].as_str().unwrap().parse().unwrap();
 
     // E-mail: to the workspace's person and the other owner; never the opener. The body names
-    // people by display name and carries the reason.
+    // people by display name and carries the reason. The notices come from the spawned task
+    // (review MEDIUM-6): poll instead of assuming they landed before the response returned.
+    until_notices(&w.h, 2).await;
     let mail = w.h.mail.sent();
     let person_email: String = sqlx::query_scalar("SELECT email::text FROM users WHERE id = $1")
         .bind(w.person)
@@ -479,7 +481,7 @@ async fn opening_notifies_the_people_and_the_other_owners_with_the_banner_set() 
     }
 
     // Web Push: one per registered device of the recipients, never to the opener's path.
-    let got = mock.received();
+    let got = mock.wait_for(2, std::time::Duration::from_secs(5)).await;
     let mut paths: Vec<&str> = got.iter().map(|r| r.path.as_str()).collect();
     paths.sort_unstable();
     assert_eq!(paths, vec!["/push/owner", "/push/person"], "no opener push");
@@ -616,7 +618,10 @@ async fn a_personal_workspace_tells_its_person() {
         )
         .await;
     assert_eq!(s, 201, "{v}");
-    let mail = w.h.mail.sent();
+    let mail = {
+        until_notices(&w.h, 2).await;
+        w.h.mail.sent()
+    };
     let mut tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
     tos.sort_unstable();
     assert_eq!(
@@ -633,6 +638,95 @@ async fn a_personal_workspace_tells_its_person() {
         person_mail.body
     );
     assert!(!person_mail.body.contains('@'), "{}", person_mail.body);
+}
+
+/// The notices go out from a spawned task after the commit (review MEDIUM-6): poll briefly
+/// instead of assuming they landed before the response returned.
+async fn until_notices(h: &Harness, want: usize) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.mail.sent().len() < want {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the notices never arrived"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// (Review MEDIUM-6) The notices go out from a spawned task after the commit: the open answers
+/// 201 at once, and a failing recipient (the push service answering 500) does not stop the
+/// others — both pushes are attempted and every e-mail still arrives.
+#[tokio::test]
+async fn a_failing_recipient_does_not_stop_the_others_and_the_open_still_returns_201() {
+    let mock = MockPush::start().await;
+    let w = world_with(|c| {
+        c.push.enabled = true;
+        c.push.vapid.subject = Some(SUBJECT.into());
+        c.push.allowed_endpoint_hosts = vec![HOST.into(), "*.push.services.mozilla.com".into()];
+        c.push
+            .dev_endpoint_overrides
+            .insert(HOST.to_owned(), mock.url());
+    })
+    .await;
+    let key = aurora_api::domains::push::vapid::active(&w.h.state)
+        .await
+        .unwrap()
+        .1
+        .public_b64u();
+    for (path, tok) in [
+        ("/push/person", &w.person_tok),
+        ("/push/owner", &w.other_tok),
+    ] {
+        let k = mock.subscribe(path);
+        let key = key.clone();
+        let (s, _, v) =
+            w.h.send(
+                Method::POST,
+                "/v1/me/push-subscriptions",
+                &[("cookie", cookie(tok).as_str()), ("origin", ORIGIN)],
+                Some(json!({
+                    "endpoint": format!("https://{HOST}{path}"),
+                    "keys": {"p256dh": k.p256dh(), "auth": k.auth()},
+                    "label": "Laptop",
+                    "show_details": false,
+                    "vapid_public_key": key,
+                })),
+            )
+            .await;
+        assert!((200..300).contains(&s.as_u16()), "{v}");
+    }
+    // The push service is down: every push send fails.
+    mock.respond(aurora_testkit::push::Answer::status(500));
+
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the push service is down"}))
+        .await;
+    assert_eq!(s, 201, "{v}: the grant stands, the notices are logged");
+
+    // Both pushes were ATTEMPTED — one failing recipient did not stop the other (the failing
+    // one may be retried, so wait for both paths, not a fixed count).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let got = loop {
+        let g = mock.received();
+        let attempted = |p: &str| g.iter().any(|r| r.path == p);
+        if attempted("/push/owner") && attempted("/push/person") {
+            break g;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "both recipients attempted: {g:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert!(got.len() >= 2);
+    // And the e-mails (a different channel) all arrived.
+    until_notices(&w.h, 2).await;
+    let mail = w.h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert!(
+        tos.contains(&"p@x.io") && tos.contains(&"oo@x.io"),
+        "{tos:?}"
+    );
 }
 
 /// (Review HIGH-1) The people's banner shows ACTIVE access whenever any grant is active: an

@@ -162,29 +162,25 @@ async fn open_emergency_access(
             "workspace_id": ws,
         }));
     audit::commit_critical(tx, &ev).await?;
-    // (D-478(c)) The people and the other owners are told at once — after the commit, and a
-    // notice failure is logged, never allowed to undo or fail the grant.
-    notify_after_open(&s, w.org_id, ws, &c, &reason, expires_at).await;
+    // (D-478(c), review MEDIUM-6) The people and the other owners are told at once — from a
+    // spawned task **after** the commit: a large workspace must not hold the request, and a
+    // disconnect must not silently stop the remaining notices. A notice failure is logged
+    // inside the task; it never undoes or fails the grant.
+    let s2 = s.clone();
+    let reason2 = reason.clone();
+    tokio::spawn(async move {
+        if let Err(e) =
+            notify::notify_open_for(&s2, w.org_id, ws, c.user_id, &reason2, expires_at).await
+        {
+            tracing::error!(error = %e, "emergency-access notices failed");
+        }
+    });
     let (by_name,): (String,) = sqlx::query_as("SELECT display_name FROM users WHERE id = $1")
         .bind(c.user_id)
         .fetch_one(&s.pool)
         .await
         .map_err(DbError::from)?;
     Ok((StatusCode::CREATED, Json(row_of(row, w.name, by_name))))
-}
-
-/// Fire the opening notices; every failure is logged (the grant stands).
-async fn notify_after_open(
-    s: &AppState,
-    org: Uuid,
-    ws: Uuid,
-    c: &Caller,
-    reason: &str,
-    expires_at: chrono::DateTime<Utc>,
-) {
-    if let Err(e) = notify::notify_open_for(s, org, ws, c.user_id, reason, expires_at).await {
-        tracing::error!(error = %e, "emergency-access notices failed");
-    }
 }
 
 /// The workspace's emergency access history (`GET /v1/workspaces/{ws}/emergency-access`): any
