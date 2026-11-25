@@ -241,6 +241,54 @@ pub async fn refresh_emergency_view(
     record_emergency_view_actor(state, &actor, &row, &grant).await
 }
 
+/// (FIX-236, verify LOW-3) Where the caller's emergency-view dedup hour for one conversation
+/// stands. The conversation stream gates every content frame on this: content may flow while
+/// the window is open; once it has rolled over the fresh row must be written first.
+pub enum EmergencyViewWindow {
+    /// The caller is not reading through a grant: content is never gated (the stream closes at
+    /// the next re-authorization tick instead).
+    NotReader,
+    /// An emergency reader whose dedup window has rolled over: no `conversation.emergency_view`
+    /// row under the active grant within the last hour — record before any content.
+    Rolled,
+    /// Inside the dedup window until this instant (the newest row's `created_at` + 1 hour).
+    Open(chrono::DateTime<chrono::Utc>),
+}
+
+/// (FIX-236, verify LOW-3) The stream's dedup-window check — the same law as the dedup inside
+/// [`record_emergency_view_actor`], read without writing: for an emergency reader, the newest
+/// `conversation.emergency_view` row under their active grant for this conversation closes the
+/// window one hour after its `created_at`; none within the hour means the window has rolled.
+pub async fn emergency_view_window(
+    state: &AppState,
+    user: Uuid,
+    conv: Uuid,
+) -> Result<EmergencyViewWindow, DbError> {
+    let Some(row) = convs::get(&state.pool, conv).await? else {
+        return Ok(EmergencyViewWindow::NotReader);
+    };
+    let Some(grant) = authz::emergency_reader(&state.pool, user, row.workspace_id).await? else {
+        return Ok(EmergencyViewWindow::NotReader);
+    };
+    let until: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT max(created_at) + interval '1 hour' FROM audit_log \
+         WHERE workspace_id = $1 AND actor_id = $2 \
+           AND action = 'conversation.emergency_view' AND target_id = $3 \
+           AND metadata->>'emergency_access' = $4 \
+           AND created_at > now() - interval '1 hour'",
+    )
+    .bind(row.workspace_id)
+    .bind(user)
+    .bind(row.id.to_string())
+    .bind(grant.id().to_string())
+    .fetch_one(&state.pool)
+    .await
+    .map_err(DbError::from)?;
+    Ok(until
+        .map(EmergencyViewWindow::Open)
+        .unwrap_or(EmergencyViewWindow::Rolled))
+}
+
 async fn note_owner_view(state: &AppState, c: &Caller, row: &ConversationRow) {
     if let Err(e) = try_note_owner_view(state, c, row).await {
         // Best-effort (docs/04 §Audit): never fails the read.

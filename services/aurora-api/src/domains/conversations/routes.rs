@@ -650,6 +650,16 @@ struct Stream_ {
     access: broadcast::Receiver<crate::http::auth::AccessPing>,
     /// Set once the final `access.changed` event is queued: the stream ends after it.
     closing: bool,
+    /// (Verify LOW-3) The caller's emergency-view dedup window: `Unknown` until first needed,
+    /// `NotReader` never gates, `Reader` gates content frames until the instant.
+    window: WindowState,
+}
+
+/// (Verify LOW-3) See [`Stream_.window`].
+enum WindowState {
+    Unknown,
+    NotReader,
+    Reader(tokio::time::Instant),
 }
 
 impl Stream_ {
@@ -665,9 +675,67 @@ impl Stream_ {
         self.closing = true;
     }
 
+    /// (Verify LOW-3) The dedup-hour gate before any content frame: inside the caller's window
+    /// content flows (the fast path touches nothing); once the window has rolled over, the
+    /// fresh `emergency_view` row is written FIRST, and a failed write ends the stream — the
+    /// client's reconnect is then refused until the audit writes again, so content never flows
+    /// unrecorded. Returns false when the stream must close.
+    async fn ensure_recorded(&mut self) -> bool {
+        if let WindowState::Reader(until) = self.window {
+            if tokio::time::Instant::now() < until {
+                return true;
+            }
+        }
+        match service::emergency_view_window(&self.s, self.user, self.conv).await {
+            Ok(service::EmergencyViewWindow::NotReader) => {
+                self.window = WindowState::NotReader;
+                true
+            }
+            Ok(service::EmergencyViewWindow::Open(until)) => {
+                self.set_window(until);
+                true
+            }
+            Ok(service::EmergencyViewWindow::Rolled) => {
+                if let Err(e) = service::refresh_emergency_view(&self.s, self.user, self.conv).await
+                {
+                    tracing::warn!(error = %e.code(), "conversation stream emergency view gate record failed");
+                    self.close_access_changed();
+                    return false;
+                }
+                match service::emergency_view_window(&self.s, self.user, self.conv).await {
+                    Ok(service::EmergencyViewWindow::Open(until)) => {
+                        self.set_window(until);
+                        true
+                    }
+                    // The record could not be confirmed: refuse the content.
+                    _ => {
+                        self.close_access_changed();
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "conversation stream emergency view gate failed");
+                self.close_access_changed();
+                false
+            }
+        }
+    }
+
+    fn set_window(&mut self, until: chrono::DateTime<chrono::Utc>) {
+        let dur = (until - chrono::Utc::now())
+            .to_std()
+            .unwrap_or(std::time::Duration::ZERO);
+        self.window = WindowState::Reader(tokio::time::Instant::now() + dur);
+    }
+
     /// Read durable events after `last` from the database until caught up.
     async fn reload(&mut self) {
         self.dirty = false;
+        // (Verify LOW-3) The replayed transcript is content: the gate comes first.
+        if !self.ensure_recorded().await {
+            return;
+        }
         loop {
             let rows = match transcript::list_after(
                 &self.s.pool,
@@ -742,6 +810,7 @@ async fn stream(
         buf: VecDeque::new(),
         tick,
         dirty: true,
+        window: WindowState::Unknown,
     };
     let events = futures::stream::unfold(st, |mut st| async move {
         loop {
@@ -764,6 +833,10 @@ async fn stream(
                     }
                     Ok(BusMsg::Delta { conversation, turn, kind, message_id, reply_to, text }) => {
                         if conversation == st.conv {
+                            // (Verify LOW-3) Deltas are content: the dedup gate comes first.
+                            if !st.ensure_recorded().await {
+                                continue;
+                            }
                             let payload = match kind.as_str() {
                                 "activity" => serde_json::json!({"turn_id": turn, "line": text}),
                                 "event.redacted" => {

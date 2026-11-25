@@ -1345,6 +1345,124 @@ async fn a_live_conversation_stream_records_again_when_the_dedup_window_rolls_ov
     assert!(frames > 0, "the stream stayed open and flowing");
 }
 
+/// (Verify LOW-3) When the dedup hour rolls over on an open stream, content does not flow
+/// before the fresh `emergency_view` row is written: the stream checks the window before each
+/// content frame and records first. The resync tick is set past the test's length, so only the
+/// per-frame gate can record — a delta pushed right after the rollover arrives only once the
+/// row exists.
+#[tokio::test]
+async fn the_stream_records_before_content_when_the_dedup_window_rolls_over() {
+    let w = world().await;
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the gated stream"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    // A resync tick slower than the test: only the per-frame gate can record after the rollover.
+    let app = test_router(
+        w.h.state
+            .clone()
+            .with_stream_recheck(std::time::Duration::from_secs(60)),
+    );
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/conversations/{}/stream", w.conv))
+                .header("cookie", cookie(&w.opener_tok))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    let mut body = Body::new(res.into_body());
+
+    // The stream's initial read recorded the view.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view'",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        if n >= 1 || tokio::time::Instant::now() >= deadline {
+            assert!(n >= 1, "the stream's initial read recorded the view");
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // Roll the window over, then push an ephemeral content delta at once. The sleep lets the
+    // stream's IMMEDIATE first tick (tokio intervals fire at once) pass while the window is
+    // still fresh; after the wind the next tick is 15 s away, so only the per-frame gate can
+    // record during the test.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    sqlx::query(
+        "UPDATE audit_log SET created_at = now() - interval '2 hours' \
+         WHERE action = 'conversation.emergency_view'",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let turn = Uuid::now_v7();
+    w.h.state
+        .conversation_bus
+        .publish_delta(
+            w.h.pool(),
+            w.conv,
+            turn,
+            "text.delta",
+            (Some("m1"), None),
+            "the gated delta",
+        )
+        .await;
+
+    // The first content frame must carry the fresh row with it: recorded BEFORE the frame.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut bytes = Vec::new();
+    loop {
+        match tokio::time::timeout_at(deadline, body.frame()).await {
+            Ok(Some(Ok(f))) => {
+                if let Ok(d) = f.into_data() {
+                    bytes.extend_from_slice(&d);
+                }
+            }
+            _ => break,
+        }
+        if std::str::from_utf8(&bytes)
+            .unwrap_or("")
+            .contains("text.delta")
+        {
+            break;
+        }
+    }
+    assert!(
+        std::str::from_utf8(&bytes)
+            .unwrap_or("")
+            .contains("text.delta"),
+        "the delta arrived: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let rows: Vec<(chrono::DateTime<chrono::Utc>, String)> = sqlx::query_as(
+        "SELECT created_at, coalesce(metadata->>'emergency_access','?') FROM audit_log \
+         WHERE action = 'conversation.emergency_view' ORDER BY id",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    eprintln!("DEBUG view rows: {rows:?}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view' \
+         AND created_at > now() - interval '1 hour'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "the fresh row was written before the content frame");
+}
+
 fn multipart(part: &str, filename: &str, ctype: &str, data: &[u8]) -> (String, Vec<u8>) {
     let b = "XBOUNDARYX";
     let mut body = format!(
