@@ -76,8 +76,11 @@ export function EmergencyBanners() {
   if (!w) return null;
   const emergency = w.audience?.emergency;
   if (w.emergency_reader) {
-    // The active grant's id is the one in `audience.emergency` (C-1165: the newest active-or-recent row).
-    return emergency ? <ReaderBanner expiresAt={emergency.expires_at} emergencyId={emergency.id} /> : null;
+    // (FIX-236, review HIGH-3) "End now" ends the caller's OWN active grant
+    // (`emergency_reader_id`), never the newest one in `audience.emergency`, which may belong to
+    // another owner; the expiry text stays the shown grant's.
+    const id = w.emergency_reader_id ?? emergency?.id;
+    return emergency && id ? <ReaderBanner expiresAt={emergency.expires_at} emergencyId={id} /> : null;
   }
   return emergency ? <PeopleBanner emergency={emergency} activeMore={w.audience?.emergency_active_more ?? 0} /> : null;
 }

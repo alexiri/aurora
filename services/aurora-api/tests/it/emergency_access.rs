@@ -524,6 +524,67 @@ async fn opening_notifies_the_people_and_the_other_owners_with_the_banner_set() 
     assert_eq!(v["emergency_reader"], json!(true), "{v}");
 }
 
+/// (Review HIGH-3) A caller who holds own access AND an active grant is an emergency reader too
+/// (their conversation reads ARE recorded as emergency views): the workspace answer says so in
+/// BOTH branches — with own access and with a grant only — and carries the caller's OWN active
+/// grant id, the one their reader banner's "End now" ends (never another owner's newest grant).
+#[tokio::test]
+async fn a_reader_with_own_access_gets_the_reader_banner_and_their_own_grant_id() {
+    let w = world().await;
+    // An org owner who is also a workspace member: own access, not can_own, so a grant is allowed.
+    let both = w.h.user("both@x.io", false).await;
+    w.h.member(w.org, both, "owner", "active").await;
+    w.h.bind_ws(w.ws, both, "member").await;
+    let (_, both_tok) = w.h.good_session(both).await;
+
+    // Without a grant: not an emergency reader, no id.
+    let (s, v) = w
+        .call(&both_tok, Method::GET, &format!("/v1/workspaces/{}", w.ws), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["emergency_reader"], json!(false), "{v}");
+    assert!(v["emergency_reader_id"].is_null(), "{v}");
+
+    // They open a grant: the own-access branch now answers emergency_reader with THEIR grant id.
+    let (s, v) = w
+        .open(&both_tok, json!({"reason": "the member-owner grant"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let grant: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = w
+        .call(&both_tok, Method::GET, &format!("/v1/workspaces/{}", w.ws), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["emergency_reader"], json!(true), "{v}");
+    assert_eq!(v["emergency_reader_id"], json!(grant), "{v}");
+
+    // The grant-only branch (no own access): the same shape, with that reader's own grant id.
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the grant-only reader"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let only: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = w
+        .call(&w.opener_tok, Method::GET, &format!("/v1/workspaces/{}", w.ws), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["emergency_reader"], json!(true), "{v}");
+    assert_eq!(v["emergency_reader_id"], json!(only), "{v}");
+    // Each reader sees their own grant's id, never one id for everyone.
+    assert_ne!(grant, only);
+
+    // And the id is the one "End now" ends: the member-owner ends their own grant by it.
+    let (s, v) = w
+        .call(
+            &both_tok,
+            Method::POST,
+            &format!("/v1/emergency-access/{grant}/end"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+}
+
 #[tokio::test]
 async fn a_personal_workspace_tells_its_person() {
     let w = world().await;

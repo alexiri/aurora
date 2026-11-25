@@ -66477,6 +66477,14 @@
                   "type": "boolean",
                   "description": "(FIX-236, C-1165) True while the caller holds an active emergency read access here."
                 },
+                "emergency_reader_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid",
+                  "description": "(FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id\ntheir reader banner's \"End now\" ends, never another owner's newest grant; `null` when\nthey hold no active grant."
+                },
                 "frozen": {
                   "oneOf": [
                     {
@@ -78975,6 +78983,14 @@
             "type": "boolean",
             "description": "(FIX-236, C-1165) True while the caller holds an active emergency read access here."
           },
+          "emergency_reader_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "(FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id\ntheir reader banner's \"End now\" ends, never another owner's newest grant; `null` when\nthey hold no active grant."
+          },
           "frozen": {
             "oneOf": [
               {
@@ -79048,7 +79064,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/WorkspaceAudienceEmergency",
-                "description": "(FIX-236, C-1165, review HIGH-1) The newest ACTIVE emergency access when any is active — an owner's\nopen access is never hidden behind another owner's newer, ended one — else the newest that\nended within the last 7 days; the workspace's banner for its people; `null` when there is\nnone to show."
+                "description": "(FIX-236, C-1165) The newest **active** emergency access when any is active (review\nHIGH-1: an owner's open access is never hidden behind another owner's newer, ended one),\nelse the newest that ended within the last 7 days — the workspace's banner for its\npeople; `null` when there is none to show."
               },
               {
                 "type": "null"
@@ -79058,7 +79074,7 @@
           "emergency_active_more": {
             "type": "integer",
             "format": "int64",
-            "description": "(FIX-236, review HIGH-1) How many OTHER emergency grants are active right now besides\n`emergency` — two simultaneous openers are both announced."
+            "description": "(FIX-236, review HIGH-1) How many **other** emergency grants are active right now besides\n`emergency` — two simultaneous openers are both announced."
           },
           "owners": {
             "type": "array",

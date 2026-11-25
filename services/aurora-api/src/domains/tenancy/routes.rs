@@ -620,6 +620,22 @@ async fn workspace_audience(
     })
 }
 
+/// (FIX-236, C-1165, review HIGH-3) The emergency-reader answer on a workspace answer: the flag
+/// from the same check every conversation read uses (`authz::emergency_reader`, so a caller with
+/// own access AND a grant is announced too) and the caller's OWN active grant id — the one their
+/// reader banner's "End now" ends, never another owner's newest grant.
+async fn emergency_reader_answer(
+    s: &AppState,
+    w: &mut Workspace,
+    user: Uuid,
+    ws: Uuid,
+) -> Result<(), ApiError> {
+    let grant = authz::emergency_reader(&s.pool, user, ws).await?;
+    w.emergency_reader = grant.is_some();
+    w.emergency_reader_id = grant.map(|g| g.id());
+    Ok(())
+}
+
 /// Get a workspace: the caller's own access answers in full; an emergency reader (C-1165) and
 /// an administrator without own access (C-1160, C-1162) get the metadata, `contacts` and
 /// `audience` — the emergency reader with `emergency_reader: true` and their own-right role
@@ -636,6 +652,7 @@ async fn get_workspace(
     match c.workspace(&s, ws).await {
         Ok(a) => {
             let mut w = load_ws(&s, ws, Some(ws_role(&a)), true).await?;
+            emergency_reader_answer(&s, &mut w, c.user_id, ws).await?;
             w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
             w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
             Ok(Json(w))
@@ -646,12 +663,15 @@ async fn get_workspace(
             match c.workspace_read(&s, ws).await {
                 Ok(read) => {
                     let mut w = load_ws(&s, ws, read.own().map(ws_role), true).await?;
-                    w.emergency_reader = true;
+                    emergency_reader_answer(&s, &mut w, c.user_id, ws).await?;
                     w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
                     w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
                     Ok(Json(w))
                 }
                 Err(_) => {
+                    // An administrator without own access: `workspace_read` returns
+                    // `ReadAuth::Emergency` whenever an active grant exists, so a caller here
+                    // cannot hold one — no emergency-reader answer to give.
                     let a = c.administer(&s, ws).await?;
                     debug_assert!(a.own.is_none());
                     let row = workspaces::get(&s.pool, ws)

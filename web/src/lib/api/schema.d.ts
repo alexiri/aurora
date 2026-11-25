@@ -14170,6 +14170,13 @@ export interface components {
                 effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
                 /** @description (FIX-236, C-1165) True while the caller holds an active emergency read access here. */
                 emergency_reader: boolean;
+                /**
+                 * Format: uuid
+                 * @description (FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id
+                 *     their reader banner's "End now" ends, never another owner's newest grant; `null` when
+                 *     they hold no active grant.
+                 */
+                emergency_reader_id?: string | null;
                 frozen?: components["schemas"]["Frozen"] | null;
                 /** Format: uuid */
                 id: string;
@@ -18087,6 +18094,13 @@ export interface components {
             effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
             /** @description (FIX-236, C-1165) True while the caller holds an active emergency read access here. */
             emergency_reader: boolean;
+            /**
+             * Format: uuid
+             * @description (FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id
+             *     their reader banner's "End now" ends, never another owner's newest grant; `null` when
+             *     they hold no active grant.
+             */
+            emergency_reader_id?: string | null;
             frozen?: components["schemas"]["Frozen"] | null;
             /** Format: uuid */
             id: string;
@@ -18109,7 +18123,7 @@ export interface components {
             emergency?: components["schemas"]["WorkspaceAudienceEmergency"] | null;
             /**
              * Format: int64
-             * @description (FIX-236, review HIGH-1) How many OTHER emergency grants are active right now besides
+             * @description (FIX-236, review HIGH-1) How many **other** emergency grants are active right now besides
              *     `emergency` — two simultaneous openers are both announced.
              */
             emergency_active_more: number;
