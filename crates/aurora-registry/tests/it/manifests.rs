@@ -427,6 +427,34 @@ fn connect_method_rules_reject_each_invalid_case() {
             METHODS.replace("connect_methods: [token] }", "connect_methods: [token], approval: ask }"),
             "tool_approval_read",
         ),
+        // A `body_check` key name is what the refusal message quotes: an identifier only.
+        (
+            "a body_check key that is not an identifier",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { refuse_keys: [bad-key] } }",
+            ),
+            "body_check_key",
+        ),
+        (
+            "a body_check with more than eight refuse keys",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                &format!(
+                    "connect_methods: [token], body_check: {{ refuse_keys: [{}] }} }}",
+                    (0..9).map(|i| format!("k{i}")).collect::<Vec<_>>().join(", ")
+                ),
+            ),
+            "body_check_refuse_keys",
+        ),
+        (
+            "a body_check exact_len of zero",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { exact_len: { data: 0 } } }",
+            ),
+            "body_check_exact_len",
+        ),
         // (P5-POLISH-3, C-1031) The package text for people has limits.
         (
             "summary over 100 characters",

@@ -273,6 +273,18 @@ so it is never offered (`levels`, `send_only` on the app and account DTOs) and i
 custom list keeps its own `empty_custom` refusal. The access notice names the account: "Dani can
 now send to Ops alerts, and asks you first." / "… without asking."
 
+**Body shape (`body_check`).** A tool may declare `body_check` — `refuse_keys: [keys]`,
+`only_keys: { key: [allowed keys] }` and `exact_len: { key: length }` — a request-body shape the
+gateway enforces on the tool's raw sends: a body carrying a refused key, an `only_keys` object
+with a key outside its list, or an `exact_len` array of the wrong length is refused with
+`tool_body_refused` before any rule, approval or injection, so nothing the approval card cannot
+show is ever held for approval. Fail closed: an absent, truncated, non-JSON or non-object body is
+refused too. Every part is a refusal, never an allowance; key names are identifiers of at most 64
+characters, the lists are small (`refuse_keys` at most 8, `only_keys` at most 8 keys of at most
+16 allowed, lengths at least 1), and an absent `body_check` checks nothing and changes no hash.
+Additive in contract 1. Built-in user: `grafana` (1.7.0: the alert-rule tools refuse a body the
+grafana-alerts script cannot build).
+
 `scopes: []` with `default_scopes: []` is valid: the authorization request then carries no `scope`
 parameter and the connection has no scopes (FIX-133: a **GitHub App's user authorization**, whose
 permissions come from the app's registration, is the package's `oauth_app` method, with its own

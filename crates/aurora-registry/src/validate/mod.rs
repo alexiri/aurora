@@ -1415,6 +1415,87 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         );
                     }
                 }
+                // A `body_check` only ever refuses, and its key names are quoted in the
+                // refusal message, so they are plain identifiers and the lists stay small.
+                if let Some(bc) = &it.body_check {
+                    let bp = format!("/tools/{gname}/items/{j}/body_check");
+                    let key_ok = |k: &str| {
+                        !k.is_empty()
+                            && k.len() <= 64
+                            && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    };
+                    macro_rules! name {
+                        ($field:expr, $k:expr) => {
+                            if !key_ok($k) {
+                                cx.v(
+                                    "body_check_key",
+                                    &format!("{bp}/{}", $field),
+                                    format!(
+                                        "tool `{}`: `{}` names `{}`, not an identifier of at most 64 characters",
+                                        it.id, $field, $k
+                                    ),
+                                );
+                            }
+                        };
+                    }
+                    if bc.refuse_keys.len() > 8 {
+                        cx.v(
+                            "body_check_refuse_keys",
+                            &format!("{bp}/refuse_keys"),
+                            format!("tool `{}`: `refuse_keys` holds at most 8 keys", it.id),
+                        );
+                    }
+                    for (a, k) in bc.refuse_keys.iter().enumerate() {
+                        if bc.refuse_keys[..a].contains(k) {
+                            cx.v(
+                                "body_check_refuse_keys",
+                                &format!("{bp}/refuse_keys"),
+                                format!("tool `{}`: `refuse_keys` names `{k}` twice", it.id),
+                            );
+                        }
+                        name!("refuse_keys", k);
+                    }
+                    if bc.only_keys.len() > 8 {
+                        cx.v(
+                            "body_check_only_keys",
+                            &format!("{bp}/only_keys"),
+                            format!("tool `{}`: `only_keys` covers at most 8 keys", it.id),
+                        );
+                    }
+                    for (k, allowed) in &bc.only_keys {
+                        name!("only_keys", k);
+                        if allowed.is_empty() {
+                            cx.v(
+                                "body_check_only_keys",
+                                &format!("{bp}/only_keys/{k}"),
+                                format!(
+                                    "tool `{}`: `only_keys.{k}` allows at least one key",
+                                    it.id
+                                ),
+                            );
+                        }
+                        if allowed.len() > 16 {
+                            cx.v(
+                                "body_check_only_keys",
+                                &format!("{bp}/only_keys/{k}"),
+                                format!("tool `{}`: `only_keys.{k}` allows at most 16 keys", it.id),
+                            );
+                        }
+                        for a in allowed {
+                            name!("only_keys", a);
+                        }
+                    }
+                    for (k, len) in &bc.exact_len {
+                        name!("exact_len", k);
+                        if *len == 0 {
+                            cx.v(
+                                "body_check_exact_len",
+                                &format!("{bp}/exact_len/{k}"),
+                                format!("tool `{}`: `exact_len.{k}` is at least 1", it.id),
+                            );
+                        }
+                    }
+                }
             }
         }
     }

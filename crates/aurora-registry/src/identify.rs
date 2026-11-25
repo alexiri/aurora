@@ -287,14 +287,16 @@ pub fn serves(
         && (t.methods.is_empty() || t.methods.iter().any(|m| m.eq_ignore_ascii_case(method)))
 }
 
-/// A GraphQL-tagged tool, or a tool with a `form` parameter condition (Q8, D-124), may match:
-/// the body prefix is needed to classify. Other requests are unaffected.
+/// A GraphQL-tagged tool, a tool with a `form` parameter condition (Q8, D-124), or a tool with
+/// a declared body shape (the gateway checks the whole body) may match: the body prefix is
+/// needed to classify or to check. Other requests are unaffected.
 pub fn needs_body(m: &AppMatch<'_>, host: &str, port: u16, path: &str, method: &str) -> bool {
     tools(m.app).any(|t| {
         (t.graphql.is_some()
             || t.params
                 .as_deref()
-                .is_some_and(aurora_policy::params::needs_body))
+                .is_some_and(aurora_policy::params::needs_body)
+            || t.body_check.is_some())
             && serves(m.app, m.instance, t, host, port, path, method)
     })
 }

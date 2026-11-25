@@ -424,6 +424,19 @@ fn execute(
         c.connection.method.as_deref(),
     );
     let mut obs = json!({ "app": m.app.app_id, "tool": tool.map(|t| t.id.as_str()) });
+    // A tool's declared body shape is enforced before any rule, approval or injection
+    // (fail closed: a body the gateway cannot check in full is refused too).
+    if let Some(bc) = tool.and_then(|t| t.body_check.as_ref())
+        && let Some(msg) = bc.violation(body, c.request.body_truncated)
+    {
+        if let Some(o) = obs.as_object_mut() {
+            o.insert(
+                "refused".into(),
+                json!({ "code": "tool_body_refused", "message": msg }),
+            );
+        }
+        return Ok(obs);
+    }
     // The instance guard refused: nothing is injected (compared against `expect.refused`).
     if let Some(r) = refusal {
         if let Some(o) = obs.as_object_mut() {

@@ -1,6 +1,6 @@
 package:
   id: grafana
-  version: 1.6.0
+  version: 1.7.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -132,8 +132,38 @@ apps:
           # policies, mute timings or templates: those routes select no tool and stay refused.
           # The legacy provisioning API is the one every supported Grafana serves (checked against
           # v13.3.1, where the /apis/… replacement is deprecating it; older servers have only it).
-          - { id: create_alert_rule, description: "Creates a Grafana-managed alert rule from the three-step query model the grafana-alerts script builds.", name: Create an alert rule, host: "{instance}", path: /api/v1/provisioning/alert-rules, methods: [POST] }
-          - { id: update_alert_rule, description: "Changes one Grafana-managed alert rule the agent manages (sends the whole rule the grafana-alerts script read and changed).", name: Change an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [PUT] }
+          # `body_check` mirrors the grafana-alerts script's rule shape, so a body the script
+          # cannot build is refused before anything else sees it: a recording rule, a second
+          # data step (a query no approval card shows), a label a notification policy could
+          # route on, or notification settings beyond the receiver.
+          - id: create_alert_rule
+            description: "Creates a Grafana-managed alert rule from the three-step query model the grafana-alerts script builds."
+            name: Create an alert rule
+            host: "{instance}"
+            path: /api/v1/provisioning/alert-rules
+            methods: [POST]
+            body_check:
+              refuse_keys: [record]
+              only_keys:
+                labels: [managed_by, expires, service]
+                annotations: [summary, expires]
+                notification_settings: [receiver]
+              exact_len:
+                data: 3
+          - id: update_alert_rule
+            description: "Changes one Grafana-managed alert rule the agent manages (sends the whole rule the grafana-alerts script read and changed)."
+            name: Change an alert rule
+            host: "{instance}"
+            path: "/api/v1/provisioning/alert-rules/*"
+            methods: [PUT]
+            body_check:
+              refuse_keys: [record]
+              only_keys:
+                labels: [managed_by, expires, service]
+                annotations: [summary, expires]
+                notification_settings: [receiver]
+              exact_len:
+                data: 3
           - { id: delete_alert_rule, description: "Deletes one Grafana-managed alert rule the agent manages.", name: Delete an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [DELETE] }
     approvals:
       create_annotation:
@@ -240,7 +270,9 @@ apps:
         To leave a Grafana alert rule, read the grafana-alerts skill and use its script: never
         create, change or delete a rule without the script's managed_by label and expiry, and
         never name a contact point that list_contact_points does not show. The script is the only
-        way to write a rule: build no rule body by hand — the approval card shows the shape the
-        script builds and cannot show fields outside it. There is no tool for contact points,
+        way to write a rule: build no rule body by hand — the gateway refuses a rule body the
+        script cannot build (a recording rule, a second query, or a label, annotation or receiver
+        setting the script does not set), and the approval card shows the shape the script builds
+        and cannot show fields outside it. There is no tool for contact points,
         notification policies, mute timings or templates: a person makes those.
       operations: operations.json

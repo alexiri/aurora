@@ -1410,6 +1410,19 @@ impl PolicyHandler {
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
+        // A tool's declared body shape is enforced before any rule, approval or injection:
+        // nothing the approval card cannot show is ever held for a person's approval. Fail
+        // closed: a body the gateway cannot check in full is refused too.
+        if let Some(bc) = tool.and_then(|t| t.body_check.as_ref())
+            && let Some(msg) = bc.violation(&body_prefix, truncated)
+        {
+            let err = ApiError::new(
+                StatusCode::FORBIDDEN,
+                "tool_body_refused",
+                format!("This request was refused: {msg}."),
+            );
+            return Outcome::Respond(self.refuse(ctx, &err, "tool_body_refused"));
+        }
         // (P5-MODELS-2, C-880) The model the request asks for, read the way the allow-list check reads it
         // (same body prefix); logged for every request with an injected key on a governed LLM endpoint.
         if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)

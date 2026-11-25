@@ -222,3 +222,37 @@
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://grafana.example.org/api/v1/provisioning/alert-rules" }
   expect: { app: grafana, no_tool: true }
+# The declared body shape: a body the grafana-alerts script cannot build is refused before the
+# approval, on both rule tools (the gateway checks it before any rule or approval sees it).
+- name: "refused create_alert_rule: a recording rule (the body carries record)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"record p95","ruleGroup":"agent-night","folderUID":"night-folder","record":{"from":"A"},"data":[{},{},{}]}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a second data step with its own SQL query"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A"},{"refId":"B"},{"refId":"C"},{"refId":"D","datasourceUid":"sql-main","model":{"rawSql":"select 1"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: a label a notification policy could route on"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night","expires":"2026-12-09","severity":"page"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: mute timings in the notification settings"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall","mute_time_intervals":["nights"]}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }

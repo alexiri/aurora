@@ -7,6 +7,7 @@ use serde_yaml::Value;
 
 pub use aurora_policy::params::{ParamCondition, ParamMatch, ParamSource};
 
+use crate::manifest::BodyCheck;
 use crate::template::Template;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -998,6 +999,12 @@ pub struct ToolItem {
     /// only; absent = no package default (and no change to the package's snapshot hash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<ToolDefaultApproval>,
+    /// A request-body shape the gateway enforces for this tool's raw sends: a body that is
+    /// not the declared shape is refused before any rule, approval or injection, so nothing
+    /// the approval card cannot show is ever held for a person's approval. Absent = no
+    /// body check (and no change to the package's snapshot hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_check: Option<BodyCheck>,
 }
 
 /// (P5-TOOLASK, C-1042) The values of a tool's `approval`; only `ask` exists.

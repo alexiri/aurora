@@ -1,8 +1,10 @@
 //! Manifest model, strict parsing and sanitization (09 §3).
+mod body_check;
 mod client_path;
 mod model;
 mod sanitize;
 
+pub use body_check::*;
 pub use client_path::*;
 pub use model::*;
 
