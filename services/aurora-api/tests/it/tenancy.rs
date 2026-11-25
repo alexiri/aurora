@@ -1074,3 +1074,96 @@ async fn workspace_and_org_delete_discard_webhook_and_integration_secrets() {
     assert_eq!(s, 204, "{e}");
     assert_eq!(mem.managed_count(), before);
 }
+
+/// (FIX-244, D-486) A delete tells the owners — a workspace's other own-right owners (else the
+/// org's other effective owners), an organization's other effective owners — never the actor and
+/// never an ordinary member. The body names the actor by display name, never an e-mail address,
+/// and says what the delete means. A refused delete sends nothing.
+#[tokio::test]
+async fn deletes_tell_the_owners_and_only_them() {
+    let h = Harness::new().await;
+    // The instance's creator (the harness's default configuration lets only an instance
+    // administrator create an organization); the notice still names them by display name, the
+    // delete is an ordinary org-owner route.
+    let (_, ot) = Who::new(&h, "owner@x.io", true).await;
+    let v = setup_org(&h, &ot, "Acme").await;
+    let org = id(&v["org"]["id"]);
+    let ws = id(&v["workspace"]["id"]);
+    // A second owner and an ordinary member, neither with a workspace binding of their own.
+    let peer = h.user("peer@x.io", false).await;
+    h.member(org, peer, "owner", "active").await;
+    let member = h.user("member@x.io", false).await;
+    h.member(org, member, "member", "active").await;
+
+    // A refused delete (wrong confirmation) sends nothing.
+    let (s, v) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/workspaces/{ws}"),
+        Some(json!({"confirm": "nope"})),
+    )
+    .await;
+    assert_eq!((s, code(&v)), (400, "confirmation_mismatch"), "{v}");
+    assert!(h.mail.sent().is_empty(), "nothing sent");
+
+    // The owner deletes the workspace: the org's other owner is told — the actor and the
+    // ordinary member are not.
+    let (s, _) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/workspaces/{ws}"),
+        Some(json!({"confirm": "default"})),
+    )
+    .await;
+    assert_eq!(s, 204);
+    let mail = h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, ["peer@x.io"], "only the other owner: {tos:?}");
+    let m = &mail[0];
+    assert!(m.subject.contains("was deleted"), "{m:?}");
+    assert!(m.body.contains(" deleted the workspace "), "{m:?}");
+    assert!(
+        m.body
+            .contains("Its agents, conversations and credentials are gone."),
+        "{m:?}"
+    );
+    assert!(
+        !m.body.contains('@'),
+        "no e-mail address in the body: {m:?}"
+    );
+
+    // The org's delete tells the org's other owners.
+    let slug: String = sqlx::query_scalar("SELECT slug FROM organizations WHERE id = $1")
+        .bind(org)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let (s, _) = call(
+        &h,
+        &ot,
+        Method::DELETE,
+        &format!("/v1/orgs/{org}"),
+        Some(json!({"confirm": slug})),
+    )
+    .await;
+    assert_eq!(s, 204);
+    let mail = h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert!(
+        tos.contains(&"peer@x.io") && !tos.contains(&"owner@x.io") && !tos.contains(&"member@x.io"),
+        "the other owner only: {tos:?}"
+    );
+    let m = mail
+        .iter()
+        .find(|m| m.to == "peer@x.io" && m.body.contains("deleted the organization"))
+        .unwrap();
+    assert!(m.body.contains(" deleted the organization "), "{m:?}");
+    assert!(
+        m.body
+            .contains("The organization and all of its workspaces are gone."),
+        "{m:?}"
+    );
+    assert!(!m.body.contains('@'), "{m:?}");
+}

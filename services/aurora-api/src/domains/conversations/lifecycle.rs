@@ -5,7 +5,7 @@
 use super::dto::{
     Conversation, PutRetention, RedactRequest, RedactResult, Retention, TranscriptEvent,
 };
-use super::service::{self, load_conversation_auth, speaker_label};
+use super::service::{self, load_conversation_auth, load_conversation_read, speaker_label};
 use super::zip::{self, ZipWriter};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
@@ -600,7 +600,8 @@ pub struct Exported {
 }
 
 /// `GET /conversations/{id}/export`: format `aurora.conversation.v1`. Authority: `can_own`, or
-/// the direct user of that direct conversation; `can_see_conversation` always applies.
+/// the direct user of that direct conversation — or an active emergency grant (C-1165: export
+/// is a read, and it is recorded as one). `can_see_conversation` always applies.
 pub async fn export(
     state: &AppState,
     c: &Caller,
@@ -616,10 +617,19 @@ pub async fn export(
             "must be >= 0",
         ));
     }
-    let (row, auth) = load_conversation_auth(state, c, id).await?;
-    if !owner_or_direct_user(c, &row, &auth) {
+    let (row, read) = load_conversation_read(state, c, id).await?;
+    let may = match &read {
+        // (C-1165) The emergency reader exports like an owner — and the export is recorded.
+        aurora_db::authz::ReadAuth::Emergency(g) => {
+            service::record_emergency_view(state, c, &row, g).await?;
+            true
+        }
+        aurora_db::authz::ReadAuth::Own(auth) => owner_or_direct_user(c, &row, auth),
+    };
+    if !may {
         return Err(forbidden());
     }
+    let org_id = read.org_id();
     let mut conn = state.pool.acquire().await.map_err(db)?;
     let (n_events, approx) = lifecycle::export_size(&mut conn, id, after).await?;
     let atts = lifecycle::export_attachments(&mut conn, id).await?;
@@ -676,11 +686,13 @@ pub async fn export(
     audit::record(
         state,
         AuditEvent::by(c, "conversation.export")
-            .org(auth.org_id)
+            .org(org_id)
             .workspace(row.workspace_id)
             .target("conversation", id)
             .metadata(json!({"events": events.len(), "attachments": zip_files,
-                             "kind": row.kind, "after_seq": after})),
+                             "kind": row.kind, "after_seq": after,
+                             "via": matches!(read, aurora_db::authz::ReadAuth::Emergency(_))
+                                 .then_some("emergency")})),
     );
     let stem = format!("conversation-{id}");
     if !zip_files {

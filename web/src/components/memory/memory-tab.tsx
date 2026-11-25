@@ -45,7 +45,7 @@ function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: string; memoryLanguage?: string; agentName?: string }) {
+export function MemoryTab({ agentId, memoryLanguage, agentName, readOnly = false }: { agentId: string; memoryLanguage?: string; agentName?: string; /** Emergency read access: memories can be read and searched, not written. */ readOnly?: boolean }) {
   const list = useMemories(agentId);
   const [q, setQ] = useState("");
   const search = useMemorySearch(agentId, q);
@@ -55,7 +55,7 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
   const current = items.find((m) => m.key === selected);
 
   // (P5-POLISH-6, C6) No memory yet: the whole tab is one empty state with its one action, and no "Select a memory" pane.
-  if (list.data && items.length === 0 && !creating) {
+  if (list.data && items.length === 0 && !creating && !readOnly) {
     return (
       <EmptyState
         title={`${agentName ?? "This agent"} doesn't remember anything yet`}
@@ -67,6 +67,10 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
         }
       />
     );
+  }
+  // Emergency read access: no memory yet means just that; nothing to write here.
+  if (list.data && items.length === 0 && readOnly) {
+    return <EmptyState title={`${agentName ?? "This agent"} doesn't remember anything yet`} when="It saves notes here as you work together." />;
   }
 
   return (
@@ -80,9 +84,11 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
             <input id="mem-search" type="search" className={inputClass} value={q} onChange={(e) => setQ(e.target.value)} />
           </Field>
         </div>
-        <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>
-          New memory
-        </Button>
+        {!readOnly ? (
+          <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>
+            New memory
+          </Button>
+        ) : null}
       </div>
       {list.isPending ? <Loading /> : null}
       {list.isError ? <ErrorState error={list.error} onRetry={() => list.refetch()} /> : null}
@@ -141,13 +147,14 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
           )}
         </div>
         <div>
-          {creating ? (
+          {readOnly && current ? <MemoryView memory={current} /> : null}
+          {!readOnly && creating ? (
             <MemoryEditor key="new" agentId={agentId} agentName={agentName} taken={items.map((m) => m.key)} onDone={(k) => { setCreating(false); setSelected(k); }} onCancel={() => setCreating(false)} />
           ) : null}
-          {!creating && current ? (
+          {!readOnly && !creating && current ? (
             <MemoryEditor key={`${current.key}:${current.revision}`} agentId={agentId} agentName={agentName} taken={[]} memory={current} onDone={(k) => setSelected(k)} onCancel={() => setSelected(null)} />
           ) : null}
-          {!creating && !current ? <p className="text-sm text-muted">Select a memory to edit it.</p> : null}
+          {!creating && !current ? <p className="text-sm text-muted">{readOnly ? "Select a memory to read it." : "Select a memory to edit it."}</p> : null}
         </div>
       </div>
     </div>
@@ -157,6 +164,42 @@ export function MemoryTab({ agentId, memoryLanguage, agentName }: { agentId: str
 /** A refusal because the key is taken (409): the key is Aurora's to make, so it tries the next one. */
 function keyTaken(e: unknown): boolean {
   return e instanceof ApiError && e.status === 409;
+}
+
+/** Emergency read access: the memory's words, without any way to change them. */
+function MemoryView({ memory }: { memory: Memory }) {
+  const locker = personName(memory.locked_by?.display_name);
+  return (
+    <div className="space-y-4">
+      <Card>
+        <div className="space-y-4">
+          {memory.title?.trim() ? (
+            <div>
+              <p className="text-xs text-muted">Title</p>
+              <p className="text-sm font-medium text-ink">{memory.title}</p>
+            </div>
+          ) : null}
+          <div>
+            <p className="text-xs text-muted">What the agent remembers</p>
+            <p className="whitespace-pre-wrap text-sm text-ink">{memory.content}</p>
+          </div>
+          <p className="text-xs text-muted">
+            Updated <When value={memory.updated_at} />
+          </p>
+          {memory.locked && memory.locked_at ? (
+            <p className="text-xs text-muted">
+              {memory.locked_by ? `Locked by ${locker} on ${formatExact(memory.locked_at)}` : `Locked on ${formatExact(memory.locked_at)}`}
+            </p>
+          ) : null}
+        </div>
+      </Card>
+      <Altitude id="memory.key" level="expert">
+        <TechnicalDetails>
+          <p>Memory key: {memory.key}</p>
+        </TechnicalDetails>
+      </Altitude>
+    </div>
+  );
 }
 
 /**

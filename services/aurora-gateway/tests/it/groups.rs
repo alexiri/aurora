@@ -382,12 +382,33 @@ async fn workspace_and_org_invalidations_refresh_binding_and_mapping_changes() {
             && i.speaker_group_ids.is_empty())
         .await
     );
-    // an `admin` org-role mapping gives `can_use` on every workspace: org scope
+    // an `admin` org-role mapping grants no workspace right (D-477): org scope changes nothing
     sqlx::query("UPDATE groups SET org_role = 'admin' WHERE id = $1")
         .bind(g)
         .execute(p)
         .await
         .unwrap();
+    ping(
+        p,
+        Channel::GatewayInvalidate,
+        json!({"scope": "org", "id": w.org}),
+    )
+    .await;
+    assert!(
+        until(&r, "auc_alice", |i| i.speaker_user_id.is_none()
+            && i.speaker_group_ids.is_empty())
+        .await,
+        "an org role is not workspace access"
+    );
+    // an org-scope invalidation does refresh a change of the person's own access
+    sqlx::query(
+        "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')",
+    )
+    .bind(w.ws)
+    .bind(w.alice)
+    .execute(p)
+    .await
+    .unwrap();
     ping(
         p,
         Channel::GatewayInvalidate,

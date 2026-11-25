@@ -352,10 +352,14 @@ impl Stream {
         }
     }
 
-    /// Re-read the viewer's access to the agent's workspace (role changes apply at once). False
-    /// (and the stream ends) when the viewer lost it.
+    /// Re-read the viewer's read authority on the agent's workspace (role changes and emergency
+    /// grants apply at once). False (and the stream ends) when the viewer lost it.
     async fn refresh_access(&mut self) -> bool {
-        match self.c.workspace(&self.s, self.agent.workspace_id).await {
+        match self
+            .c
+            .workspace_read(&self.s, self.agent.workspace_id)
+            .await
+        {
             Ok(auth) => {
                 self.viewer.auth = auth;
                 true
@@ -499,6 +503,12 @@ impl Stream {
             .iter()
             .filter_map(|r| feed.request_event(r))
             .collect();
+        // (FIX-236, C-1165, review HIGH) The record before the content, like the list endpoint:
+        // `rows_of_turns` records what it let through, but the single calls, the loaded rows
+        // (approvals, runs, deliveries, …) and the request events only queued their
+        // conversations — a failed audit write fails the build, and the stream resyncs instead
+        // of delivering content it could not record.
+        feed.record_emergency_views().await?;
         Ok((items, requests))
     }
 

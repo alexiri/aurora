@@ -3901,6 +3901,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/emergency-access/{id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End emergency read access early (C-1164): the opener, or any active org owner of the
+         *     organization, in a session. Idempotent: a grant that already ended answers 200 with the row.
+         */
+        post: operations["endEmergencyAccess"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/eval-questions/{id}": {
         parameters: {
             query?: never;
@@ -5090,6 +5110,26 @@ export interface paths {
          *     so that org connections can be granted; metadata only; I-27).
          */
         get: operations["listOrgConnections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/orgs/{org}/emergency-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The organization's emergency access history (`GET /v1/orgs/{org}/emergency-access`): org
+         *     owners and admins (C-1164). Metadata only, newest first, paged.
+         */
+        get: operations["listOrgEmergencyAccess"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6491,8 +6531,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get a workspace: the caller's own access answers in full; an administrator without own
-         *     access gets the metadata, `contacts` and `audience` (C-1160, C-1162).
+         * Get a workspace: the caller's own access answers in full; an emergency reader (C-1165) and
+         *     an administrator without own access (C-1160, C-1162) get the metadata, `contacts` and
+         *     `audience` — the emergency reader with `emergency_reader: true` and their own-right role
+         *     (usually none).
          */
         get: operations["getWorkspace"];
         put?: never;
@@ -6514,7 +6556,8 @@ export interface paths {
         };
         /**
          * List the workspace's access bindings (`can_administer`, C-1160; the rows are the bindings in
-         *     one's own right — since FIX-234 there are no implicit rows).
+         *     one's own right — since FIX-234 there are no implicit rows). Emergency read access (C-1165)
+         *     also reads the workspace's people.
          */
         get: operations["listAccess"];
         put?: never;
@@ -6956,6 +6999,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{ws}/emergency-access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The workspace's emergency access history (`GET /v1/workspaces/{ws}/emergency-access`): any
+         *     caller with own access or `can_administer` (C-1164). Metadata only, newest first, paged.
+         */
+        get: operations["listWorkspaceEmergencyAccess"];
+        put?: never;
+        /**
+         * Open emergency read access on a workspace (C-1164): a **session** of an active effective org
+         *     owner of the workspace's organization, with a reason (10–500 characters) and 1–24 hours
+         *     (default 4). The critical audit row `workspace.emergency_access.open` commits with the grant;
+         *     the notices (C-1165) go out after the commit and never fail it.
+         */
+        post: operations["openEmergencyAccess"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{ws}/freeze": {
         parameters: {
             query?: never;
@@ -7255,7 +7324,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List a workspace's skills (workspace tier). */
+        /**
+         * List a workspace's skills (workspace tier). The list is a C-1165 read (review LOW-9):
+         *     `ReadAuth` — the emergency reader reads it too; the create stays `can_own`.
+         */
         get: operations["listWorkspaceSkills"];
         put?: never;
         /** Create a workspace-tier skill (`can_own`, org owners/admins included); 409 `skill_exists`. */
@@ -10427,6 +10499,35 @@ export interface components {
             sent: boolean;
         };
         /**
+         * @description One emergency access row (C-1164). `active` is `ended_at IS NULL AND expires_at > now()`,
+         *     evaluated at answer time.
+         */
+        EmergencyAccess: {
+            active: boolean;
+            by: components["schemas"]["EmergencyAccessBy"];
+            end_reason?: string | null;
+            /** Format: date-time */
+            ended_at?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            opened_at: string;
+            reason: string;
+            workspace: components["schemas"]["EmergencyAccessWorkspace"];
+        };
+        EmergencyAccessBy: {
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+        };
+        EmergencyAccessWorkspace: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        /**
          * @description (P5-POLISH-3, D-385, C-1034) A role an endpoint leaves unset (or not allowed), for the endpoint's row in
          *     Administration › AI models.
          */
@@ -12316,6 +12417,16 @@ export interface components {
             groups?: boolean;
             id: string;
         };
+        OpenEmergencyAccessRequest: {
+            /**
+             * Format: int64
+             * @description How long it stays open, in hours: 1–24 (default 4). It can never be extended (D-478(d)):
+             *     a new grant is opened instead, and that notifies again.
+             */
+            hours?: number | null;
+            /** @description Why the access is needed; 10–500 characters (C-1164). */
+            reason: string;
+        };
         /**
          * @description Open-lane posture (RFE-003), ordered by strictness
          *     (`enabled` < `allowlist_only` < `disabled`).
@@ -13234,6 +13345,24 @@ export interface components {
             }[];
             next_cursor?: string | null;
         };
+        Page_EmergencyAccess: {
+            items: {
+                active: boolean;
+                by: components["schemas"]["EmergencyAccessBy"];
+                end_reason?: string | null;
+                /** Format: date-time */
+                ended_at?: string | null;
+                /** Format: date-time */
+                expires_at: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: date-time */
+                opened_at: string;
+                reason: string;
+                workspace: components["schemas"]["EmergencyAccessWorkspace"];
+            }[];
+            next_cursor?: string | null;
+        };
         Page_EvalRun: {
             items: {
                 agent: components["schemas"]["EvalAgentRef"];
@@ -14042,6 +14171,22 @@ export interface components {
                 /** Format: date-time */
                 created_at: string;
                 effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
+                /** @description (FIX-236, C-1165) True while the caller holds an active emergency read access here. */
+                emergency_reader: boolean;
+                /**
+                 * Format: date-time
+                 * @description (FIX-236, verify LOW-2) The caller's OWN active grant's expiry — what their reader
+                 *     banner counts down (`audience.emergency` may be another owner's newest grant); `null`
+                 *     when they hold no active grant. Never set for an API key: keys cannot use a grant.
+                 */
+                emergency_reader_expires_at?: string | null;
+                /**
+                 * Format: uuid
+                 * @description (FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id
+                 *     their reader banner's "End now" ends, never another owner's newest grant; `null` when
+                 *     they hold no active grant.
+                 */
+                emergency_reader_id?: string | null;
                 frozen?: components["schemas"]["Frozen"] | null;
                 /** Format: uuid */
                 id: string;
@@ -17957,6 +18102,22 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             effective_byo_posture?: components["schemas"]["ByoPostureView"] | null;
+            /** @description (FIX-236, C-1165) True while the caller holds an active emergency read access here. */
+            emergency_reader: boolean;
+            /**
+             * Format: date-time
+             * @description (FIX-236, verify LOW-2) The caller's OWN active grant's expiry — what their reader
+             *     banner counts down (`audience.emergency` may be another owner's newest grant); `null`
+             *     when they hold no active grant. Never set for an API key: keys cannot use a grant.
+             */
+            emergency_reader_expires_at?: string | null;
+            /**
+             * Format: uuid
+             * @description (FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id
+             *     their reader banner's "End now" ends, never another owner's newest grant; `null` when
+             *     they hold no active grant.
+             */
+            emergency_reader_id?: string | null;
             frozen?: components["schemas"]["Frozen"] | null;
             /** Format: uuid */
             id: string;
@@ -17976,6 +18137,13 @@ export interface components {
          *     own-right owners. Names only; never content.
          */
         WorkspaceAudience: {
+            emergency?: components["schemas"]["WorkspaceAudienceEmergency"] | null;
+            /**
+             * Format: int64
+             * @description (FIX-236, review HIGH-1) How many **other** emergency grants are active right now besides
+             *     `emergency` — two simultaneous openers are both announced.
+             */
+            emergency_active_more: number;
             /** @description The own-right owners: at most 5, the caller first if an owner, then by display name. */
             owners: components["schemas"]["WorkspaceAudienceOwner"][];
             /**
@@ -17988,6 +18156,23 @@ export interface components {
              * @description Distinct active people with access in their own right.
              */
             people: number;
+        };
+        /**
+         * @description (FIX-236, C-1165) `audience.emergency`: who opened emergency read access, why and until
+         *     when. Metadata only; the reason is the opener's own sanitized words.
+         */
+        WorkspaceAudienceEmergency: {
+            active: boolean;
+            by: components["schemas"]["WorkspaceAudienceOwner"];
+            /** Format: date-time */
+            ended_at?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            opened_at: string;
+            reason: string;
         };
         WorkspaceAudienceOwner: {
             display_name: string;
@@ -34334,6 +34519,70 @@ export interface operations {
             };
         };
     };
+    endEmergencyAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Emergency access id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmergencyAccess"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getEvalQuestion: {
         parameters: {
             query?: never;
@@ -39674,6 +39923,75 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listOrgEmergencyAccess: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Organization id */
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_EmergencyAccess"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -48311,6 +48629,166 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listWorkspaceEmergencyAccess: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..=200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a previous response's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Page_EmergencyAccess"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    openEmergencyAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Workspace id */
+                ws: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenEmergencyAccessRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmergencyAccess"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

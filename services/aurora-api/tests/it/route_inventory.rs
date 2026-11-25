@@ -1,10 +1,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-//! (FIX-234, C-1160) The route inventory. Every workspace-, agent-, connection-, schedule- and
-//! webhook-scoped route of the OpenAPI document must be classified: either it accepts
-//! `can_administer` (the C-1160 administer list) or it needs the caller's own access
-//! (`can_use`/`can_own`). A route that is in neither list fails the test, so a new route cannot
-//! quietly decide its own rule. The lists are compared against the document the router
-//! generates — nothing is hand-typed from memory.
+//! (FIX-234, C-1160; FIX-236, C-1165) The route inventory. Every workspace-, agent-,
+//! connection-, schedule- and webhook-scoped route of the OpenAPI document must be classified
+//! into exactly one of the lists: it accepts `can_administer` (the C-1160 administer list), it
+//! takes a `ReadAuth` — the caller's own access or an active emergency grant (C-1165) — it is
+//! the org owner's break-glass open (C-1164), or it needs the caller's own access
+//! (`can_use`/`can_own`). A route that is in two lists, or in
+//! neither, fails the test, so a new route cannot quietly decide its own rule. The lists are
+//! compared against the document the router generates — nothing is hand-typed from memory.
 
 use crate::common::*;
 use crate::org_role_admin::YAML;
@@ -20,9 +22,10 @@ const ADMINISTER: &[(&str, &[&str])] = &[
     // The org's workspaces: every row for an administrator, `my_role` null without own access.
     ("/orgs/{org}/workspaces", &["get"]),
     // Workspace metadata (`administers`, contacts, audience) and deletion. PATCH stays own.
+    // The GET also admits an emergency reader (C-1165), but `can_administer` alone already
+    // succeeds, so the route stays on this list.
     ("/workspaces/{ws}", &["get", "delete"]),
-    // People (C-1161 applies to each).
-    ("/workspaces/{ws}/access", &["get"]),
+    // People's writes (C-1161 applies to each); the people list itself is a READAUTH route.
     (
         "/workspaces/{ws}/access/{user}",
         &["put", "patch", "delete"],
@@ -44,11 +47,60 @@ const ADMINISTER: &[(&str, &[&str])] = &[
     // Metadata reads.
     ("/workspaces/{ws}/usage", &["get"]),
     ("/workspaces/{ws}/agent-tokens", &["get"]),
+    // The workspace's emergency-access history: own access or `can_administer` (C-1164) —
+    // `can_administer` alone succeeding puts it on this list.
+    ("/workspaces/{ws}/emergency-access", &["get"]),
     // The organization's accounts: grants, removal and the limit preview (org-scope only).
     ("/connections/{id}/grants", &["get", "post"]),
     ("/agents/{agent}/grants/connections/{conn}", &["delete"]),
     ("/connections/{id}/limit-preview", &["get"]),
 ];
+
+/// `(path, methods)` of the routes that take a `ReadAuth` (FIX-236, C-1165): the caller's own
+/// access or an active emergency grant. `can_administer` alone does not get in (the workspace
+/// GET's administer branch is that list's row), and a route here must refuse an emergency
+/// reader's writes — which never reach these methods. The C-1165 list is strict: memories
+/// search, followups and attention keep their own-access authority, and the skill file keeps
+/// its mixed authority outside this walk.
+const READAUTH: &[(&str, &[&str])] = &[
+    // The workspace's people (the administer path keeps working through its fallback).
+    ("/workspaces/{ws}/access", &["get"]),
+    // The workspace's agents and the request log (metadata, no recording needed).
+    ("/workspaces/{ws}/activity", &["get"]),
+    ("/workspaces/{ws}/agents", &["get"]),
+    ("/workspaces/{ws}/messages/search", &["get"]),
+    // The agent itself and its conversation lists.
+    ("/agents/{agent}", &["get"]),
+    ("/agents/{agent}/conversation-folders", &["get"]),
+    ("/agents/{agent}/conversations", &["get"]),
+    // Memory, schedules (+runs), webhooks (+deliveries) and skills: list and read.
+    ("/agents/{agent}/memories", &["get"]),
+    ("/agents/{agent}/memories/{key}", &["get"]),
+    ("/agents/{agent}/schedules", &["get"]),
+    ("/schedules/{id}", &["get"]),
+    ("/schedules/{id}/runs", &["get"]),
+    ("/agents/{agent}/webhooks", &["get"]),
+    ("/webhooks/{id}", &["get"]),
+    ("/webhooks/{id}/deliveries", &["get"]),
+    ("/agents/{agent}/skills", &["get"]),
+    // (Review LOW-9) The workspace skills list and the skill detail: the C-1165 reads.
+    ("/workspaces/{ws}/skills", &["get"]),
+    ("/skills/{id}", &["get"]),
+    // The conversation content: every response carrying it records the emergency view.
+    ("/conversations/{id}", &["get"]),
+    ("/conversations/{id}/events", &["get"]),
+    ("/conversations/{id}/stream", &["get"]),
+    ("/conversations/{id}/export", &["get"]),
+    ("/attachments/{id}/content", &["get"]),
+    ("/agents/{agent}/timeline", &["get"]),
+    ("/agents/{agent}/timeline/stream", &["get"]),
+];
+
+/// `(path, methods)` of the break-glass open route (FIX-236, C-1164): a **session** of an
+/// active effective org owner of the workspace's organization — an org admin, a member and a
+/// holder of own `can_own` there are all refused, so it is neither administered, nor a read, nor
+/// an own-access route. Its whole principal matrix is the SEC-154 tests (it/emergency_access.rs).
+const ORG_OWNER: &[(&str, &[&str])] = &[("/workspaces/{ws}/emergency-access", &["post"])];
 
 /// `(path, methods)` of the routes that need the caller's own access (`can_use` or `can_own`):
 /// everything scoped the administer list does not name (D-477: administering is not using). An
@@ -61,8 +113,7 @@ const OWN: &[(&str, &[&str])] = &[
     ("/workspaces/{ws}/access-requests", &["get"]),
     ("/workspaces/{ws}/accounts", &["get"]),
     ("/workspaces/{ws}/action-approvals", &["get"]),
-    ("/workspaces/{ws}/activity", &["get"]),
-    ("/workspaces/{ws}/agents", &["get", "post"]),
+    ("/workspaces/{ws}/agents", &["post"]),
     ("/workspaces/{ws}/agents/from-template", &["post"]),
     ("/workspaces/{ws}/agent-templates", &["get"]),
     ("/workspaces/{ws}/agent-templates/{template_id}", &["get"]),
@@ -76,7 +127,6 @@ const OWN: &[(&str, &[&str])] = &[
     ("/workspaces/{ws}/audit", &["get"]),
     ("/workspaces/{ws}/connections", &["get"]),
     ("/workspaces/{ws}/internet-access", &["get"]),
-    ("/workspaces/{ws}/messages/search", &["get"]),
     ("/workspaces/{ws}/oauth-clients", &["get", "post"]),
     ("/workspaces/{ws}/policy", &["get"]),
     ("/workspaces/{ws}/policy/draft", &["put"]),
@@ -89,20 +139,29 @@ const OWN: &[(&str, &[&str])] = &[
     ("/workspaces/{ws}/requests/{id}", &["delete"]),
     ("/workspaces/{ws}/secrets", &["get", "post"]),
     ("/workspaces/{ws}/skill-library-updates", &["get"]),
-    ("/workspaces/{ws}/skills", &["get", "post"]),
+    // (Review LOW-9) The GET moved to READAUTH (the C-1165 read); the create stays `can_own`.
+    ("/workspaces/{ws}/skills", &["post"]),
+    // The skill item and its files and library routes keep their own-access authority (review
+    // LOW-9 names the two reads only); the detail's GET is the READAUTH row above.
+    ("/skills/{id}", &["patch", "delete"]),
+    ("/skills/{id}/files/{*path}", &["get", "put", "delete"]),
+    ("/skills/{id}/library", &["get"]),
+    ("/skills/{id}/library/detach", &["post"]),
+    ("/skills/{id}/library/updates/{uid}/approve", &["post"]),
+    ("/skills/{id}/library/updates/{uid}/reject", &["post"]),
     (
         "/workspaces/{ws}/apps/{app}/setup-request",
         &["post", "delete"],
     ),
     // The agent itself and everything a person does with it: use it, read it, configure it.
-    ("/agents/{agent}", &["get", "patch", "delete"]),
+    // The GET is a READAUTH route (C-1165); configuring and deleting stay own.
+    ("/agents/{agent}", &["patch", "delete"]),
     ("/agents/{agent}/answer-readiness", &["get"]),
     ("/agents/{agent}/apps/{app}/access", &["get"]),
     ("/agents/{agent}/avatar", &["get", "put", "delete"]),
     ("/agents/{agent}/byo", &["put"]),
     ("/agents/{agent}/container-config", &["get"]),
-    ("/agents/{agent}/conversation-folders", &["get"]),
-    ("/agents/{agent}/conversations", &["get", "post"]),
+    ("/agents/{agent}/conversations", &["post"]),
     ("/agents/{agent}/conversations/direct", &["post"]),
     ("/agents/{agent}/conversations/direct/new", &["post"]),
     ("/agents/{agent}/effective", &["get"]),
@@ -126,8 +185,8 @@ const OWN: &[(&str, &[&str])] = &[
     ("/agents/{agent}/helpers/content", &["get"]),
     ("/agents/{agent}/linkable", &["get"]),
     ("/agents/{agent}/links", &["get", "post"]),
-    ("/agents/{agent}/memories", &["get", "post"]),
-    ("/agents/{agent}/memories/{key}", &["get", "put", "delete"]),
+    ("/agents/{agent}/memories", &["post"]),
+    ("/agents/{agent}/memories/{key}", &["put", "delete"]),
     ("/agents/{agent}/memories/{key}/locked", &["put"]),
     ("/agents/{agent}/memories/{key}/revisions", &["get"]),
     ("/agents/{agent}/memories/{key}/restore", &["post"]),
@@ -148,10 +207,10 @@ const OWN: &[(&str, &[&str])] = &[
     ("/agents/{agent}/sandbox/retry", &["post"]),
     ("/agents/{agent}/sandbox/sleep", &["post"]),
     ("/agents/{agent}/sandbox/wake", &["post"]),
-    ("/agents/{agent}/schedules", &["get", "post"]),
+    ("/agents/{agent}/schedules", &["post"]),
     ("/agents/{agent}/schedules/preview", &["post"]),
     ("/agents/{agent}/skill-library-updates", &["get"]),
-    ("/agents/{agent}/skills", &["get", "post"]),
+    ("/agents/{agent}/skills", &["post"]),
     ("/agents/{agent}/skills/effective", &["get"]),
     ("/agents/{agent}/space-bindings", &["get", "post"]),
     ("/agents/{agent}/ssh-certificate", &["post"]),
@@ -160,42 +219,33 @@ const OWN: &[(&str, &[&str])] = &[
     ("/agents/{agent}/template", &["get", "delete"]),
     ("/agents/{agent}/template/apply", &["post"]),
     ("/agents/{agent}/terminal/shell", &["get", "put"]),
-    ("/agents/{agent}/timeline", &["get"]),
-    ("/agents/{agent}/timeline/stream", &["get"]),
     ("/agents/{agent}/token", &["post"]),
-    ("/agents/{agent}/webhooks", &["get", "post"]),
+    ("/agents/{agent}/webhooks", &["post"]),
     // Credentials, schedules and webhooks addressed by their own id: own `can_use`/`can_own`
     // (an org-scope connection's grants are the administer list's rows).
     ("/connections/{id}", &["get", "patch", "delete"]),
     ("/connections/{id}/webhook", &["get", "put"]),
     ("/connections/{id}/webhook/test", &["post"]),
-    ("/schedules/{id}", &["get", "patch", "delete"]),
-    ("/schedules/{id}/runs", &["get"]),
+    ("/schedules/{id}", &["patch", "delete"]),
     ("/schedules/{id}/run-now", &["post"]),
-    ("/webhooks/{id}", &["get", "patch", "delete"]),
-    ("/webhooks/{id}/deliveries", &["get"]),
+    ("/webhooks/{id}", &["patch", "delete"]),
     ("/webhooks/{id}/rotate", &["post"]),
     ("/webhooks/{id}/rotate-secret", &["post"]),
     // Conversations, turns and attachments: the transcript belongs to the workspace's people
-    // (D-477: administering is not using). Reading and writing need `can_use`
-    // (`can_see_conversation`); deleting, exporting and redacting need `can_own`, a direct
-    // conversation's person excepted.
-    ("/conversations/{id}", &["get", "patch", "delete"]),
+    // (D-477: administering is not using). Writing, deleting and redacting need `can_own`, a
+    // direct conversation's person excepted; the content reads are READAUTH routes (C-1165).
+    ("/conversations/{id}", &["patch", "delete"]),
     ("/conversations/{id}/archive", &["post"]),
     ("/conversations/{id}/unarchive", &["post"]),
-    ("/conversations/{id}/events", &["get"]),
     ("/conversations/{id}/events/{seq}/redact", &["post"]),
     ("/conversations/{id}/attachments", &["post"]),
     ("/conversations/{id}/continue", &["post"]),
-    ("/conversations/{id}/export", &["get"]),
     ("/conversations/{id}/followups", &["get"]),
     ("/conversations/{id}/messages", &["post"]),
-    ("/conversations/{id}/stream", &["get"]),
     ("/turns/{id}/abort", &["post"]),
     ("/turns/{id}/redact", &["post"]),
     ("/turns/{id}/send-now", &["post"]),
     ("/attachments/{id}", &["delete"]),
-    ("/attachments/{id}/content", &["get"]),
     ("/followups/{id}", &["patch"]),
     ("/followups/{id}/cancel", &["post"]),
     ("/followups/{id}/steer", &["post"]),
@@ -222,9 +272,10 @@ const OWN: &[(&str, &[&str])] = &[
 
 /// The item-scoped route prefixes the inventory walks: the routes whose authority is a
 /// workspace's. The document's paths carry the `/v1` nest prefix; it is stripped here so the
-/// lists read like the route catalogue. (`/secrets/{id}`, `/agent-links/{id}`, `/skills/{id}`,
-/// `/apps/{app}` and the channel-setup routes keep their own mixed org/workspace authority and
-/// stay outside this walk — the permission matrix covers every documented route.)
+/// lists read like the route catalogue. (`/secrets/{id}`, `/agent-links/{id}`, `/apps/{app}`
+/// and the channel-setup routes keep their own mixed org/workspace authority and stay outside
+/// this walk — the permission matrix covers every documented route. `/skills/{id}` is IN since
+/// review LOW-9: its reads are C-1165 reads and the item itself follows the workspace.)
 fn scoped(path: &str) -> bool {
     let p = path.strip_prefix("/v1").unwrap_or(path);
     [
@@ -245,6 +296,7 @@ fn scoped(path: &str) -> bool {
         "/eval-runs/{id}",
         "/eval-schedules/{id}",
         "/action-approvals/{id}",
+        "/skills/{id}",
     ]
     .iter()
     .any(|pre| p.starts_with(pre))
@@ -276,22 +328,43 @@ fn every_scoped_route_is_classified() {
                 _ => None,
             };
             let Some(_) = op else { continue };
-            if listed(ADMINISTER, path, method) || listed(OWN, path, method) {
+            let mut lists: Vec<&str> = Vec::new();
+            if listed(ADMINISTER, path, method) {
+                lists.push("ADMINISTER");
+            }
+            if listed(READAUTH, path, method) {
+                lists.push("READAUTH");
+            }
+            if listed(ORG_OWNER, path, method) {
+                lists.push("ORG_OWNER");
+            }
+            if listed(OWN, path, method) {
+                lists.push("OWN");
+            }
+            if lists.len() == 1 {
                 classified += 1;
+            } else if lists.is_empty() {
+                problems.push(format!("{method} {path} (in none)"));
             } else {
-                problems.push(format!("{method} {path}"));
+                problems.push(format!("{method} {path} (in {})", lists.join(" and ")));
             }
         }
     }
     assert!(
         problems.is_empty(),
-        "unclassified route(s) — put each into ADMINISTER (accepts `can_administer`) or OWN \
-         (needs own access) in tests/it/route_inventory.rs:\n  {}",
+        "misclassified route(s) — put each into exactly one of ADMINISTER (accepts \
+         `can_administer`), READAUTH (own access or an emergency grant), ORG_OWNER (the \
+         break-glass open) or OWN (needs own access) in tests/it/route_inventory.rs:\n  {}",
         problems.join("\n  ")
     );
     // The lists themselves must not drift: every entry still names a documented route.
     let mut stale = Vec::new();
-    for (path, methods) in ADMINISTER.iter().chain(OWN.iter()) {
+    for (path, methods) in ADMINISTER
+        .iter()
+        .chain(READAUTH.iter())
+        .chain(ORG_OWNER.iter())
+        .chain(OWN.iter())
+    {
         for m in methods.iter() {
             let key = format!("/v1{path}");
             let Some(item) = doc.paths.paths.get(key.as_str()) else {
@@ -353,6 +426,10 @@ struct World {
     conn: Uuid,
     schedule: Uuid,
     webhook: Uuid,
+    /// The author's direct conversation with one message (the C-1165 conversation rows).
+    conversation: Uuid,
+    /// A workspace-tier skill (review LOW-9: the skill reads joined the walk).
+    skill: Uuid,
     extra_ws: Uuid,
     extra_slug: String,
     markers: Vec<String>,
@@ -502,6 +579,20 @@ async fn seed_world() -> World {
         .await;
     assert!((200..300).contains(&sc), "{sv}");
 
+    // A workspace-tier skill the author created (the C-1165 skill reads, review LOW-9).
+    let skill = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO skills (id, org_id, workspace_id, name, description, body, created_by_kind) \
+         VALUES ($1,$2,$3,'inv-walk-skill','the walk skill','MATRIX-skill-body','user')",
+    )
+    .bind(skill)
+    .bind(org)
+    .bind(ws)
+    .bind(author)
+    .execute(h.pool())
+    .await
+    .unwrap();
+
     // A second workspace the admin deletes at the very end (the org's default stays).
     let (sc, sv) = h
         .call_tok(
@@ -535,6 +626,8 @@ async fn seed_world() -> World {
         conn,
         schedule,
         webhook,
+        conversation,
+        skill,
         extra_ws,
         extra_slug,
         markers: vec![
@@ -553,6 +646,11 @@ fn body_for_row(m: &str, p: &str, w: &World) -> Value {
     match (m, p) {
         ("POST", "/connections/{id}/grants") => {
             json!({"agent_ids": [w.fx.agent], "mode": "full"})
+        }
+        // The break-glass open: a syntactically valid body, so the org-role refusal is what
+        // the walk sees (the SEC-154 file covers the 409/422 ladder).
+        ("POST", "/workspaces/{ws}/emergency-access") => {
+            json!({"reason": "inventory walk refusal", "hours": 1})
         }
         ("DELETE", "/workspaces/{ws}") => json!({"confirm": w.extra_slug}),
         // Routes body_for does not cover (their matrix rows are EXEMPT or need a field).
@@ -603,8 +701,44 @@ fn uri_for(m: &str, p: &str, w: &World, pending: &mut Option<Uuid>) -> String {
         "/schedules/{id}/creator" => {
             uri = format!("/v1/schedules/{}/creator", w.schedule);
         }
+        // (Review LOW-9) The seeded workspace skill: the reads ride on it, the refusals and
+        // library rows still answer on authority before their path/uid matter.
+        p if p.starts_with("/skills/{id}") => {
+            if p.ends_with("/files/{*path}") {
+                uri = format!("/v1/skills/{}/files/a.txt", w.skill);
+            } else {
+                let rest = p
+                    .trim_start_matches("/skills/{id}")
+                    .replace("{uid}", &Uuid::now_v7().to_string());
+                uri = format!("/v1/skills/{}{}", w.skill, rest);
+            }
+        }
+        // The C-1165 read rows addressed by their own id: the seeded schedule and webhook.
+        "/schedules/{id}" | "/schedules/{id}/runs" => {
+            uri = format!(
+                "/v1/schedules/{}{}",
+                w.schedule,
+                p.trim_start_matches("/schedules/{id}")
+            );
+        }
+        "/webhooks/{id}" | "/webhooks/{id}/deliveries" => {
+            uri = format!(
+                "/v1/webhooks/{}{}",
+                w.webhook,
+                p.trim_start_matches("/webhooks/{id}")
+            );
+        }
         "/webhooks/{id}/creator" => {
             uri = format!("/v1/webhooks/{}/creator", w.webhook);
+        }
+        // The C-1165 conversation rows: the seeded direct conversation (the stream row never
+        // finishes its body once authorized, which the walk reads as an open stream).
+        p if p.starts_with("/conversations/{id}") => {
+            uri = format!(
+                "/v1/conversations/{}{}",
+                w.conversation,
+                permission_matrix::fill(p.trim_start_matches("/conversations/{id}"), &w.fx)
+            );
         }
         // The extra workspace: the org's default one must survive the walk.
         "/workspaces/{ws}" if m.eq_ignore_ascii_case("delete") => {
@@ -635,9 +769,14 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
             rows.push((m.to_string(), p));
         }
     }
+    // (FIX-236, C-1165) The people list is a READAUTH route now, but an administrator without
+    // own access still gets its contentless success through the route's administer fallback.
+    rows.push(("get".to_owned(), "/workspaces/{ws}/access"));
     rows.sort_by_key(|(m, p)| phase(m, p));
     let own_rows: Vec<(String, &'static str)> = OWN
         .iter()
+        .chain(READAUTH.iter())
+        .chain(ORG_OWNER.iter())
         .flat_map(|(p, ms)| ms.iter().map(move |m| (m.to_string(), *p)))
         .collect();
 
@@ -799,10 +938,219 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
             assert_eq!(s, 200, "OWN {m} {p}: the personal stream stays open");
             continue;
         }
+        if p == "/workspaces/{ws}/access" {
+            // (FIX-236, C-1165) A READAUTH route, walked with the administered rows above for
+            // its fallback: here it is the emergency reader's row, skipped for this admin.
+            continue;
+        }
         assert!(
             matches!(s, 403 | 404),
             "OWN {m} {p} for an admin without a binding: {s} {}",
             serde_json::to_string(&v).unwrap_or_default()
         );
     }
+}
+
+/// (FIX-236, SEC-154, C-1165) The behavioural emergency walk: with an active emergency grant,
+/// the emergency reader gets a success **with content** on every READAUTH route — the grant is
+/// the only authority they hold there (the opener has no workspace binding; FIX-234: an org role
+/// grants no workspace right). Everywhere else the opener's own org-owner rights answer as they
+/// would without the grant: the administered and org-scope rows stay **contentless successes**,
+/// every OWN row and write refuses (403/404), and the break-glass open itself is 409 (one
+/// active grant per workspace and person). No route ever leaks a content marker to a caller
+/// the grant does not cover.
+#[tokio::test]
+async fn emergency_reader_reads_the_readauth_routes_and_is_refused_everywhere_else() {
+    let w = seed_world().await;
+    let opener = w.h.user("inv-opener@x.io", false).await;
+    w.h.member(w.fx.org, opener, "owner", "active").await;
+    let (_, opener_tok) = w.h.good_session(opener).await;
+    let (s, v) =
+        w.h.call_tok(
+            &opener_tok,
+            Method::POST,
+            &format!("/v1/workspaces/{}/emergency-access", w.fx.ws),
+            Some(json!({"reason": "inventory emergency walk", "hours": 4})),
+        )
+        .await;
+    assert_eq!(s, 201, "the org owner opens the grant: {v}");
+    let grant: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let c = cookie(&opener_tok);
+
+    // (method, path, is a read row). The read rows are the C-1165 list plus the workspace GET.
+    let mut rows: Vec<(String, &'static str, bool)> = Vec::new();
+    for (p, ms) in READAUTH {
+        for m in ms.iter() {
+            rows.push((m.to_string(), p, true));
+        }
+    }
+    for (p, ms) in ADMINISTER.iter().chain(OWN.iter()) {
+        for m in ms.iter() {
+            let read = *p == "/workspaces/{ws}" && *m == "get";
+            rows.push((m.to_string(), p, read));
+        }
+    }
+    rows.push((
+        "post".to_owned(),
+        "/workspaces/{ws}/emergency-access",
+        false,
+    ));
+    // The stream rows last: an emergency reader's open read stream never finishes its body,
+    // and its handler holds a pool connection while it hangs — with the 5-connection test pool
+    // that would starve the later writes (a secret grant takes two connections at once).
+    rows.sort_by_key(|(m, p, _)| {
+        if p.ends_with("/stream") {
+            10
+        } else {
+            phase(m, p)
+        }
+    });
+
+    let mut pending: Option<Uuid> = None;
+    let mut read_rows = 0usize;
+    for (m, p, read) in &rows {
+        let uri = uri_for(m, p, &w, &mut pending);
+        // The memory detail's {key} is a key, not an id: the author seeded "k".
+        let uri = if *p == "/agents/{agent}/memories/{key}" {
+            format!("/v1/agents/{}/memories/k", w.fx.agent)
+        } else if p.ends_with("/messages/search") || p.ends_with("/memories/search") {
+            // The required `q` query (whether the row is walked as a read or an own-access
+            // refusal) — without it the query extractor would answer 400 first.
+            format!("{uri}?q=matrix")
+        } else if p.ends_with("/content") || p.ends_with("/text") {
+            // The required `path` query (files and helpers content reads) is extracted after
+            // authorization: with it, the route answers on authority (the emergency reader
+            // holds none) instead of 400.
+            format!("{uri}?path=/workspace/a.txt")
+        } else {
+            uri
+        };
+        let write = m.eq_ignore_ascii_case("post")
+            || m.eq_ignore_ascii_case("put")
+            || m.eq_ignore_ascii_case("patch");
+        let body = (write || (m.eq_ignore_ascii_case("delete") && *p == "/workspaces/{ws}"))
+            .then(|| body_for_row(&m.to_uppercase(), p, &w));
+        // The two stream rows never finish their body once authorized: a timeout means the
+        // stream opened — the emergency reader may read both streams (C-1165).
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            w.h.send(
+                Method::from_bytes(m.to_uppercase().as_bytes()).unwrap(),
+                &uri,
+                &[("cookie", c.as_str()), ("origin", ORIGIN)],
+                body,
+            ),
+        )
+        .await;
+        let (s, v) = match outcome {
+            Ok((s, _, v)) => (s.as_u16(), v),
+            Err(_) => (200, Value::Null),
+        };
+        // The by-email row for the pending-delete later in the walk (the opener is an org
+        // owner: the administered POST creates it, like for the admin walk).
+        if *p == "/workspaces/{ws}/access/by-email" {
+            let (ps, pv) =
+                w.h.call(
+                    &c,
+                    Method::GET,
+                    &format!("/v1/workspaces/{}/access/pending", w.fx.ws),
+                    None,
+                )
+                .await;
+            assert_eq!(ps, 200, "{pv}");
+            pending = Some(
+                pv["items"][0]["id"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("by-email created a pending row: {pv}"))
+                    .parse()
+                    .unwrap(),
+            );
+        }
+        if *p == "/approvals/pending" || *p == "/approvals/stream" {
+            // The caller's personal queue/stream: not workspace authority at all — the
+            // opener's own (empty) queue answers, like for the admin walk.
+            assert_eq!(s, 200, "personal {m} {p}: {v}");
+            if *p == "/approvals/pending" {
+                assert_eq!(v["items"].as_array().map(Vec::len), Some(0), "{v}");
+            }
+            continue;
+        }
+        if *read {
+            read_rows += 1;
+            // The one READAUTH row whose resource the walk does not seed (a random attachment
+            // id) may 404 — but never on authorization; the seeded download is the
+            // SEC-154 file's attachment test.
+            if *p == "/attachments/{id}/content" {
+                assert_ne!(s, 403, "READAUTH {m} {p}: {v}");
+            } else {
+                assert!(
+                    (200..300).contains(&s),
+                    "READAUTH {m} {p} for an emergency reader: {s} {v}"
+                );
+            }
+            // The grant is what the reads ride on: the workspace's content reaches the
+            // emergency reader where the route returns it (the direct conversation's
+            // transcript, its memory).
+            if *p == "/conversations/{id}/events" {
+                assert!(
+                    v.to_string().contains("MATRIX-message-content"),
+                    "the emergency reader reads the direct conversation's transcript: {v}"
+                );
+            }
+            if *p == "/agents/{agent}/memories" {
+                assert!(
+                    v.to_string().contains("MATRIX-memory-content"),
+                    "the emergency reader reads the agent's memory: {v}"
+                );
+            }
+        } else if *p == "/workspaces/{ws}/emergency-access" && m == "post" {
+            // The one active grant per (workspace, person): 409 `emergency_access_active`,
+            // never a second grant.
+            assert_eq!(s, 409, "{m} {p}: {v}");
+            assert_eq!(v["error"]["code"], "emergency_access_active", "{v}");
+        } else {
+            let text = v.to_string();
+            for marker in &w.markers {
+                assert!(
+                    !text.contains(marker),
+                    "{m} {p} leaked content marker {marker} to an emergency reader: {text}"
+                );
+            }
+            // An administered row answers the opener anyway: they are an org owner, and
+            // `can_administer` covers it with or without the grant (C-1160) — but contentless.
+            // Everything else (the OWN writes and reads) refuses: the grant is a read-only
+            // exception, never an own-access right (C-1165).
+            let administered = ADMINISTER
+                .iter()
+                .any(|(ap, ms)| *ap == *p && ms.contains(&m.as_str()));
+            assert!(
+                if administered {
+                    (200..300).contains(&s)
+                } else {
+                    matches!(s, 403 | 404)
+                },
+                "{m} {p} for an emergency reader (administered: {administered}): {s} {v}"
+            );
+        }
+    }
+    assert!(read_rows >= 20, "{read_rows} read rows walked");
+
+    // The recording (C-1165): every content read of the conversation wrote exactly one
+    // `conversation.emergency_view` row (once per actor, conversation and hour — the GET, the
+    // events, the stream, the export and the timeline all dedupe onto it).
+    let views: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(views, 1, "one deduplicated emergency_view row");
+    let recorded: (Uuid, Uuid) = sqlx::query_as(
+        "SELECT (metadata->>'emergency_access')::uuid, target_id::uuid FROM audit_log \
+         WHERE action = 'conversation.emergency_view' LIMIT 1",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(recorded.0, grant, "the row names the grant");
 }

@@ -1273,6 +1273,9 @@ unified by D-407 (P5-REFINE-1).
 | **Language <Agent> remembers in** ("Language agents remember in" for a workspace) | Memory language | the language of memory search | Expert |
 | **Locked** (a memory: the badge, the switch, "Lock it", "Locked by <name> on <date>") | Read-only, pinned, protected | a memory a person locked so <Agent> can read it but not change or delete it (P6-MEMLOCK, C-1150) | Use |
 | **Came with this workspace** | Default agent, Default (badge) | the agent a new workspace starts with | Use |
+| **Emergency read access** ("Open emergency read access", "End now") | Break-glass, emergency grant | time-limited read-only access an organization owner opens on one workspace, with a reason; everyone in the workspace is told and every read is recorded (FIX-236) | Set up |
+| **"Emergency read access until <time>…"** (the reader's banner); **"<Name>, an organization owner, has emergency read access…"** (the people's banner) | `emergency_reader`, `audience.emergency` | the state the workspace is in while a grant is active | Use |
+| **Until <time>**, **Ended**, **Expired**, **Access lost** | end_reason, expiry | how a grant ended, in the history lists | Set up |
 | **Ask an admin** ("Ask an Aurora administrator", "Ask an organization admin", "Ask a workspace owner"); "Needs an admin first"; "Managed by your organization's admins" | Ask alice, Needs alice first, managed by alice | who can do what you cannot: a role, never a login, because instance and organization admins can be several people. A person's name stays where that person is the subject ("Bob asked", "Invited by Alice Admin") | Use |
 | **Administration** | Admin, All organizations | the instance level, for instance admins | Use |
 | **Apps & accounts** | Credentials, Apps & services | the topic for what agents can use and how apps are set up | Use |
@@ -3472,6 +3475,36 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
 - **Settings:** the organization's switch and the two limits are a card on the organization's Apps tab (owners
   change them). The instance's `outgoing_webhooks` section is on Apps & accounts › Advanced, through the generic
   section form.
+
+### 13. Emergency read access: dialog, emergency mode, banners and history (FIX-236, D-478, C-1164, C-1165)
+
+- **Opening it.** On the manage page (`/o/<org>/workspaces/<ws>`, FIX-235), for organization owners only, the danger
+  button **"Open emergency read access"** (`emergency-open`). The dialog is the confirmation ladder's steps, not a
+  wizard of its own:
+  1. **The form:** a textarea "Why do you need to read this workspace?" (10–500 characters, counted inline) and a
+     duration select (1, 2, 4 (default), 8 or 24 hours). Server errors surface here.
+  2. **The danger confirm** ("Back" keeps the reason): "Everyone in <Workspace> and the organization's other owners
+     will be told, with your reason. Everything you open is recorded. You can read, not act."
+  On success the owner lands in the workspace in emergency mode. A 409 (one active per workspace and person, or the
+  owner already holds own access) shows as an alert in both steps.
+- **Emergency mode.** While `emergency_reader` is true the workspace shell is read-only, from the existing read-only
+  owner view's pieces: Chat (every conversation, direct ones included, with no composer, no Stop, no "…" menu and a
+  notice instead of the composer), Activity, each agent's Settings (inputs disabled, no save bar, no avatar change),
+  Memory (read-only view), Automations and Skills (lists and reads), People (no Add people). The side navigation
+  stays on the read-only topics; Terminal, Files, Computer, previews, Apps & access and approvals are not offered.
+  Availability badges show the emergency state; Status and AnswerFix are hidden.
+- **The reader's banner** (`emergency-reader-banner`), on every page: "Emergency read access until <time>. Everything
+  you open is recorded, and this workspace's people have been told." with **"End now"** (`emergency-end-now`). Ending
+  is idempotent; the banner goes when the workspace refetches.
+- **The people's banner** (`emergency-people-banner`), on every page of the workspace while `audience.emergency` is
+  set: "<Name>, an organization owner, has emergency read access to this workspace until <time>. Reason: <reason>."
+  After it ends (the row stays 7 days): "…had emergency read access from <time> to <time>." Dismissible per person
+  (local storage, try/catch; `emergency-banner-dismiss`).
+- **The chat line** (D-479): `lib/chat/audience.ts` appends, in every branch while it is active: "<Name>, an
+  organization owner, can read this workspace's conversations until <time> (emergency access)."
+- **History.** An "Emergency access" section on the workspace's People page and under the organization's audit topic:
+  who, reason, from–to, and a badge — "Until <time>" while active, or the ending ("Ended", "Expired", "Access
+  lost"). The rows are metadata only; they never carry conversation content.
 
 ### Rules for every screen in this section
 

@@ -224,6 +224,10 @@ pub async fn freeze(
     credentials::notify_gateway_invalidate(&mut *tx, label(target.scope), target.id).await?;
     let own = repo::get(&mut tx, target.scope, target.id, false).await?;
     tx.commit().await.map_err(DbError::from)?;
+    // (FIX-244) The owners are told after the commit; a failing notice never fails the freeze.
+    if created || escalated {
+        crate::domains::lifecycle_notices::freeze_committed(state, target, &who.actor).await;
+    }
     for (c, t) in flush {
         lifecycle::flush_deltas(state, c, t).await;
     }
@@ -251,7 +255,9 @@ pub async fn unfreeze(
     if !repo::lock(&mut tx, target.scope, target.id).await? {
         return Err(ApiError::not_found("Not found."));
     }
+    let mut unfroze = false;
     if let Some(cur) = repo::get(&mut tx, target.scope, target.id, false).await? {
+        unfroze = true;
         if repo::authority_rank(who.authority) < repo::authority_rank(&cur.authority) {
             return Err(insufficient(who.authority, &cur.authority));
         }
@@ -291,6 +297,10 @@ pub async fn unfreeze(
             .is_some(),
     };
     tx.commit().await.map_err(DbError::from)?;
+    // (FIX-244) The owners are told after the commit; a failing notice never fails the unfreeze.
+    if unfroze {
+        crate::domains::lifecycle_notices::unfreeze_committed(state, target, &who.actor).await;
+    }
     Ok(FreezeResult {
         frozen: None,
         effective_frozen,

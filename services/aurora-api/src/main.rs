@@ -576,6 +576,8 @@ async fn serve(
     aurora_api::jobs::spawn_ssh_sweep(state.clone());
     // (P4-UTOK) discard the sealed values of finished sends and ended person tokens.
     aurora_api::jobs::spawn_user_token_sweep(state.clone());
+    // (FIX-236, C-1164) end the emergency-access grants whose expires_at passed.
+    aurora_api::jobs::spawn_emergency_expiry(state.clone());
     aurora_api::jobs::spawn_eval_retention(state.pool.clone());
     aurora_api::domains::push::jobs::spawn(state.clone());
     aurora_api::jobs::spawn(pool, state.ops_live.clone(), quota_mail);

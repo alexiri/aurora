@@ -46,6 +46,10 @@ describe("OrgAuditView (RFE-008)", () => {
         const req = input instanceof Request ? input : null;
         const url = new URL(req ? req.url : String(input), "http://localhost");
         seen.push(url.search);
+        // (FIX-236) The audit topic's emergency history is its own list; the test's org has none.
+        if (url.pathname === "/v1/orgs/o1/emergency-access") {
+          return new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200, headers: { "content-type": "application/json" } });
+        }
         const only = url.searchParams.get("critical") === "true";
         const items = only ? [entry("1", "policy.publish", true)] : [entry("1", "policy.publish", true), entry("2", "agent.create", false)];
         return new Response(JSON.stringify({ items, next_cursor: null }), {
@@ -85,6 +89,10 @@ describe("OrgAuditView (RFE-008)", () => {
         const req = input instanceof Request ? input : null;
         const url = new URL(req ? req.url : String(input), "http://localhost");
         seen.push(url.pathname + url.search);
+        // (FIX-236) The audit topic's emergency history is its own list; the test's org has none.
+        if (url.pathname === "/v1/orgs/o1/emergency-access") {
+          return new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200, headers: { "content-type": "application/json" } });
+        }
         return new Response(JSON.stringify({ items: [entry("1", "agent.create", true)], next_cursor: null }), {
           status: 200,
           headers: { "content-type": "application/json" },

@@ -149,6 +149,44 @@ async fn failed_auth_increments_the_scim_auth_failure_counter() {
     assert!(counter_value(ROK) >= ok0 + 1.0, "ok outcome counted");
 }
 
+/// (FIX-236, review LOW-12) A **live** SCIM token — valid on `/scim/v2` — can never open
+/// emergency read access: the open route takes a session only, and a bearer `aud_` token does
+/// not even authenticate on `/v1/**` (401, never an org-owner grant).
+#[tokio::test]
+async fn a_live_scim_token_cannot_open_emergency_access() {
+    let fx = ScimFx::new().await;
+    // A workspace in the token's org, so the refusal is the credential's, not a missing target.
+    let (s, _, v) =
+        fx.h.send(
+            Method::POST,
+            &format!("/v1/orgs/{}/workspaces", fx.org),
+            &[("cookie", &fx.owner.cookie), ("origin", ORIGIN)],
+            Some(json!({"name": "Scim org ws"})),
+        )
+        .await;
+    assert_eq!(s, http::StatusCode::CREATED, "{v}");
+    let ws: Uuid = v["workspace"]["id"].as_str().unwrap().parse().unwrap();
+    let bearer = format!("Bearer {}", fx.token);
+    let (s, _, v) =
+        fx.h.send(
+            Method::POST,
+            &format!("/v1/workspaces/{ws}/emergency-access"),
+            &[("authorization", bearer.as_str())],
+            Some(json!({"reason": "the SCIM token must not open this", "hours": 1})),
+        )
+        .await;
+    assert_eq!(s, http::StatusCode::UNAUTHORIZED, "{v}");
+    // No grant row, either.
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM workspace_emergency_access WHERE workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0, "no grant was opened");
+}
+
 #[tokio::test]
 async fn revoked_and_expired_and_org_disabled_are_401() {
     let fx = ScimFx::new().await;

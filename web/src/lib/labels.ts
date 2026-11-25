@@ -504,6 +504,10 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "workspace.delete": named("deleted", "the workspace", "a workspace", "important"),
   "workspace.freeze": named("paused", "the workspace", "the workspace", "important"),
   "workspace.unfreeze": named("resumed", "the workspace", "the workspace"),
+  // (FIX-236, C-1164) Emergency read access: metadata only — the workspace's name stays out, the row's target is its id.
+  "workspace.emergency_access.open": plain("opened emergency read access to the workspace", "important"),
+  "workspace.emergency_access.end": plain("ended emergency read access to the workspace", "important"),
+  "workspace.emergency_access.expire": plain("let emergency read access to the workspace expire", "important"),
   "workspace_access.set": {
     // (batch 6) A person with no earlier binding (`previous_role: null`) was added, not changed; no row is written when nothing changed.
     sentence: (actor, t, m) =>
@@ -749,6 +753,7 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "dm_default.set": plain("chose which agent answers their direct messages"),
   // Conversations, memory, skills, schedules, evals
   "conversation.delete": plain("deleted a conversation", "important"),
+  "conversation.emergency_view": plain("read a conversation through emergency access", "important"),
   "conversation.export": plain("exported a conversation", "important"),
   "conversation.rename": plain("renamed a conversation"),
   "conversation.owner_view": plain("read someone else's conversation", "important"),
@@ -929,6 +934,7 @@ const MACHINE_ACTORS: Record<string, string> = {
   "addon-source-poll": "App source check",
   "app-setup-requests": "App requests",
   "channel-deprovision": "Chat platform clean-up",
+  "emergency-access-expiry": "Emergency access expiry",
   "user-token": "Chat accounts",
   "aurora-api push rotate-vapid": "Push notification keys",
   "plugin-builtin": "Built-in apps",

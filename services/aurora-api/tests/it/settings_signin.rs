@@ -408,6 +408,103 @@ async fn discovery_is_checked_on_save_and_the_destination_guard_applies() {
     assert_eq!(w.provider_ids().await, ["helm"]);
 }
 
+/// (FIX-244) The save refuses a role mapping that targets a personal workspace — naming the
+/// workspace, not the person — and accepts the same save once the personal target is gone. The
+/// dashboard PUT, the import and the CLI all come through this hook.
+#[tokio::test]
+async fn a_role_mapping_targeting_a_personal_workspace_is_refused_on_save() {
+    let w = world().await;
+    // An organization with a shared workspace and a personal one.
+    let org = w.h.org().await;
+    let shared = w.h.workspace(org).await;
+    let lair = w.h.workspace(org).await;
+    sqlx::query("UPDATE organizations SET slug = 'acme' WHERE id = $1")
+        .bind(org)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE workspaces SET slug = 'shared', name = 'Shared Bench' WHERE id = $1")
+        .bind(shared)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE workspaces SET slug = 'lair', name = 'The Lair', \
+         personal_owner_user_id = $2, personal = true WHERE id = $1",
+    )
+    .bind(lair)
+    .bind(w.admin_id)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+
+    let mut e = w.corp_entry();
+    e["role_claim"] = json!("cern_roles");
+    e["role_mappings"] = json!([
+        {
+            "value": "acme-staff",
+            "org": { "slug": "acme", "role": "member" },
+            "workspaces": [
+                { "slug": "shared", "role": "member" },
+                { "slug": "lair", "role": "member" }
+            ]
+        }
+    ]);
+    let (s, v) = w
+        .put("sign_in", json!({ "auth.oidc_providers": [e.clone()] }))
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert!(
+        field_codes(&v).iter().any(|(p, c)| p
+            == "/auth.oidc_providers/corp/role_mappings/0/workspaces/1"
+            && c == "role_mapping_personal_workspace"),
+        "{v}"
+    );
+    // The message names the workspace by its display name.
+    let fields = v["error"]["details"]["fields"].as_array().unwrap();
+    let f = fields
+        .iter()
+        .find(|f| f["code"] == "role_mapping_personal_workspace")
+        .unwrap();
+    assert!(
+        f["message"].as_str().unwrap().contains("The Lair"),
+        "the message names the workspace: {v}"
+    );
+    // The refused save did not happen.
+    assert_eq!(w.provider_ids().await, ["helm"]);
+
+    // The same save with the personal target removed goes through; the shared target stays.
+    e["role_mappings"] = json!([
+        {
+            "value": "acme-staff",
+            "org": { "slug": "acme", "role": "member" },
+            "workspaces": [ { "slug": "shared", "role": "member" } ]
+        }
+    ]);
+    let (s, v) = w
+        .put("sign_in", json!({ "auth.oidc_providers": [e] }))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let sec = w.section("sign_in").await;
+    let corp = setting(&sec, "auth.oidc_providers")["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "corp")
+        .unwrap();
+    assert_eq!(
+        corp["value"]["role_mappings"][0]["workspaces"][0]["slug"],
+        "shared"
+    );
+    assert_eq!(
+        corp["value"]["role_mappings"][0]["workspaces"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 // ------------------------------------------------------------------------------ the rules
 
 #[tokio::test]

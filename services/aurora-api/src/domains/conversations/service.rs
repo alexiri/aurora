@@ -2,12 +2,12 @@ use super::dto::{
     Conversation, EventsPage, MessageAccepted, PurgedAttachment, TranscriptEvent, Turn,
 };
 use crate::app::AppState;
-use crate::audit::{AuditActor, Outcome};
+use crate::audit::{AuditActor, AuditEvent, Outcome};
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
 use aurora_core::limits::{ATTACH_IN_COUNT, TURN_TEXT_MAX};
 use aurora_db::DbError;
-use aurora_db::authz::{self, WorkspaceAuth};
+use aurora_db::authz::{self, EmergencyGrant, ReadAuth, WorkspaceAuth};
 use aurora_db::bus::{self, Channel};
 use aurora_db::repo::agents::{self, AgentRow};
 use aurora_db::repo::audit::{self as audit_repo, NewAudit};
@@ -45,6 +45,26 @@ pub async fn load_agent(state: &AppState, c: &Caller, id: Uuid) -> Result<AgentR
     Ok(a)
 }
 
+/// [`load_agent`] for a *read* (C-1165): the emergency reader of the agent's workspace sees the
+/// agent too. Never for a write: those resolve [`WorkspaceAuth`] through [`Caller::workspace`].
+pub async fn load_agent_read(state: &AppState, c: &Caller, id: Uuid) -> Result<AgentRow, ApiError> {
+    load_agent_read_auth(state, c, id).await.map(|(a, _)| a)
+}
+
+/// [`load_agent_read`] with the read authority, for routes whose response carries conversation
+/// content the emergency recording must cover (review LOW-12: the conversation list).
+pub async fn load_agent_read_auth(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<(AgentRow, ReadAuth), ApiError> {
+    let a = agents::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    let read = c.workspace_read(state, a.workspace_id).await?;
+    Ok((a, read))
+}
+
 /// Conversation visible to the caller (`can_see_conversation`, docs/04; RFE-009). A direct
 /// conversation is visible to its user and to workspace owners; anyone else gets 404. This is
 /// the predicate for reading, abort and send-now; writing needs [`load_conversation_for_write`].
@@ -69,19 +89,204 @@ pub async fn load_conversation_auth(
     Ok((row, auth))
 }
 
+/// Like [`load_conversation_auth`] for a *read* (C-1165): the authority is a [`ReadAuth`] — the
+/// caller's own access, or an active emergency grant (session callers only, evaluated on every
+/// request). A direct conversation is visible to the emergency reader like to an owner.
+pub async fn load_conversation_read(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<(ConversationRow, ReadAuth), ApiError> {
+    let row = convs::get(&state.pool, id).await?.ok_or_else(conv_404)?;
+    let read = c.workspace_read(state, row.workspace_id).await?;
+    if !read.can_see_conversation(c.user_id, &row.kind, row.direct_user_id) {
+        return Err(conv_404());
+    }
+    Ok((row, read))
+}
+
 /// Like [`load_conversation`] for a *read* (transcript, events, stream, attachment bytes): an
 /// owner who is not the direct user also writes the best-effort `conversation.owner_view` audit
-/// row (once per actor, conversation and hour).
+/// row (once per actor, conversation and hour); a caller reading through an active emergency
+/// grant writes `conversation.emergency_view` **before any content is returned** (C-1165) —
+/// that write is not best-effort: a failed audit row refuses the read (503).
 pub async fn read_conversation(
     state: &AppState,
     c: &Caller,
     id: Uuid,
 ) -> Result<ConversationRow, ApiError> {
-    let (row, _) = load_conversation_auth(state, c, id).await?;
-    if row.kind == "direct" && row.direct_user_id != Some(c.user_id) {
-        note_owner_view(state, c, &row).await;
+    let (row, read) = load_conversation_read(state, c, id).await?;
+    match read {
+        ReadAuth::Emergency(g) => record_emergency_view(state, c, &row, &g).await?,
+        ReadAuth::Own(_) if row.kind == "direct" && row.direct_user_id != Some(c.user_id) => {
+            note_owner_view(state, c, &row).await;
+        }
+        ReadAuth::Own(_) => {}
     }
     Ok(row)
+}
+
+/// The emergency reader's record (C-1165): once per actor, conversation and hour (the same
+/// advisory-lock dedupe as [`try_note_owner_view`]); a failed write is a 503, never a read.
+pub async fn record_emergency_view(
+    state: &AppState,
+    c: &Caller,
+    row: &ConversationRow,
+    grant: &EmergencyGrant,
+) -> Result<(), ApiError> {
+    record_emergency_view_actor(state, &AuditActor::from_caller(c), row, grant).await
+}
+
+/// [`record_emergency_view`] for a caller known only as an audit actor (the timeline's feed).
+/// Every failure here is the record failing — the read is refused with 503
+/// `audit_unavailable` (C-1165: not best-effort like `conversation.owner_view`).
+pub async fn record_emergency_view_actor(
+    state: &AppState,
+    actor: &AuditActor,
+    row: &ConversationRow,
+    grant: &EmergencyGrant,
+) -> Result<(), ApiError> {
+    let refuse = |_| crate::audit::unavailable();
+    let mut tx = state.pool.begin().await.map_err(refuse)?;
+    let actor_id = actor.id.unwrap_or(Uuid::nil());
+    // (Review MEDIUM-4) The dedup key includes the grant: after end-and-reopen within the hour,
+    // reads under the new grant record again, attributed to the new grant.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!(
+            "emergency_view:{}:{}:{}",
+            actor_id,
+            row.id,
+            grant.id()
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(refuse)?;
+    let seen: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM audit_log WHERE workspace_id = $1 AND actor_id = $2
+           AND action = 'conversation.emergency_view' AND target_id = $3
+           AND metadata->>'emergency_access' = $4
+           AND created_at > now() - interval '1 hour')",
+    )
+    .bind(row.workspace_id)
+    .bind(actor.id)
+    .bind(row.id.to_string())
+    .bind(grant.id().to_string())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(refuse)?;
+    if !seen {
+        let ev = AuditEvent::new(
+            actor.clone(),
+            "conversation.emergency_view",
+            Outcome::Success,
+        )
+        .org(grant.org_id())
+        .workspace(row.workspace_id)
+        .target("conversation", row.id)
+        .metadata(json!({
+            "agent_id": row.agent_id,
+            "emergency_access": grant.id(),
+            "direct_user_id": row.direct_user_id,
+        }));
+        crate::audit::insert_tx(&mut tx, &ev)
+            .await
+            .map_err(|_| crate::audit::unavailable())?;
+    }
+    tx.commit().await.map_err(refuse)?;
+    Ok(())
+}
+
+/// [`record_emergency_view`] for a conversation known only by id (the timeline's rows): a
+/// conversation that disappeared in between has nothing left to record.
+pub async fn record_emergency_view_id(
+    state: &AppState,
+    actor: &AuditActor,
+    id: Uuid,
+    grant: &EmergencyGrant,
+) -> Result<(), ApiError> {
+    if let Some(row) = convs::get(&state.pool, id).await? {
+        return record_emergency_view_actor(state, actor, &row, grant).await;
+    }
+    Ok(())
+}
+
+/// (FIX-236, review MEDIUM-4) The conversation stream's resync tick: re-record the emergency
+/// view so a long-lived stream keeps a fresh audit row (24 hours of live reading leave more
+/// than the one row from the open). The dedup makes this a no-op within the hour under the
+/// same grant; a viewer who no longer reads through a grant (or at all) records nothing.
+pub async fn refresh_emergency_view(
+    state: &AppState,
+    user: Uuid,
+    conv: Uuid,
+) -> Result<(), ApiError> {
+    let Some(row) = convs::get(&state.pool, conv).await? else {
+        return Ok(());
+    };
+    // The same check the open used: only an active grant records (a session-only right).
+    let Some(grant) = authz::emergency_reader(&state.pool, user, row.workspace_id).await? else {
+        return Ok(());
+    };
+    let email: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+        .bind(user)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(DbError::from)?;
+    let actor = AuditActor {
+        kind: "user",
+        id: Some(user),
+        label: email.unwrap_or_default(),
+        source: "dashboard",
+        ip: None,
+    };
+    record_emergency_view_actor(state, &actor, &row, &grant).await
+}
+
+/// (FIX-236, verify LOW-3) Where the caller's emergency-view dedup hour for one conversation
+/// stands. The conversation stream gates every content frame on this: content may flow while
+/// the window is open; once it has rolled over the fresh row must be written first.
+pub enum EmergencyViewWindow {
+    /// The caller is not reading through a grant: content is never gated (the stream closes at
+    /// the next re-authorization tick instead).
+    NotReader,
+    /// An emergency reader whose dedup window has rolled over: no `conversation.emergency_view`
+    /// row under the active grant within the last hour — record before any content.
+    Rolled,
+    /// Inside the dedup window until this instant (the newest row's `created_at` + 1 hour).
+    Open(chrono::DateTime<chrono::Utc>),
+}
+
+/// (FIX-236, verify LOW-3) The stream's dedup-window check — the same law as the dedup inside
+/// [`record_emergency_view_actor`], read without writing: for an emergency reader, the newest
+/// `conversation.emergency_view` row under their active grant for this conversation closes the
+/// window one hour after its `created_at`; none within the hour means the window has rolled.
+pub async fn emergency_view_window(
+    state: &AppState,
+    user: Uuid,
+    conv: Uuid,
+) -> Result<EmergencyViewWindow, DbError> {
+    let Some(row) = convs::get(&state.pool, conv).await? else {
+        return Ok(EmergencyViewWindow::NotReader);
+    };
+    let Some(grant) = authz::emergency_reader(&state.pool, user, row.workspace_id).await? else {
+        return Ok(EmergencyViewWindow::NotReader);
+    };
+    let until: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT max(created_at) + interval '1 hour' FROM audit_log \
+         WHERE workspace_id = $1 AND actor_id = $2 \
+           AND action = 'conversation.emergency_view' AND target_id = $3 \
+           AND metadata->>'emergency_access' = $4 \
+           AND created_at > now() - interval '1 hour'",
+    )
+    .bind(row.workspace_id)
+    .bind(user)
+    .bind(row.id.to_string())
+    .bind(grant.id().to_string())
+    .fetch_one(&state.pool)
+    .await
+    .map_err(DbError::from)?;
+    Ok(until
+        .map(EmergencyViewWindow::Open)
+        .unwrap_or(EmergencyViewWindow::Rolled))
 }
 
 async fn note_owner_view(state: &AppState, c: &Caller, row: &ConversationRow) {

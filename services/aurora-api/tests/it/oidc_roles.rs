@@ -1129,3 +1129,221 @@ async fn fix050_admin_overview_lists_ownerless_orgs() {
     assert_eq!(items[0]["members"], 1, "the active non-owner counts");
     assert!(items[0]["created_at"].as_str().is_some(), "{v}");
 }
+
+/// (FIX-236, verify LOW-4) When an IdP claim lowers or removes an owner's role, the sync ends
+/// the person's open emergency grants **in the same transaction** (`access_lost`) — otherwise
+/// the people's banner keeps announcing access the person can no longer use (reads were
+/// already refused; the row stayed open until expiry and blocked a future reopen with 409).
+#[tokio::test]
+async fn a_lowered_or_removed_claim_ends_the_emergency_grants_as_access_lost() {
+    let idp = MockIdp::start().await;
+    set_roles(&idp, E, "s1", json!(["it-ai-team"]));
+    let h = h(&idp, SignupMode::InviteOnly, false).await;
+    let session = sign_in(&h).await.unwrap();
+    assert_eq!(org_role(&h, "it", E).await.as_deref(), Some("owner"));
+    // A second owner keeps the sync away from the last-owner guard.
+    let it: Uuid = sqlx::query_scalar("SELECT id FROM organizations WHERE slug = 'it'")
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let keeper = h.user("keeper@example.com", false).await;
+    h.member(it, keeper, "owner", "active").await;
+
+    // The claim owner opens emergency read access on a workspace of the org.
+    let ws: Uuid = sqlx::query_scalar("SELECT id FROM workspaces WHERE org_id = $1 LIMIT 1")
+        .bind(it)
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let (st, _, v) = h
+        .send(
+            Method::POST,
+            &format!("/v1/workspaces/{ws}/emergency-access"),
+            &[
+                ("cookie", session.as_str()),
+                ("origin", crate::common::ORIGIN),
+            ],
+            Some(json!({"reason": "opened under the claim's ownership"})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+
+    // The claim drops the org entirely: the sync removes the claim-sourced membership — the
+    // ownership is lost, and the grant must end with it.
+    set_roles(&idp, E, "s1", json!(["aurora-users"]));
+    sign_in(&h).await.unwrap();
+    assert_ne!(org_role(&h, "it", E).await.as_deref(), Some("owner"));
+
+    let (ended, reason): (bool, Option<String>) = sqlx::query_as(
+        "SELECT ended_at IS NOT NULL, end_reason FROM workspace_emergency_access \
+         WHERE workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(reason.as_deref(), Some("access_lost"), "the grant's end");
+    assert!(ended, "the grant is not open any more");
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM audit_log WHERE action = 'workspace.emergency_access.end' \
+             AND metadata->>'end_reason' = 'access_lost'"
+        )
+        .await,
+        1,
+        "the critical end row is in the log"
+    );
+    // The people's banner source: the grant is no longer announced as active.
+    let (_, keeper_tok) = h.good_session(keeper).await;
+    let (st, _, v) = h
+        .send(
+            Method::GET,
+            &format!("/v1/workspaces/{ws}"),
+            &[
+                ("cookie", crate::common::cookie(&keeper_tok).as_str()),
+                ("origin", crate::common::ORIGIN),
+            ],
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["audience"]["emergency"]["active"], json!(false), "{v}");
+    assert!(
+        !v["audience"]["emergency"]["ended_at"].is_null(),
+        "the banner shows it ended: {v}"
+    );
+}
+
+/// Mark the workspace `ws_slug` (in any org) as `email`'s personal one: the sticky marker, the
+/// way the placement path leaves it (FIX-097, SEC-79).
+async fn make_personal(h: &Harness, email: &str, ws_slug: &str) {
+    sqlx::query(
+        "UPDATE workspaces w SET personal_owner_user_id = u.id, personal = true \
+         FROM users u WHERE u.email = $1 AND w.slug = $2",
+    )
+    .bind(email)
+    .bind(ws_slug)
+    .execute(h.pool())
+    .await
+    .unwrap();
+}
+
+/// The mapping of the other tests, plus a second value that keeps the org membership while
+/// dropping the workspace targets: that is how the removal half of the sync is reached without
+/// losing the org (whose removal would cascade over every binding).
+fn lair_provider(p: &mut OidcProvider) {
+    p.role_claim = Some("cern_roles".into());
+    p.role_mappings = vec![
+        map("it-ai-team", |m| {
+            m.org = org("it", "owner");
+            m.workspaces = vec![
+                OidcWorkspaceRole {
+                    slug: "infra".into(),
+                    role: "owner".into(),
+                },
+                OidcWorkspaceRole {
+                    slug: "lair".into(),
+                    role: "member".into(),
+                },
+            ];
+        }),
+        map("it-staff", |m| m.org = org("it", "member")),
+    ];
+}
+
+/// (FIX-244) A role mapping never grants a role in a personal workspace: the other targets of
+/// the same mapping still apply, the sign-in succeeds, and the owner's own binding is a no-op
+/// for the sync.
+#[tokio::test]
+async fn a_mapping_never_grants_a_role_in_a_personal_workspace() {
+    let idp = MockIdp::start().await;
+    let h = harness(&idp, SignupMode::InviteOnly, lair_provider, &[]).await;
+    // The first sign-in creates the org, both workspaces, and grants both targets.
+    set_roles(&idp, E, "s1", json!(["it-ai-team"]));
+    sign_in(&h).await.unwrap();
+    assert_eq!(
+        ws_role(&h, "it", "infra", E).await.as_deref(),
+        Some("owner")
+    );
+    assert_eq!(
+        ws_role(&h, "it", "lair", E).await.as_deref(),
+        Some("member")
+    );
+    // `lair` becomes the owner's personal workspace.
+    make_personal(&h, E, "lair").await;
+    // Another claim holder signs in: the shared target applies, the personal one is skipped,
+    // and the skip is not an error.
+    set_roles(&idp, "tyke@example.com", "s2", json!(["it-ai-team"]));
+    sign_in(&h)
+        .await
+        .expect("the skip must not fail the sign-in");
+    assert_eq!(
+        ws_role(&h, "it", "infra", "tyke@example.com")
+            .await
+            .as_deref(),
+        Some("owner")
+    );
+    assert_eq!(ws_role(&h, "it", "lair", "tyke@example.com").await, None);
+    // The owner signs in again with the mapping still in force: nothing changes on the
+    // personal binding.
+    set_roles(&idp, E, "s1", json!(["it-ai-team"]));
+    sign_in(&h).await.unwrap();
+    assert_eq!(
+        ws_role(&h, "it", "lair", E).await.as_deref(),
+        Some("member")
+    );
+}
+
+/// (FIX-244) A claim-sourced binding in a personal workspace that predated the rule is never
+/// unbound or lowered by the sync — neither the owner's nor anybody else's.
+#[tokio::test]
+async fn a_personal_workspaces_claim_sourced_binding_is_never_unbound_or_lowered() {
+    let idp = MockIdp::start().await;
+    let h = harness(&idp, SignupMode::InviteOnly, lair_provider, &[]).await;
+    // Both sign in while `lair` is still an ordinary workspace: both get claim-sourced bindings.
+    set_roles(&idp, E, "s1", json!(["it-ai-team"]));
+    sign_in(&h).await.unwrap();
+    set_roles(&idp, "tyke@example.com", "s2", json!(["it-ai-team"]));
+    sign_in(&h).await.unwrap();
+    assert_eq!(
+        ws_role(&h, "it", "lair", "tyke@example.com")
+            .await
+            .as_deref(),
+        Some("member")
+    );
+    // `lair` becomes the owner's personal workspace; then the claims drop the value that
+    // carried the workspace targets (the org stays, mapped by the second value).
+    make_personal(&h, E, "lair").await;
+    set_roles(&idp, E, "s1", json!(["it-staff"]));
+    sign_in(&h).await.unwrap();
+    set_roles(&idp, "tyke@example.com", "s2", json!(["it-staff"]));
+    sign_in(&h).await.unwrap();
+    // The shared target follows the claim down ...
+    assert_eq!(ws_role(&h, "it", "infra", E).await, None);
+    assert_eq!(ws_role(&h, "it", "infra", "tyke@example.com").await, None);
+    // ... and the personal workspace's rows are exactly as they were, claim source and all.
+    assert_eq!(
+        ws_role(&h, "it", "lair", E).await.as_deref(),
+        Some("member")
+    );
+    assert_eq!(
+        ws_role(&h, "it", "lair", "tyke@example.com")
+            .await
+            .as_deref(),
+        Some("member")
+    );
+    assert_eq!(
+        count(
+            &h,
+            "SELECT count(*) FROM workspace_access a \
+             JOIN workspaces w ON w.id = a.workspace_id \
+             WHERE w.slug = 'lair' AND a.idp_source IS NOT NULL"
+        )
+        .await,
+        2
+    );
+    // Both are still in the org: only the workspace rows were touched.
+    assert!(org_role(&h, "it", E).await.is_some());
+    assert!(org_role(&h, "it", "tyke@example.com").await.is_some());
+}

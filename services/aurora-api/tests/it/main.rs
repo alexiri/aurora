@@ -55,6 +55,7 @@ mod conversation_lifecycle;
 mod conversations;
 mod counters;
 mod direct_visibility;
+mod emergency_access;
 mod evals_judge;
 mod evals_questions;
 mod evals_runs;

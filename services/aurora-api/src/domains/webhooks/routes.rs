@@ -52,6 +52,31 @@ async fn authorized(
     Ok((row, agent))
 }
 
+/// [`visible_agent`] for a *read* (C-1165): the emergency reader of the workspace lists the
+/// webhooks. Never for a write.
+async fn visible_agent_read(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<agents::AgentRow, ApiError> {
+    let row = agents::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    c.workspace_read(s, row.workspace_id).await?;
+    Ok(row)
+}
+
+/// [`authorized`] for a *read* (C-1165).
+async fn authorized_read(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<(WebhookRow, agents::AgentRow), ApiError> {
+    let row = service::get(s, id).await?;
+    let agent = visible_agent_read(c, s, row.agent_id).await?;
+    Ok((row, agent))
+}
+
 fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &WebhookRow, action: &str) {
     audit::record(
         s,
@@ -73,7 +98,7 @@ async fn list_webhooks(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Webhook>>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    visible_agent_read(&c, &s, agent).await?;
     let items = service::list(&s, agent).await?;
     Ok(Json(Page {
         items: items.into_iter().map(Webhook::from).collect(),
@@ -157,7 +182,7 @@ async fn get_webhook(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Webhook>, ApiError> {
-    let (row, _) = authorized(&c, &s, id).await?;
+    let (row, _) = authorized_read(&c, &s, id).await?;
     Ok(Json(row.into()))
 }
 
@@ -276,7 +301,7 @@ async fn list_deliveries(
     Path(id): Path<Uuid>,
     Query(q): Query<DeliveriesQuery>,
 ) -> Result<Json<Page<WebhookDelivery>>, ApiError> {
-    authorized(&c, &s, id).await?;
+    authorized_read(&c, &s, id).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows =
         aurora_db::repo::webhooks::deliveries_with_results(&s.pool, id, p.after_key(), p.fetch())

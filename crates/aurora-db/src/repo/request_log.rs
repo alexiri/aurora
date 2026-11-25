@@ -53,10 +53,12 @@ pub struct ActivityFilter {
 
 /// Workspace activity, `ts desc, id desc`; keyset on `(ts, id)`.
 /// Rows whose conversation is a direct conversation `viewer` cannot see are omitted
-/// (phase 1, RFE-009).
+/// (phase 1, RFE-009) — unless `viewer_owns` reads every conversation (an own-right owner
+/// already passes the hidden check; an emergency reader, C-1165, does not and needs the flag).
 pub async fn list_activity(
     pool: &PgPool,
     viewer: Uuid,
+    viewer_owns: bool,
     ws: Uuid,
     f: &ActivityFilter,
     after: After,
@@ -68,7 +70,7 @@ pub async fn list_activity(
                 path, app_id, tool_id, connection_id, secret_id, decision, rule_logical_id, \
                 rule_name, upstream_status, status, error_code, injected, latency_ms, bytes_up, \
                 bytes_down, context_label, approval_id, resumed, llm_model \
-         FROM request_log WHERE workspace_id = $1 AND NOT {} \
+         FROM request_log WHERE workspace_id = $1 AND (NOT {HC} OR $10) \
            AND ($2::uuid IS NULL OR agent_id = $2) \
            AND ($3::uuid IS NULL OR conversation_id = $3) \
            AND ($4::text IS NULL OR decision = $4) \
@@ -76,7 +78,7 @@ pub async fn list_activity(
            AND ($6::text IS NULL OR app_id = $6) \
            AND ($7::timestamptz IS NULL OR (ts, id) < ($7, $8)) \
          ORDER BY ts DESC, id DESC LIMIT $9",
-        crate::authz::hidden_direct_conversation_sql("conversation_id", "$10", "workspace_id")
+        HC = crate::authz::hidden_direct_conversation_sql("conversation_id", "$11", "workspace_id")
     )))
     .bind(ws)
     .bind(f.agent_id)
@@ -87,6 +89,7 @@ pub async fn list_activity(
     .bind(t)
     .bind(id)
     .bind(fetch)
+    .bind(viewer_owns)
     .bind(viewer)
     .fetch_all(pool)
     .await?)

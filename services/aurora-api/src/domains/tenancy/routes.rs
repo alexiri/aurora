@@ -588,15 +588,64 @@ async fn workspace_audience(
         owners.insert(0, me);
     }
     owners.truncate(5);
+    // (FIX-236, C-1165, review HIGH-1) The banner: the newest ACTIVE emergency access when any
+    // is active, else the newest ended within the last 7 days; every caller who gets `audience`
+    // sees it, and simultaneous active grants are all announced.
+    let emergency = aurora_db::repo::emergency_access::latest_banner(&s.pool, ws)
+        .await?
+        .map(|(r, more)| {
+            (
+                WorkspaceAudienceEmergency {
+                    id: r.row.id,
+                    by: WorkspaceAudienceOwner {
+                        id: r.row.user_id,
+                        display_name: r.by_display_name,
+                    },
+                    reason: r.row.reason,
+                    opened_at: r.row.opened_at,
+                    expires_at: r.row.expires_at,
+                    ended_at: r.row.ended_at,
+                    active: r.row.ended_at.is_none() && r.row.expires_at > chrono::Utc::now(),
+                },
+                more,
+            )
+        });
+    let emergency_active_more = emergency.as_ref().map_or(0, |(_, more)| *more);
     Ok(WorkspaceAudience {
         people,
         owners,
         owners_total,
+        emergency: emergency.map(|(e, _)| e),
+        emergency_active_more,
     })
 }
 
-/// Get a workspace: the caller's own access answers in full; an administrator without own
-/// access gets the metadata, `contacts` and `audience` (C-1160, C-1162).
+/// (FIX-236, C-1165, review HIGH-3, verify LOW-2) The emergency-reader answer on a workspace
+/// answer: the flag from the same check every conversation read uses (`authz::emergency_reader`,
+/// so a caller with own access AND a grant is announced too) and the caller's OWN active grant —
+/// the one their reader banner's "End now" ends, never another owner's newest grant. **Session
+/// callers only**: an API key can never use a grant (keys read with their own access only), so
+/// its answer keeps the flag false and carries no grant.
+async fn emergency_reader_answer(
+    s: &AppState,
+    w: &mut Workspace,
+    c: &Caller,
+    ws: Uuid,
+) -> Result<(), ApiError> {
+    if !c.is_session() {
+        return Ok(());
+    }
+    let grant = authz::emergency_reader(&s.pool, c.user_id, ws).await?;
+    w.emergency_reader = grant.is_some();
+    w.emergency_reader_id = grant.as_ref().map(|g| g.id());
+    w.emergency_reader_expires_at = grant.as_ref().map(|g| g.expires_at());
+    Ok(())
+}
+
+/// Get a workspace: the caller's own access answers in full; an emergency reader (C-1165) and
+/// an administrator without own access (C-1160, C-1162) get the metadata, `contacts` and
+/// `audience` — the emergency reader with `emergency_reader: true` and their own-right role
+/// (usually none).
 #[utoipa::path(get, path = "/workspaces/{ws}", operation_id = "getWorkspace", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, body = Workspace), (status = 404, body = ErrorEnvelope)),
@@ -609,20 +658,37 @@ async fn get_workspace(
     match c.workspace(&s, ws).await {
         Ok(a) => {
             let mut w = load_ws(&s, ws, Some(ws_role(&a)), true).await?;
+            emergency_reader_answer(&s, &mut w, &c, ws).await?;
             w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
             w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
             Ok(Json(w))
         }
         Err(e) if e.code() == "workspace_access_required" => {
-            let a = c.administer(&s, ws).await?;
-            debug_assert!(a.own.is_none());
-            let row = workspaces::get(&s.pool, ws)
-                .await?
-                .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
-            let mut w = with_effective_byo(&s, row, None, true).await?;
-            w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
-            w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
-            Ok(Json(w))
+            // (FIX-236, C-1165) The emergency reader reads the workspace they were opened
+            // access to, with their own-right role (an emergency grant is never own access).
+            match c.workspace_read(&s, ws).await {
+                Ok(read) => {
+                    let mut w = load_ws(&s, ws, read.own().map(ws_role), true).await?;
+                    emergency_reader_answer(&s, &mut w, &c, ws).await?;
+                    w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
+                    w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
+                    Ok(Json(w))
+                }
+                Err(_) => {
+                    // An administrator without own access: `workspace_read` returns
+                    // `ReadAuth::Emergency` whenever an active grant exists, so a caller here
+                    // cannot hold one — no emergency-reader answer to give.
+                    let a = c.administer(&s, ws).await?;
+                    debug_assert!(a.own.is_none());
+                    let row = workspaces::get(&s.pool, ws)
+                        .await?
+                        .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+                    let mut w = with_effective_byo(&s, row, None, true).await?;
+                    w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
+                    w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
+                    Ok(Json(w))
+                }
+            }
         }
         Err(e) => Err(e),
     }
@@ -708,7 +774,8 @@ async fn delete_workspace(
 // ---- access ----
 
 /// List the workspace's access bindings (`can_administer`, C-1160; the rows are the bindings in
-/// one's own right — since FIX-234 there are no implicit rows).
+/// one's own right — since FIX-234 there are no implicit rows). Emergency read access (C-1165)
+/// also reads the workspace's people.
 #[utoipa::path(get, path = "/workspaces/{ws}/access", operation_id = "listAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), crate::domains::groups::dto::AccessQuery),
     responses((status = 200, body = crate::domains::groups::dto::AccessList),
@@ -721,7 +788,15 @@ async fn list_access(
     Query(q): Query<crate::domains::groups::dto::AccessQuery>,
 ) -> Result<Json<crate::domains::groups::dto::AccessList>, ApiError> {
     use crate::domains::groups::dto as g;
-    c.administer(&s, ws).await?;
+    // (FIX-236, C-1165) The emergency reader reads the workspace's people (metadata only). A
+    // member with own access does not — the people routes stay administer routes (C-1160) — so
+    // only an emergency `ReadAuth` is admitted here; everyone else keeps the administer path.
+    match c.workspace_read(&s, ws).await {
+        Ok(aurora_db::authz::ReadAuth::Emergency(_)) => {}
+        _ => {
+            c.administer(&s, ws).await?;
+        }
+    }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = workspaces::list_access(&s.pool, ws, after(&p), p.fetch()).await?;
     let page = page_of(rows, &p, |r| (r.created_at, r.user_id), AccessBinding::from);

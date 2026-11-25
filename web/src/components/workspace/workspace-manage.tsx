@@ -8,6 +8,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { AgentFreeze, WorkspaceFreeze } from "@/components/freeze/freeze-sections";
+import { OpenEmergencyAccess } from "@/components/emergency/emergency-open";
 import { AccessTab } from "@/components/settings/access-tab";
 import { AddPeople } from "@/components/settings/add-people";
 import { DangerTab } from "@/components/settings/danger-tab";
@@ -130,6 +131,12 @@ export function WorkspaceManage() {
             <AddPeople wsId={w.id} orgId={w.org_id} workspacePath={orgRoutes(org).workspace(ws)} />
           )}
           {meId && w.my_role == null ? <AddYourself wsId={w.id} wsName={w.name} meId={meId} /> : null}
+          {/* (FIX-236, review LOW-11, D-470) Only where opening can succeed: an org owner who
+              is one of the workspace's owners (409 already_has_access) or already holds a grant
+              (409 emergency_access_active) gets no entry. */}
+          {orgOwner && w.my_role !== "owner" && !w.emergency_reader ? (
+            <OpenEmergencyAccess wsId={w.id} wsName={w.name} />
+          ) : null}
           <AccessTab wsId={w.id} orgId={w.org_id} canOwn={canAdminister} personal={personal} />
         </div>
       </Section>

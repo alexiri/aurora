@@ -24,6 +24,7 @@ import { useRefreshAttentionOnMutation, useWorkspaceCounts } from "@/lib/api/att
 import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
+import { EmergencyBanners } from "./emergency/emergency-banners";
 import { CommandPalette, openPalette, openShortcutSheet } from "./palette/command-palette";
 import { ScopeSwitcher } from "./nav/scope-switcher";
 import { ShortcutsHost } from "./shortcuts/shortcuts-host";
@@ -267,6 +268,9 @@ function CountPill({ n, testId }: { n: number; testId: string }) {
   );
 }
 
+/** (FIX-236, C-1164) The topics emergency read access may open: the read set, no Settings, no Approvals. */
+const EMERGENCY_TOPICS = ["overview", "agents", "skills", "activity", "people"] as const;
+
 export function WorkspaceNav({
   base,
   wsId,
@@ -277,11 +281,17 @@ export function WorkspaceNav({
   pathname: string;
 }) {
   const instanceAdmin = useMe().data?.user.is_instance_admin === true;
-  const role = useWorkspace(wsId).data?.my_role;
+  const w = useWorkspace(wsId).data;
+  const role = w?.my_role;
   // While the role loads, list what every member sees (Approvals, People and Settings wait for the role).
   const altitude = useAltitude({ wsId });
   const counts = useWorkspaceCounts(wsId);
-  const topics = visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") }, altitude);
+  // (FIX-236, C-1165) Emergency read access: the rail is the fixed read-only set — the topics the
+  // mode is allowed to open (C-1164) — because the role is null and no membership decides the rest.
+  const topics =
+    w?.emergency_reader === true
+      ? EMERGENCY_TOPICS
+      : visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") }, altitude);
   return (
     <nav aria-label="Workspace">
       <ul className="space-y-0.5">
@@ -631,6 +641,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="w-full min-w-0 space-y-4 px-4 py-6 md:px-8 md:py-8">
           <ApprovalNotifier />
           <FrozenEntityBanner />
+          <EmergencyBanners />
           {missing ? <NotFoundState kind={missing} slug={missing === "organization" ? orgSlug : wsSlug} /> : children}
         </main>
         <Tour setNavOpen={tourNavOpen} />

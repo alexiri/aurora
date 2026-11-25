@@ -202,6 +202,26 @@ const fn r(m: &'static str, p: &'static str, g: G, so: bool) -> Row {
 /// Routes that are not checked against the principal matrix, with reasons.
 const EXEMPT: &[(&str, &str, &str)] = &[
     (
+        "POST",
+        "/v1/workspaces/{ws}/emergency-access",
+        "FIX-236 (C-1164, SEC-154): the break-glass open — a session of an active effective org owner only (an org admin, a member and a holder of own `can_own` there are 403/409, an API key 403 `session_required`); the whole ladder (409s, 422s, the rate class, the critical audit row, the notices) is it/emergency_access.rs",
+    ),
+    (
+        "GET",
+        "/v1/workspaces/{ws}/emergency-access",
+        "FIX-236 (C-1164): own access or `can_administer`, metadata only; the matrix is it/emergency_access.rs",
+    ),
+    (
+        "POST",
+        "/v1/emergency-access/{id}/end",
+        "FIX-236 (C-1164): the opener or any active org owner, idempotent, critical audit row; the matrix is it/emergency_access.rs",
+    ),
+    (
+        "GET",
+        "/v1/orgs/{org}/emergency-access",
+        "FIX-236 (C-1164): org owners and admins; the matrix is it/emergency_access.rs",
+    ),
+    (
         "GET",
         "/v1/agents/{agent}/files",
         "P5-FILES-1 (C-898/C-900): session-cookie only like the terminal (a key is 401, not 403), 404 `terminal_disabled` while the terminal is off (this harness leaves it off) and a live sandbox + runner leg for anything else; the auth matrix is it/files.rs",

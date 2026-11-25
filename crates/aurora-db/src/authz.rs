@@ -495,6 +495,138 @@ pub async fn can_administer<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-236, D-478, C-1164) One active emergency grant, as [`emergency_reader`] resolved it.
+/// Constructed only inside this module: no `From`, no public constructor — an
+/// `EmergencyGrant` can never become a [`WorkspaceAuth`] or an `AdminAuth` (C-1165), so it can
+/// never satisfy `can_use`, `can_approve`, `can_own`, `can_administer` or `can_ssh`, and no
+/// write route accepts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmergencyGrant {
+    id: Uuid,
+    org_id: Uuid,
+    workspace_id: Uuid,
+    /// The opener of the grant (the reader while it is theirs).
+    user_id: Uuid,
+    reason: String,
+    opened_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+    expires_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+}
+
+impl EmergencyGrant {
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+    pub fn org_id(&self) -> Uuid {
+        self.org_id
+    }
+    pub fn workspace_id(&self) -> Uuid {
+        self.workspace_id
+    }
+    pub fn user_id(&self) -> Uuid {
+        self.user_id
+    }
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+    pub fn opened_at(&self) -> sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> {
+        self.opened_at
+    }
+    pub fn expires_at(&self) -> sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> {
+        self.expires_at
+    }
+}
+
+/// The read authority a read route accepts (FIX-236, C-1165): the caller's own access, or an
+/// active emergency grant. Writes never take it — they keep [`WorkspaceAuth`], which an
+/// `Emergency` cannot produce.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadAuth {
+    Own(WorkspaceAuth),
+    Emergency(EmergencyGrant),
+}
+
+impl ReadAuth {
+    pub fn workspace_id(&self) -> Uuid {
+        match self {
+            Self::Own(a) => a.workspace_id,
+            Self::Emergency(g) => g.workspace_id(),
+        }
+    }
+    pub fn org_id(&self) -> Uuid {
+        match self {
+            Self::Own(a) => a.org_id,
+            Self::Emergency(g) => g.org_id(),
+        }
+    }
+    /// `can_see_conversation` through a `ReadAuth` (D-478(b): the emergency reader reads what an
+    /// owner reads — every conversation of the workspace, direct ones included). Own access
+    /// keeps its own rule.
+    pub fn can_see_conversation(
+        &self,
+        user: Uuid,
+        kind: &str,
+        direct_user_id: Option<Uuid>,
+    ) -> bool {
+        match self {
+            Self::Own(a) => can_see_conversation(a, user, kind, direct_user_id),
+            Self::Emergency(_) => true,
+        }
+    }
+    /// The caller's own access, when the read authority is their own (an emergency grant is
+    /// never a `WorkspaceAuth`).
+    pub fn own(&self) -> Option<&WorkspaceAuth> {
+        match self {
+            Self::Own(a) => Some(a),
+            Self::Emergency(_) => None,
+        }
+    }
+    /// Holding a `WorkspaceAuth` *is* `can_use` (see its impl); an emergency grant reads like a
+    /// member. Lists and metadata need nothing more than the `ReadAuth` itself.
+    /// `can_own` for the read routes (C-1165, D-478(b)): the emergency reader reads what an
+    /// owner reads — every conversation, direct ones included, and every message in search.
+    /// Never usable for a write: writes resolve [`WorkspaceAuth`] through [`Caller::workspace`].
+    pub fn can_own(&self) -> bool {
+        match self {
+            Self::Own(a) => a.can_own(),
+            Self::Emergency(_) => true,
+        }
+    }
+}
+
+/// (FIX-236, C-1165) The one helper. `Some` only while `user` holds an **active** emergency
+/// grant on `ws` (`ended_at IS NULL AND expires_at > now()`, evaluated here on every call —
+/// never cached) **and** is still an active effective org owner of its organization (a lowered,
+/// suspended or removed owner loses the grant at once, even before the access-lost hook ran).
+pub async fn emergency_reader<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    ws: Uuid,
+) -> Result<Option<EmergencyGrant>, DbError> {
+    let row: Option<(Uuid, Uuid, Uuid, String, _, _)> = sqlx::query_as(
+        "SELECT e.id, e.org_id, e.workspace_id, e.reason, e.opened_at, e.expires_at \
+         FROM workspace_emergency_access e \
+         JOIN effective_org_members m ON m.org_id = e.org_id AND m.user_id = e.user_id \
+                                      AND m.role = 'owner' \
+        WHERE e.workspace_id = $1 AND e.user_id = $2 \
+          AND e.ended_at IS NULL AND e.expires_at > now()",
+    )
+    .bind(ws)
+    .bind(user)
+    .fetch_optional(exec)
+    .await?;
+    Ok(row.map(
+        |(id, org_id, workspace_id, reason, opened_at, expires_at)| EmergencyGrant {
+            id,
+            org_id,
+            workspace_id,
+            user_id: user,
+            reason,
+            opened_at,
+            expires_at,
+        },
+    ))
+}
+
 /// Org of a workspace regardless of caller (for key confinement checks).
 pub async fn workspace_org<'e, E: PgExecutor<'e>>(
     exec: E,
@@ -557,6 +689,35 @@ pub async fn can_see_conversation_id<'e, E: PgExecutor<'e>>(
            JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $1 \
            WHERE c.id = $2 AND NOT {})",
         hidden_direct_conversation_sql("c.id", "$1", "w.id")
+    )))
+    .bind(user)
+    .bind(conv)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// (FIX-236, C-1165) [`can_see_conversation_id`] extended with the emergency grant: a caller
+/// holding an **active** grant on the conversation's workspace (and still an active effective
+/// org owner) reads it like an owner — the read stream's resync checks use this, so a stream
+/// opened under emergency access ends when the grant ends. Keep in step with
+/// [`emergency_reader`].
+pub async fn can_see_conversation_id_emergency<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    conv: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT EXISTS (SELECT 1 FROM conversations c \
+           JOIN workspaces w ON w.id = c.workspace_id \
+           JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $1 \
+           WHERE c.id = $2 AND NOT {HC}) \
+         OR EXISTS (SELECT 1 FROM conversations c2 \
+           JOIN workspace_emergency_access e ON e.workspace_id = c2.workspace_id \
+                AND e.user_id = $1 AND e.ended_at IS NULL AND e.expires_at > now() \
+           JOIN effective_org_members m ON m.org_id = e.org_id AND m.user_id = e.user_id \
+                AND m.role = 'owner' \
+           WHERE c2.id = $2)",
+        HC = hidden_direct_conversation_sql("c.id", "$1", "w.id")
     )))
     .bind(user)
     .bind(conv)

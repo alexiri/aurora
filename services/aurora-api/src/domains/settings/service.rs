@@ -1346,6 +1346,19 @@ async fn apply_inner(
             .await?;
     }
     let mut written = Vec::new();
+    // The default store the change goes **from**: the effective value before the write (the
+    // stored one, else the deployment's, else the built-in). Read before `cas_write` and the
+    // post-commit reload: the notice must not name the wrong "from".
+    let prev_default = if changed.iter().any(|p| p.section == "secrets") {
+        h.snapshot()
+            .effective
+            .keys
+            .get("secrets.default_store")
+            .and_then(|e| e.value.as_str())
+            .map(str::to_owned)
+    } else {
+        None
+    };
     for p in &changed {
         let g = repo::cas_write(
             &mut tx,
@@ -1419,6 +1432,29 @@ async fn apply_inner(
         });
     }
     notify_admins(state, via, &changed, &reqs);
+    // (FIX-244, D-486) The default secret store changed (an instance-wide setting): every
+    // organization's owners are told after the commit. A failing notice never fails the
+    // save.
+    for p in &changed {
+        if p.section != "secrets" {
+            continue;
+        }
+        for c in stored_changes(&p.section, &p.old, &p.new) {
+            if c["key"] == json!("secrets.default_store") {
+                let to = c["after"].as_str().unwrap_or("inline");
+                let from = prev_default.as_deref().unwrap_or("inline");
+                if from != to {
+                    crate::domains::lifecycle_notices::default_store_changed(
+                        state,
+                        &via.actor(),
+                        from,
+                        to,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
     Ok(Applied { changed: written })
 }
 

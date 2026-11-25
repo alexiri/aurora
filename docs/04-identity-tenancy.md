@@ -701,6 +701,8 @@ the frozen payload.
 | Org BYO posture, org default source CIDRs, org require-context default (phase 2, RFE-025) | org `owner`/`admin` (through governance, `governance.update`) |
 | List BYO agent tokens (expiry, last use, stale) of a workspace / of an org (phase 3, RFE-013) | workspace: `can_administer` (FIX-234, C-1160) / org: org `owner`/`admin`; org maximum age of agent tokens: org `owner`/`admin` through governance (`governance.update`, which records the retrofit) |
 | Chat with agents, read transcripts, upload attachments | `can_use`; (phase 1, RFE-009) for `direct` conversations: the direct user (read + write) and `can_own` (read, abort/send-now only) — `can_see_conversation` |
+| **Emergency read access**: open it on a workspace (reason, 1–24 h), end it, read its history (phase 5, FIX-236, D-478, C-1164, `§Emergency read access`) | open and end: a **session** of an active effective org **owner** of the workspace's organization (an org admin, a member, an instance admin who is not an org owner and every API key are refused); history lists: own access or `can_administer` (workspace), org `owner`/`admin` (org) |
+| **Read through an active emergency grant** (the C-1165 list: the workspace, its agents, the conversation lists and content reads, attachments, export, search, activity, memory, schedules, webhooks, skills, the people list) (phase 5, FIX-236, C-1165) | the caller's own access, **or** an active emergency grant in a session (`ReadAuth`); every other workspace route refuses an emergency session, and every conversation content read is recorded before the body |
 | Decide gateway approvals, action approvals and agent-link requests for agents of the workspace; read the approvals feed (pending, history, long-poll, SSE) | phase 0/1: `can_use`. **From phase 2 (RFE-012): `can_approve`** (a plain member sees an approval waiting inline in their own visible conversation, read-only, but not the feed and cannot decide); (phase 1, RFE-009) an approval that names a `direct` conversation is visible and decidable only by callers who `can_see_conversation` it (so: the direct user and `can_own`) |
 | Archive/unarchive a conversation (phase 2, RFE-010) | `can_see_conversation` and, for non-direct kinds, `can_use` |
 | Delete a conversation; redact transcript events; export a conversation (phase 2, RFE-010) | `direct`: its user or `can_own`; other kinds: `can_own` (redaction also: the event's turn author; export: not the turn author); always subject to `can_see_conversation` |
@@ -1321,7 +1323,12 @@ record and authority).
    `org.freeze|unfreeze` are in the security-critical set (written in the same
    transaction, *Audit*). Each effectively frozen agent's direct conversations get
    a platform `notice` (`code: "agent_frozen"`), and the dashboard shows a banner
-   at the scope.
+   at the scope. (FIX-244, D-486) After the commit the workspace's other own-right owners —
+   or, when there is none, the organization's other effective owners — are told of a
+   freeze or unfreeze of the workspace, and the organization's other effective owners of a
+   freeze or unfreeze of the organization: what happened, who (an instance administrator is
+   not named), when and what it means; never the actor, and a failed send never undoes the
+   freeze.
    (phase 4, P4-PRV-1/2) **Previews** of an effectively frozen agent answer 423 `frozen`, never
    wake or start anything, and their open streams close within `PREVIEW_AUTH_CACHE`; the shares
    and preview sessions are kept (`11 §Port previews`, `§Preview access`).
@@ -1332,6 +1339,45 @@ record and authority).
 7. **Reversal**: unfreezing clears the flags, invalidates the gateway and wakes due
    work. Nothing is replayed: aborted turns stay aborted, schedules resume at
    their next occurrence, sandboxes start on demand.
+
+## Emergency read access (phase 5, FIX-236, D-478, C-1164, C-1165, SEC-154)
+
+Break-glass: the one controlled exception to the access law above. An
+organization **owner** — never an org admin, never an instance admin by the
+flag — can open time-limited, read-only access to **one** workspace of their
+organization, with a reason, for 1–24 hours (default 4). It exists because
+freezing, suspending and deleting stop harm without reading anything, while
+legal and incident work sometimes needs the content.
+
+- **Opening it** needs a session (an API key can never open or use it) and
+  writes the security-critical `workspace.emergency_access.open` audit row in
+  the grant's transaction. One active grant per workspace and person (a
+  partial unique index backs the 409). It is never extendable: a new grant
+  notifies again.
+- **Everyone is told at once.** The workspace's people in their own right
+  (for a personal workspace, its person) and the organization's other
+  **effective** active owners are notified by e-mail and Web Push — the same
+  `effective_org_members` view the open check uses, so a group- or
+  IdP-derived owner is told like a direct one (review MEDIUM-7); never the
+  opener. The notices go out from a spawned task after the grant's commit
+  (a failing recipient is logged and never stops the others). The workspace
+  shows a banner naming the owner, the reason and the end time while it is
+  open and for 7 days after. Labels are display names, never e-mail
+  addresses.
+- **Read-only.** The grant satisfies only the C-1165 read routes through
+  `ReadAuth`; it never satisfies `can_use`, `can_approve`, `can_own`,
+  `can_administer` or `can_ssh`, and every write, approval, terminal, SSH,
+  files, preview and grants route refuses it. The reader sees every
+  conversation of the workspace, direct ones included.
+- **Every read is recorded.** Each response carrying a conversation's content
+  writes `conversation.emergency_view` before the body is sent; a failed
+  write refuses the read (503). The open, list and end responses carry
+  metadata only.
+- **It ends.** At `expires_at`, evaluated on every use (never only by the
+  sweep); early, by the opener or any active org owner (critical audit row,
+  idempotent); with `access_lost` when the opener stops being an active org
+  owner, in the same transaction as that change. Rows are kept 400 days for
+  the history views, then the nightly sweep deletes them.
 
 ## Invitations
 
@@ -1405,12 +1451,17 @@ personal-workspace owners add people this way.
   (FIX-097) The managed secret values of the workspace's secrets, connections and OAuth
   clients are discarded in their store after the commit (`08 §Secret stores`) and the
   gateways are invalidated (`workspace` scope); deleting an **agent** also removes the
-  compiled rules of its grants.
+  compiled rules of its grants. (FIX-244, D-486) The workspace's other own-right owners —
+  or, when there is none, the organization's other effective owners — are told after the
+  commit (the recipients are read before the cascade removes their rows); the notice names
+  what happened, who (an instance administrator is not named) and when, never the actor.
 - **Org deletion**: owner only, typed confirmation; hand-written service deletes
   children in dependency order (including directory groups, SCIM tokens and SCIM links,
   which restrict the organization row), enqueues connector deprovisioning, then deletes
   the org; the managed secret values of every secret, connection and OAuth client of
   the org are discarded after the commit and the gateways invalidated (`org` scope).
+  (FIX-244, D-486) The organization's other effective owners are told after the commit;
+  the notice never names an instance administrator.
   Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
 - **Deletion by an instance admin** (phase 5, P5-ADMDEL, D-234): `DELETE
   /v1/admin/orgs/{org}` and `DELETE /v1/admin/workspaces/{ws}` (C-733) run **the same

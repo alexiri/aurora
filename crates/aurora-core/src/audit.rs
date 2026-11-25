@@ -157,6 +157,13 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "org.unfreeze",
     "workspace.freeze",
     "workspace.unfreeze",
+    // (FIX-236, D-478(d), C-1164, SEC-154) emergency read access: opening it, ending it early
+    // and its expiry are security-critical; every conversation read through it writes
+    // `conversation.emergency_view` atomically (a failed write refuses the read, C-1165).
+    "conversation.emergency_view",
+    "workspace.emergency_access.end",
+    "workspace.emergency_access.expire",
+    "workspace.emergency_access.open",
     // Port previews (P4-PRV-1, D-144, D-145, SEC-80): share lifecycle and the org switch
     "org.previews.update",
     "preview.share.create",

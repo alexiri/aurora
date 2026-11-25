@@ -154,6 +154,8 @@ pub struct PruneReport {
     pub calendar_invitations: u64,
     /// (P5-SCHED-ONCE, C-1092) Done one-time schedules past `SCHEDULE_DONE_RETENTION`.
     pub schedules_done: u64,
+    /// (FIX-236, C-1164) Emergency access rows past their 400-day retention.
+    pub emergency_access: u64,
 }
 
 /// Run one batched delete until a batch comes back short (each statement removes at most
@@ -209,6 +211,13 @@ pub async fn run_retention_prune(pool: &PgPool) -> Result<PruneReport, aurora_db
         .await?
             + drain(|| aurora_db::repo::calendar_invitations::prune_sends(pool, b)).await?,
         schedules_done: drain(|| crate::domains::schedules::service::prune_done(pool, b)).await?,
+        emergency_access: drain(|| {
+            aurora_db::repo::emergency_access::prune(
+                pool,
+                aurora_core::limits::EMERGENCY_ACCESS_RETENTION_DAYS,
+            )
+        })
+        .await?,
     })
 }
 
@@ -373,6 +382,15 @@ pub async fn preview_housekeeping(pool: &PgPool) -> Result<u64, aurora_db::DbErr
         tracing::trace!(state, shares = n, "preview shares gauge");
     }
     Ok(cleared)
+}
+
+/// (FIX-236, C-1164) The emergency-access expiry sweep: every API replica, every minute, ends
+/// the grants whose `expires_at` passed (`end_reason = 'expired'`, one critical audit row each).
+/// Use never waits for it: every check reads `expires_at > now()` itself. Idempotent.
+pub const EMERGENCY_SWEEP_EVERY: Duration = Duration::from_secs(60);
+
+pub fn spawn_emergency_expiry(state: crate::app::AppState) {
+    crate::domains::emergency_access::service::spawn_emergency_expiry(state);
 }
 
 /// (P4-SSH-2, C-794) The stale-session sweep: every API replica, every 30 s, closes the open

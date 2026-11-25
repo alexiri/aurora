@@ -41,14 +41,17 @@ pub(super) async fn visible_agent(
     Ok(row)
 }
 
-/// Workspace skills: membership reads (404 invisible), `can_own` writes (403 for a member).
+/// Workspace skills: `ReadAuth` reads (404 invisible; C-1165, review LOW-9), `can_own` writes
+/// (403 for a member).
 async fn workspace_auth(c: &Caller, s: &AppState, ws: Uuid, write: bool) -> Result<(), ApiError> {
     let a = c.workspace(s, ws).await?;
     if write { require_own(&a) } else { Ok(()) }
 }
 
-/// Agent skills follow the agent's workspace; workspace skills: `can_use` reads, `can_own`
-/// writes; org skills: any active member reads, owner/admin writes.
+/// Agent skills follow the agent's workspace; workspace skills: `ReadAuth` reads (the list and
+/// the detail; review LOW-9), `can_own` writes; org skills: any active member reads,
+/// owner/admin writes. The skill FILE routes keep own access (review LOW-9 names the two
+/// reads only).
 pub(super) async fn authorize(
     c: &Caller,
     s: &AppState,
@@ -68,6 +71,36 @@ pub(super) async fn authorize(
             Ok(())
         }
     }
+}
+
+/// [`authorize`] for a *read* (C-1165): the emergency reader of the workspace reads the agent's
+/// and the workspace's skills. Never for a write. Org-tier skills are unchanged: an emergency
+/// reader is an active org owner, so the org read already passes.
+async fn authorize_read(c: &Caller, s: &AppState, sk: &SkillRow) -> Result<(), ApiError> {
+    if let Some(ws) = sk.workspace_id {
+        c.workspace_read(s, ws).await?;
+        return Ok(());
+    }
+    match sk.agent_id {
+        Some(a) => visible_agent_read(c, s, a).await.map(|_| ()),
+        None => {
+            c.org(s, sk.org_id).await?;
+            Ok(())
+        }
+    }
+}
+
+/// [`visible_agent`] for a *read* (C-1165).
+async fn visible_agent_read(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<agents::AgentRow, ApiError> {
+    let row = agents::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    c.workspace_read(s, row.workspace_id).await?;
+    Ok(row)
 }
 
 fn record(c: &Caller, s: &AppState, sk: &SkillRow, action: &str, ws: Option<Uuid>) {
@@ -112,7 +145,7 @@ async fn list_agent_skills(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Skill>>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    visible_agent_read(&c, &s, agent).await?;
     page(&s, service::list_agent(&s.pool, agent).await?).await
 }
 
@@ -197,7 +230,8 @@ async fn create_org_skill(
     Ok((StatusCode::CREATED, Json(v.into())))
 }
 
-/// List a workspace's skills (workspace tier).
+/// List a workspace's skills (workspace tier). The list is a C-1165 read (review LOW-9):
+/// `ReadAuth` — the emergency reader reads it too; the create stays `can_own`.
 #[utoipa::path(get, path = "/workspaces/{ws}/skills", operation_id = "listWorkspaceSkills",
     tag = "skills", params(("ws" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, body = Page<Skill>), (status = 403, body = ErrorEnvelope),
@@ -208,7 +242,7 @@ async fn list_workspace_skills(
     State(s): State<AppState>,
     Path(ws): Path<Uuid>,
 ) -> Result<Json<Page<Skill>>, ApiError> {
-    workspace_auth(&c, &s, ws, false).await?;
+    c.workspace_read(&s, ws).await?;
     page(&s, service::list_workspace(&s.pool, ws).await?).await
 }
 
@@ -387,7 +421,7 @@ async fn get_skill(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Skill>, ApiError> {
     let v = service::get(&s.pool, id).await?;
-    authorize(&c, &s, &v.row, false).await?;
+    authorize_read(&c, &s, &v.row).await?;
     Ok(Json(service::dto(&s.pool, v).await?))
 }
 

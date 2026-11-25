@@ -43,6 +43,7 @@ export function ChatThread({
   audience = null,
   myRole = null,
   readerId = null,
+  emergency = false,
   onGone,
   onBack,
   onTurn,
@@ -71,6 +72,11 @@ export function ChatThread({
   /** Display name of the person whose direct conversation an owner is reading (read-only). */
   ownerView?: string | null;
   ownDirect?: boolean;
+  /**
+   * (FIX-236, C-1165) The caller reads through emergency access: read-only, and unlike the owner
+   * view no Stop and no "…" menu — nothing here may act.
+   */
+  emergency?: boolean;
   /** The conversation is archived (RFE-010): offer Unarchive instead of Archive. */
   archived?: boolean;
   /** The org's conversation retention window in days, when one is set. */
@@ -134,7 +140,7 @@ export function ChatThread({
   const agentName = agent?.name ?? "the agent";
   // (D-414) The agent has no AI key at all: no composer, and the empty chat says "<Agent> has no AI model yet".
   const { noKey: noModel } = useAnswerFix(agentId);
-  const readOnly = ownerView !== null;
+  const readOnly = ownerView !== null || emergency;
   const isDirect = ownDirect || !!direct || readOnly || conversation?.kind === "direct";
   const empty = !loading && !error && state.events.length === 0 && Object.keys(state.deltas).length === 0;
 
@@ -178,7 +184,7 @@ export function ChatThread({
           live={loading || error ? null : live}
           onBack={onBack}
           actions={
-            onGone ? (
+            onGone && !emergency ? (
               <>
                 {archived && !readOnly ? <RestoreButton agentId={agentId} convId={convId} /> : null}
                 <ConversationActions
@@ -263,29 +269,37 @@ export function ChatThread({
         ) : null}
         {readOnly ? (
           <div className="shrink-0 space-y-2 border-t border-line p-3 md:px-5">
-            {stopErr ? (
+            {stopErr && !emergency ? (
               <p role="alert" className="text-sm text-danger-ink">
                 {stopErr}
               </p>
             ) : null}
-            <Notice role="note" className="flex flex-wrap items-center gap-2">
-              <p className="min-w-0 flex-1">
-                Read-only view. This is {ownerView || "another member"}&apos;s direct conversation. You can read it because you own this workspace; your access
-                is recorded in the audit log. You can stop its turns but cannot write in it.
-              </p>
-              {active ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setStopErr(null);
-                    chatApi.abort(active).then(() => markStopped(active)).catch((e: unknown) => setStopErr(e instanceof ApiError ? e.message : "Could not stop the turn."));
-                  }}>
-                  Stop
-                </Button>
-              ) : null}
-            </Notice>
+            {emergency ? (
+              // (FIX-236) Reading through emergency access: the reader's banner above the page says
+              // until when; the thread says why it is read-only and that nothing here may act.
+              <Notice role="note" data-testid="emergency-thread-notice">
+                Read-only. You hold emergency read access: everything you open is recorded, and you can read, not act.
+              </Notice>
+            ) : (
+              <Notice role="note" className="flex flex-wrap items-center gap-2">
+                <p className="min-w-0 flex-1">
+                  Read-only view. This is {ownerView || "another member"}&apos;s direct conversation. You can read it because you own this workspace; your access
+                  is recorded in the audit log. You can stop its turns but cannot write in it.
+                </p>
+                {active ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setStopErr(null);
+                      chatApi.abort(active).then(() => markStopped(active)).catch((e: unknown) => setStopErr(e instanceof ApiError ? e.message : "Could not stop the turn."));
+                    }}>
+                    Stop
+                  </Button>
+                ) : null}
+              </Notice>
+            )}
           </div>
         ) : archived ? (
           // (chat-1) An archived conversation is read-only: no composer, one sentence and Restore in the header.

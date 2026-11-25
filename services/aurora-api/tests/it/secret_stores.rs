@@ -5,6 +5,7 @@
 //! `aurora-secrets`' suites (`AURORA_TEST_VAULT=1`) and by the config-level tests below.
 
 use crate::common::*;
+use aurora_api::domains::auth::mail::{Mail, MailError, Mailer};
 use aurora_api::secrets_migrate::{Options, run};
 use aurora_core::Secret;
 use aurora_secrets::{MemoryStore, Purpose, SealContext, SecretRef, SecretVault, StoreRegistry};
@@ -1125,4 +1126,202 @@ async fn a_dashboard_store_cannot_use_the_kubernetes_login() {
         "{r}"
     );
     assert_eq!(t.hits(), 0);
+}
+
+/// A mailer that records every attempt and fails them all (the freeze suite's pattern).
+struct RecordingFailMailer(std::sync::Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl Mailer for RecordingFailMailer {
+    async fn send(&self, m: Mail) -> Result<(), MailError> {
+        self.0.lock().unwrap().push(m.to);
+        Err(MailError("smtp down".into()))
+    }
+}
+
+/// (FIX-244, D-486) The default-secret-store change tells every organization's effective owners —
+/// once each, not once per organization — never the actor (an instance administrator is never
+/// named), never an ordinary member, never a disabled user. The body says who, when, and from
+/// which store to which; no e-mail address and no secret appear in it. Adding a store without
+/// making it the default tells nobody.
+#[tokio::test]
+async fn the_default_store_change_tells_the_org_owners_and_only_them() {
+    let h = harness().await;
+    let a = admin(&h, "root@example.com").await;
+
+    // Pia owns two organizations (one notice, not two), Olive owns the second; an ordinary
+    // member and a disabled owner of the first get nothing.
+    let pia = h.user("pia@x.io", false).await;
+    let olive = h.user("olive@x.io", false).await;
+    let member = h.user("mem@x.io", false).await;
+    let sleepy = h.user("sleepy@x.io", false).await;
+    let org1 = h.org().await;
+    let org2 = h.org().await;
+    h.member(org1, pia, "owner", "active").await;
+    h.member(org1, member, "member", "active").await;
+    h.member(org1, sleepy, "owner", "active").await;
+    h.disable_user(sleepy).await;
+    h.member(org2, pia, "owner", "active").await;
+    h.member(org2, olive, "owner", "active").await;
+
+    let g0 = status(&h, &a).await["generation"].as_i64().unwrap();
+    let (s, v) = put_memory_store(&h, &a, "mem", g0).await;
+    assert_eq!(s, 200, "{v}");
+    let owner_mail = |h: &Harness| {
+        h.mail
+            .sent()
+            .into_iter()
+            .filter(|m| m.to == "pia@x.io" || m.to == "olive@x.io")
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        owner_mail(&h).is_empty(),
+        "adding a store without making it the default tells nobody"
+    );
+
+    let g1 = v["generation"].as_i64().unwrap();
+    let (s, v) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-store-default",
+        Some(json!({ "generation": g1, "store_id": "mem" })),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let mail = owner_mail(&h);
+    let mut tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    tos.sort_unstable();
+    tos.dedup();
+    assert_eq!(
+        tos,
+        ["olive@x.io", "pia@x.io"],
+        "every organization's owner, once each, nobody else: {tos:?}"
+    );
+    assert!(
+        !h.mail
+            .sent()
+            .iter()
+            .any(|m| m.to == "mem@x.io" || m.to == "sleepy@x.io"),
+        "an ordinary member and a disabled owner get nothing"
+    );
+    assert_eq!(
+        mail.iter().filter(|m| m.to == "pia@x.io").count(),
+        1,
+        "an owner of two organizations gets one notice: {mail:?}"
+    );
+    let m = &mail[0];
+    assert!(
+        m.subject.contains("default secret store"),
+        "the subject says what happened: {m:?}"
+    );
+    assert!(
+        m.body
+            .contains("an instance administrator changed the instance's default secret store")
+            && m.body.contains("go to mem instead of the built-in store"),
+        "who (the actor never named), from which store to which: {m:?}"
+    );
+    assert!(
+        !m.body.contains('@'),
+        "no e-mail address in the body: {m:?}"
+    );
+
+    // Only a real change tells: the same default again sends nothing.
+    let g2 = v["generation"].as_i64().unwrap();
+    let (s, v) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-store-default",
+        Some(json!({ "generation": g2, "store_id": "mem" })),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(owner_mail(&h).len(), mail.len(), "no second notice");
+}
+
+/// (FIX-244, D-486) A refused default change rolls back and sends nothing: a stale generation
+/// and an unknown store.
+#[tokio::test]
+async fn a_refused_default_change_sends_nothing() {
+    let h = harness().await;
+    let a = admin(&h, "root@example.com").await;
+    let pia = h.user("pia@x.io", false).await;
+    let org1 = h.org().await;
+    h.member(org1, pia, "owner", "active").await;
+
+    let g0 = status(&h, &a).await["generation"].as_i64().unwrap();
+    let (s, v) = put_memory_store(&h, &a, "mem", g0).await;
+    assert_eq!(s, 200, "{v}");
+    let g1 = v["generation"].as_i64().unwrap();
+
+    // A stale generation: the save is refused, the transaction rolls back.
+    let (s, e) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-store-default",
+        Some(json!({ "generation": g1 + 5, "store_id": "mem" })),
+    )
+    .await;
+    assert_eq!(s, 409, "{e}");
+    // An unknown store: refused too.
+    let (s, e) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-store-default",
+        Some(json!({ "generation": g1, "store_id": "ghost" })),
+    )
+    .await;
+    assert_ne!(s, 200, "{e}");
+    assert!(
+        !h.mail.sent().iter().any(|m| m.to == "pia@x.io"),
+        "a rolled-back change sends nothing"
+    );
+}
+
+/// (FIX-244, D-486) A failing recipient does not stop the others and never fails the save:
+/// every recipient's send is attempted and the change commits.
+#[tokio::test]
+async fn a_failing_recipient_does_not_stop_the_others_and_the_save_still_commits() {
+    let mut h = harness().await;
+    let a = admin(&h, "root@example.com").await;
+    let pia = h.user("pia@x.io", false).await;
+    let olive = h.user("olive@x.io", false).await;
+    let org1 = h.org().await;
+    let org2 = h.org().await;
+    h.member(org1, pia, "owner", "active").await;
+    h.member(org2, olive, "owner", "active").await;
+
+    let attempts = Arc::new(RecordingFailMailer(std::sync::Mutex::new(Vec::new())));
+    h.state = h
+        .state
+        .clone()
+        .with_mailer(Arc::clone(&attempts) as Arc<dyn Mailer>);
+    h.app = test_router(h.state.clone());
+
+    let g0 = status(&h, &a).await["generation"].as_i64().unwrap();
+    let (s, v) = put_memory_store(&h, &a, "mem", g0).await;
+    assert_eq!(s, 200, "{v}");
+    let g1 = v["generation"].as_i64().unwrap();
+    let (s, v) = call(
+        &h,
+        &a,
+        Method::PUT,
+        "/v1/admin/secret-store-default",
+        Some(json!({ "generation": g1, "store_id": "mem" })),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}: the save stands, the failures are logged");
+    // The change committed.
+    assert_eq!(status(&h, &a).await["effective_default"], json!("mem"));
+    // Every recipient was attempted (one failing recipient did not stop the others); the
+    // actor is not among them (the admin notification of the settings change fails too and
+    // is logged the same way).
+    let mut tos = attempts.0.lock().unwrap().clone();
+    tos.retain(|t| t == "pia@x.io" || t == "olive@x.io");
+    tos.sort_unstable();
+    tos.dedup();
+    assert_eq!(tos, ["olive@x.io", "pia@x.io"], "{tos:?}");
 }

@@ -519,6 +519,15 @@ pub async fn delete_org(
     let mut dep = deprovision::prepare(state, Scope::Org(org_id)).await?;
     let mut refs = Vec::new();
     let mut token_discards = crate::domains::user_tokens::custody::Discards::default();
+    // (FIX-244) The org's owners are read before the cascade removes their rows; the notice goes
+    // after the commit. A failing lookup means no notice, never a failed delete.
+    let notice = crate::domains::lifecycle_notices::prepare_org(
+        state,
+        org_id,
+        &ev.actor,
+        crate::domains::lifecycle_notices::Action::Deleted,
+    )
+    .await;
     let done = async {
         let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
         dep.enqueue(&mut tx).await?;
@@ -546,6 +555,9 @@ pub async fn delete_org(
     dep.committed(state).await;
     token_discards.run(state).await;
     discard_managed(state, refs).await;
+    if let Some(n) = notice {
+        n.send(state).await;
+    }
     Ok(())
 }
 
@@ -559,6 +571,16 @@ pub async fn delete_workspace(
     ev: &crate::audit::AuditEvent,
 ) -> Result<(), ApiError> {
     let mut del = WorkspaceDeletion::prepare(state, ws).await?;
+    // (FIX-244) The workspace's owners are read before the cascade removes their rows; the
+    // notice goes after the commit. A failing lookup means no notice, never a failed delete.
+    let notice = crate::domains::lifecycle_notices::prepare_workspace(
+        state,
+        org_id,
+        ws,
+        &ev.actor,
+        crate::domains::lifecycle_notices::Action::Deleted,
+    )
+    .await;
     let done = async {
         let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
         del.run(&mut tx, org_id, ws).await?;
@@ -570,6 +592,9 @@ pub async fn delete_workspace(
         return Err(e);
     }
     del.committed(state).await;
+    if let Some(n) = notice {
+        n.send(state).await;
+    }
     Ok(())
 }
 
@@ -777,6 +802,12 @@ pub async fn patch_member(
         req.status.map(MemberStatus::as_str),
     )
     .await?;
+    // (FIX-236, C-1164) An active owner losing owner status (role lowered or suspended) ends
+    // the emergency read access they opened, in this transaction, with one audit row per grant.
+    if cur.role == "owner" && cur.status == "active" && loses_owner {
+        crate::domains::emergency_access::service::end_lost_in_tx(&mut tx, actor, org_id, target)
+            .await?;
+    }
     // (FIX-234 review 4, D-480) The person is back: bind them as owner of their personal
     // workspace again when the binding is missing, so the workspace is never left ownerless
     // while its person was suspended (their access stays gated by the active membership).
@@ -881,6 +912,12 @@ pub async fn remove_member(
         reassign_org_member(&mut tx, actor, org_id, target, to).await?;
     }
     members::remove(&mut tx, org_id, target).await?;
+    // (FIX-236, C-1164) A removed active owner loses the emergency read access they opened,
+    // in this transaction, with one audit row per grant.
+    if cur.role == "owner" && cur.status == "active" {
+        crate::domains::emergency_access::service::end_lost_in_tx(&mut tx, actor, org_id, target)
+            .await?;
+    }
     // (FIX-108) The removal is remembered, so JIT provisioning never restores the membership.
     members::record_removal(&mut *tx, org_id, target).await?;
     // (FIX-037) A human removal of a SCIM-linked member tombstones the link in the same

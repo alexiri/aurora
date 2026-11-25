@@ -223,7 +223,7 @@ async fn list_conversations(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Conversation>>, ApiError> {
     // Authorise before parsing the query (FIX-181 F7, C-1041).
-    let agent_row = service::load_agent(&s, &c, agent).await?;
+    let (agent_row, read) = service::load_agent_read_auth(&s, &c, agent).await?;
     if let Some(k) = q.kind.as_deref()
         && !KINDS.contains(&k)
     {
@@ -254,8 +254,12 @@ async fn list_conversations(
         }
     };
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    // RFE-009: owners see every direct conversation of the agent; others only their own.
-    let owns = c.workspace(&s, agent_row.workspace_id).await?.can_own();
+    // RFE-009: owners see every direct conversation of the agent; others only their own. An
+    // emergency reader reads what an owner reads (C-1165, D-478(b)).
+    let owns = c
+        .workspace_read(&s, agent_row.workspace_id)
+        .await?
+        .can_own();
     let rows = convs::list_for_agent(
         &s.pool,
         agent,
@@ -298,6 +302,16 @@ async fn list_conversations(
         items.push(conv);
     }
     service::with_automation(&s.pool, &mut items).await?;
+    // (FIX-236, review LOW-12) The list carries conversation content (each row's active turn's
+    // text, and for direct rows who else takes part): the emergency reader's views for the
+    // listed conversations are recorded before the body, like the search and the feed — a
+    // failed write refuses the read with 503.
+    if let aurora_db::authz::ReadAuth::Emergency(g) = &read {
+        let actor = crate::audit::AuditActor::from_caller(&c);
+        for id in &ids {
+            service::record_emergency_view_id(&s, &actor, *id, g).await?;
+        }
+    }
     Ok(Json(Page {
         items,
         next_cursor: page.next_cursor,
@@ -371,7 +385,7 @@ async fn list_conversation_folders(
     Path(agent): Path<Uuid>,
     Query(q): Query<FoldersQuery>,
 ) -> Result<Json<Page<ConversationFolder>>, ApiError> {
-    service::load_agent(&s, &c, agent).await?;
+    service::load_agent_read(&s, &c, agent).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = convs::list_folders(&s.pool, agent, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.last_activity_at, r.automation_id));
@@ -636,6 +650,16 @@ struct Stream_ {
     access: broadcast::Receiver<crate::http::auth::AccessPing>,
     /// Set once the final `access.changed` event is queued: the stream ends after it.
     closing: bool,
+    /// (Verify LOW-3) The caller's emergency-view dedup window: `Unknown` until first needed,
+    /// `NotReader` never gates, `Reader` gates content frames until the instant.
+    window: WindowState,
+}
+
+/// (Verify LOW-3) See [`Stream_.window`].
+enum WindowState {
+    Unknown,
+    NotReader,
+    Reader(tokio::time::Instant),
 }
 
 impl Stream_ {
@@ -651,9 +675,67 @@ impl Stream_ {
         self.closing = true;
     }
 
+    /// (Verify LOW-3) The dedup-hour gate before any content frame: inside the caller's window
+    /// content flows (the fast path touches nothing); once the window has rolled over, the
+    /// fresh `emergency_view` row is written FIRST, and a failed write ends the stream — the
+    /// client's reconnect is then refused until the audit writes again, so content never flows
+    /// unrecorded. Returns false when the stream must close.
+    async fn ensure_recorded(&mut self) -> bool {
+        if let WindowState::Reader(until) = self.window
+            && tokio::time::Instant::now() < until
+        {
+            return true;
+        }
+        match service::emergency_view_window(&self.s, self.user, self.conv).await {
+            Ok(service::EmergencyViewWindow::NotReader) => {
+                self.window = WindowState::NotReader;
+                true
+            }
+            Ok(service::EmergencyViewWindow::Open(until)) => {
+                self.set_window(until);
+                true
+            }
+            Ok(service::EmergencyViewWindow::Rolled) => {
+                if let Err(e) = service::refresh_emergency_view(&self.s, self.user, self.conv).await
+                {
+                    tracing::warn!(error = %e.code(), "conversation stream emergency view gate record failed");
+                    self.close_access_changed();
+                    return false;
+                }
+                match service::emergency_view_window(&self.s, self.user, self.conv).await {
+                    Ok(service::EmergencyViewWindow::Open(until)) => {
+                        self.set_window(until);
+                        true
+                    }
+                    // The record could not be confirmed: refuse the content.
+                    _ => {
+                        self.close_access_changed();
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "conversation stream emergency view gate failed");
+                self.close_access_changed();
+                false
+            }
+        }
+    }
+
+    fn set_window(&mut self, until: chrono::DateTime<chrono::Utc>) {
+        let dur = (until - chrono::Utc::now())
+            .to_std()
+            .unwrap_or(std::time::Duration::ZERO);
+        self.window = WindowState::Reader(tokio::time::Instant::now() + dur);
+    }
+
     /// Read durable events after `last` from the database until caught up.
     async fn reload(&mut self) {
         self.dirty = false;
+        // (Verify LOW-3) The replayed transcript is content: the gate comes first.
+        if !self.ensure_recorded().await {
+            return;
+        }
         loop {
             let rows = match transcript::list_after(
                 &self.s.pool,
@@ -714,7 +796,7 @@ async fn stream(
     let rx = s.conversation_bus.subscribe(&s.pool).await?;
     let keepalive = s.sse_keepalive;
     let gone = crate::http::auth::revoked(s.clone(), c.clone());
-    let mut tick = tokio::time::interval(RESYNC_EVERY);
+    let mut tick = tokio::time::interval(s.stream_recheck.min(RESYNC_EVERY));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let access = s.session_cache.subscribe_access();
     let st = Stream_ {
@@ -728,6 +810,7 @@ async fn stream(
         buf: VecDeque::new(),
         tick,
         dirty: true,
+        window: WindowState::Unknown,
     };
     let events = futures::stream::unfold(st, |mut st| async move {
         loop {
@@ -750,6 +833,10 @@ async fn stream(
                     }
                     Ok(BusMsg::Delta { conversation, turn, kind, message_id, reply_to, text }) => {
                         if conversation == st.conv {
+                            // (Verify LOW-3) Deltas are content: the dedup gate comes first.
+                            if !st.ensure_recorded().await {
+                                continue;
+                            }
                             let payload = match kind.as_str() {
                                 "activity" => serde_json::json!({"turn_id": turn, "line": text}),
                                 "event.redacted" => {
@@ -790,7 +877,12 @@ async fn stream(
                     };
                     if relevant
                         && matches!(
-                            aurora_db::authz::can_see_conversation_id(&st.s.pool, st.user, st.conv).await,
+                            aurora_db::authz::can_see_conversation_id_emergency(
+                                &st.s.pool,
+                                st.user,
+                                st.conv
+                            )
+                            .await,
                             Ok(false)
                         )
                     {
@@ -799,11 +891,29 @@ async fn stream(
                 }
                 _ = st.tick.tick() => {
                     // RFE-009: a viewer who lost visibility (left the workspace, lost
-                    // ownership) stops receiving the stream at the next resync.
+                    // ownership, or whose emergency grant ended) stops receiving the stream at
+                    // the next resync.
                     if matches!(
-                        aurora_db::authz::can_see_conversation_id(&st.s.pool, st.user, st.conv).await,
+                        aurora_db::authz::can_see_conversation_id_emergency(
+                            &st.s.pool,
+                            st.user,
+                            st.conv
+                        )
+                        .await,
                         Ok(false)
                     ) {
+                        st.close_access_changed();
+                        continue;
+                    }
+                    // (FIX-236, review MEDIUM-4) A live stream keeps recording: when the hour
+                    // window has rolled over, the tick writes a fresh `emergency_view` row (the
+                    // dedup makes it a no-op otherwise). A failed write ends the stream — the
+                    // client's reconnect is refused until the audit writes again, so content
+                    // never flows unrecorded.
+                    if let Err(e) =
+                        service::refresh_emergency_view(&st.s, st.user, st.conv).await
+                    {
+                        tracing::warn!(error = %e.code(), "conversation stream emergency view re-record failed");
                         st.close_access_changed();
                         continue;
                     }

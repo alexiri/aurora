@@ -11,7 +11,7 @@ use crate::http::client_ip::ClientIp;
 use crate::http::who_can::{WhoCanRole, forbid, forbid_code};
 use aurora_core::ApiError;
 use aurora_core::token::{self, TokenPrefix};
-use aurora_db::authz::{self, OrgRole, WorkspaceAuth};
+use aurora_db::authz::{self, OrgRole, ReadAuth, WorkspaceAuth};
 use aurora_db::bus::{BusEvent, Channel, Listener};
 use aurora_db::repo::{api_keys, sessions};
 use axum::extract::FromRequestParts;
@@ -107,6 +107,56 @@ impl Caller {
             Some(a) => Ok(a),
             // (FIX-234, C-1160) An administrator without own access names the fact instead of
             // the 404, so the dashboard can point at the manage page; they still get no content.
+            None if authz::can_administer(&state.pool, self.user_id, ws).await? => {
+                Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "workspace_access_required",
+                    "You manage this workspace but you are not one of its people.",
+                ))
+            }
+            None => Err(not_found_ws()),
+        }
+    }
+
+    /// (FIX-236, C-1165) Resolve the read authority for the C-1165 read routes: the caller's
+    /// own access, or — only for a **session** caller — an active emergency grant
+    /// ([`authz::emergency_reader`], evaluated here on every request, never cached). An API key
+    /// (workspace key, org key `auo_` included) can never open or use an emergency grant: it
+    /// reads only with its own access. Key confinement as in [`Caller::workspace`]; the
+    /// FIX-234 refusals (403 `workspace_access_required` for an administrator without own
+    /// access, 404 otherwise) are unchanged.
+    pub async fn workspace_read(&self, state: &AppState, ws: Uuid) -> Result<ReadAuth, ApiError> {
+        if let Principal::ApiKey {
+            org_id,
+            workspace_id,
+            ..
+        } = &self.principal
+        {
+            match workspace_id {
+                Some(k) if *k != ws => {
+                    return Err(ApiError::new(
+                        StatusCode::FORBIDDEN,
+                        "workspace_mismatch",
+                        "This API key is confined to a different workspace.",
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    if authz::workspace_org(&state.pool, ws).await? != Some(*org_id) {
+                        return Err(not_found_ws());
+                    }
+                }
+            }
+        }
+        // An emergency grant widens the read even for a caller who also holds own access
+        // (D-478(b): every conversation, direct ones included) — but only in a session.
+        if self.is_session()
+            && let Some(g) = authz::emergency_reader(&state.pool, self.user_id, ws).await?
+        {
+            return Ok(ReadAuth::Emergency(g));
+        }
+        match authz::workspace_access(&state.pool, self.user_id, ws).await? {
+            Some(a) => Ok(ReadAuth::Own(a)),
             None if authz::can_administer(&state.pool, self.user_id, ws).await? => {
                 Err(ApiError::new(
                     StatusCode::FORBIDDEN,

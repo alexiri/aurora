@@ -241,6 +241,18 @@ pub struct Workspace {
     /// (FIX-234, C-1160) The caller manages this workspace through their organization role
     /// (own-right `owner` there or an active org owner/admin) but may hold no own access.
     pub administers: bool,
+    /// (FIX-236, C-1165) True while the caller holds an active emergency read access here.
+    pub emergency_reader: bool,
+    /// (FIX-236, C-1165, review HIGH-3) The caller's OWN active emergency grant here — the id
+    /// their reader banner's "End now" ends, never another owner's newest grant; `null` when
+    /// they hold no active grant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emergency_reader_id: Option<Uuid>,
+    /// (FIX-236, verify LOW-2) The caller's OWN active grant's expiry — what their reader
+    /// banner counts down (`audience.emergency` may be another owner's newest grant); `null`
+    /// when they hold no active grant. Never set for an API key: keys cannot use a grant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emergency_reader_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     /// (FIX-234, C-1162) Who the workspace's people are; present on `GET /v1/workspaces/{ws}`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audience: Option<WorkspaceAudience>,
@@ -272,6 +284,9 @@ impl Workspace {
             effective_byo_posture: None,
             my_role,
             administers,
+            emergency_reader: false,
+            emergency_reader_id: None,
+            emergency_reader_expires_at: None,
             audience: None,
             frozen: None,
             contacts: None,
@@ -292,9 +307,31 @@ pub struct WorkspaceAudience {
     pub owners: Vec<WorkspaceAudienceOwner>,
     /// How many own-right owners the workspace has.
     pub owners_total: i64,
+    /// (FIX-236, C-1165) The newest **active** emergency access when any is active (review
+    /// HIGH-1: an owner's open access is never hidden behind another owner's newer, ended one),
+    /// else the newest that ended within the last 7 days — the workspace's banner for its
+    /// people; `null` when there is none to show.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emergency: Option<WorkspaceAudienceEmergency>,
+    /// (FIX-236, review HIGH-1) How many **other** emergency grants are active right now besides
+    /// `emergency` — two simultaneous openers are both announced.
+    pub emergency_active_more: i64,
 }
 
-#[derive(Serialize, ToSchema)]
+/// (FIX-236, C-1165) `audience.emergency`: who opened emergency read access, why and until
+/// when. Metadata only; the reason is the opener's own sanitized words.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WorkspaceAudienceEmergency {
+    pub id: Uuid,
+    pub by: WorkspaceAudienceOwner,
+    pub reason: String,
+    pub opened_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub active: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub struct WorkspaceAudienceOwner {
     pub id: Uuid,
     pub display_name: String,

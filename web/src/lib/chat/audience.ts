@@ -11,6 +11,7 @@
 // workspace's people can neither use the agent nor read its chats.
 
 import type { components } from "@/lib/api/schema";
+import { emergencyVisibilityLine } from "@/lib/emergency";
 import { personName } from "@/lib/workspace-name";
 
 type S = components["schemas"];
@@ -47,14 +48,22 @@ function nameList(others: { display_name: string }[], totalOthers: number): stri
 export function visibilityLines(input: VisibilityInput): string[] {
   const { kind, ownDirect, ownerView, audience, readerId, myRole } = input;
 
+  // (FIX-236, C-1165) While an emergency grant is active, its line is appended whatever else the
+  // table says — the emergency reader holds no own access, so `audience` is the only place the
+  // grant shows. The workspace's own line stays unchanged; the emergency line is the last one.
+  const emergency = audience?.emergency;
+  const emergencyLine = emergency?.active ? emergencyVisibilityLine(emergency) : null;
+
   // An owner reading another person's direct chat: the read-only view's line, unchanged.
   if (ownerView) {
-    return [`Only ${ownerView} and the workspace's owners can see this conversation.`];
+    const lines = [`Only ${ownerView} and the workspace's owners can see this conversation.`];
+    return emergencyLine ? [...lines, emergencyLine] : lines;
   }
 
   const n = audience?.people ?? 0;
   if (n < 2) {
-    return ["Only you can use this agent and read its conversations."];
+    const lines = ["Only you can use this agent and read its conversations."];
+    return emergencyLine ? [...lines, emergencyLine] : lines;
   }
 
   const use = `All ${n} people in this workspace can use this agent`;
@@ -65,18 +74,23 @@ export function visibilityLines(input: VisibilityInput): string[] {
   if (kind === "direct" && ownDirect) {
     if (totalOthers < 1) {
       // The reader the only owner, or nobody holds the workspace's ownership.
-      return [`${use}. Only you can read this chat.`];
+      const lines = [`${use}. Only you can read this chat.`];
+      return emergencyLine ? [...lines, emergencyLine] : lines;
     }
     if (myRole === "owner") {
       const who = totalOthers === 1 ? "the other owner" : "the other owners";
-      return [`${use}. This chat is visible to you and ${who}: ${nameList(others, totalOthers)}.`];
+      const lines = [`${use}. This chat is visible to you and ${who}: ${nameList(others, totalOthers)}.`];
+      return emergencyLine ? [...lines, emergencyLine] : lines;
     }
     if (totalOthers === 1) {
-      return [`${use}. This chat is visible to you and the workspace's owner, ${personName(others[0]?.display_name) ?? "the owner"}.`];
+      const lines = [`${use}. This chat is visible to you and the workspace's owner, ${personName(others[0]?.display_name) ?? "the owner"}.`];
+      return emergencyLine ? [...lines, emergencyLine] : lines;
     }
-    return [`${use}. This chat is visible to you and the workspace's owners: ${nameList(others, totalOthers)}.`];
+    const lines = [`${use}. This chat is visible to you and the workspace's owners: ${nameList(others, totalOthers)}.`];
+    return emergencyLine ? [...lines, emergencyLine] : lines;
   }
 
   // A conversation that is not the reader's direct chat: everyone with access reads it.
-  return [`${use} and read this conversation.`];
+  const lines = [`${use} and read this conversation.`];
+  return emergencyLine ? [...lines, emergencyLine] : lines;
 }

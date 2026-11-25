@@ -239,7 +239,15 @@ pub async fn download(state: &AppState, c: &Caller, id: Uuid) -> Result<Response
         .ok_or_else(att_404)?;
     conv::read_conversation(state, c, row.conversation_id)
         .await
-        .map_err(|_| att_404())?;
+        .map_err(|e| {
+            // (Review LOW-8) A failed audit write is the record refusing the read with 503
+            // `audit_unavailable` (C-1165) — never disguised as a missing attachment.
+            if e.code() == "audit_unavailable" {
+                e
+            } else {
+                att_404()
+            }
+        })?;
     if row.purged_at.is_some() {
         return Err(purged());
     }

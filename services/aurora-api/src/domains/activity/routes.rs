@@ -112,7 +112,9 @@ async fn activity(
     Path(ws): Path<Uuid>,
     Query(q): Query<ActivityQuery>,
 ) -> Result<Json<Page<RequestLogEntry>>, ApiError> {
-    c.workspace(&s, ws).await?;
+    // (FIX-236, C-1165) A read route: the caller's own access, or an active emergency grant,
+    // which reads the request log like an owner — every conversation, direct ones included.
+    let read = c.workspace_read(&s, ws).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let f = ActivityFilter {
         agent_id: q.agent_id,
@@ -121,8 +123,16 @@ async fn activity(
         host: q.host,
         app_id: q.app_id,
     };
-    let rows =
-        request_log::list_activity(&s.pool, c.user_id, ws, &f, p.after_key(), p.fetch()).await?;
+    let rows = request_log::list_activity(
+        &s.pool,
+        c.user_id,
+        read.can_own(),
+        ws,
+        &f,
+        p.after_key(),
+        p.fetch(),
+    )
+    .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.ts, r.id));
     Ok(Json(page.map(RequestLogEntry::from)))
 }
