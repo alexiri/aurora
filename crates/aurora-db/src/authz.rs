@@ -580,6 +580,17 @@ impl ReadAuth {
             Self::Emergency(_) => None,
         }
     }
+    /// Holding a `WorkspaceAuth` *is* `can_use` (see its impl); an emergency grant reads like a
+    /// member. Lists and metadata need nothing more than the `ReadAuth` itself.
+    /// `can_own` for the read routes (C-1165, D-478(b)): the emergency reader reads what an
+    /// owner reads — every conversation, direct ones included, and every message in search.
+    /// Never usable for a write: writes resolve [`WorkspaceAuth`] through [`Caller::workspace`].
+    pub fn can_own(&self) -> bool {
+        match self {
+            Self::Own(a) => a.can_own(),
+            Self::Emergency(_) => true,
+        }
+    }
 }
 
 /// (FIX-236, C-1165) The one helper. `Some` only while `user` holds an **active** emergency
@@ -678,6 +689,35 @@ pub async fn can_see_conversation_id<'e, E: PgExecutor<'e>>(
            JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $1 \
            WHERE c.id = $2 AND NOT {})",
         hidden_direct_conversation_sql("c.id", "$1", "w.id")
+    )))
+    .bind(user)
+    .bind(conv)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// (FIX-236, C-1165) [`can_see_conversation_id`] extended with the emergency grant: a caller
+/// holding an **active** grant on the conversation's workspace (and still an active effective
+/// org owner) reads it like an owner — the read stream's resync checks use this, so a stream
+/// opened under emergency access ends when the grant ends. Keep in step with
+/// [`emergency_reader`].
+pub async fn can_see_conversation_id_emergency<'e, E: PgExecutor<'e>>(
+    exec: E,
+    user: Uuid,
+    conv: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT EXISTS (SELECT 1 FROM conversations c \
+           JOIN workspaces w ON w.id = c.workspace_id \
+           JOIN effective_workspace_access ea ON ea.workspace_id = w.id AND ea.user_id = $1 \
+           WHERE c.id = $2 AND NOT {HC}) \
+         OR EXISTS (SELECT 1 FROM conversations c2 \
+           JOIN workspace_emergency_access e ON e.workspace_id = c2.workspace_id \
+                AND e.user_id = $1 AND e.ended_at IS NULL AND e.expires_at > now() \
+           JOIN effective_org_members m ON m.org_id = e.org_id AND m.user_id = e.user_id \
+                AND m.role = 'owner' \
+           WHERE c2.id = $2)",
+        HC = hidden_direct_conversation_sql("c.id", "$1", "w.id")
     )))
     .bind(user)
     .bind(conv)

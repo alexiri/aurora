@@ -310,11 +310,12 @@ async fn list_agents(
     Query(params): Query<PageParams>,
 ) -> Result<Json<Page<Agent>>, ApiError> {
     let p = params.resolve()?;
-    let a = caller.workspace(&state, ws).await?;
+    // (FIX-236, C-1165) A read route: own access, or an active emergency grant.
+    let read = caller.workspace_read(&state, ws).await?;
     let rows = agents::list_for_workspace(&state.pool, ws, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     let refs: Vec<&agents::AgentRow> = page.items.iter().collect();
-    let views = super::byo::views(&state, a.org_id, ws, &refs).await?;
+    let views = super::byo::views(&state, read.org_id(), ws, &refs).await?;
     let mut items: Vec<Agent> = page
         .items
         .into_iter()
@@ -353,7 +354,8 @@ async fn get_agent(
     let row = agents::get(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    caller.workspace(&state, row.workspace_id).await?;
+    // (FIX-236, C-1165) A read route: own access, or an active emergency grant.
+    caller.workspace_read(&state, row.workspace_id).await?;
     Ok(Json(with_byo(&state, row).await?))
 }
 

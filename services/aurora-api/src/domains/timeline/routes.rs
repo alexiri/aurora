@@ -2,7 +2,6 @@ use super::dto::{StreamQuery, TimelinePage, TimelineQuery, TimelineStreamEvents}
 use super::feed::{self, AgentCtx, Cursor, Feed, Filter, Viewer};
 use super::stream::Stream;
 use crate::app::AppState;
-use crate::domains::conversations::service::load_agent;
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -19,10 +18,11 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(timeline_stream))
 }
 
-/// The agent and the caller's access to its workspace (404 as every agent route).
+/// The agent and the caller's read authority to its workspace (404 as every agent route): own
+/// access, or an active emergency grant (C-1165).
 async fn resolve(s: &AppState, c: &Caller, agent: Uuid) -> Result<(Viewer, AgentCtx), ApiError> {
-    let a = load_agent(s, c, agent).await?;
-    let auth = c.workspace(s, a.workspace_id).await?;
+    let a = crate::domains::conversations::service::load_agent_read(s, c, agent).await?;
+    let auth = c.workspace_read(s, a.workspace_id).await?;
     let harness = a
         .harness
         .clone()
@@ -30,6 +30,7 @@ async fn resolve(s: &AppState, c: &Caller, agent: Uuid) -> Result<(Viewer, Agent
     Ok((
         Viewer {
             user: c.user_id,
+            actor: crate::audit::AuditActor::from_caller(c),
             auth,
         },
         AgentCtx {

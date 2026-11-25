@@ -70,6 +70,36 @@ pub(super) async fn authorize(
     }
 }
 
+/// [`authorize`] for a *read* (C-1165): the emergency reader of the workspace reads the agent's
+/// and the workspace's skills. Never for a write. Org-tier skills are unchanged: an emergency
+/// reader is an active org owner, so the org read already passes.
+async fn authorize_read(c: &Caller, s: &AppState, sk: &SkillRow) -> Result<(), ApiError> {
+    if let Some(ws) = sk.workspace_id {
+        c.workspace_read(s, ws).await?;
+        return Ok(());
+    }
+    match sk.agent_id {
+        Some(a) => visible_agent_read(c, s, a).await.map(|_| ()),
+        None => {
+            c.org(s, sk.org_id).await?;
+            Ok(())
+        }
+    }
+}
+
+/// [`visible_agent`] for a *read* (C-1165).
+async fn visible_agent_read(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<agents::AgentRow, ApiError> {
+    let row = agents::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    c.workspace_read(s, row.workspace_id).await?;
+    Ok(row)
+}
+
 fn record(c: &Caller, s: &AppState, sk: &SkillRow, action: &str, ws: Option<Uuid>) {
     let mut ev = AuditEvent::by(c, action)
         .org(sk.org_id)
@@ -112,7 +142,7 @@ async fn list_agent_skills(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Skill>>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    visible_agent_read(&c, &s, agent).await?;
     page(&s, service::list_agent(&s.pool, agent).await?).await
 }
 
@@ -387,7 +417,7 @@ async fn get_skill(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Skill>, ApiError> {
     let v = service::get(&s.pool, id).await?;
-    authorize(&c, &s, &v.row, false).await?;
+    authorize_read(&c, &s, &v.row).await?;
     Ok(Json(service::dto(&s.pool, v).await?))
 }
 

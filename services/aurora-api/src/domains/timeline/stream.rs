@@ -352,10 +352,14 @@ impl Stream {
         }
     }
 
-    /// Re-read the viewer's access to the agent's workspace (role changes apply at once). False
-    /// (and the stream ends) when the viewer lost it.
+    /// Re-read the viewer's read authority on the agent's workspace (role changes and emergency
+    /// grants apply at once). False (and the stream ends) when the viewer lost it.
     async fn refresh_access(&mut self) -> bool {
-        match self.c.workspace(&self.s, self.agent.workspace_id).await {
+        match self
+            .c
+            .workspace_read(&self.s, self.agent.workspace_id)
+            .await
+        {
             Ok(auth) => {
                 self.viewer.auth = auth;
                 true

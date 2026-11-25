@@ -41,6 +41,21 @@ async fn visible_agent(c: &Caller, s: &AppState, id: Uuid) -> Result<agents::Age
     Ok(row)
 }
 
+/// [`visible_agent`] for a *read* (C-1165): the emergency reader of the workspace lists the
+/// schedules. Never for a write. Returns the read authority (the origin-conversation redaction
+/// does not apply to an emergency reader: they read every conversation).
+async fn visible_agent_read(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<(agents::AgentRow, aurora_db::authz::ReadAuth), ApiError> {
+    let row = agents::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    let read = c.workspace_read(s, row.workspace_id).await?;
+    Ok((row, read))
+}
+
 /// Load a schedule and check access through its agent.
 async fn authorized(
     c: &Caller,
@@ -50,6 +65,17 @@ async fn authorized(
     let row = service::get(&s.pool, id).await?;
     let agent = visible_agent(c, s, row.agent_id).await?;
     Ok((row, agent))
+}
+
+/// [`authorized`] for a *read* (C-1165); returns the read authority as well.
+async fn authorized_read(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<(ScheduleRow, agents::AgentRow, aurora_db::authz::ReadAuth), ApiError> {
+    let row = service::get(&s.pool, id).await?;
+    let (agent, read) = visible_agent_read(c, s, row.agent_id).await?;
+    Ok((row, agent, read))
 }
 
 fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &ScheduleRow, action: &str) {
@@ -65,8 +91,14 @@ fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &ScheduleRow, actio
 
 /// RFE-009: a reference to a direct conversation the caller cannot see is returned as `null`
 /// with `conversation_hidden: true`. (P5-REFINE-7, C-1077) Also fills `next_runs` and
-/// `last_result` (one query for the page).
-async fn redact_all(c: &Caller, s: &AppState, items: &mut [Schedule]) -> Result<(), ApiError> {
+/// `last_result` (one query for the page). An emergency reader reads every conversation
+/// (C-1165, D-478(b)): nothing is hidden from them.
+async fn redact_all(
+    c: &Caller,
+    s: &AppState,
+    emergency: bool,
+    items: &mut [Schedule],
+) -> Result<(), ApiError> {
     let now = chrono::Utc::now();
     for i in items.iter_mut().filter(|i| i.enabled) {
         i.next_runs = match &i.cron {
@@ -84,15 +116,24 @@ async fn redact_all(c: &Caller, s: &AppState, items: &mut [Schedule]) -> Result<
             i.last_result = Some(ScheduleRun::from(r).result);
         }
     }
-    redact_origins(c, s, items).await
+    redact_origins(c, s, emergency, items).await
 }
 
-async fn redact_origins(c: &Caller, s: &AppState, items: &mut [Schedule]) -> Result<(), ApiError> {
+async fn redact_origins(
+    c: &Caller,
+    s: &AppState,
+    emergency: bool,
+    items: &mut [Schedule],
+) -> Result<(), ApiError> {
     let ids: Vec<Uuid> = items
         .iter()
         .filter_map(|i| i.origin_conversation_id)
         .collect();
-    let hidden = aurora_db::authz::hidden_conversations(&s.pool, c.user_id, &ids).await?;
+    let hidden = if emergency {
+        Vec::new()
+    } else {
+        aurora_db::authz::hidden_conversations(&s.pool, c.user_id, &ids).await?
+    };
     for i in items.iter_mut() {
         if i.origin_conversation_id
             .is_some_and(|id| hidden.contains(&id))
@@ -114,10 +155,16 @@ async fn list_schedules(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Schedule>>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    let (_, read) = visible_agent_read(&c, &s, agent).await?;
     let items = service::list(&s.pool, agent).await?;
     let mut items: Vec<Schedule> = items.into_iter().map(Schedule::from).collect();
-    redact_all(&c, &s, &mut items).await?;
+    redact_all(
+        &c,
+        &s,
+        matches!(read, aurora_db::authz::ReadAuth::Emergency(_)),
+        &mut items,
+    )
+    .await?;
     Ok(Json(Page {
         items,
         next_cursor: None,
@@ -159,7 +206,8 @@ async fn create_schedule(
     record(&c, &s, &a, &row, "schedule.create");
     let row = service::get(&s.pool, row.id).await?;
     let mut out = vec![Schedule::from(row)];
-    redact_all(&c, &s, &mut out).await?;
+    // A write route: the caller holds `WorkspaceAuth`, never an emergency grant.
+    redact_all(&c, &s, false, &mut out).await?;
     Ok((StatusCode::CREATED, Json(out.remove(0))))
 }
 
@@ -173,9 +221,15 @@ async fn get_schedule(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Schedule>, ApiError> {
-    let (row, _) = authorized(&c, &s, id).await?;
+    let (row, _, read) = authorized_read(&c, &s, id).await?;
     let mut out = vec![Schedule::from(row)];
-    redact_all(&c, &s, &mut out).await?;
+    redact_all(
+        &c,
+        &s,
+        matches!(read, aurora_db::authz::ReadAuth::Emergency(_)),
+        &mut out,
+    )
+    .await?;
     Ok(Json(out.remove(0)))
 }
 
@@ -236,7 +290,8 @@ async fn update_schedule(
         row = service::get(&s.pool, id).await?;
     }
     let mut out = vec![Schedule::from(row)];
-    redact_all(&c, &s, &mut out).await?;
+    // A write route: the caller holds `WorkspaceAuth`, never an emergency grant.
+    redact_all(&c, &s, false, &mut out).await?;
     Ok(Json(out.remove(0)))
 }
 
@@ -275,7 +330,7 @@ async fn list_runs(
     Path(id): Path<Uuid>,
     Query(q): Query<RunsQuery>,
 ) -> Result<Json<Page<ScheduleRun>>, ApiError> {
-    authorized(&c, &s, id).await?;
+    authorized_read(&c, &s, id).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = aurora_db::repo::schedules::runs_with_results(&s.pool, id, p.after_key(), p.fetch())
         .await?;
@@ -432,7 +487,8 @@ async fn reassign_creator(
         .await?
         .is_some();
     let mut out = vec![Schedule::from(service::get(&s.pool, id).await?)];
-    redact_all(&c, &s, &mut out).await?;
+    // A write route: the caller holds `WorkspaceAuth`, never an emergency grant.
+    redact_all(&c, &s, false, &mut out).await?;
     let out = out.remove(0);
     // (FIX-234 review round 3, C-1160) An administerer without own access gets the response
     // shape with the content emptied: the prompt and gate text a person wrote, the provenance

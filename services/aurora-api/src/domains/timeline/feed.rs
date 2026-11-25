@@ -19,9 +19,10 @@ use super::dto::{
     TimelineRequestEvent, TimelineRule, TimelineState,
 };
 use crate::app::AppState;
+use crate::audit::AuditActor;
 use crate::domains::schedules::results;
 use aurora_core::ApiError;
-use aurora_db::authz::{WorkspaceAuth, can_see_conversation};
+use aurora_db::authz::ReadAuth;
 use aurora_db::repo::timeline::{
     self as repo, AccessItemRow, ActionApprovalItemRow, ApprovalItemRow, AutomationItemRow,
     CallRow, PeerItemRow, StepRow, TurnRow,
@@ -41,11 +42,14 @@ pub const COMPUTER_ROWS_PER_TURN: usize = 3;
 /// Turns created before a page's horizon that may still have steps above it.
 const OVERLAP_TURNS: i64 = 200;
 
-/// Who reads the timeline: the caller and their access to the agent's workspace.
+/// Who reads the timeline: the caller (as the audit actor), their access to the agent's
+/// workspace — own access or an active emergency grant (C-1165) — and the conversations an
+/// emergency reader's page let through, recorded before the body.
 #[derive(Debug, Clone)]
 pub struct Viewer {
     pub user: Uuid,
-    pub auth: WorkspaceAuth,
+    pub actor: AuditActor,
+    pub auth: ReadAuth,
 }
 
 /// The agent whose timeline it is.
@@ -80,7 +84,9 @@ impl Viewer {
         };
         ws == agent_ws
             && kind != "eval"
-            && can_see_conversation(&self.auth, self.user, kind, c.direct_user)
+            && self
+                .auth
+                .can_see_conversation(self.user, kind, c.direct_user)
     }
 }
 
@@ -225,6 +231,11 @@ pub struct Feed<'a> {
     pub viewer: Viewer,
     pub agent: AgentCtx,
     snap: Option<Snapshot>,
+    /// The conversations this page let through (C-1165): recorded for the emergency reader
+    /// before the body. Only filled when the viewer reads through an emergency grant. A
+    /// `Mutex` (not a `RefCell`): the feed's `&self` crosses awaits in the stream, and a lock
+    /// is held only inside `sees` and `record_emergency_views`, never across one.
+    emergency_seen: std::sync::Mutex<Vec<Uuid>>,
 }
 
 impl<'a> Feed<'a> {
@@ -235,6 +246,7 @@ impl<'a> Feed<'a> {
             viewer,
             agent,
             snap,
+            emergency_seen: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -243,7 +255,42 @@ impl<'a> Feed<'a> {
     }
 
     fn sees(&self, c: ConvFacts<'_>) -> bool {
-        self.viewer.sees(self.agent.workspace_id, c)
+        let ok = self.viewer.sees(self.agent.workspace_id, c);
+        if ok
+            && let Some(id) = c.id
+            && matches!(self.viewer.auth, ReadAuth::Emergency(_))
+        {
+            self.emergency_seen
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(id);
+        }
+        ok
+    }
+
+    /// (FIX-236, C-1165) The emergency reader's record for every conversation this feed let
+    /// through, written before the response body (a failed write fails the read with 503).
+    async fn record_emergency_views(&self) -> Result<(), ApiError> {
+        let grant = match &self.viewer.auth {
+            ReadAuth::Emergency(g) => g,
+            ReadAuth::Own(_) => return Ok(()),
+        };
+        let seen = self
+            .emergency_seen
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+            .collect::<Vec<_>>();
+        for id in seen {
+            crate::domains::conversations::service::record_emergency_view_id(
+                self.s,
+                &self.viewer.actor,
+                id,
+                grant,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     fn agent_ref(&self) -> TimelineRef {
@@ -400,6 +447,7 @@ impl<'a> Feed<'a> {
             items.extend(rows.iter().filter_map(|r| self.access_item(r)));
         }
 
+        self.record_emergency_views().await?;
         Ok(merge(items, cursor, horizons.into_iter().max(), limit, f))
     }
 
@@ -442,6 +490,7 @@ impl<'a> Feed<'a> {
                 .iter()
                 .filter_map(|r| self.delivery_item(r, &data)),
         );
+        self.record_emergency_views().await?;
         Ok(out)
     }
 

@@ -223,7 +223,7 @@ async fn list_conversations(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Conversation>>, ApiError> {
     // Authorise before parsing the query (FIX-181 F7, C-1041).
-    let agent_row = service::load_agent(&s, &c, agent).await?;
+    let agent_row = service::load_agent_read(&s, &c, agent).await?;
     if let Some(k) = q.kind.as_deref()
         && !KINDS.contains(&k)
     {
@@ -254,8 +254,12 @@ async fn list_conversations(
         }
     };
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
-    // RFE-009: owners see every direct conversation of the agent; others only their own.
-    let owns = c.workspace(&s, agent_row.workspace_id).await?.can_own();
+    // RFE-009: owners see every direct conversation of the agent; others only their own. An
+    // emergency reader reads what an owner reads (C-1165, D-478(b)).
+    let owns = c
+        .workspace_read(&s, agent_row.workspace_id)
+        .await?
+        .can_own();
     let rows = convs::list_for_agent(
         &s.pool,
         agent,
@@ -371,7 +375,7 @@ async fn list_conversation_folders(
     Path(agent): Path<Uuid>,
     Query(q): Query<FoldersQuery>,
 ) -> Result<Json<Page<ConversationFolder>>, ApiError> {
-    service::load_agent(&s, &c, agent).await?;
+    service::load_agent_read(&s, &c, agent).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = convs::list_folders(&s.pool, agent, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.last_activity_at, r.automation_id));
@@ -790,7 +794,12 @@ async fn stream(
                     };
                     if relevant
                         && matches!(
-                            aurora_db::authz::can_see_conversation_id(&st.s.pool, st.user, st.conv).await,
+                            aurora_db::authz::can_see_conversation_id_emergency(
+                                &st.s.pool,
+                                st.user,
+                                st.conv
+                            )
+                            .await,
                             Ok(false)
                         )
                     {
@@ -799,9 +808,15 @@ async fn stream(
                 }
                 _ = st.tick.tick() => {
                     // RFE-009: a viewer who lost visibility (left the workspace, lost
-                    // ownership) stops receiving the stream at the next resync.
+                    // ownership, or whose emergency grant ended) stops receiving the stream at
+                    // the next resync.
                     if matches!(
-                        aurora_db::authz::can_see_conversation_id(&st.s.pool, st.user, st.conv).await,
+                        aurora_db::authz::can_see_conversation_id_emergency(
+                            &st.s.pool,
+                            st.user,
+                            st.conv
+                        )
+                        .await,
                         Ok(false)
                     ) {
                         st.close_access_changed();

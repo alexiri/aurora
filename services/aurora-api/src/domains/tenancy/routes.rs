@@ -612,8 +612,10 @@ async fn workspace_audience(
     })
 }
 
-/// Get a workspace: the caller's own access answers in full; an administrator without own
-/// access gets the metadata, `contacts` and `audience` (C-1160, C-1162).
+/// Get a workspace: the caller's own access answers in full; an emergency reader (C-1165) and
+/// an administrator without own access (C-1160, C-1162) get the metadata, `contacts` and
+/// `audience` — the emergency reader with `emergency_reader: true` and their own-right role
+/// (usually none).
 #[utoipa::path(get, path = "/workspaces/{ws}", operation_id = "getWorkspace", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, body = Workspace), (status = 404, body = ErrorEnvelope)),
@@ -631,15 +633,28 @@ async fn get_workspace(
             Ok(Json(w))
         }
         Err(e) if e.code() == "workspace_access_required" => {
-            let a = c.administer(&s, ws).await?;
-            debug_assert!(a.own.is_none());
-            let row = workspaces::get(&s.pool, ws)
-                .await?
-                .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
-            let mut w = with_effective_byo(&s, row, None, true).await?;
-            w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
-            w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
-            Ok(Json(w))
+            // (FIX-236, C-1165) The emergency reader reads the workspace they were opened
+            // access to, with their own-right role (an emergency grant is never own access).
+            match c.workspace_read(&s, ws).await {
+                Ok(read) => {
+                    let mut w = load_ws(&s, ws, read.own().map(ws_role), true).await?;
+                    w.emergency_reader = true;
+                    w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
+                    w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
+                    Ok(Json(w))
+                }
+                Err(_) => {
+                    let a = c.administer(&s, ws).await?;
+                    debug_assert!(a.own.is_none());
+                    let row = workspaces::get(&s.pool, ws)
+                        .await?
+                        .ok_or_else(|| ApiError::not_found("Workspace not found."))?;
+                    let mut w = with_effective_byo(&s, row, None, true).await?;
+                    w.contacts = Some(crate::http::who_can::workspace_contacts(&s, ws).await?);
+                    w.audience = Some(workspace_audience(&s, ws, c.user_id).await?);
+                    Ok(Json(w))
+                }
+            }
         }
         Err(e) => Err(e),
     }
@@ -725,7 +740,8 @@ async fn delete_workspace(
 // ---- access ----
 
 /// List the workspace's access bindings (`can_administer`, C-1160; the rows are the bindings in
-/// one's own right — since FIX-234 there are no implicit rows).
+/// one's own right — since FIX-234 there are no implicit rows). Emergency read access (C-1165)
+/// also reads the workspace's people.
 #[utoipa::path(get, path = "/workspaces/{ws}/access", operation_id = "listAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), crate::domains::groups::dto::AccessQuery),
     responses((status = 200, body = crate::domains::groups::dto::AccessList),
@@ -738,7 +754,14 @@ async fn list_access(
     Query(q): Query<crate::domains::groups::dto::AccessQuery>,
 ) -> Result<Json<crate::domains::groups::dto::AccessList>, ApiError> {
     use crate::domains::groups::dto as g;
-    c.administer(&s, ws).await?;
+    // (FIX-236, C-1165) Read access first; the administer path (C-1160) is unchanged.
+    match c.workspace_read(&s, ws).await {
+        Ok(_) => {}
+        Err(e) if e.code() == "workspace_access_required" => {
+            c.administer(&s, ws).await?;
+        }
+        Err(e) => return Err(e),
+    }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = workspaces::list_access(&s.pool, ws, after(&p), p.fetch()).await?;
     let page = page_of(rows, &p, |r| (r.created_at, r.user_id), AccessBinding::from);

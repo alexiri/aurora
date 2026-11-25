@@ -194,7 +194,9 @@ pub async fn search_workspace(
     ws: Uuid,
     q: SearchQuery,
 ) -> Result<SearchResponse, ApiError> {
-    let auth = c.workspace(s, ws).await?;
+    // (FIX-236, C-1165) A read route: the caller's own access, or an active emergency grant
+    // (which searches like an owner — every conversation, direct ones included).
+    let read = c.workspace_read(s, ws).await?;
     let query = search::Query::parse(&q.q).map_err(|e| query_invalid(&e))?;
     let limit = q.limit.unwrap_or(LIMIT_DEFAULT);
     if !(1..=LIMIT_MAX).contains(&limit) {
@@ -258,7 +260,7 @@ pub async fn search_workspace(
             query: &query,
             scope: Scope::Caller {
                 user_id: c.user_id,
-                owner: auth.can_own(),
+                owner: read.can_own(),
             },
             conversation_id: q.conversation_id,
             agent_id: q.agent_id,
@@ -286,7 +288,7 @@ pub async fn search_workspace(
             } else {
                 h.author_label.clone()
             };
-            SearchItem {
+            let item = SearchItem {
                 conversation: SearchConversation {
                     id: h.conversation_id,
                     title: h.conversation_title,
@@ -314,11 +316,23 @@ pub async fn search_workspace(
                         ]
                     })
                     .collect(),
-            }
+            };
+            (h.conversation_id, item)
         })
-        .collect();
+        .collect::<Vec<(Uuid, SearchItem)>>();
+    // (FIX-236, C-1165) The snippets are conversation content: the emergency reader's search
+    // records every conversation it touched, before the body (503 on a failed write).
+    if let aurora_db::authz::ReadAuth::Emergency(g) = &read {
+        let actor = crate::audit::AuditActor::from_caller(c);
+        let mut seen = std::collections::HashSet::new();
+        for (conv, _) in &items {
+            if seen.insert(*conv) {
+                service::record_emergency_view_id(s, &actor, *conv, g).await?;
+            }
+        }
+    }
     Ok(SearchResponse {
-        items,
+        items: items.into_iter().map(|(_, i)| i).collect(),
         next_cursor,
         index_complete,
     })

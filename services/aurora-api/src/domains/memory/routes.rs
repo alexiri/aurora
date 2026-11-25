@@ -33,6 +33,20 @@ async fn visible_agent(c: &Caller, s: &AppState, id: Uuid) -> Result<agents::Age
     Ok(row)
 }
 
+/// [`visible_agent`] for a *read* (C-1165): the emergency reader of the workspace lists and
+/// reads the agent's memory. Never for a write.
+async fn visible_agent_read(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<agents::AgentRow, ApiError> {
+    let row = agents::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    c.workspace_read(s, row.workspace_id).await?;
+    Ok(row)
+}
+
 fn author(c: &Caller) -> Author {
     Author {
         kind: "user",
@@ -70,7 +84,7 @@ async fn list_memories(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Memory>>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    visible_agent_read(&c, &s, agent).await?;
     let items = service::list(&s.pool, agent)
         .await?
         .into_iter()
@@ -145,7 +159,7 @@ async fn get_memory(
     State(s): State<AppState>,
     Path((agent, key)): Path<(Uuid, String)>,
 ) -> Result<Json<Memory>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    visible_agent_read(&c, &s, agent).await?;
     Ok(Json(service::get(&s.pool, agent, &key).await?.into()))
 }
 

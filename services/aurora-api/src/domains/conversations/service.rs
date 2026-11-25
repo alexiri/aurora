@@ -2,12 +2,12 @@ use super::dto::{
     Conversation, EventsPage, MessageAccepted, PurgedAttachment, TranscriptEvent, Turn,
 };
 use crate::app::AppState;
-use crate::audit::{AuditActor, Outcome};
+use crate::audit::{AuditActor, AuditEvent, Outcome};
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
 use aurora_core::limits::{ATTACH_IN_COUNT, TURN_TEXT_MAX};
 use aurora_db::DbError;
-use aurora_db::authz::{self, WorkspaceAuth};
+use aurora_db::authz::{self, EmergencyGrant, ReadAuth, WorkspaceAuth};
 use aurora_db::bus::{self, Channel};
 use aurora_db::repo::agents::{self, AgentRow};
 use aurora_db::repo::audit::{self as audit_repo, NewAudit};
@@ -45,6 +45,16 @@ pub async fn load_agent(state: &AppState, c: &Caller, id: Uuid) -> Result<AgentR
     Ok(a)
 }
 
+/// [`load_agent`] for a *read* (C-1165): the emergency reader of the agent's workspace sees the
+/// agent too. Never for a write: those resolve [`WorkspaceAuth`] through [`Caller::workspace`].
+pub async fn load_agent_read(state: &AppState, c: &Caller, id: Uuid) -> Result<AgentRow, ApiError> {
+    let a = agents::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    c.workspace_read(state, a.workspace_id).await?;
+    Ok(a)
+}
+
 /// Conversation visible to the caller (`can_see_conversation`, docs/04; RFE-009). A direct
 /// conversation is visible to its user and to workspace owners; anyone else gets 404. This is
 /// the predicate for reading, abort and send-now; writing needs [`load_conversation_for_write`].
@@ -69,19 +79,111 @@ pub async fn load_conversation_auth(
     Ok((row, auth))
 }
 
+/// Like [`load_conversation_auth`] for a *read* (C-1165): the authority is a [`ReadAuth`] — the
+/// caller's own access, or an active emergency grant (session callers only, evaluated on every
+/// request). A direct conversation is visible to the emergency reader like to an owner.
+pub async fn load_conversation_read(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<(ConversationRow, ReadAuth), ApiError> {
+    let row = convs::get(&state.pool, id).await?.ok_or_else(conv_404)?;
+    let read = c.workspace_read(state, row.workspace_id).await?;
+    if !read.can_see_conversation(c.user_id, &row.kind, row.direct_user_id) {
+        return Err(conv_404());
+    }
+    Ok((row, read))
+}
+
 /// Like [`load_conversation`] for a *read* (transcript, events, stream, attachment bytes): an
 /// owner who is not the direct user also writes the best-effort `conversation.owner_view` audit
-/// row (once per actor, conversation and hour).
+/// row (once per actor, conversation and hour); a caller reading through an active emergency
+/// grant writes `conversation.emergency_view` **before any content is returned** (C-1165) —
+/// that write is not best-effort: a failed audit row refuses the read (503).
 pub async fn read_conversation(
     state: &AppState,
     c: &Caller,
     id: Uuid,
 ) -> Result<ConversationRow, ApiError> {
-    let (row, _) = load_conversation_auth(state, c, id).await?;
-    if row.kind == "direct" && row.direct_user_id != Some(c.user_id) {
-        note_owner_view(state, c, &row).await;
+    let (row, read) = load_conversation_read(state, c, id).await?;
+    match read {
+        ReadAuth::Emergency(g) => record_emergency_view(state, c, &row, &g).await?,
+        ReadAuth::Own(_) if row.kind == "direct" && row.direct_user_id != Some(c.user_id) => {
+            note_owner_view(state, c, &row).await;
+        }
+        ReadAuth::Own(_) => {}
     }
     Ok(row)
+}
+
+/// The emergency reader's record (C-1165): once per actor, conversation and hour (the same
+/// advisory-lock dedupe as [`try_note_owner_view`]); a failed write is a 503, never a read.
+pub async fn record_emergency_view(
+    state: &AppState,
+    c: &Caller,
+    row: &ConversationRow,
+    grant: &EmergencyGrant,
+) -> Result<(), ApiError> {
+    record_emergency_view_actor(state, &AuditActor::from_caller(c), row, grant).await
+}
+
+/// [`record_emergency_view`] for a caller known only as an audit actor (the timeline's feed).
+pub async fn record_emergency_view_actor(
+    state: &AppState,
+    actor: &AuditActor,
+    row: &ConversationRow,
+    grant: &EmergencyGrant,
+) -> Result<(), ApiError> {
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    let actor_id = actor.id.unwrap_or(Uuid::nil());
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("emergency_view:{}:{}", actor_id, row.id))
+        .execute(&mut *tx)
+        .await
+        .map_err(DbError::from)?;
+    let seen: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM audit_log WHERE workspace_id = $1 AND actor_id = $2
+           AND action = 'conversation.emergency_view' AND target_id = $3
+           AND created_at > now() - interval '1 hour')",
+    )
+    .bind(row.workspace_id)
+    .bind(actor.id)
+    .bind(row.id.to_string())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(DbError::from)?;
+    if !seen {
+        let ev = AuditEvent::new(
+            actor.clone(),
+            "conversation.emergency_view",
+            Outcome::Success,
+        )
+        .org(grant.org_id())
+        .workspace(row.workspace_id)
+        .target("conversation", row.id)
+        .metadata(json!({
+            "agent_id": row.agent_id,
+            "emergency_access": grant.id(),
+            "direct_user_id": row.direct_user_id,
+        }));
+        crate::audit::insert_tx(&mut tx, &ev).await?;
+    }
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(())
+}
+
+/// [`record_emergency_view`] for a conversation known only by id (the timeline's rows): a
+/// conversation that disappeared in between has nothing left to record.
+pub async fn record_emergency_view_id(
+    state: &AppState,
+    actor: &AuditActor,
+    id: Uuid,
+    grant: &EmergencyGrant,
+) -> Result<(), ApiError> {
+    if let Some(row) = convs::get(&state.pool, id).await? {
+        return record_emergency_view_actor(state, actor, &row, grant).await;
+    }
+    Ok(())
 }
 
 async fn note_owner_view(state: &AppState, c: &Caller, row: &ConversationRow) {
