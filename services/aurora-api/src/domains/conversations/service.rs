@@ -139,19 +139,28 @@ pub async fn record_emergency_view_actor(
     let refuse = |_| crate::audit::unavailable();
     let mut tx = state.pool.begin().await.map_err(refuse)?;
     let actor_id = actor.id.unwrap_or(Uuid::nil());
+    // (Review MEDIUM-4) The dedup key includes the grant: after end-and-reopen within the hour,
+    // reads under the new grant record again, attributed to the new grant.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(format!("emergency_view:{}:{}", actor_id, row.id))
+        .bind(format!(
+            "emergency_view:{}:{}:{}",
+            actor_id,
+            row.id,
+            grant.id()
+        ))
         .execute(&mut *tx)
         .await
         .map_err(refuse)?;
     let seen: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM audit_log WHERE workspace_id = $1 AND actor_id = $2
            AND action = 'conversation.emergency_view' AND target_id = $3
+           AND metadata->>'emergency_access' = $4
            AND created_at > now() - interval '1 hour')",
     )
     .bind(row.workspace_id)
     .bind(actor.id)
     .bind(row.id.to_string())
+    .bind(grant.id().to_string())
     .fetch_one(&mut *tx)
     .await
     .map_err(refuse)?;
@@ -189,6 +198,37 @@ pub async fn record_emergency_view_id(
         return record_emergency_view_actor(state, actor, &row, grant).await;
     }
     Ok(())
+}
+
+/// (FIX-236, review MEDIUM-4) The conversation stream's resync tick: re-record the emergency
+/// view so a long-lived stream keeps a fresh audit row (24 hours of live reading leave more
+/// than the one row from the open). The dedup makes this a no-op within the hour under the
+/// same grant; a viewer who no longer reads through a grant (or at all) records nothing.
+pub async fn refresh_emergency_view(
+    state: &AppState,
+    user: Uuid,
+    conv: Uuid,
+) -> Result<(), ApiError> {
+    let Some(row) = convs::get(&state.pool, conv).await? else {
+        return Ok(());
+    };
+    // The same check the open used: only an active grant records (a session-only right).
+    let Some(grant) = authz::emergency_reader(&state.pool, user, row.workspace_id).await? else {
+        return Ok(());
+    };
+    let email: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id = $1")
+        .bind(user)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(DbError::from)?;
+    let actor = AuditActor {
+        kind: "user",
+        id: Some(user),
+        label: email.unwrap_or_default(),
+        source: "dashboard",
+        ip: None,
+    };
+    record_emergency_view_actor(state, &actor, &row, &grant).await
 }
 
 async fn note_owner_view(state: &AppState, c: &Caller, row: &ConversationRow) {

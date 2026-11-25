@@ -539,7 +539,12 @@ async fn a_reader_with_own_access_gets_the_reader_banner_and_their_own_grant_id(
 
     // Without a grant: not an emergency reader, no id.
     let (s, v) = w
-        .call(&both_tok, Method::GET, &format!("/v1/workspaces/{}", w.ws), None)
+        .call(
+            &both_tok,
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            None,
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["emergency_reader"], json!(false), "{v}");
@@ -552,7 +557,12 @@ async fn a_reader_with_own_access_gets_the_reader_banner_and_their_own_grant_id(
     assert_eq!(s, 201, "{v}");
     let grant: Uuid = v["id"].as_str().unwrap().parse().unwrap();
     let (s, v) = w
-        .call(&both_tok, Method::GET, &format!("/v1/workspaces/{}", w.ws), None)
+        .call(
+            &both_tok,
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            None,
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["emergency_reader"], json!(true), "{v}");
@@ -565,7 +575,12 @@ async fn a_reader_with_own_access_gets_the_reader_banner_and_their_own_grant_id(
     assert_eq!(s, 201, "{v}");
     let only: Uuid = v["id"].as_str().unwrap().parse().unwrap();
     let (s, v) = w
-        .call(&w.opener_tok, Method::GET, &format!("/v1/workspaces/{}", w.ws), None)
+        .call(
+            &w.opener_tok,
+            Method::GET,
+            &format!("/v1/workspaces/{}", w.ws),
+            None,
+        )
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["emergency_reader"], json!(true), "{v}");
@@ -832,6 +847,141 @@ async fn every_content_read_is_recorded_before_the_body() {
     .await
     .unwrap();
     assert_eq!(n, 2, "the new hour's row");
+}
+
+/// (Review MEDIUM-4) The dedup is per grant: after end-and-reopen within the hour, reads under
+/// the NEW grant record again, attributed to the new grant — never silently skipped or
+/// attributed to the old one.
+#[tokio::test]
+async fn reads_under_a_new_grant_record_again_even_within_the_hour() {
+    let w = world().await;
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "grant A of the hour"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let a: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = w.events(&w.opener_tok).await;
+    assert_eq!(s, 200, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view' \
+         AND metadata->>'emergency_access' = $1",
+    )
+    .bind(a.to_string())
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "one row under grant A");
+
+    // End A and reopen as B within the same hour: the next read records under B.
+    let (s, v) = w
+        .call(
+            &w.opener_tok,
+            Method::POST,
+            &format!("/v1/emergency-access/{a}/end"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "grant B, same hour"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let b: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let (s, v) = w.events(&w.opener_tok).await;
+    assert_eq!(s, 200, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view' \
+         AND metadata->>'emergency_access' = $1",
+    )
+    .bind(b.to_string())
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "a fresh row under grant B, not the deduped old one");
+}
+
+/// (Review MEDIUM-4) A live conversation stream keeps recording: when the hour window rolls
+/// over, the resync tick writes a fresh `emergency_view` row — 24 hours of live reading leave
+/// more than the one row from the open.
+#[tokio::test]
+async fn a_live_conversation_stream_records_again_when_the_dedup_window_rolls_over() {
+    let w = world().await;
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the live stream"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    // A short resync tick for the test (production: 10–15 s).
+    let app = test_router(
+        w.h.state
+            .clone()
+            .with_stream_recheck(std::time::Duration::from_millis(250)),
+    );
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/conversations/{}/stream", w.conv))
+                .header("cookie", cookie(&w.opener_tok))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    let mut body = Body::new(res.into_body());
+
+    // The open recorded the view.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view'",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        if n >= 1 || tokio::time::Instant::now() >= deadline {
+            assert!(n >= 1, "the open recorded the view");
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // Wind the window back: the next tick records a fresh row while the stream stays open.
+    sqlx::query(
+        "UPDATE audit_log SET created_at = now() - interval '2 hours' \
+         WHERE action = 'conversation.emergency_view'",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut frames = 0;
+    loop {
+        match tokio::time::timeout_at(deadline, body.frame()).await {
+            Ok(Some(Ok(_))) => frames += 1,
+            _ => break,
+        }
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view' \
+             AND created_at > now() - interval '1 hour'",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        if n >= 1 {
+            break;
+        }
+    }
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view' \
+         AND created_at > now() - interval '1 hour'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "the tick recorded a fresh row");
+    assert!(frames > 0, "the stream stayed open and flowing");
 }
 
 fn multipart(part: &str, filename: &str, ctype: &str, data: &[u8]) -> (String, Vec<u8>) {

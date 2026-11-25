@@ -718,7 +718,7 @@ async fn stream(
     let rx = s.conversation_bus.subscribe(&s.pool).await?;
     let keepalive = s.sse_keepalive;
     let gone = crate::http::auth::revoked(s.clone(), c.clone());
-    let mut tick = tokio::time::interval(RESYNC_EVERY);
+    let mut tick = tokio::time::interval(s.stream_recheck.min(RESYNC_EVERY));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let access = s.session_cache.subscribe_access();
     let st = Stream_ {
@@ -819,6 +819,18 @@ async fn stream(
                         .await,
                         Ok(false)
                     ) {
+                        st.close_access_changed();
+                        continue;
+                    }
+                    // (FIX-236, review MEDIUM-4) A live stream keeps recording: when the hour
+                    // window has rolled over, the tick writes a fresh `emergency_view` row (the
+                    // dedup makes it a no-op otherwise). A failed write ends the stream — the
+                    // client's reconnect is refused until the audit writes again, so content
+                    // never flows unrecorded.
+                    if let Err(e) =
+                        service::refresh_emergency_view(&st.s, st.user, st.conv).await
+                    {
+                        tracing::warn!(error = %e.code(), "conversation stream emergency view re-record failed");
                         st.close_access_changed();
                         continue;
                     }
