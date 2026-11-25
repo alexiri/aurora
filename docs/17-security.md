@@ -182,6 +182,8 @@ runs), configured external secret stores.
 
 ## Residual risks (accepted, documented to operators)
 
+- (phase 5, FIX-236, D-478) **An organization owner can still read a workspace's conversations — but never silently.** The access law (SEC-153) leaves legal and incident work with no way to see content; the break-glass (FIX-236) gives owners a bounded, announced and recorded way in (`04 §Emergency read access`). The residual risk is the trust placed in an owner: within the grant's window they read every conversation, direct ones included. Mitigations: org admins and instance admins cannot open it; a reason and a 1–24-hour bound; the workspace's people and the other owners are told at once and the workspace shows a banner for 7 days; every content read writes a security-critical audit row before the body, and a failed write refuses the read; it ends at its expiry, early by another owner, and with `access_lost` the moment the opener stops being an owner.
+
 - (phase 5, P5-FILES, D-316) **Files is a second door into the same room as the terminal.** Anyone who
   may use an agent's terminal can also upload files of up to 512 MB into its `/workspace` and download
   anything there, without typing a command. This adds no privilege (the terminal already reads and

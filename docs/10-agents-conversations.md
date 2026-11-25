@@ -148,7 +148,10 @@ phase 1 a `direct` conversation is visible only to its user and to workspace
 owners in their own right** (`can_own` from `own_workspace_access`; **since
 FIX-234 (D-477) an organization role is no longer an owner**, per
 `can_see_conversation` (`04 §The access law`)); other kinds keep `can_use`
-visibility. Consequences,
+visibility. The one controlled exception is **emergency read access**
+(FIX-236, D-478): an organization owner may open time-limited, announced and
+recorded read access to the workspace, which covers its direct conversations
+too (`04 §Emergency read access`). Consequences,
 specified once here and enforced by the same predicate everywhere:
 
 - API/SSE/attachments: `05 §Conversation visibility`; the dashboard lists only

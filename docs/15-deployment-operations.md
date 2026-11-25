@@ -644,6 +644,13 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   working after the upgrade (an organization role no longer grants workspace
   access); the people listed can be added to their workspaces first. The
   report is read-only and writes nothing.
+- (FIX-236, C-1164) **Emergency read access needs no operator step.** The
+  break-glass (`04 §Emergency read access`) ships in the same release as the
+  access law: an expiry sweep runs on every API replica every minute and the
+  nightly retention pass deletes grant rows after 400 days, so no operator
+  cron is needed. Audit the use through the audit log's
+  `workspace.emergency_access.*` and `conversation.emergency_view` actions;
+  they are all security-critical.
 - Wire contracts: API supports runner/connector/supervisor protocol versions N
   and N−1; plugin manifest contracts N and N−1; registry snapshots
   "newest contract wins" (`09 §9`).
