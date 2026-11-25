@@ -156,16 +156,19 @@ export function ChatThread({
     readerId,
     myRole,
   }).join(" ");
+  // (retention-tooltip) The retention note, said once: below xl it is the meta line's inline segment, from xl the
+  // ThreadHeader attaches it to the visibility line as its tooltip, so a desktop width never loses the note either.
+  const retention = retentionDays ? `Deleted after ${retentionDays} days without activity` : null;
   const segments = [
     ...(isDirect || !conversation ? [] : [kindLabel(conversation.kind)]),
     // (schedules-7) "Schedule · was "Every minute ping", renamed with it", then "Schedule deleted" / "Webhook deleted".
     ...(conversation ? automationNotes(conversation) : []),
     // (chat-1) "Archived 19 Nov 2026 · read only"
     ...(conversation?.archived_at ? [`Archived ${DATE.format(new Date(conversation.archived_at))}`, "read only"] : archived ? ["Archived", "read only"] : []),
-    // (FIX-235) The retention note is the one segment that may drop at xl: with the D-479 line the
-    // meta no longer fits the 64 px header pinned by agent-page-p5, and this segment is the least
-    // of them (not asserted in agent-header-widths' META_CASES).
-    ...(retentionDays ? [{ text: `Deleted after ${retentionDays} days without activity`, className: "xl:hidden" }] : []),
+    // (FIX-235) The retention note is the one segment that may drop at xl: with the D-479 line the meta no longer
+    // fits the 64 px header pinned by agent-page-p5. Since the owner's decision (2026-11-25) it is not lost: from
+    // xl it shows as the visibility line's tooltip (`retention` above), below xl it stays inline here.
+    ...(retention ? [{ text: retention, className: "xl:hidden" }] : []),
   ];
 
   return (
@@ -176,6 +179,7 @@ export function ChatThread({
           title={title}
           visibility={visibility}
           visibilityIcon={isDirect ? "lock" : "people"}
+          retention={retention ?? undefined}
           segments={segments}
           live={loading || error ? null : live}
           onBack={onBack}

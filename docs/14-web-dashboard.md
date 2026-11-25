@@ -431,6 +431,17 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     **Kbd** is a key cap: JetBrains Mono 11 px, 1 px `line-strong` border (on a
     tooltip: `muted`), radius 4 px, 0 × 4 px padding. The shortcut is written for
     the platform (`Ctrl+B`; `⌘B` on macOS).
+  - **InfoTip** [retention-tooltip]: a sentence-sized note attached to a piece of
+    inline text, for a whole sentence that must not be dropped on a desktop width
+    (the chat header's retention window on the visibility line). The trigger is
+    the text itself, dotted-underlined (`line`), and it opens on pointer hover,
+    keyboard focus and a touch tap; Escape, blur and a tap or press outside close
+    it (a mouse-out waits briefly, so the pointer can cross to the note). While
+    it shows, the note is the trigger's accessible description (`aria-describedby`,
+    `role="tooltip"`); the trigger keeps its own text, so the note never carries
+    the control's only name. On the **Popover** surface (`surface`, `line` border,
+    `shadow-pop`, radius 14 px, `w-auto` up to 320 px, 12/16 `ink`).
+    Used by the thread header from 1280 px; below 1280 px the sentence stays inline.
   - **SuggestionList** [P5-CHAT-3, or P5-CHAT-4 part B if it lands first]: the
     listbox of a combobox attached to an `input` or `textarea`
     (`aria-controls`, `aria-activedescendant`; focus stays in the field). Up/Down
@@ -782,10 +793,14 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       every conversation — who can use the agent and who can read this chat,
       from `Workspace.audience`; a lock icon on direct conversations, a people
       icon on the others), the kind, the archived date, and the org retention
-      window ("Deleted after N days without activity") when one is set. This
-      line replaces the separate retention and visibility banners; the empty
-      state shows the same sentence under the greeting, so a chat with no
-      messages says who sees it before anything is written.
+      window ("Deleted after N days without activity") when one is set. The
+      retention window is inline below 1280 px; from 1280 px it shows as the
+      visibility line's tooltip (retention-tooltip: hover, keyboard focus or a
+      tap on the line opens it, Escape or leaving the line closes it), so the
+      line fits the pinned 64 px header and a desktop width never loses the
+      window. This line replaces the separate retention and visibility banners;
+      the empty state shows the same sentence under the greeting, so a chat with
+      no messages says who sees it before anything is written.
     - On the right: a connection pill and a "Conversation actions" icon
       button. The pill reads `Live` (`accent-soft`) or `Reconnecting…`
       (`pending-soft`); connection state is never a loose line of text.
