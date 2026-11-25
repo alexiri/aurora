@@ -754,13 +754,14 @@ async fn list_access(
     Query(q): Query<crate::domains::groups::dto::AccessQuery>,
 ) -> Result<Json<crate::domains::groups::dto::AccessList>, ApiError> {
     use crate::domains::groups::dto as g;
-    // (FIX-236, C-1165) Read access first; the administer path (C-1160) is unchanged.
+    // (FIX-236, C-1165) The emergency reader reads the workspace's people (metadata only). A
+    // member with own access does not — the people routes stay administer routes (C-1160) — so
+    // only an emergency `ReadAuth` is admitted here; everyone else keeps the administer path.
     match c.workspace_read(&s, ws).await {
-        Ok(_) => {}
-        Err(e) if e.code() == "workspace_access_required" => {
+        Ok(aurora_db::authz::ReadAuth::Emergency(_)) => {}
+        _ => {
             c.administer(&s, ws).await?;
         }
-        Err(e) => return Err(e),
     }
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = workspaces::list_access(&s.pool, ws, after(&p), p.fetch()).await?;
