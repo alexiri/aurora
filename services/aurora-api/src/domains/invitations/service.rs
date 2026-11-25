@@ -387,6 +387,10 @@ async fn accept_in_tx(
         );
     }
     members::insert(&mut *tx, inv.org_id, user.id, &inv.role).await?;
+    // (FIX-234 verify 4, D-480) An invitation re-adds a person an administrator removed: bind
+    // them as the owner of their personal workspace again (a no-op without one) — the removal
+    // took the binding with it and the workspace must not stay ownerless.
+    aurora_db::repo::placement::rebind_personal_owner(&mut *tx, inv.org_id, user.id).await?;
     let mut bound = repo::workspaces_in_org(&mut *tx, inv.org_id, &inv.workspace_ids).await?;
     for ws in &bound {
         workspaces::bind_user(&mut *tx, *ws, user.id, "member").await?;

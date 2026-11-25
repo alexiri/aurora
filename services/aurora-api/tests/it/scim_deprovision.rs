@@ -238,6 +238,57 @@ async fn post_after_delete_revives_the_link() {
     assert_eq!(n, 1);
 }
 
+/// (FIX-234 verify 4, D-480) A re-provisioned person owns their personal workspace again: the
+/// delete took the owner binding with the membership, the POST restores it — and nobody else
+/// was added there.
+#[tokio::test]
+async fn reprovisioning_restores_the_personal_owner_binding() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("pw-restore@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let user = fx.aurora_user(&sid).await;
+    // Their personal workspace, as the creation path leaves it.
+    let ws = fx.h.workspace_owned_by(fx.org, user).await;
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2, personal = true WHERE id = $1")
+        .bind(ws)
+        .bind(user)
+        .execute(fx.h.pool())
+        .await
+        .unwrap();
+
+    // DELETE: the membership and its bindings (the owner binding included) go with it.
+    let (s, _, _) = fx
+        .scim(Method::DELETE, &format!("{USERS}/{sid}"), None)
+        .await;
+    assert_eq!(s, 204);
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM workspace_access WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(user)
+    .fetch_one(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0, "the delete took the owner binding");
+
+    // POST the same e-mail again: the active membership is re-created and the person owns
+    // their personal workspace again, alone.
+    let v2 = fx.provision_ok("pw-restore@x.io").await;
+    assert_eq!(v2["id"], u["id"]);
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT user_id, role, status FROM workspace_access WHERE workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_all(fx.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(user, "owner".to_owned(), "active".to_owned())],
+        "{rows:?}"
+    );
+}
+
 #[tokio::test]
 async fn suspend_matrix_membership_keys_sessions() {
     let fx = ScimFx::new().await;

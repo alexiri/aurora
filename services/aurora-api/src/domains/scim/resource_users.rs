@@ -421,6 +421,13 @@ pub async fn create_user(
                 members::update(&mut *tx, org.org_id, user_id, None, Some("suspended"))
                     .await
                     .map_err(db)?;
+            } else {
+                // (FIX-234 verify 4, D-480) The link may re-add a person an administrator
+                // removed: bind them as the owner of their personal workspace again (a no-op
+                // without one; a suspended membership stays ownerless until reactivation).
+                aurora_db::repo::placement::rebind_personal_owner(&mut *tx, org.org_id, user_id)
+                    .await
+                    .map_err(db)?;
             }
         }
         Some(m) if m.role == "owner" => {
@@ -1382,6 +1389,13 @@ async fn move_link(
                 .map_err(db)?;
             if !want_active {
                 members::update(&mut *tx, org, to, None, Some("suspended"))
+                    .await
+                    .map_err(db)?;
+            } else {
+                // (FIX-234 verify 4, D-480) The move may re-add a person an administrator
+                // removed: bind them as the owner of their personal workspace again (a no-op
+                // without one; a suspended membership stays ownerless until reactivation).
+                aurora_db::repo::placement::rebind_personal_owner(&mut *tx, org, to)
                     .await
                     .map_err(db)?;
             }

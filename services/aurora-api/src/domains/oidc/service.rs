@@ -963,6 +963,10 @@ async fn apply_jit(
     }
     let role = if j.role == "admin" { "admin" } else { "member" };
     members::insert(&mut *tx, org_id, user.id, role).await?;
+    // (FIX-234 verify 4, D-480) A sign-in re-add can follow a SCIM delete (which does not
+    // write the FIX-108 removal marker): bind the person as the owner of their personal
+    // workspace again — the removal took the binding with it. A no-op without one.
+    aurora_db::repo::placement::rebind_personal_owner(&mut *tx, org_id, user.id).await?;
     // RFE-008: a membership created by JIT provisioning is audited in the sign-in transaction.
     let actor = AuditActor {
         kind: "user",

@@ -71,6 +71,10 @@ pub async fn activate_on_sign_in(
         if !members::activate_pending(&mut *tx, org, user).await? {
             continue;
         }
+        // (FIX-234 verify 4, D-480) The pending membership may follow a removal (the link
+        // cleared the FIX-108 marker): bind the person as the owner of their personal
+        // workspace again. A no-op without one.
+        aurora_db::repo::placement::rebind_personal_owner(&mut *tx, org, user).await?;
         groups::notify_member_changed(&mut *tx, org, user).await?;
         notify_auth_revoked(&mut *tx, "user", user).await?;
         // The actor is the person: their own verified sign-in is what grants the membership.

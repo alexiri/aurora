@@ -653,3 +653,73 @@ async fn sec140_resend_needs_mail_and_mails_a_new_link() {
     wait_audit(&h, "invitation.resend").await;
     leaks(&h, &c, &[t1, t2]).await;
 }
+
+/// (FIX-234 verify 4, D-480) Re-adding a person an administrator removed restores their owner
+/// binding on their personal workspace — the removal took it with the membership — and adds
+/// nobody else there.
+#[tokio::test]
+async fn a_reinvited_person_owns_their_personal_workspace_again() {
+    let h = Harness::new().await;
+    let c = setup(&h).await;
+    // The person and their personal workspace (as the creation path leaves it).
+    let bob = h.user("bob@x.io", false).await;
+    h.member(c.org, bob, "member", "active").await;
+    let ws = h.workspace_owned_by(c.org, bob).await;
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2, personal = true WHERE id = $1")
+        .bind(ws)
+        .bind(bob)
+        .execute(h.pool())
+        .await
+        .unwrap();
+
+    // An administrator removes them: the bindings (the owner binding included) go with the
+    // membership.
+    let (s, v) = call(
+        &h,
+        &c.admin_tok,
+        Method::DELETE,
+        &format!("/v1/orgs/{}/members/{}", c.org, bob),
+        None,
+    )
+    .await;
+    assert_eq!(s, 204, "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM workspace_access WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(ws)
+    .bind(bob)
+    .fetch_one(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0, "the removal took the owner binding");
+
+    // The invitation back and the accept.
+    let (s, v) = invite(&h, &c, "bob@x.io", "member", vec![]).await;
+    assert_eq!(s, 201, "{v}");
+    let tok = mailed_token(&h, "bob@x.io").await;
+    verify(&h, bob).await;
+    let (_, bt) = h.good_session(bob).await;
+    let (s, v) = call(
+        &h,
+        &bt,
+        Method::POST,
+        "/v1/invitations/accept",
+        Some(json!({"token": tok})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+
+    // They own their personal workspace again, and nobody else was added there.
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT user_id, role, status FROM workspace_access WHERE workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_all(h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(bob, "owner".to_owned(), "active".to_owned())],
+        "{rows:?}"
+    );
+}
