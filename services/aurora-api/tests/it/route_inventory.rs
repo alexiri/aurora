@@ -83,6 +83,9 @@ const READAUTH: &[(&str, &[&str])] = &[
     ("/webhooks/{id}", &["get"]),
     ("/webhooks/{id}/deliveries", &["get"]),
     ("/agents/{agent}/skills", &["get"]),
+    // (Review LOW-9) The workspace skills list and the skill detail: the C-1165 reads.
+    ("/workspaces/{ws}/skills", &["get"]),
+    ("/skills/{id}", &["get"]),
     // The conversation content: every response carrying it records the emergency view.
     ("/conversations/{id}", &["get"]),
     ("/conversations/{id}/events", &["get"]),
@@ -136,7 +139,16 @@ const OWN: &[(&str, &[&str])] = &[
     ("/workspaces/{ws}/requests/{id}", &["delete"]),
     ("/workspaces/{ws}/secrets", &["get", "post"]),
     ("/workspaces/{ws}/skill-library-updates", &["get"]),
-    ("/workspaces/{ws}/skills", &["get", "post"]),
+    // (Review LOW-9) The GET moved to READAUTH (the C-1165 read); the create stays `can_own`.
+    ("/workspaces/{ws}/skills", &["post"]),
+    // The skill item and its files and library routes keep their own-access authority (review
+    // LOW-9 names the two reads only); the detail's GET is the READAUTH row above.
+    ("/skills/{id}", &["patch", "delete"]),
+    ("/skills/{id}/files/{*path}", &["get", "put", "delete"]),
+    ("/skills/{id}/library", &["get"]),
+    ("/skills/{id}/library/detach", &["post"]),
+    ("/skills/{id}/library/updates/{uid}/approve", &["post"]),
+    ("/skills/{id}/library/updates/{uid}/reject", &["post"]),
     (
         "/workspaces/{ws}/apps/{app}/setup-request",
         &["post", "delete"],
@@ -260,9 +272,10 @@ const OWN: &[(&str, &[&str])] = &[
 
 /// The item-scoped route prefixes the inventory walks: the routes whose authority is a
 /// workspace's. The document's paths carry the `/v1` nest prefix; it is stripped here so the
-/// lists read like the route catalogue. (`/secrets/{id}`, `/agent-links/{id}`, `/skills/{id}`,
-/// `/apps/{app}` and the channel-setup routes keep their own mixed org/workspace authority and
-/// stay outside this walk — the permission matrix covers every documented route.)
+/// lists read like the route catalogue. (`/secrets/{id}`, `/agent-links/{id}`, `/apps/{app}`
+/// and the channel-setup routes keep their own mixed org/workspace authority and stay outside
+/// this walk — the permission matrix covers every documented route. `/skills/{id}` is IN since
+/// review LOW-9: its reads are C-1165 reads and the item itself follows the workspace.)
 fn scoped(path: &str) -> bool {
     let p = path.strip_prefix("/v1").unwrap_or(path);
     [
@@ -283,6 +296,7 @@ fn scoped(path: &str) -> bool {
         "/eval-runs/{id}",
         "/eval-schedules/{id}",
         "/action-approvals/{id}",
+        "/skills/{id}",
     ]
     .iter()
     .any(|pre| p.starts_with(pre))
@@ -414,6 +428,8 @@ struct World {
     webhook: Uuid,
     /// The author's direct conversation with one message (the C-1165 conversation rows).
     conversation: Uuid,
+    /// A workspace-tier skill (review LOW-9: the skill reads joined the walk).
+    skill: Uuid,
     extra_ws: Uuid,
     extra_slug: String,
     markers: Vec<String>,
@@ -563,6 +579,20 @@ async fn seed_world() -> World {
         .await;
     assert!((200..300).contains(&sc), "{sv}");
 
+    // A workspace-tier skill the author created (the C-1165 skill reads, review LOW-9).
+    let skill = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO skills (id, org_id, workspace_id, name, description, body, created_by_kind) \
+         VALUES ($1,$2,$3,'inv-walk-skill','the walk skill','MATRIX-skill-body','user')",
+    )
+    .bind(skill)
+    .bind(org)
+    .bind(ws)
+    .bind(author)
+    .execute(h.pool())
+    .await
+    .unwrap();
+
     // A second workspace the admin deletes at the very end (the org's default stays).
     let (sc, sv) = h
         .call_tok(
@@ -597,6 +627,7 @@ async fn seed_world() -> World {
         schedule,
         webhook,
         conversation,
+        skill,
         extra_ws,
         extra_slug,
         markers: vec![
@@ -669,6 +700,18 @@ fn uri_for(m: &str, p: &str, w: &World, pending: &mut Option<Uuid>) -> String {
         }
         "/schedules/{id}/creator" => {
             uri = format!("/v1/schedules/{}/creator", w.schedule);
+        }
+        // (Review LOW-9) The seeded workspace skill: the reads ride on it, the refusals and
+        // library rows still answer on authority before their path/uid matter.
+        p if p.starts_with("/skills/{id}") => {
+            if p.ends_with("/files/{*path}") {
+                uri = format!("/v1/skills/{}/files/a.txt", w.skill);
+            } else {
+                let rest = p
+                    .trim_start_matches("/skills/{id}")
+                    .replace("{uid}", &Uuid::now_v7().to_string());
+                uri = format!("/v1/skills/{}{}", w.skill, rest);
+            }
         }
         // The C-1165 read rows addressed by their own id: the seeded schedule and webhook.
         "/schedules/{id}" | "/schedules/{id}/runs" => {
