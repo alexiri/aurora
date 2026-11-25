@@ -48,11 +48,21 @@ pub async fn load_agent(state: &AppState, c: &Caller, id: Uuid) -> Result<AgentR
 /// [`load_agent`] for a *read* (C-1165): the emergency reader of the agent's workspace sees the
 /// agent too. Never for a write: those resolve [`WorkspaceAuth`] through [`Caller::workspace`].
 pub async fn load_agent_read(state: &AppState, c: &Caller, id: Uuid) -> Result<AgentRow, ApiError> {
+    load_agent_read_auth(state, c, id).await.map(|(a, _)| a)
+}
+
+/// [`load_agent_read`] with the read authority, for routes whose response carries conversation
+/// content the emergency recording must cover (review LOW-12: the conversation list).
+pub async fn load_agent_read_auth(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+) -> Result<(AgentRow, ReadAuth), ApiError> {
     let a = agents::get(&state.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    c.workspace_read(state, a.workspace_id).await?;
-    Ok(a)
+    let read = c.workspace_read(state, a.workspace_id).await?;
+    Ok((a, read))
 }
 
 /// Conversation visible to the caller (`can_see_conversation`, docs/04; RFE-009). A direct

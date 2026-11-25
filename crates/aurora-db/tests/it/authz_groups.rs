@@ -701,3 +701,53 @@ async fn uses_any_workspace_counts_group_granted_access(pool: PgPool) {
         .unwrap();
     assert!(!authz::uses_any_workspace(&pool, u, f.org).await.unwrap());
 }
+
+/// (FIX-236, review LOW-12) The gateway's `can_use` (repo/gateway.rs) restates the
+/// `effective_workspace_access` law and never references `workspace_emergency_access`: an
+/// emergency grant is invisible to the gateway — the reader gets no agent/credential rights
+/// there (the grant is a C-1165 read-only exception on the control plane only). For contrast,
+/// the same user is an emergency reader and still holds no own access.
+#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
+async fn the_gateway_can_use_law_never_counts_an_emergency_grant(pool: PgPool) {
+    let o = org(&pool).await;
+    let ws = workspace(&pool, o).await;
+    let opener = member(&pool, o, "owner").await;
+
+    // An active grant for the org owner, who holds no workspace binding of their own.
+    sqlx::query(
+        "INSERT INTO workspace_emergency_access \
+         (id, org_id, workspace_id, user_id, reason, expires_at) \
+         VALUES ($1, $2, $3, $4, 'the gateway law test grant', now() + interval '1 hour')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(o)
+    .bind(ws)
+    .bind(opener)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The gateway: no speaker credential, no agent use — the grant changes nothing.
+    assert!(
+        !aurora_db::repo::gateway::can_use(&pool, ws, opener)
+            .await
+            .unwrap(),
+        "the gateway can_use never counts an emergency grant"
+    );
+    // Own access stays None (no WorkspaceAuth is derivable from the grant).
+    assert!(
+        authz::own_access(&pool, opener, ws)
+            .await
+            .unwrap()
+            .is_none(),
+        "an emergency grant is never own access"
+    );
+    // …while the control plane does see the reader.
+    assert!(
+        authz::emergency_reader(&pool, opener, ws)
+            .await
+            .unwrap()
+            .is_some(),
+        "the same user is the emergency reader on the control plane"
+    );
+}

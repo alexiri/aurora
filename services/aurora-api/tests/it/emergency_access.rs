@@ -1018,6 +1018,89 @@ async fn reopening_after_expiry_within_the_sweep_window_is_201_not_a_conflict() 
     assert_eq!(n, 1, "exactly one active grant");
 }
 
+/// (Review LOW-12) The conversation LIST carries conversation content (each row's active turn's
+/// text, and for direct rows who else takes part): the emergency reader's views for the listed
+/// conversations are recorded before the body, and a failed audit write refuses the read with
+/// 503 — the route was already a C-1165 read; only the recording was missing. (The workspace
+/// activity list is metadata only: no message text or preview, nothing to record.)
+#[tokio::test]
+async fn the_conversation_list_records_the_emergency_views_it_carries() {
+    let w = world().await;
+    let (s, v) = w
+        .open(&w.opener_tok, json!({"reason": "the list recording"}))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM conversations WHERE id = $1")
+        .bind(w.conv)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    // The world's direct conversation carries an active turn (its text rides on the list row);
+    // the list must record the view for the conversation it lists.
+
+    let (s, v) =
+        w.h.call_tok(
+            &w.opener_tok,
+            Method::GET,
+            &format!("/v1/agents/{agent}/conversations"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v.to_string().contains(MARKER),
+        "the list carries the active turn's text: {v}"
+    );
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view' \
+         AND target_id = $1",
+    )
+    .bind(w.conv.to_string())
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "the listed conversation's view is recorded");
+
+    // The recording is not best-effort: drop the row so the dedup does not skip the write, fail
+    // the write, and the list refuses with 503 carrying no content.
+    sqlx::query("DELETE FROM audit_log WHERE action = 'conversation.emergency_view'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE FUNCTION audit_critical_fail() RETURNS trigger AS $$ BEGIN \
+         RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER audit_critical_fail BEFORE INSERT ON audit_log FOR EACH ROW \
+         WHEN (NEW.critical) EXECUTE FUNCTION audit_critical_fail()",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let (s, v) =
+        w.h.call_tok(
+            &w.opener_tok,
+            Method::GET,
+            &format!("/v1/agents/{agent}/conversations"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 503, "{v}");
+    assert!(!v.to_string().contains(MARKER), "no content: {v}");
+    sqlx::query("DROP TRIGGER audit_critical_fail ON audit_log")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION audit_critical_fail")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+}
+
 /// (Review MEDIUM-4) The dedup is per grant: after end-and-reopen within the hour, reads under
 /// the NEW grant record again, attributed to the new grant — never silently skipped or
 /// attributed to the old one.

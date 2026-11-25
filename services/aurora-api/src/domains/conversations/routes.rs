@@ -223,7 +223,7 @@ async fn list_conversations(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Conversation>>, ApiError> {
     // Authorise before parsing the query (FIX-181 F7, C-1041).
-    let agent_row = service::load_agent_read(&s, &c, agent).await?;
+    let (agent_row, read) = service::load_agent_read_auth(&s, &c, agent).await?;
     if let Some(k) = q.kind.as_deref()
         && !KINDS.contains(&k)
     {
@@ -302,6 +302,16 @@ async fn list_conversations(
         items.push(conv);
     }
     service::with_automation(&s.pool, &mut items).await?;
+    // (FIX-236, review LOW-12) The list carries conversation content (each row's active turn's
+    // text, and for direct rows who else takes part): the emergency reader's views for the
+    // listed conversations are recorded before the body, like the search and the feed — a
+    // failed write refuses the read with 503.
+    if let aurora_db::authz::ReadAuth::Emergency(g) = &read {
+        let actor = crate::audit::AuditActor::from_caller(&c);
+        for id in &ids {
+            service::record_emergency_view_id(&s, &actor, *id, g).await?;
+        }
+    }
     Ok(Json(Page {
         items,
         next_cursor: page.next_cursor,
