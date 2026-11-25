@@ -1,8 +1,10 @@
 //! (FIX-236, D-478(c), C-1165) The opening notices. The workspace's people **in their own
-//! right** (for a personal workspace, its person) and the organization's other active owners are
-//! told at once by e-mail and Web Push; never the opener. Notices go out **after** the grant's
-//! transaction (with its critical audit row) committed: a failed send is logged and must not
-//! undo or fail the grant. A person's e-mail is never a label — display names only.
+//! right** (for a personal workspace, its person) and the organization's other **effective**
+//! active owners (review MEDIUM-7: the same `effective_org_members` view the open route checks,
+//! so group- or IdP-derived owners are told like direct ones) are told at once by e-mail and Web
+//! Push; never the opener. Notices go out **after** the grant's transaction (with its critical
+//! audit row) committed, from a spawned task (review MEDIUM-6): a failed send is logged and must
+//! not undo or fail the grant. A person's e-mail is never a label — display names only.
 
 use crate::app::AppState;
 use crate::domains::auth::mail::Mail;
@@ -27,7 +29,9 @@ struct Recipient {
 }
 
 /// The recipients: every active person with access to the workspace in their own right, plus
-/// every other active org owner; the opener is never told (C-1165). People tables only.
+/// every other **effective** org owner (D-130(b): the view the open route's own check uses, so
+/// a group- or IdP-derived owner is told like a direct one — review MEDIUM-7); the opener is
+/// never told (C-1165). People tables only.
 async fn recipients(
     pool: &PgPool,
     org: Uuid,
@@ -41,8 +45,8 @@ async fn recipients(
                                       AND m.status = 'active' \
                 WHERE o.workspace_id = $1 \
                UNION \
-               SELECT m2.user_id FROM org_members m2 \
-                WHERE m2.org_id = $2 AND m2.role = 'owner' AND m2.status = 'active') t \
+               SELECT e.user_id FROM effective_org_members e \
+                WHERE e.org_id = $2 AND e.role = 'owner') t \
          JOIN users u ON u.id = t.user_id AND u.disabled_at IS NULL \
          WHERE t.user_id <> $3 \
          ORDER BY u.display_name, t.user_id",

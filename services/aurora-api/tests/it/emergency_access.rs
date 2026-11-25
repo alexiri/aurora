@@ -1052,6 +1052,57 @@ async fn losing_ownership_in_one_org_ends_only_that_orgs_grants() {
     assert_eq!(org1_reason, None);
 }
 
+/// (Review MEDIUM-7) The notices go to the **effective** owners — the same
+/// `effective_org_members` view the open check uses. A group-derived admin (the strongest a
+/// group may map, SEC-71) is not an owner and is not told; the direct owners are.
+#[tokio::test]
+async fn notices_go_to_the_effective_owners_not_group_admins() {
+    let w = world().await;
+    // A member who is an admin through a group (no API route maps it; the view computes it).
+    // Deliberately no own workspace access: only the owner branch could ever tell them.
+    let grouped = w.h.user("grouped@x.io", false).await;
+    w.h.member(w.org, grouped, "member", "active").await;
+    let g = Uuid::now_v7();
+    sqlx::query("INSERT INTO groups (id, org_id, name, org_role) VALUES ($1,$2,'G','admin')")
+        .bind(g)
+        .bind(w.org)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO group_members (group_id, org_id, user_id) VALUES ($1,$2,$3)")
+        .bind(g)
+        .bind(w.org)
+        .bind(grouped)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let role: String = sqlx::query_scalar(
+        "SELECT role FROM effective_org_members WHERE org_id = $1 AND user_id = $2",
+    )
+    .bind(w.org)
+    .bind(grouped)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(role, "admin", "the view derives the group's admin role");
+
+    // The open tells the person and the other owner — not the group admin.
+    let (s, v) = w
+        .open(
+            &w.opener_tok,
+            json!({"reason": "the effective owners notice"}),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    until_notices(&w.h, 2).await;
+    let mail = w.h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert!(
+        tos.contains(&"oo@x.io") && tos.contains(&"p@x.io") && !tos.contains(&"grouped@x.io"),
+        "owner-only: {tos:?}"
+    );
+}
+
 /// (Review MEDIUM-4) A live conversation stream keeps recording: when the hour window rolls
 /// over, the resync tick writes a fresh `emergency_view` row — 24 hours of live reading leave
 /// more than the one row from the open.

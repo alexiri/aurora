@@ -1350,8 +1350,12 @@ legal and incident work sometimes needs the content.
   partial unique index backs the 409). It is never extendable: a new grant
   notifies again.
 - **Everyone is told at once.** The workspace's people in their own right
-  (for a personal workspace, its person) and the organization's other active
-  owners are notified by e-mail and Web Push; never the opener. The workspace
+  (for a personal workspace, its person) and the organization's other
+  **effective** active owners are notified by e-mail and Web Push — the same
+  `effective_org_members` view the open check uses, so a group- or
+  IdP-derived owner is told like a direct one (review MEDIUM-7); never the
+  opener. The notices go out from a spawned task after the grant's commit
+  (a failing recipient is logged and never stops the others). The workspace
   shows a banner naming the owner, the reason and the end time while it is
   open and for 7 days after. Labels are display names, never e-mail
   addresses.
