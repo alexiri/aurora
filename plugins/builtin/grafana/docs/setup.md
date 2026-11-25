@@ -22,11 +22,14 @@ the gateway's network policy).
 1. In Grafana open *Administration, Users and access, Service accounts* and choose *Add service
    account*. Give it a name such as "Aurora agents".
 2. Choose the role. The connect window shows what to pick for the access you chose:
-   - **Viewer**: search and read dashboards and folders, run queries on the data sources Viewers may
-     query, read alert rules, alerts, silences and annotations.
-   - **Editor**: the same, plus saving dashboards, adding annotations, creating or ending silences
-     and creating, changing and deleting alert rules.
-     Reading a dashboard's saved versions also needs edit permission on that dashboard.
+   - **Viewer**: search and read dashboards and folders, run queries on the data sources Viewers
+     may query, read alert rules, alerts, silences and annotations — and, with edit permission on
+     one folder, create, change and delete alert rules in that folder (*Alert rules* below).
+   - **Editor**: the same reads, plus saving dashboards, adding annotations and creating or ending
+     silences. By default Grafana's Editors can edit **every** folder, so an Editor token gains
+     nothing from a folder permission: choose Editor only when agents must save dashboards, add
+     annotations or end silences, and never to let them write alert rules.
+   Reading a dashboard's saved versions also needs edit permission on that dashboard.
    Folder and data source permissions narrow both roles further. Do not give the service account the
    Admin role: agents do not need it.
 3. Choose *Add service account token*, set an expiry, and copy the token (`glsa_…`). Grafana shows it
@@ -88,19 +91,24 @@ These are separate permissions and are held for approval:
 
 ## Alert rules
 
-With an **Editor** token, agents can create, change and delete Grafana-managed alert rules and
-list the contact points the server has (names only, never their secrets). Reading rules, their
-state and alerts works with Viewer.
+Agents can create, change and delete Grafana-managed alert rules and list the contact points the
+server has (names only, never their secrets). Reading rules, their state and alerts works with
+Viewer.
 
-Where a rule may live is decided by Grafana's folder permissions, not by Aurora. Create a folder
-for the agent's rules and give the service account **Edit on that one folder only** — Grafana
-checks rule permissions per folder, so the agent can then only touch rules in the folder a person
-gave it, and everyone else's rules stay out of its reach:
+Keep the service account's role **Viewer** and give it **Edit on one folder** — the folder named
+for the agent, and no other. The role matters: by default Grafana's Editors can edit every folder,
+so an Editor token is not narrowed by Edit permission on one folder, and its raw writes could
+still change or delete people's rules anywhere. A Viewer has no edit anywhere by default, so with
+Viewer plus one folder's Edit the agent can only touch rules in the folder a person gave it:
 
 1. In Grafana open *Dashboards* and choose *New folder*; name it for the agent, for example
-   "night agent".
+   "night agent". Give **each agent its own folder**: two agents sharing one folder could change
+   or delete each other's rules and share the same caps.
 2. Open the folder, choose *Permissions*, *Add a permission*, pick the service account and give it
    **Edit**.
+3. Check that the other folders are not editable: open another folder's *Permissions* page and
+   confirm the service account is not listed there (or is listed only with **View**). Grafana's
+   folder permissions decide where a rule may live, not Aurora.
 
 A rule an agent makes carries a `managed_by` label (which agent left it) and an `expires` label and
 annotation, and the app's helper script builds the rule and refuses to touch rules without its own
@@ -162,8 +170,8 @@ use Grafana's HMAC signature settings.
    otherwise. Aurora also records a repeated identical delivery as a duplicate without waking the
    agent — but a payload that changes every time is a new delivery.
 5. **Folder and token** for the agent's rules: the folder named for the agent, the service account
-   with Edit on that one folder only, and its token in the agent's Grafana connection — *Alert
-   rules* above has the steps.
+   left a **Viewer** with Edit on that one folder only, and its token in the agent's Grafana
+   connection — *Alert rules* above has the steps.
 6. **Check the whole path:** create a harmless test rule (for example `up == 1`, `for: 1m`, on a
    throwaway label, in the agent's folder) and watch it fire: Grafana's *Alert rules* list shows
    the rule firing, and Aurora's webhook **Deliveries** shows the delivery and its thread with the
