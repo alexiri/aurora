@@ -479,7 +479,10 @@ async fn background_work_after_the_turn_ends_reaches_nobody() {
             if name == "Bash" && summary == "Bash: npm run e2e:full"),
         "{events:?}"
     );
-    assert!(matches!(events.last(), Some(HarnessEvent::Done { .. })), "{events:?}");
+    assert!(
+        matches!(events.last(), Some(HarnessEvent::Done { .. })),
+        "{events:?}"
+    );
     assert!(
         !killed.load(Ordering::SeqCst),
         "the child is not killed at turn end"
@@ -505,8 +508,10 @@ async fn background_work_after_the_turn_ends_reaches_nobody() {
 #[tokio::test]
 async fn background_work_is_tracked_and_reported_at_turn_end() {
     let reply = include_str!("fixtures/background_turn.jsonl");
-    let adapter =
-        ClaudeCodeAdapter::with_launcher(Arc::new(Mock::new(Some((INIT_OK, Duration::from_millis(0))), reply)));
+    let adapter = ClaudeCodeAdapter::with_launcher(Arc::new(Mock::new(
+        Some((INIT_OK, Duration::from_millis(0))),
+        reply,
+    )));
     let mut s = adapter.start_session(opts(None)).await.unwrap();
     let _ = collect(s.run_turn(turn("run the e2e suite")).await.unwrap()).await;
     let work = s.background_work();

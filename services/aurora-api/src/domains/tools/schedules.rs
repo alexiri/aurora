@@ -4,8 +4,8 @@ use super::registry::{PlatformTool, ToolCallContext, ToolContext, ToolError};
 use crate::domains::schedules::once;
 use crate::domains::schedules::service::{self, Create, Patch};
 use aurora_core::ApiError;
-use aurora_db::repo::schedules::ScheduleRow;
 use aurora_db::repo::peer_tasks;
+use aurora_db::repo::schedules::ScheduleRow;
 use aurora_db::repo::{agents, turns, users, workspaces};
 use aurora_protocol::tools::{JsonContent, ToolContent};
 use serde::Deserialize;
@@ -76,9 +76,11 @@ async fn creator(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
     if let Some(u) = speaker(ctx).await? {
         return Ok(Some(u));
     }
-    Ok(peer_tasks::by_task_conversation(&ctx.agent.pool, ctx.conversation_id)
-        .await?
-        .and_then(|t| t.requester_user_id))
+    Ok(
+        peer_tasks::by_task_conversation(&ctx.agent.pool, ctx.conversation_id)
+            .await?
+            .and_then(|t| t.requester_user_id),
+    )
 }
 
 /// (P5-SCHED-ONCE, C-1094) The tools' default time zone: the speaker's own (`users.timezone`,

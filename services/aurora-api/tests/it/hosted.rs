@@ -634,14 +634,20 @@ async fn background_activity_is_visible_deduped_and_stoppable() {
     assert_eq!(evs.len(), 2, "{evs:?}");
     assert_eq!(evs[1].0, "background_stopped");
     let items = r.work().await;
-    let rel = items.iter().find(|i| i["kind"] == "session.release").unwrap();
+    let rel = items
+        .iter()
+        .find(|i| i["kind"] == "session.release")
+        .unwrap();
     assert_eq!(
         rel["conversation_id"],
         json!(lv.conv),
         "the idle session of the conversation is released"
     );
     assert!(
-        r.work().await.iter().all(|i| i["kind"] != "session.release"),
+        r.work()
+            .await
+            .iter()
+            .all(|i| i["kind"] != "session.release"),
         "claimed once"
     );
 

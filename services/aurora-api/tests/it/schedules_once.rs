@@ -731,8 +731,7 @@ async fn a_reminder_runs_in_the_creators_chat_queued_and_pushed() {
     .await;
     assert_eq!(v["ok"], false, "{v}");
     assert!(
-        v.to_string()
-            .contains("only be created for a person"),
+        v.to_string().contains("only be created for a person"),
         "{v}"
     );
 

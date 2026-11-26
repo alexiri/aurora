@@ -1142,7 +1142,11 @@ impl TurnTask {
         let mut tick = interval(self.progress);
         tick.tick().await;
         let mut abort_deadline: Option<Instant> = None;
-        let out = |n: u64, s: TurnStatus, c: Option<&'static str>, m: Option<String>, u: Option<serde_json::Value>| (s, c, m, u, n);
+        let out = |n: u64,
+                   s: TurnStatus,
+                   c: Option<&'static str>,
+                   m: Option<String>,
+                   u: Option<serde_json::Value>| (s, c, m, u, n);
         loop {
             let deadline = async {
                 match abort_deadline {

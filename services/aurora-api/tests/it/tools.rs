@@ -428,8 +428,13 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
     // conversation, and `origin_for_run` sends the fire there while the task is open.
     let (conv, turn) = peer("open", Some(requester)).await;
     let (s, v) = r
-        .tool(call_in(&a, conv, turn, "schedule_create",
-            json!({"name": "check", "prompt": "Look again.", "run_at": "2026-12-01T09:00"})))
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "check", "prompt": "Look again.", "run_at": "2026-12-01T09:00"}),
+        ))
         .await;
     assert_eq!(s, 200, "{v}");
     let row: (Option<Uuid>, Option<Uuid>) = sqlx::query_as(
@@ -445,8 +450,13 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
             .await
             .unwrap();
     let mut conn = r.h.pool().acquire().await.unwrap();
-    let row = aurora_db::repo::schedules::get(&mut *conn, schedule).await.unwrap().unwrap();
-    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut *conn, &row).await.unwrap();
+    let row = aurora_db::repo::schedules::get(&mut *conn, schedule)
+        .await
+        .unwrap()
+        .unwrap();
+    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut *conn, &row)
+        .await
+        .unwrap();
     assert_eq!(fire_at, Some(conv));
     drop(conn);
     // A closed task's conversation is nobody's chat any more.
@@ -456,16 +466,26 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
         .await
         .unwrap();
     let mut conn = r.h.pool().acquire().await.unwrap();
-    let row = aurora_db::repo::schedules::get(&mut *conn, schedule).await.unwrap().unwrap();
-    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut *conn, &row).await.unwrap();
+    let row = aurora_db::repo::schedules::get(&mut *conn, schedule)
+        .await
+        .unwrap()
+        .unwrap();
+    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut *conn, &row)
+        .await
+        .unwrap();
     assert_eq!(fire_at, None);
     drop(conn);
 
     // A peer turn with no requester still refuses.
     let (conv, turn) = peer("open", None).await;
     let (s, v) = r
-        .tool(call_in(&a, conv, turn, "schedule_create",
-            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"})))
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        ))
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["ok"], false, "{v}");
@@ -481,12 +501,20 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
         .await
         .unwrap();
     let (s, v) = r
-        .tool(call_in(&a, conv, turn, "schedule_create",
-            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"})))
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        ))
         .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["ok"], false, "{v}");
-    assert!(v.to_string().contains("can no longer use this agent"), "{v}");
+    assert!(
+        v.to_string().contains("can no longer use this agent"),
+        "{v}"
+    );
 }
 
 /// A `peer` conversation of `agent` with an agent-speaker turn, and an open peer task behind it
@@ -519,7 +547,9 @@ async fn peer_task_conv(
     .execute(r.h.pool())
     .await
     .unwrap();
-    let other = r.h.hosted_agent(r.org, r.ws, &format!("peer-{}", Uuid::now_v7().simple())).await;
+    let other =
+        r.h.hosted_agent(r.org, r.ws, &format!("peer-{}", Uuid::now_v7().simple()))
+            .await;
     let (x, y) = if agent < other {
         (agent, other)
     } else {
