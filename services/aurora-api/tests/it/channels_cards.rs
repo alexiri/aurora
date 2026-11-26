@@ -1348,3 +1348,183 @@ async fn dm_approval_card_click_by_non_participant_is_refused() {
     assert_eq!(out["result"].as_str(), Some("done"), "{out}");
     assert_eq!(w.status("approvals", id).await, "approved");
 }
+
+// ---------------------------------------------------------------- FIX-252: the origin card
+
+impl W {
+    /// (FIX-252) An approval raised in a peer task conversation: `task` (the receiver's `peer`
+    /// conversation) has no thread link; `origin` (where the person asked) has one of `origin_kind`.
+    /// Delegating agent: `agent2`; receiving agent (the approval's): `agent`. Returns
+    /// `(approval id, task conversation, origin conversation)`.
+    async fn peer_approval(&self, origin_kind: &str) -> (Uuid, Uuid, Uuid) {
+        let p = self.pool();
+        let origin = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+             VALUES ($1,$2,$3,'api',$1::text, now())",
+        )
+        .bind(origin)
+        .bind(self.agent2)
+        .bind(self.ws)
+        .execute(p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO thread_links (id, integration_id, agent_id, conversation_id, kind, space_ref, thread_ref, sender)
+             VALUES ($1,$2,$3,$4,$5,'C9','T9','\"shared\"')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(self.integ)
+        .bind(self.agent2)
+        .bind(origin)
+        .bind(origin_kind)
+        .execute(p)
+        .await
+        .unwrap();
+        let task = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+             VALUES ($1,$2,$3,'peer',$1::text, now())",
+        )
+        .bind(task)
+        .bind(self.agent)
+        .bind(self.ws)
+        .execute(p)
+        .await
+        .unwrap();
+        let (a, b) = if self.agent < self.agent2 {
+            (self.agent, self.agent2)
+        } else {
+            (self.agent2, self.agent)
+        };
+        let link = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO agent_links (id, agent_a_id, agent_b_id, policy_a, policy_b)
+             VALUES ($1,$2,$3,'allow','allow')",
+        )
+        .bind(link)
+        .bind(a)
+        .bind(b)
+        .execute(p)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
+                origin_conversation_id, task_conversation_id, status, message_budget, expires_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,'open',20, now() + interval '1 day')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(link)
+        .bind(self.agent2)
+        .bind(self.agent)
+        .bind(self.member)
+        .bind(origin)
+        .bind(task)
+        .execute(p)
+        .await
+        .unwrap();
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, gateway_instance_id,
+                method, host, path, summary, status, deadline)
+             VALUES ($1,$2,$3,$4,$5,$6,'POST','api.example.com','/x',
+                '{\"title\":\"Push to GitLab\",\"fields\":[{\"label\":\"repo\",\"value\":\"x/y\"}],\"source\":\"generic\"}',
+                'pending', now() + interval '5 minutes')",
+        )
+        .bind(id)
+        .bind(self.org)
+        .bind(self.ws)
+        .bind(self.agent)
+        .bind(task)
+        .bind(self.gw)
+        .execute(p)
+        .await
+        .unwrap();
+        (id, task, origin)
+    }
+}
+
+/// (FIX-252) An approval raised in a peer task conversation is surfaced at the origin thread the
+/// person asked in — not at the peer conversation (which has no thread link of its own) — with the
+/// delegating agent named. In a shared space the card carries no request details (D-178).
+#[tokio::test]
+async fn peer_approval_card_goes_to_the_origin_thread_and_names_the_delegating_agent() {
+    let w = W::new(&FULL).await;
+    let (id, _task, _origin) = w.peer_approval("group").await;
+    w.fanout().await;
+    w.fanout().await; // idempotent: still exactly one card
+    let posts = w.ops("message.post").await;
+    assert_eq!(posts.len(), 1);
+    let (_, op, dedupe) = &posts[0];
+    assert_eq!(dedupe.as_deref(), Some(format!("approval:{id}").as_str()));
+    assert_eq!(op["target"], json!({"space_ref": "C9", "thread_ref": "T9"}));
+    let blocks = op["content"]["card"]["blocks"].as_array().unwrap();
+    assert_eq!(
+        blocks[0],
+        json!({"type": "header", "text": "Approval needed"})
+    );
+    let title = blocks[1]["text"].as_str().unwrap();
+    assert!(
+        title.contains("is waiting for your approval to send a POST request to api.example.com"),
+        "{title}"
+    );
+    assert!(title.contains("(asked for by "), "{title}");
+    // D-178: a shared origin shows no request fields.
+    assert!(W::tokens(op).iter().map(|t| &t.0).eq(["Allow once", "Block"]));
+    assert!(!serde_json::to_string(&op).unwrap().contains("x/y"));
+    let card: (String, String) =
+        sqlx::query_as("SELECT subject_kind, state FROM channel_cards WHERE subject_id=$1")
+            .bind(id)
+            .fetch_one(w.pool())
+            .await
+            .unwrap();
+    assert_eq!(card, ("approval".into(), "posting".into()));
+}
+
+/// (FIX-252) A direct (1:1) origin conversation gets the request's details on the card (D-178).
+#[tokio::test]
+async fn peer_approval_card_in_a_direct_origin_carries_the_details() {
+    let w = W::new(&FULL).await;
+    w.peer_approval("direct").await;
+    w.fanout().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let blocks = op["content"]["card"]["blocks"].as_array().unwrap();
+    let fields = blocks
+        .iter()
+        .find(|b| b["type"] == "fields")
+        .expect("fields on a direct card");
+    assert!(serde_json::to_string(fields).unwrap().contains("x/y"));
+}
+
+/// (FIX-252) Without a thread link at the origin nothing is posted (the card waits for one).
+#[tokio::test]
+async fn peer_approval_without_an_origin_link_posts_nothing() {
+    let w = W::new(&FULL).await;
+    let (_id, _task, origin) = w.peer_approval("group").await;
+    sqlx::query("DELETE FROM thread_links WHERE conversation_id = $1")
+        .bind(origin)
+        .execute(w.pool())
+        .await
+        .unwrap();
+    w.fanout().await;
+    assert_eq!(w.ops("message.post").await.len(), 0);
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM channel_cards")
+        .fetch_one(w.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+/// (FIX-252) A peer approval whose origin link sits on a SECOND integration that is not active
+/// posts nothing (the same rule as every card).
+#[tokio::test]
+async fn peer_approval_card_needs_an_active_integration() {
+    let w = W::new(&FULL).await;
+    w.peer_approval("group").await;
+    sqlx::query("UPDATE channel_integrations SET status='disabled'")
+        .execute(w.pool())
+        .await
+        .unwrap();
+    w.fanout().await;
+    assert_eq!(w.ops("message.post").await.len(), 0);
+}

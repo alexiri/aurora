@@ -48,6 +48,14 @@ pub fn parked_sentence(resume_window_secs: u64) -> String {
     )
 }
 
+/// (FIX-252) The extra facts of an approval raised in a peer task: its card at the origin
+/// conversation says the receiving agent is waiting and who asked for it (the delegating agent's
+/// label, never the requester's e-mail).
+pub struct PeerOrigin {
+    /// `<Agent name> (@handle)`, sanitized, of the agent the task was asked through.
+    pub asked_for_by: String,
+}
+
 /// Gateway approval card: header, summary title (and fields in a 1:1 conversation), context,
 /// Approve/Deny and, for batches with more than one approval, Approve all / Deny all.
 ///
@@ -58,15 +66,25 @@ pub fn parked_sentence(resume_window_secs: u64) -> String {
 /// (P4-011B-2, C-825) A **parked** approval's card adds the sentence of `13 §5.6` (`resume_window_secs`
 /// is the instance's `approvals.park.resume_window_secs`); it carries no request detail, so D-192
 /// is unchanged.
+///
+/// (FIX-252) A **peer** origin card (`peer`) says "<Agent> is waiting for your approval to <action>
+/// (asked for by <agent>)" — the same facts as every approval card plus the delegating agent.
 pub fn approval(
     m: &Minter<'_>,
     row: &ApprovalRow,
     shared: bool,
     resume_window_secs: u64,
+    peer: Option<&PeerOrigin>,
 ) -> Result<Card, ApiError> {
     // (P5-UX-16, C-983) The same sentence as the dashboard's card: "<Agent> wants to <action>".
     let sentence = crate::domains::approvals::dto::Approval::from(row.clone()).sentence;
-    let title = format!("{} wants to {}", sentence.agent.name, sentence.action);
+    let title = match peer {
+        Some(p) => format!(
+            "{} is waiting for your approval to {} (asked for by {})",
+            sentence.agent.name, sentence.action, p.asked_for_by
+        ),
+        None => format!("{} wants to {}", sentence.agent.name, sentence.action),
+    };
     let mut blocks = vec![Block::header("Approval needed"), Block::data(&title)];
     let fields: Vec<(String, String)> = row
         .summary
