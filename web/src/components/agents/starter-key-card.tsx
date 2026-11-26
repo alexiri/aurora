@@ -3,7 +3,6 @@
 import { useAnswerFix, GiveKeyButton } from "@/components/agents/answer-fix";
 import { Button } from "@/components/ui/button";
 import { ErrorNotice } from "@/components/ui/notice";
-import { showUndoToast } from "@/components/ui/undo-toast";
 import { useAddCredentialGrants } from "@/lib/api/credential-grants";
 
 /**
