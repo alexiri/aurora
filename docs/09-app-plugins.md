@@ -275,7 +275,9 @@ now send to Ops alerts, and asks you first." / "… without asking."
 
 **Body shape (`body_check`).** A tool may declare `body_check` — `refuse_keys: [keys]`,
 `allow_keys: [keys]`, `only_keys: { key: [allowed keys] }`, `exact_len: { key: length }`,
-`entry_keys: { key: [allowed keys] }` and `entry_value: { key: { from, key, value } }` — a
+`entry_keys: { key: [allowed keys] }`, `entry_value: { key: { from, key, value } }`,
+`entry_member: { key: [{ at, member, keys, value? }] }`, `entry_at: { key: [{ at, member?, key,
+value }] }` and `value: { key: scalar }` — a
 request-body shape the gateway enforces on the tool's raw sends: a body carrying a refused key, a
 key outside the declared allow list, an `only_keys` object with a key outside its list, or an
 `exact_len` array of the wrong length is refused with `tool_body_refused` before any rule,
@@ -284,20 +286,29 @@ entry rules read the entries of an array: every entry of an `entry_keys` array i
 no keys but the listed ones, and from the `from`-th entry on, an `entry_value` array's entries
 carry the named key with exactly the named scalar value — so an array of a fixed length whose
 later entries must be the receiver's own processing steps (never another query of the agent's
-own) is declarable. Fail
+own) is declarable. An `entry_member` rule checks the object an entry names along a `member`
+path (member names and indexes) the way `only_keys` does — no keys but the listed ones, and,
+when `value` is set, its `key` with exactly that scalar — and an `entry_at` rule pins one
+entry's key, on the entry itself or along such a path, to exactly that scalar; a `value` rule
+pins a top-level key the body must carry with exactly that scalar (a body without it is refused
+too). Fail
 closed: an absent, truncated, non-JSON or non-object body is refused too. Receivers match object
 key names without regard to case and keep the last match, so a key the case-folded form of which
 (the Kelvin sign U+212A and the long s U+017F fold to `k` and `s`) equals a checked or allowed key
 but is not spelled exactly that way is refused wherever the check reads — at the top level,
-inside `only_keys` objects and inside `entry_keys` arrays — and a duplicated exact key is checked
+inside `only_keys` objects, inside `entry_keys` arrays and inside the objects the member rules
+read — and a duplicated exact key is checked
 as the receiver reads it, by
 its last occurrence. Every part is a refusal, never an allowance; key names are identifiers of at
 most 64 characters, the lists are small (`refuse_keys` at most 8, `allow_keys` at most 16,
-`only_keys` and `entry_keys` at most 8 keys of at most 16 allowed, `entry_value` values at most
+`only_keys` and `entry_keys` at most 8 keys of at most 16 allowed, `entry_member` at most 8
+members of at most 16 keys, `entry_at` at most 16 pins, `value` at most 8 keys, member paths at
+most 8 segments, `entry_value` and pin values at most
 64 characters of JSON, lengths at least 1), and an absent `body_check`
 checks nothing and changes no hash. Additive in contract 1. Built-in user: `grafana` (1.8.0: the
 alert-rule tools accept only the top-level keys the grafana-alert script sends, every `data` step
-is the object the script sends, the steps after the first are the server's own expression steps,
+is the object the script sends, the steps after the first are the server's own expression steps
+whose refIds, expression links and the top-level `condition` are pinned to the script's values,
 and any spelling the receiver would fold onto one of these keys is refused).
 
 **No query parameters (`refuse_query: true`).** A read tool that serves only a fixed path may

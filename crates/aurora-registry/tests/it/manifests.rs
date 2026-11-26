@@ -514,6 +514,59 @@ fn connect_method_rules_reject_each_invalid_case() {
             ),
             "body_check_entry_value",
         ),
+        // An `entry_at` pin forces a key onto exactly one entry: on the entry itself the key
+        // must be one `entry_keys` lists, or the two rules contradict each other.
+        (
+            "an entry_at key that entry_keys does not list",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_keys: { data: [refId] }, entry_at: { data: [ { at: 0, key: datasourceUid, value: __expr__ } ] } } }",
+            ),
+            "body_check_entry_at",
+        ),
+        // An `entry_at` member path is quoted in the refusal message: identifiers and
+        // indexes only, like an `entry_member` path.
+        (
+            "an entry_at member path that is not identifiers or indexes",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_at: { data: [ { at: 1, member: \"model/bad name\", key: expr, value: A } ] } } }",
+            ),
+            "body_check_key",
+        ),
+        (
+            "an entry_at beyond entry 64",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_at: { data: [ { at: 65, key: refId, value: A } ] } } }",
+            ),
+            "body_check_entry_at",
+        ),
+        (
+            "an entry_at value that is an object",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_at: { data: [ { at: 0, key: refId, value: { a: 1 } } ] } } }",
+            ),
+            "body_check_entry_at",
+        ),
+        // A `value` pin is a scalar the body carries exactly, named by an identifier.
+        (
+            "a body_check value that is an object",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { value: { condition: { a: 1 } } } }",
+            ),
+            "body_check_value",
+        ),
+        (
+            "a body_check value key that is not an identifier",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { value: { bad-key: C } } }",
+            ),
+            "body_check_key",
+        ),
         // (lane review 2026-11-25) A `project` selects named fields of every answer item:
         // plain `$`-paths only, at most 8.
         (

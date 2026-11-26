@@ -46,6 +46,31 @@ pub struct BodyCheck {
     /// refused).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub entry_member: BTreeMap<String, Vec<EntryMember>>,
+    /// A key whose value must be an array whose entry at `at` carries `key` — on the entry
+    /// itself, or, along the optional `member` path of object keys and array indexes, on
+    /// the object it names — with exactly this value (the steps' `refId`s and the
+    /// expression links between them: the card shows the step the top-level `condition`
+    /// names, and a swapped refId would name another step than the one the card reads).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entry_at: BTreeMap<String, Vec<EntryAt>>,
+    /// A key the body must carry with exactly this scalar value (the top-level
+    /// `condition`: the card shows the decision it names, so it names the threshold step
+    /// the script builds or the body is refused). A key the body does not carry is
+    /// refused too.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub value: BTreeMap<String, serde_json::Value>,
+}
+
+/// An entry rule of [`BodyCheck::entry_at`]: the entry at `at` (0 counts the first)
+/// carries, on itself or along the optional `member` path, `key` with exactly `value`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryAt {
+    pub at: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
+    pub key: String,
+    pub value: serde_json::Value,
 }
 
 /// An entry rule of [`BodyCheck::entry_member`]: the entry at `at` (0 counts the first)
@@ -103,7 +128,9 @@ impl BodyCheck {
                 + self.only_keys.len()
                 + self.exact_len.len()
                 + self.entry_keys.len()
-                + self.entry_value.len(),
+                + self.entry_value.len()
+                + self.entry_at.len()
+                + self.value.len(),
         );
         known.extend(self.refuse_keys.iter().map(String::as_str));
         known.extend(self.allow_keys.iter().map(String::as_str));
@@ -111,6 +138,8 @@ impl BodyCheck {
         known.extend(self.exact_len.keys().map(String::as_str));
         known.extend(self.entry_keys.keys().map(String::as_str));
         known.extend(self.entry_value.keys().map(String::as_str));
+        known.extend(self.entry_at.keys().map(String::as_str));
+        known.extend(self.value.keys().map(String::as_str));
         let mut hit: Option<(&String, &str)> = None;
         for k in obj.keys() {
             if let Some(same) = known.iter().find(|s| fold(s) == fold(k) && **s != *k) {
@@ -244,20 +273,11 @@ impl BodyCheck {
                         // the receiver's parser matches key names without case and keeps the
                         // last match, so a spelling that folds onto a listed key is that key
                         // to it, whatever it shows.
-                        let mut place = format!("`{k}`[{at}]");
-                        let mut cur = e;
-                        for seg in m.member.split('/') {
-                            let next = match seg.parse::<usize>() {
-                                Ok(n) => cur.get(n),
-                                Err(_) => cur.get(seg),
-                            };
-                            let Some(next) = next else {
-                                return Some(format!("{place} carries no `{seg}`"));
-                            };
-                            place.push('/');
-                            place.push_str(seg);
-                            cur = next;
-                        }
+                        let place = format!("`{k}`[{at}]");
+                        let (cur, place) = match member_value(e, &m.member, &place) {
+                            Ok(found) => found,
+                            Err(why) => return Some(why),
+                        };
                         let Some(o) = cur.as_object() else {
                             return Some(format!("{place} must be a JSON object"));
                         };
@@ -296,8 +316,99 @@ impl BodyCheck {
                 Some(_) => return Some(format!("`{k}` must be a JSON array")),
             }
         }
+        // The pins run last: a body that fails a shape rule above is refused for that, and
+        // a pinned key's folded spellings are refused by the fold checks those rules already
+        // run (and by the top-level one before them).
+        for (k, want) in &self.value {
+            match obj.get(k) {
+                Some(v) if v == want => {}
+                Some(v) => {
+                    return Some(format!(
+                        "the body carries `{k}: {v}`: this tool sends only `{k}: {want}`"
+                    ));
+                }
+                None => {
+                    return Some(format!(
+                        "the body carries no `{k}`: this tool sends only `{k}: {want}`"
+                    ));
+                }
+            }
+        }
+        for (k, pins) in &self.entry_at {
+            match obj.get(k) {
+                None => {}
+                Some(serde_json::Value::Array(a)) => {
+                    for p in pins {
+                        let at = p.at;
+                        let Some(e) = a.get(usize::try_from(at).unwrap_or(usize::MAX)) else {
+                            return Some(format!("the body has no `{k}`[{at}]"));
+                        };
+                        let place = format!("`{k}`[{at}]");
+                        let (cur, place) = match &p.member {
+                            Some(member) => match member_value(e, member, &place) {
+                                Ok(found) => found,
+                                Err(why) => return Some(why),
+                            },
+                            None => (e, place),
+                        };
+                        let Some(o) = cur.as_object() else {
+                            return Some(format!("{place} must be a JSON object"));
+                        };
+                        // The same fold as the checked objects above: the receiver reads the
+                        // pinned key's name without case, so a spelling that folds onto it is
+                        // that key to it, whatever it shows.
+                        if let Some(extra) =
+                            o.keys().find(|x| fold(x) == fold(&p.key) && **x != p.key)
+                        {
+                            return Some(format!(
+                                "{place} carries `{extra}`, which the receiver reads as `{}` (key names match without case): spell it `{}`",
+                                p.key, p.key
+                            ));
+                        }
+                        if o.get(&p.key).is_some_and(|v| v == &p.value) {
+                            continue;
+                        }
+                        let actual = o
+                            .get(&p.key)
+                            .map(|v| format!("`{key}: {v}`", key = p.key))
+                            .unwrap_or_else(|| format!("no `{}`", p.key));
+                        return Some(format!(
+                            "{place} carries {actual}: this tool sends only `{key}: {value}` there",
+                            key = p.key,
+                            value = p.value
+                        ));
+                    }
+                }
+                Some(_) => return Some(format!("`{k}` must be a JSON array")),
+            }
+        }
         None
     }
+}
+
+/// The value `member` names from `entry` (object keys and array indexes separated by `/`),
+/// with the place it was found at, quoted in the refusal message; `Err` names how far the
+/// walk came when a segment is missing.
+fn member_value<'a>(
+    entry: &'a serde_json::Value,
+    member: &str,
+    base: &str,
+) -> Result<(&'a serde_json::Value, String), String> {
+    let mut place = base.to_owned();
+    let mut cur = entry;
+    for seg in member.split('/') {
+        let next = match seg.parse::<usize>() {
+            Ok(n) => cur.get(n),
+            Err(_) => cur.get(seg),
+        };
+        let Some(next) = next else {
+            return Err(format!("{place} carries no `{seg}`"));
+        };
+        place.push('/');
+        place.push_str(seg);
+        cur = next;
+    }
+    Ok((cur, place))
 }
 
 /// Folds a key the way the receiver's JSON parser matches field names: without case, and with
@@ -332,6 +443,16 @@ mod tests {
             },
             "entry_value": {
                 "data": { "from": 1, "key": "datasourceUid", "value": "__expr__" }
+            },
+            "value": { "condition": "C" },
+            "entry_at": {
+                "data": [
+                    { "at": 0, "key": "refId", "value": "A" },
+                    { "at": 1, "key": "refId", "value": "B" },
+                    { "at": 2, "key": "refId", "value": "C" },
+                    { "at": 1, "member": "model", "key": "expression", "value": "A" },
+                    { "at": 2, "member": "model", "key": "expression", "value": "B" }
+                ]
             },
             "entry_member": {
                 "data": [
@@ -429,8 +550,82 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("refId");
-        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        let b = serde_json::to_vec(&json!({ "condition": "C", "data": data })).unwrap();
         assert_eq!(c.violation(b.as_slice(), false), None);
+    }
+
+    #[test]
+    fn the_steps_refids_the_expression_links_and_the_condition_are_pinned() {
+        let c = check();
+        // The script's own body passes with the pins declared.
+        let b = serde_json::to_vec(&json!({ "condition": "C", "data": steps() })).unwrap();
+        assert_eq!(c.violation(b.as_slice(), false), None);
+
+        // The exploit: the query step named `C` and the threshold step named `A`, the two
+        // expression links pointed back through them, and the condition left at `C` — the
+        // card shows `Condition step: C` and the threshold step's comparison while the
+        // receiver fires on the raw query's value.
+        let mut data = steps();
+        data[0]["refId"] = json!("C");
+        data[2]["refId"] = json!("A");
+        data[1]["model"]["expression"] = json!("C");
+        let b = serde_json::to_vec(&json!({ "condition": "C", "data": data })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("refId"), "{why}");
+
+        // The condition naming the reduce step: the card would show a decision the
+        // threshold step does not make.
+        let b = serde_json::to_vec(&json!({ "condition": "B", "data": steps() })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("condition"), "{why}");
+
+        // No condition at all: the card's Condition step field would show nothing.
+        let b = serde_json::to_vec(&json!({ "data": steps() })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("no `condition`"), "{why}");
+
+        // The two expression links swapped: the reduce step reads the threshold step.
+        let mut data = steps();
+        data[1]["model"]["expression"] = json!("C");
+        data[2]["model"]["expression"] = json!("A");
+        let b = serde_json::to_vec(&json!({ "condition": "C", "data": data })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("expression"), "{why}");
+
+        // One swapped step refId, the rest the script's: the threshold step named `B`.
+        let mut data = steps();
+        data[2]["refId"] = json!("B");
+        let b = serde_json::to_vec(&json!({ "condition": "C", "data": data })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("refId"), "{why}");
+    }
+
+    #[test]
+    fn a_spelling_that_folds_onto_a_pinned_key_is_refused() {
+        // The pin's own fold, with no other rule to lean on: the receiver reads key names
+        // without case and keeps the last match, so `RefId` is `refId` to it whatever the
+        // pin compares.
+        let c = serde_json::from_value::<BodyCheck>(json!({
+            "entry_at": { "data": [{ "at": 0, "key": "refId", "value": "A" }] }
+        }))
+        .unwrap();
+        let b = serde_json::to_vec(&json!({ "data": [{ "refId": "A" }] })).unwrap();
+        assert_eq!(c.violation(b.as_slice(), false), None);
+        for spelling in ["RefId", "REFID", "rEfid"] {
+            let mut o = serde_json::Map::new();
+            o.insert(spelling.to_owned(), json!("A"));
+            let b = serde_json::to_vec(&json!({ "data": [Value::Object(o)] })).unwrap();
+            let why = c.violation(b.as_slice(), false).unwrap();
+            assert!(why.contains(&format!("`{spelling}`")), "{spelling}: {why}");
+        }
+        // A pin naming an entry the body does not carry is refused too (fail closed).
+        let c = serde_json::from_value::<BodyCheck>(json!({
+            "entry_at": { "data": [{ "at": 5, "key": "refId", "value": "A" }] }
+        }))
+        .unwrap();
+        let b = serde_json::to_vec(&json!({ "data": [{ "refId": "A" }] })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("no `data`[5]"), "{why}");
     }
 
     #[test]
@@ -447,7 +642,7 @@ mod tests {
         ] {
             let mut data = steps();
             data[0]["model"] = model;
-            let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+            let b = serde_json::to_vec(&json!({ "condition": "C", "data": data })).unwrap();
             assert_eq!(
                 c.violation(b.as_slice(), false),
                 None,
@@ -510,7 +705,7 @@ mod tests {
     fn the_expression_steps_are_the_ones_the_script_builds() {
         let c = check();
         // The script's reduce and threshold steps pass with the whole body.
-        let b = serde_json::to_vec(&json!({ "data": steps() })).unwrap();
+        let b = serde_json::to_vec(&json!({ "condition": "C", "data": steps() })).unwrap();
         assert_eq!(c.violation(b.as_slice(), false), None);
         // The reduce step's model carrying another expression type is refused (a `math` step
         // computes whatever it likes while the card shows the threshold step's comparison).
@@ -747,8 +942,10 @@ mod tests {
                 .contains("datasourceUid")
         );
         // The first step is the agent's own data source: any uid there is the declared shape.
-        let b = serde_json::to_vec(&json!({ "data": [step("A", "postgres-logs"), step("B", "__expr__"), step("C", "__expr__")] }))
-            .unwrap();
+        let b = serde_json::to_vec(
+            &json!({ "condition": "C", "data": [step("A", "postgres-logs"), step("B", "__expr__"), step("C", "__expr__")] }),
+        )
+        .unwrap();
         assert_eq!(c.violation(b.as_slice(), false), None);
     }
 
@@ -824,7 +1021,7 @@ mod tests {
                 .contains("`labels` must be a JSON object")
         );
         // Absent `only_keys` members are allowed (the script sets `service` only when given).
-        let b = serde_json::to_vec(&json!({ "data": steps() })).unwrap();
+        let b = serde_json::to_vec(&json!({ "condition": "C", "data": steps() })).unwrap();
         assert_eq!(c.violation(b.as_slice(), false), None);
     }
 }

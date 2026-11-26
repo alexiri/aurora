@@ -1690,6 +1690,116 @@ fn method_rules(cx: &mut Ctx<'_>) {
                             }
                         }
                     }
+                    if bc.value.len() > 8 {
+                        cx.v(
+                            "body_check_value",
+                            &format!("{bp}/value"),
+                            format!("tool `{}`: `value` covers at most 8 keys", it.id),
+                        );
+                    }
+                    for (k, v) in &bc.value {
+                        name!("value", k);
+                        if v.is_object() || v.is_array() {
+                            cx.v(
+                                "body_check_value",
+                                &format!("{bp}/value/{k}"),
+                                format!(
+                                    "tool `{}`: `value.{k}` is a scalar the body must carry exactly",
+                                    it.id
+                                ),
+                            );
+                        } else if v.to_string().len() > 64 {
+                            cx.v(
+                                "body_check_value",
+                                &format!("{bp}/value/{k}"),
+                                format!(
+                                    "tool `{}`: `value.{k}` is at most 64 characters of JSON",
+                                    it.id
+                                ),
+                            );
+                        }
+                    }
+                    for (k, pins) in &bc.entry_at {
+                        name!("entry_at", k);
+                        if pins.is_empty() {
+                            cx.v(
+                                "body_check_entry_at",
+                                &format!("{bp}/entry_at/{k}"),
+                                format!("tool `{}`: `entry_at.{k}` holds at least one pin", it.id),
+                            );
+                        }
+                        if pins.len() > 16 {
+                            cx.v(
+                                "body_check_entry_at",
+                                &format!("{bp}/entry_at/{k}"),
+                                format!("tool `{}`: `entry_at.{k}` holds at most 16 pins", it.id),
+                            );
+                        }
+                        for p in pins {
+                            name!("entry_at", &p.key);
+                            if p.at > 64 {
+                                cx.v(
+                                    "body_check_entry_at",
+                                    &format!("{bp}/entry_at/{k}/at"),
+                                    format!("tool `{}`: `entry_at.{k}.at` is at most 64", it.id),
+                                );
+                            }
+                            if let Some(m) = &p.member {
+                                // The member path is quoted in the refusal message: object
+                                // keys and array indexes, at most 8 of them.
+                                let segs: Vec<&str> = m.split('/').collect();
+                                let seg_ok = |s: &str| s.parse::<u32>().is_ok() || key_ok(s);
+                                if m.is_empty() || segs.len() > 8 || segs.iter().any(|s| !seg_ok(s))
+                                {
+                                    cx.v(
+                                        "body_check_key",
+                                        &format!("{bp}/entry_at/{k}/member"),
+                                        format!(
+                                            "tool `{}`: `entry_at.{k}.member` is a path of at most 8 identifiers or indexes",
+                                            it.id
+                                        ),
+                                    );
+                                }
+                            } else {
+                                // A pin on the entry itself forces a key onto it: one
+                                // `entry_keys` lists, or the two rules contradict each
+                                // other and refuse every body, whatever it carries.
+                                if !bc
+                                    .entry_keys
+                                    .get(k)
+                                    .is_some_and(|allowed| allowed.contains(&p.key))
+                                {
+                                    cx.v(
+                                        "body_check_entry_at",
+                                        &format!("{bp}/entry_at/{k}/key"),
+                                        format!(
+                                            "tool `{}`: `entry_at.{k}.key` names `{}`, which `entry_keys.{k}` does not list",
+                                            it.id, p.key
+                                        ),
+                                    );
+                                }
+                            }
+                            if p.value.is_object() || p.value.is_array() {
+                                cx.v(
+                                    "body_check_entry_at",
+                                    &format!("{bp}/entry_at/{k}/value"),
+                                    format!(
+                                        "tool `{}`: `entry_at.{k}.value` is a scalar the body must carry exactly",
+                                        it.id
+                                    ),
+                                );
+                            } else if p.value.to_string().len() > 64 {
+                                cx.v(
+                                    "body_check_entry_at",
+                                    &format!("{bp}/entry_at/{k}/value"),
+                                    format!(
+                                        "tool `{}`: `entry_at.{k}.value` is at most 64 characters of JSON",
+                                        it.id
+                                    ),
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -178,6 +178,20 @@ apps:
                 data: [refId, datasourceUid, queryType, relativeTimeRange, model]
               entry_value:
                 data: { from: 1, key: datasourceUid, value: __expr__ }
+              # The steps carry exactly the script's refIds: the query step is `A`, the reduce
+              # step `B`, the threshold step `C`; the reduce step reads `A` and the threshold
+              # step reads `B`; and the top-level `condition` is `C`, the step the card reads
+              # its decision from. A body that swaps or renames them shows one decision on the
+              # card and runs another (a `condition` naming the raw query step fires on
+              # whatever the query returns, with the threshold step only shown).
+              value: { condition: C }
+              entry_at:
+                data:
+                  - { at: 0, key: refId, value: A }
+                  - { at: 1, key: refId, value: B }
+                  - { at: 2, key: refId, value: C }
+                  - { at: 1, member: model, key: expression, value: A }
+                  - { at: 2, member: model, key: expression, value: B }
               entry_member:
                 data:
                   - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
@@ -218,6 +232,20 @@ apps:
                 data: [refId, datasourceUid, queryType, relativeTimeRange, model]
               entry_value:
                 data: { from: 1, key: datasourceUid, value: __expr__ }
+              # The steps carry exactly the script's refIds: the query step is `A`, the reduce
+              # step `B`, the threshold step `C`; the reduce step reads `A` and the threshold
+              # step reads `B`; and the top-level `condition` is `C`, the step the card reads
+              # its decision from. A body that swaps or renames them shows one decision on the
+              # card and runs another (a `condition` naming the raw query step fires on
+              # whatever the query returns, with the threshold step only shown).
+              value: { condition: C }
+              entry_at:
+                data:
+                  - { at: 0, key: refId, value: A }
+                  - { at: 1, key: refId, value: B }
+                  - { at: 2, key: refId, value: C }
+                  - { at: 1, member: model, key: expression, value: A }
+                  - { at: 2, member: model, key: expression, value: B }
               entry_member:
                 data:
                   - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
