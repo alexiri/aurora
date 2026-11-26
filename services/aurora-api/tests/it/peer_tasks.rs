@@ -846,14 +846,15 @@ async fn a_reminder_press_sets_one_one_time_schedule_for_the_presser() {
     assert_eq!(code, 200, "{body}");
     let when = body["reminder_for"].as_str().unwrap().to_owned();
     assert_eq!(when.len(), 5, "{when}");
-    let rows: Vec<(
+    type ReminderRow = (
         String,
         Option<String>,
         Option<Uuid>,
         Uuid,
         Option<Uuid>,
         f64,
-    )> = sqlx::query_as(
+    );
+    let rows: Vec<ReminderRow> = sqlx::query_as(
         "SELECT name, cron, creator_user_id, agent_id, origin_conversation_id,
                 extract(epoch from (run_at - now()))::double precision
          FROM schedules WHERE origin_conversation_id = $1",
