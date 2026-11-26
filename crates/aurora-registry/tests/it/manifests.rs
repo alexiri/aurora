@@ -465,6 +465,45 @@ fn connect_method_rules_reject_each_invalid_case() {
             ),
             "body_check_exact_len",
         ),
+        // An `entry_member` path is quoted in the refusal message: identifiers and indexes only.
+        (
+            "an entry_member path that is not identifiers or indexes",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_member: { data: [ { at: 0, member: \"model/bad name\", keys: [expr] } ] } } }",
+            ),
+            "body_check_key",
+        ),
+        (
+            "an entry_member with more than eight members",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                &format!(
+                    "connect_methods: [token], body_check: {{ entry_member: {{ data: [{}] }} }} }}",
+                    (0..9)
+                        .map(|i| format!("{{ at: {i}, member: model, keys: [expr] }}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ),
+            "body_check_entry_member",
+        ),
+        (
+            "an entry_member that allows no key",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_member: { data: [ { at: 0, member: model, keys: [] } ] } } }",
+            ),
+            "body_check_entry_member",
+        ),
+        (
+            "an entry_member value that is an object",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_member: { data: [ { at: 0, member: model, keys: [type], value: { key: type, value: { a: 1 } } } ] } } }",
+            ),
+            "body_check_entry_member",
+        ),
         // (lane review 2026-11-25) A `project` selects named fields of every answer item:
         // plain `$`-paths only, at most 8.
         (

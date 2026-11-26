@@ -1586,6 +1586,93 @@ fn method_rules(cx: &mut Ctx<'_>) {
                             );
                         }
                     }
+                    for (k, members) in &bc.entry_member {
+                        name!("entry_member", k);
+                        if members.len() > 8 {
+                            cx.v(
+                                "body_check_entry_member",
+                                &format!("{bp}/entry_member/{k}"),
+                                format!(
+                                    "tool `{}`: `entry_member.{k}` checks at most 8 members",
+                                    it.id
+                                ),
+                            );
+                        }
+                        for m in members {
+                            // The member path is quoted in the refusal message: object keys
+                            // and array indexes, at most 8 of them.
+                            let segs: Vec<&str> = m.member.split('/').collect();
+                            let seg_ok = |s: &str| s.parse::<u32>().is_ok() || key_ok(s);
+                            if m.member.is_empty()
+                                || segs.len() > 8
+                                || segs.iter().any(|s| !seg_ok(s))
+                            {
+                                cx.v(
+                                    "body_check_key",
+                                    &format!("{bp}/entry_member/{k}/member"),
+                                    format!(
+                                        "tool `{}`: `entry_member.{k}.member` is a path of at most 8 identifiers or indexes",
+                                        it.id
+                                    ),
+                                );
+                            }
+                            if m.at > 64 {
+                                cx.v(
+                                    "body_check_entry_member",
+                                    &format!("{bp}/entry_member/{k}/at"),
+                                    format!(
+                                        "tool `{}`: `entry_member.{k}.at` is at most 64",
+                                        it.id
+                                    ),
+                                );
+                            }
+                            if m.keys.is_empty() {
+                                cx.v(
+                                    "body_check_entry_member",
+                                    &format!("{bp}/entry_member/{k}/keys"),
+                                    format!(
+                                        "tool `{}`: `entry_member.{k}.keys` allows at least one key",
+                                        it.id
+                                    ),
+                                );
+                            }
+                            if m.keys.len() > 16 {
+                                cx.v(
+                                    "body_check_entry_member",
+                                    &format!("{bp}/entry_member/{k}/keys"),
+                                    format!(
+                                        "tool `{}`: `entry_member.{k}.keys` allows at most 16 keys",
+                                        it.id
+                                    ),
+                                );
+                            }
+                            for a in &m.keys {
+                                name!("entry_member", a);
+                            }
+                            if let Some(v) = &m.value {
+                                name!("entry_member", &v.key);
+                                if v.value.is_object() || v.value.is_array() {
+                                    cx.v(
+                                        "body_check_entry_member",
+                                        &format!("{bp}/entry_member/{k}/value"),
+                                        format!(
+                                            "tool `{}`: `entry_member.{k}.value` is a scalar the body must carry exactly",
+                                            it.id
+                                        ),
+                                    );
+                                } else if v.value.to_string().len() > 64 {
+                                    cx.v(
+                                        "body_check_entry_member",
+                                        &format!("{bp}/entry_member/{k}/value"),
+                                        format!(
+                                            "tool `{}`: `entry_member.{k}.value` is at most 64 characters of JSON",
+                                            it.id
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

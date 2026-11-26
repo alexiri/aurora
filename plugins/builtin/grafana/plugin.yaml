@@ -148,7 +148,17 @@ apps:
           # is the `{refId, datasourceUid, queryType, relativeTimeRange, model}` object the
           # script sends, and the steps after the first are the server's own `__expr__` steps
           # (its reduce and threshold): a step that queries a data source of its own — a
-          # second SQL query the approval card does not show — is refused.
+          # second SQL query the approval card does not show — is refused. The first step's
+          # `model` is the raw query object that same parser reads without case, so
+          # `entry_member` holds the same folded allow list for it that `allow_keys` holds
+          # for the body: exactly the keys the script's builder sends (editorMode, expr,
+          # instant, legendFormat, refId), no other key and no other spelling of one. That is
+          # what keeps a query the card does not show out of the one step that queries a data
+          # source: a SQL query lives in the model's `rawSql`, not in the `expr` the card
+          # shows. The first step's `datasourceUid` itself has no value to declare (it names
+          # the connection's Prometheus data source, whichever instance the connection was
+          # made on), so the card shows it and nothing binds it here; the model keys are what
+          # keep a query type the card cannot show out of the rule.
           - id: create_alert_rule
             description: "Creates a Grafana-managed alert rule from the three-step query model the grafana-alerts script builds."
             name: Create an alert rule
@@ -168,6 +178,9 @@ apps:
                 data: [refId, datasourceUid, queryType, relativeTimeRange, model]
               entry_value:
                 data: { from: 1, key: datasourceUid, value: __expr__ }
+              entry_member:
+                data:
+                  - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
           - id: update_alert_rule
             description: "Changes one Grafana-managed alert rule the agent manages (sends the whole rule the grafana-alerts script read and changed)."
             name: Change an alert rule
@@ -187,6 +200,9 @@ apps:
                 data: [refId, datasourceUid, queryType, relativeTimeRange, model]
               entry_value:
                 data: { from: 1, key: datasourceUid, value: __expr__ }
+              entry_member:
+                data:
+                  - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
           - { id: delete_alert_rule, description: "Deletes one Grafana-managed alert rule the agent manages.", name: Delete an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [DELETE] }
     approvals:
       create_annotation:

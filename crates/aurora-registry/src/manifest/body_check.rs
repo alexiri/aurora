@@ -39,6 +39,35 @@ pub struct BodyCheck {
     /// which run no query of their own).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub entry_value: BTreeMap<String, EntryValue>,
+    /// A key whose value must be an array whose entry at `at` carries, along the `member`
+    /// path, an object with no keys but the listed ones (the first data step's `model`: the
+    /// raw query object the receiver's parser reads without case, so a query bolted onto it
+    /// under another spelling — or a query type the approval card does not show — is
+    /// refused).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entry_member: BTreeMap<String, Vec<EntryMember>>,
+}
+
+/// An entry rule of [`BodyCheck::entry_member`]: the entry at `at` (0 counts the first)
+/// carries, along the `member` path from the entry (object keys and array indexes
+/// separated by `/`), an object with no keys but `keys`, and — when `value` is set — that
+/// object's `value.0` carries exactly `value.1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryMember {
+    pub at: u32,
+    pub member: String,
+    pub keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<EntryMemberValue>,
+}
+
+/// The exact value an entry member carries: the member object's `key` is `value`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryMemberValue {
+    pub key: String,
+    pub value: serde_json::Value,
 }
 
 /// An entry rule of [`BodyCheck::entry_value`]: from the `from`-th entry of the array on
@@ -201,6 +230,72 @@ impl BodyCheck {
                 Some(_) => return Some(format!("`{k}` must be a JSON object")),
             }
         }
+        for (k, members) in &self.entry_member {
+            match obj.get(k) {
+                None => {}
+                Some(serde_json::Value::Array(a)) => {
+                    for m in members {
+                        let at = m.at;
+                        let Some(e) = a.get(usize::try_from(at).unwrap_or(usize::MAX)) else {
+                            return Some(format!("the body has no `{k}`[{at}]"));
+                        };
+                        // The member is reached along object keys and array indexes; the
+                        // object it names is checked the way the checked objects above are:
+                        // the receiver's parser matches key names without case and keeps the
+                        // last match, so a spelling that folds onto a listed key is that key
+                        // to it, whatever it shows.
+                        let mut place = format!("`{k}`[{at}]");
+                        let mut cur = e;
+                        for seg in m.member.split('/') {
+                            let next = match seg.parse::<usize>() {
+                                Ok(n) => cur.get(n),
+                                Err(_) => cur.get(seg),
+                            };
+                            let Some(next) = next else {
+                                return Some(format!("{place} carries no `{seg}`"));
+                            };
+                            place.push('/');
+                            place.push_str(seg);
+                            cur = next;
+                        }
+                        let Some(o) = cur.as_object() else {
+                            return Some(format!("{place} must be a JSON object"));
+                        };
+                        if let Some((extra, same)) = o.keys().find_map(|x| {
+                            m.keys
+                                .iter()
+                                .find(|a| fold(a) == fold(x) && *a != x)
+                                .map(|a| (x, a.as_str()))
+                        }) {
+                            return Some(format!(
+                                "{place} carries `{extra}`, which the receiver reads as `{same}` (key names match without case): spell it `{same}`"
+                            ));
+                        }
+                        if let Some(extra) = o.keys().find(|x| !m.keys.contains(x)) {
+                            return Some(format!(
+                                "{place} carries `{extra}`, which this tool never sets (allowed: {})",
+                                m.keys.join(", ")
+                            ));
+                        }
+                        if let Some(v) = &m.value {
+                            if o.get(&v.key).is_some_and(|x| x == &v.value) {
+                                continue;
+                            }
+                            let actual = o
+                                .get(&v.key)
+                                .map(|x| format!("`{key}: {x}`", key = v.key))
+                                .unwrap_or_else(|| format!("no `{}`", v.key));
+                            return Some(format!(
+                                "{place} carries {actual}: this tool sends only `{key}: {value}` here",
+                                key = v.key,
+                                value = v.value
+                            ));
+                        }
+                    }
+                }
+                Some(_) => return Some(format!("`{k}` must be a JSON array")),
+            }
+        }
         None
     }
 }
@@ -237,6 +332,12 @@ mod tests {
             },
             "entry_value": {
                 "data": { "from": 1, "key": "datasourceUid", "value": "__expr__" }
+            },
+            "entry_member": {
+                "data": [
+                    { "at": 0, "member": "model",
+                      "keys": ["editorMode", "expr", "instant", "legendFormat", "refId"] }
+                ]
             },
             "only_keys": {
                 "labels": ["managed_by", "expires", "service"],
@@ -286,6 +387,79 @@ mod tests {
             c.violation(serde_json::to_vec(&body).unwrap().as_slice(), false),
             None
         );
+    }
+
+    #[test]
+    fn the_first_steps_model_carries_only_the_keys_the_script_sends() {
+        let c = check();
+        // The script's own first step (the builder sends editorMode, expr, instant,
+        // legendFormat, refId) passes, and so does the rule read back before an update,
+        // whose model carries no refId (Grafana stores the model without it).
+        for model in [
+            json!({ "editorMode": "code", "expr": "up", "instant": true,
+                    "legendFormat": "__auto", "refId": "A" }),
+            json!({ "editorMode": "code", "expr": "up", "instant": true,
+                    "legendFormat": "__auto" }),
+        ] {
+            let mut data = steps();
+            data[0]["model"] = model;
+            let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+            assert_eq!(
+                c.violation(b.as_slice(), false),
+                None,
+                "the script's own first step must pass"
+            );
+        }
+    }
+
+    #[test]
+    fn the_first_steps_model_refuses_a_query_the_card_does_not_show() {
+        let c = check();
+        // A SQL query bolted onto the first step's model: the card reads /data/0/model/expr,
+        // which it does not show.
+        let mut data = steps();
+        data[0]["model"] = json!({ "editorMode": "code", "rawSql": "select 1", "refId": "A" });
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("rawSql"), "{why}");
+        // A key the script never sends (whatever it carries).
+        let mut data = steps();
+        data[0]["model"]["intervalMs"] = json!(1000);
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("intervalMs"), "{why}");
+    }
+
+    #[test]
+    fn the_first_steps_model_refuses_case_variants_of_its_keys() {
+        let c = check();
+        // The receiver's parser matches key names without case and keeps the last match, so
+        // `{"expr": "up", "Expr": "<other query>"}` shows `up` on the card and runs the other
+        // query: every spelling that folds onto a listed key is refused.
+        for spelling in ["Expr", "EXPR", "in\u{212A}stant"] {
+            let mut data = steps();
+            data[0]["model"][spelling] = json!("histogram_quantile(0.5, x[5m])");
+            let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+            let why = c.violation(b.as_slice(), false).unwrap();
+            assert!(why.contains(&format!("`{spelling}`")), "{spelling}: {why}");
+        }
+    }
+
+    #[test]
+    fn the_first_steps_model_must_be_present_and_an_object() {
+        let c = check();
+        // A first step without a model: the card's Query field would show nothing at all.
+        let mut data = steps();
+        data[0].as_object_mut().unwrap().remove("model");
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("no `model`"), "{why}");
+        // A model that is not an object.
+        let mut data = steps();
+        data[0]["model"] = json!("up");
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        let why = c.violation(b.as_slice(), false).unwrap();
+        assert!(why.contains("must be a JSON object"), "{why}");
     }
 
     #[test]
