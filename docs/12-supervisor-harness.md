@@ -134,6 +134,11 @@ pub trait HarnessSession: Send {
   follow-up id), thinking delta, activity line, tool started/finished,
   correction (retract/replace a streamed message), message joined, sent-now
   confirmation, session ref update, usage, `Done`, `Error{code, message}`.
+  (FIX-253, D-490) `HarnessSession::background_work()` reports the child's own
+  background commands that outlive the turn (claude-code: the model's `Bash`
+  calls with `run_in_background`, tracked while mapping); the supervisor lists
+  them at turn end as a `background` turn event (nothing happens unseen), and a
+  dead or released child reports none — its background work died with it.
 - **Steer** must refuse between turns (never queue for a future turn).
   Consumption is confirmed later by `message joined`; a steer that resolves but
   never joins before the turn ends is reported *missed* (the API promotes it).
@@ -141,7 +146,9 @@ pub trait HarnessSession: Send {
   channel presences, instruction inputs) while idle: the next message starts the
   session again with the same `resume_ref`, so conversation memory is kept and
   tools/instructions refresh together. A running turn is never interrupted for
-  this.
+  this. (FIX-253, D-490) The same release is what a Stop of a finished turn's
+  **Background activity** dispatches (`session.release`): the idle child is
+  killed and its background work dies with it.
 
 A **conformance suite** (`tests/conformance/harness`) runs against every adapter:
 terminal-event guarantee, abort, resume, steer refusal between turns, missed

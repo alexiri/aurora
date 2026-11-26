@@ -253,6 +253,10 @@ silent (D-470).
 - **Abort** (`POST /v1/turns/{id}/abort`): sets `abort_requested_at`; queued
 turns become `aborted` immediately; dispatched/running ones get
 `turn.abort` and end `aborted` on the terminal event (or by stall recovery).
+(FIX-253, D-490) On a **finished** turn the same right stops the turn's still-running
+**Background activity** (below): it records the durable `background_stopped`
+notice and the conversation's idle harness session is released, so the child's
+background work dies with it.
 
 ### Turn context (phase 5, P5-PERSON, D-402, C-1052, C-1053, SEC-139)
 
@@ -433,6 +437,19 @@ its last tool call is written as durable `text` events before the `error` event 
   durable `notice` `{ code: "turn_stopped", text: "You stopped this answer.", turn_id }` and
   `turn.finished`, in one transaction. A queued turn stopped before it started gets the notice only.
   Freeze and deprovision endings keep their own notices.
+- **Background activity (FIX-253, D-490).** At turn end the supervisor lists the harness child's
+  own background commands that outlive the turn (the claude-code adapter tracks the model's
+  `Bash` calls with `run_in_background`); the API records one durable `notice`
+  `{ code: "background_activity", turn_id, items: [{ command, started_at }], text }` — one entry
+  per conversation while it stands (re-reports are deduped), with Stop in the web (`10 §Abort`).
+  Stopping records `notice` `{ code: "background_stopped", turn_id, text }`. Other adapters report
+  nothing (their child has no such mode, or it is gone).
+- **A promise without a wake (FIX-253, D-490).** When an agent turn ends `done` in a delegated
+  task's conversation whose peer task is still open and nothing is set to wake the agent (no armed
+  watch on the conversation, no uncompleted schedule anchored to it), the platform records one
+  `notice` `{ code: "no_wakeup", turn_id, agent_id, agent_name, text }` — "<Agent> said it would
+  continue, but nothing is set to wake it." The signal is the open task, never the wording of the
+  reply; a failed turn, a person turn and a conversation with a wake registered record nothing.
 - **An error shows once (C-1076).** When a turn fails and a buffered message is the harness's own
   error line (it equals, contains or starts with the failure message, or starts with `API Error`, as
   the Claude Code adapter prints a failed model call), it is not written as the agent's `text`: the
@@ -1213,6 +1230,12 @@ thread link, the answer is posted there too (`13 §Mirror`).
   opted-in devices get one Web Push (`schedule_answer`, `07 §Web Push`). Origin notices (finished,
   failed, disabled) of any schedule are written into a direct conversation only while its person
   is the schedule's current creator (a creator-less schedule names nobody else and keeps them).
+  (FIX-253, D-490) A one-time schedule made in a **delegated task's conversation** (a peer turn,
+  no speaker) belongs to the task's requester — the requester must still be able to use the agent,
+  re-checked at create and at fire time, never widened — and `origin_for_run` sends the wake into
+  that task conversation while the task is not closed (`queued`/`open`); a closed task's
+  conversation is nobody's chat any more, so the run keeps its own run thread. The Web Push never
+  fires for these (the claim requires the creator's direct chat).
 
 ## Webhooks
 

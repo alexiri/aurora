@@ -640,6 +640,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     **Stop** keeps the partial answer: the button reads **Stopping…** (disabled) while the call runs and until the turn finishes, the
     header returns to **Ready** at once (`abort_requested` or a Stop pressed here is not "Working"), and the durable `turn_stopped`
     notice shows as **"You stopped this answer"**, muted between two rules, under the partial text.
+    (FIX-253, D-490) The **Background activity** notice (`background_activity`) shows what the harness child keeps doing after the
+    turn ended ("Background activity, still running: `…`") with a **Stop** button (the same abort right, `10 §Abort`); the durable
+    `background_stopped` notice mutes the entry row away and stays as **"Background activity stopped."** The reminder notice
+    (`no_wakeup`, "<Agent> said it would continue, but nothing is set to wake it.") shows as a muted system line.
   - *Waiting for other briefs:* "can't answer" fix button (P5-REFINE-12), the timeline feed (P5-REFINE-9), the Needs-you badge on the Agents list (C-1082, P5-REFINE-8).
   - **Computer** (phase 5, **P5-REFINE-15, D-405, D-406, D-408, D-412, D-416**). The sub-nav is **Files · Terminal · Connect · Previews ·
     Details** (`?tab=files|terminal|ssh|previews|computer`; the ids are unchanged). The tab opens on **Files**; with the terminal off
