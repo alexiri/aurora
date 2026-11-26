@@ -124,6 +124,7 @@
         Query: "max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))"
         Comparison: "gt"
         Threshold: "2"
+        Reducer: "last"
         Condition step: "C"
         No data state: "NoData"
         On query error: "Error"
@@ -137,6 +138,26 @@
     upstream:
       url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
       headers: { authorization: "Bearer tok-fixture-1", x-disable-provenance: "true" }
+- name: "create_alert_rule: a range comparison shows both threshold values"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 between 2s and 5s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2,5],"type":"within"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 between 2s and 5s"},"notification_settings":{"receiver":"oncall"}}'
+  expect:
+    app: grafana
+    tool: create_alert_rule
+    summary:
+      title: "create an alert rule"
+      fields:
+        Title: "p95 between 2s and 5s"
+        Comparison: "within"
+        Threshold: "2"
+        Second threshold: "5"
+        Reducer: "last"
+        Condition step: "C"
+        Receiver: "oncall"
 - name: "negative create_alert_rule: a contact point write (another provisioning path) selects no tool"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request:
@@ -203,11 +224,33 @@
         Service: "api"
         Expires: "2026-12-02"
         Summary: "p95 over 3s"
-        Expires annotation: "2026-12-02"
         Receiver: "nightmanager"
     upstream:
       url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
       headers: { authorization: "Bearer tok-fixture-1", x-disable-provenance: "true" }
+# The reduce step's reducer and both threshold values: a person can change a rule's evaluator
+# outside the script and the change tool resends the rule it read, so the card shows a range
+# comparison's second value too.
+- name: "update_alert_rule: a range comparison shows both threshold values and the reducer"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2,5],"type":"within"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect:
+    app: grafana
+    tool: update_alert_rule
+    summary:
+      title: "change an alert rule"
+      fields:
+        Rule: "tripwire-p95"
+        Comparison: "within"
+        Threshold: "2"
+        Second threshold: "5"
+        Reducer: "last"
+        Condition step: "C"
+        Receiver: "nightmanager"
 - name: "delete_alert_rule: deleting one rule shows the rule and carries the provenance header"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95" }
@@ -356,7 +399,6 @@
         Service: "api"
         Expires: "2026-12-02"
         Summary: "p95 over 3s"
-        Expires annotation: "2026-12-02"
         Receiver: "nightmanager"
 - name: "refused create_alert_rule: a rule made with keep_firing_for (the script builds none)"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }

@@ -308,6 +308,8 @@ apps:
           - { label: Query, source: body, steps: [ { json: /data/0/model/expr } ] }
           - { label: Comparison, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/type } ] }
           - { label: Threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/0 } ] }
+          - { label: Reducer, source: body, steps: [ { json: /data/1/model/reducer } ] }
+          - { label: Second threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/1 } ] }
           - { label: Condition step, source: body, steps: [ { json: /condition } ] }
           - { label: No data state, source: body, steps: [ { json: /noDataState } ] }
           - { label: On query error, source: body, steps: [ { json: /execErrState } ] }
@@ -320,6 +322,9 @@ apps:
           - { label: Receiver, source: body, steps: [ { json: /notification_settings/receiver } ] }
       update_alert_rule:
         title: change an alert rule
+        # The card holds at most 20 fields and this tool needs one for the rule's uid, so the
+        # annotation copy of the expiry is dropped here: the `Expires` label above shows the
+        # same date from the rule's labels.
         fields:
           - { label: Rule, source: path, segment: 5 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
@@ -330,6 +335,8 @@ apps:
           - { label: Query, source: body, steps: [ { json: /data/0/model/expr } ] }
           - { label: Comparison, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/type } ] }
           - { label: Threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/0 } ] }
+          - { label: Reducer, source: body, steps: [ { json: /data/1/model/reducer } ] }
+          - { label: Second threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/1 } ] }
           - { label: Condition step, source: body, steps: [ { json: /condition } ] }
           - { label: No data state, source: body, steps: [ { json: /noDataState } ] }
           - { label: On query error, source: body, steps: [ { json: /execErrState } ] }
@@ -338,7 +345,6 @@ apps:
           - { label: Service, source: body, steps: [ { json: /labels/service } ] }
           - { label: Expires, source: body, steps: [ { json: /labels/expires } ] }
           - { label: Summary, source: body, steps: [ { json: /annotations/summary } ] }
-          - { label: Expires annotation, source: body, steps: [ { json: /annotations/expires } ] }
           - { label: Receiver, source: body, steps: [ { json: /notification_settings/receiver } ] }
       delete_alert_rule:
         title: delete an alert rule
