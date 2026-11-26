@@ -1701,6 +1701,49 @@ async fn peer_ask_an_approver_emails_the_deciders_once() {
     assert_eq!(action, "approval.ask_approver");
 }
 
+/// (FIX-252 review, D-178 Q-R5-9) The decided line keeps the approver's name out of a shared
+/// origin space (a card there shows the facts only, no names); a direct origin conversation
+/// keeps it.
+#[tokio::test]
+async fn peer_decision_line_shows_the_approvers_name_only_in_a_direct_origin() {
+    for (kind, named) in [("group", false), ("direct", true)] {
+        let w = W::new(&FULL).await;
+        let (id, _task, origin) = w.peer_approval(kind, w.outsider).await;
+        sqlx::query("UPDATE users SET display_name = 'Decider Person' WHERE id = $1")
+            .bind(w.member)
+            .execute(w.pool())
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE approvals SET status='approved', decided_by_user_id=$2, \
+             decided_via='dashboard', decided_at=now() WHERE id=$1",
+        )
+        .bind(id)
+        .bind(w.member)
+        .execute(w.pool())
+        .await
+        .unwrap();
+        aurora_api::domains::approvals::transcript::write_current(&w.h.state, id)
+            .await
+            .unwrap();
+        let lines: Vec<String> = sqlx::query_scalar(
+            "SELECT payload->>'text' FROM transcript_events WHERE conversation_id = $1 \
+             AND type = 'notice' AND payload->>'code' = 'peer_approval_decided'",
+        )
+        .bind(origin)
+        .fetch_all(w.pool())
+        .await
+        .unwrap();
+        assert_eq!(lines.len(), 1, "{kind}");
+        assert_eq!(
+            lines[0].contains("Decider Person"),
+            named,
+            "{kind}: {}",
+            lines[0]
+        );
+    }
+}
+
 /// (FIX-252 review) Ask an approver is the requester's button, like Cancel: any other linked
 /// person's click is an ephemeral refusal and the single-use button stays usable.
 #[tokio::test]

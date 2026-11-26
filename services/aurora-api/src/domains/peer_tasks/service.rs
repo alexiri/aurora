@@ -900,11 +900,20 @@ pub async fn approval_notice(
         }
         "approved" | "denied" => {
             extra["outcome"] = json!(row.status);
-            let by = row
-                .decided_by_name
-                .as_deref()
-                .map(|n| format!(" by {}", sanitize::one_line(n, 120)))
-                .unwrap_or_default();
+            // (FIX-252 review, D-178 Q-R5-9) The approver's name is a detail: a shared origin
+            // space (the thread link is not `direct`) gets the fact only, the name stays in a
+            // direct conversation — the same redaction the origin card follows. No thread link
+            // (a web chat) is the requester's own conversation.
+            let shared = aurora_db::repo::channel_cards::latest_thread_link(
+                &mut *conn,
+                task.origin_conversation_id,
+            )
+            .await?
+            .is_some_and(|l| l.kind != "direct");
+            let by = match row.decided_by_name.as_deref() {
+                Some(n) if !shared => format!(" by {}", sanitize::one_line(n, 120)),
+                _ => String::new(),
+            };
             (
                 "peer_approval_decided",
                 format!("The approval to {action} was {}{by}.", row.status),
