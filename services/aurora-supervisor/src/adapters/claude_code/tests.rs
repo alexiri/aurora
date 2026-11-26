@@ -24,6 +24,10 @@ struct Mock {
     /// (arrival instant, was init already emitted)
     received: Arc<StdMutex<Vec<bool>>>,
     killed: Arc<AtomicBool>,
+    /// (FIX-253) Lines written after the turn's `result` (the idle child's own run), `late_after`
+    /// behind the reply.
+    late: Vec<String>,
+    late_after: Duration,
 }
 
 impl Mock {
@@ -39,6 +43,8 @@ impl Mock {
             specs: Arc::default(),
             received: Arc::default(),
             killed: Arc::default(),
+            late: Vec::new(),
+            late_after: Duration::from_millis(150),
         }
     }
 }
@@ -59,6 +65,8 @@ impl Launcher for Mock {
             });
         }
         let (reply, silent, received) = (self.reply.clone(), self.silent, self.received.clone());
+        let late = self.late.clone();
+        let late_after = self.late_after;
         let tx = out_tx.clone();
         tokio::spawn(async move {
             while let Some(msg) = in_rx.recv().await {
@@ -72,6 +80,15 @@ impl Launcher for Mock {
                 }
                 for l in &reply {
                     let _ = tx.send(l.clone()).await;
+                }
+                if !late.is_empty() {
+                    let (tx, late) = (tx.clone(), late.clone());
+                    tokio::spawn(async move {
+                        tokio::time::sleep(late_after).await;
+                        for l in late {
+                            let _ = tx.send(l).await;
+                        }
+                    });
                 }
             }
         });
@@ -432,4 +449,52 @@ async fn purge_session_removes_every_stored_file_of_that_session_only() {
     assert!(a.purge_session(&wd, "").await.is_err());
     assert!(proj.join("sess-2").exists());
     let _ = std::fs::remove_dir_all(&home);
+}
+
+/// (FIX-253, D-490) The owner's case, reproduced against the scripted child (no CLI): the model
+/// starts a background command (`run_in_background`), answers "I'll finish the task report once
+/// it's done", the turn ends at its `result` — and the child is not killed, keeps running, and
+/// acts on its own.
+///
+/// What the supervisor sees: the turn's own tool event and the terminal `Done`, nothing else.
+/// What is lost: everything the child writes after the `result` — here a whole run that pushed a
+/// fix — reaches nobody. The stream is over, no turn is open, so the lines sit unread; the next
+/// turn then finds them first and maps the stale run into itself (the old `result` ends it).
+#[tokio::test]
+async fn background_work_after_the_turn_ends_reaches_nobody() {
+    let reply = include_str!("fixtures/background_turn.jsonl");
+    let mut mock = Mock::new(Some((INIT_OK, Duration::from_millis(0))), reply);
+    mock.late = include_str!("fixtures/background_after.jsonl")
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let killed = mock.killed.clone();
+    let adapter = ClaudeCodeAdapter::with_launcher(Arc::new(mock));
+    let mut s = adapter.start_session(opts(None)).await.unwrap();
+
+    let events = collect(s.run_turn(turn("run the e2e suite")).await.unwrap()).await;
+    assert_eq!(events.len(), 3, "{events:?}");
+    assert!(
+        matches!(&events[0], HarnessEvent::ToolStarted { name, summary, .. }
+            if name == "Bash" && summary == "Bash: npm run e2e:full"),
+        "{events:?}"
+    );
+    assert!(matches!(events.last(), Some(HarnessEvent::Done { .. })), "{events:?}");
+    assert!(
+        !killed.load(Ordering::SeqCst),
+        "the child is not killed at turn end"
+    );
+
+    // The idle child's own run is written to stdout, and nobody is reading: the receiver of the
+    // ended turn is exhausted, and no event ever carried "pushed a fix".
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    // The next turn finds the stale lines first: its own message is queued behind them, and the
+    // stale run's `result` ends it. The stale text lands in the new turn as if it were its own.
+    let events2 = collect(s.run_turn(turn("and now?")).await.unwrap()).await;
+    let flattened = format!("{events2:?}");
+    assert!(
+        flattened.contains("pushed a fix"),
+        "the stale run leaks into the next turn: {flattened}"
+    );
 }
