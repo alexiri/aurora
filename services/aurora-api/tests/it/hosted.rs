@@ -579,6 +579,43 @@ async fn background_notices(r: &Rig) -> Vec<(String, Value)> {
     .unwrap()
 }
 
+/// (FIX-253 review) The commands in the **Background activity** entry are masked like every
+/// other displayed text (tokens, `Authorization:` values, `KEY=value` env assignments) and
+/// capped: at most 10 items, each at most 200 characters.
+#[tokio::test]
+async fn background_activity_commands_are_masked_and_capped() {
+    let r = rig().await;
+    let lv = r.boot("bgmask").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn})).await;
+    let mut items: Vec<Value> = vec![
+        json!({"command": "curl -H 'Authorization: aub_secret123' https://x", "started_at": 1700000000u64}),
+        json!({"command": "API_KEY=hunter2 ./deploy.sh", "started_at": 1700000000u64}),
+        json!({"command": format!("long-{}", "x".repeat(300)), "started_at": 1700000000u64}),
+    ];
+    for i in 0..12 {
+        items.push(json!({"command": format!("job{i}"), "started_at": 1700000000u64}));
+    }
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [ev(1, "background", json!({"items": items}))]}),
+    )
+    .await;
+    let evs = background_notices(&r).await;
+    assert_eq!(evs.len(), 1, "{evs:?}");
+    let items = evs[0].1["items"].as_array().unwrap();
+    assert_eq!(items.len(), 10, "at most 10 items: {items:?}");
+    assert_eq!(items[0]["command"], "curl -H 'Authorization: aub_*** https://x", "{items:?}");
+    assert_eq!(items[1]["command"], "API_KEY=*** ./deploy.sh", "{items:?}");
+    let long = items[2]["command"].as_str().unwrap();
+    assert!(
+        long.chars().count() <= 200,
+        "each command is capped: {}",
+        long.chars().count()
+    );
+}
+
 /// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
 /// `background` turn event: one visible **Background activity** notice (deduped while it keeps
 /// running), and Stop on a finished turn records **Stop requested** and dispatches one

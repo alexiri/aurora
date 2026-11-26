@@ -544,12 +544,15 @@ async fn one_event(
             let items: Vec<Value> = items
                 .iter()
                 .filter_map(|i| {
-                    let command = sanitize::one_line(i.get("command")?.as_str()?, 200);
+                    // (FIX-253 review) The command is displayed text: masked like a start-failure
+                    // reason (tokens, `Authorization:`, `KEY=value` env assignments), capped.
+                    let command = sanitize::reason(i.get("command")?.as_str()?, 200);
                     (!command.is_empty()).then(|| {
                         json!({"command": command,
                             "started_at": i.get("started_at").and_then(Value::as_u64).unwrap_or(0)})
                     })
                 })
+                .take(10)
                 .collect();
             if items.is_empty() {
                 return Ok(());
