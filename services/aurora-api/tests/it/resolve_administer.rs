@@ -173,8 +173,7 @@ async fn resolve_admits_an_administrator_and_nobody_else() {
     let _ = (w.owner, w.bob);
 }
 
-/// What the manage page calls for an administrator without own access: never a 404, and the
-/// answer the page can render (200, or the documented 403 on a route that names the fact).
+/// What the manage page calls for an administrator without own access: all of it answers 200.
 #[tokio::test]
 async fn manage_page_routes_never_404_an_administrator() {
     let w = world().await;
@@ -197,12 +196,56 @@ async fn manage_page_routes_never_404_an_administrator() {
             for r in routes {
                 let (s, v) = w.h.call_tok(tok, Method::GET, &r, None).await;
                 eprintln!("MANAGE {who} {kind} GET {r} -> {s} {}", code(&v));
-                assert!(
-                    s == 200 || (s == 403 && code(&v) == "workspace_access_required"),
-                    "{who} {kind} {r}: {s} {v}"
-                );
+                assert_eq!(s, 200, "{who} {kind} {r}: {v}");
             }
         }
     }
     let _ = (w.member, w.owner);
+}
+
+const BRIEF: &str = "FIX246-agent-brief-content";
+
+/// The agent list for an administrator without own access: the same agents, metadata only (no
+/// brief, no BYO governance); the person with access still reads the brief.
+#[tokio::test]
+async fn agent_list_for_an_administrator_carries_no_brief() {
+    let w = world().await;
+    sqlx::query("UPDATE agents SET brief = $1 WHERE workspace_id = ANY($2)")
+        .bind(BRIEF)
+        .bind(vec![w.personal, w.shared])
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let (_, carol_tok) = w.h.good_session(w.carol).await;
+    for (ws, person_tok) in [(w.personal, &w.bob_tok), (w.shared, &carol_tok)] {
+        let uri = format!("/v1/workspaces/{ws}/agents");
+        let (s, own) = w.h.call_tok(person_tok, Method::GET, &uri, None).await;
+        assert_eq!(s, 200, "{own}");
+        assert!(
+            own.to_string().contains(BRIEF),
+            "the person reads the brief"
+        );
+        for (who, tok) in [("owner", &w.owner_tok), ("admin", &w.admin_tok)] {
+            let (s, v) = w.h.call_tok(tok, Method::GET, &uri, None).await;
+            assert_eq!(s, 200, "{who}: {v}");
+            assert!(!v.to_string().contains(BRIEF), "{who}: {v}");
+            let ids = |v: &Value| -> Vec<Value> {
+                v["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|a| a["id"].clone())
+                    .collect()
+            };
+            assert_eq!(ids(&v), ids(&own), "{who}: same agents");
+            for a in v["items"].as_array().unwrap() {
+                assert_eq!(a["brief"], json!(""));
+                assert!(a["byo"].is_null());
+                assert!(a.get("frozen").is_some() && a.get("effective_frozen").is_some());
+            }
+        }
+        // An ordinary member without access keeps today's 404.
+        let (s, _) = w.h.call_tok(&w.member_tok, Method::GET, &uri, None).await;
+        assert_eq!(s, 404);
+    }
 }

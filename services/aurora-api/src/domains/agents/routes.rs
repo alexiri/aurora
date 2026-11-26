@@ -311,11 +311,27 @@ async fn list_agents(
 ) -> Result<Json<Page<Agent>>, ApiError> {
     let p = params.resolve()?;
     // (FIX-236, C-1165) A read route: own access, or an active emergency grant.
-    let read = caller.workspace_read(&state, ws).await?;
+    let read = match caller.workspace_read(&state, ws).await {
+        Ok(r) => Some(r),
+        // (FIX-246, D-477) An administrator without own access gets the rows without anything
+        // a person wrote or governs (no brief, no BYO view): the manage page pauses agents.
+        Err(e) => {
+            if caller.administer(&state, ws).await.is_err() {
+                return Err(e);
+            }
+            None
+        }
+    };
     let rows = agents::list_for_workspace(&state.pool, ws, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
-    let refs: Vec<&agents::AgentRow> = page.items.iter().collect();
-    let views = super::byo::views(&state, read.org_id(), ws, &refs).await?;
+    let views = match &read {
+        Some(read) => {
+            let refs: Vec<&agents::AgentRow> = page.items.iter().collect();
+            super::byo::views(&state, read.org_id(), ws, &refs).await?
+        }
+        None => vec![None; page.items.len()],
+    };
+    let administer_only = read.is_none();
     let mut items: Vec<Agent> = page
         .items
         .into_iter()
@@ -323,6 +339,9 @@ async fn list_agents(
         .map(|(r, v)| {
             let mut a = Agent::from(r);
             a.byo = v;
+            if administer_only {
+                a.brief.clear();
+            }
             a
         })
         .collect();

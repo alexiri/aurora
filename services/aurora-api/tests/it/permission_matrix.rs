@@ -1015,7 +1015,13 @@ const ROWS: &[Row] = &[
         G::Administer,
         false,
     ),
-    r("GET", "/v1/workspaces/{ws}/agents", G::WsUse, false),
+    // (FIX-246) Own access, or the administer fallback (a list without briefs).
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/agents",
+        G::WsUseOrAdminister,
+        false,
+    ),
     r("POST", "/v1/workspaces/{ws}/agents", G::WsUse, false),
     // (phase 3, RFE-013, C-313) agent-token lists: workspace owner / org owner or admin.
     r(
