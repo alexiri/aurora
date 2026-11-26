@@ -18005,6 +18005,81 @@
         ]
       }
     },
+    "/v1/approvals/{id}/ask-approver": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "(FIX-252) The web origin card's **Ask an approver**: the stored requester of the peer task\nthe approval was raised in e-mails the people with `can_approve` in the approval's\nworkspace (the channel card's button does the same). Sessions only, the stored requester\nonly — nobody else's task is revealed (404); the ask grants nobody a right.",
+        "operationId": "askApprovalApprovers",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Approval id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskApprovers"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/approvals/{id}/decision": {
       "post": {
         "tags": [
@@ -49344,6 +49419,20 @@
           }
         },
         "additionalProperties": false
+      },
+      "AskApprovers": {
+        "type": "object",
+        "description": "(FIX-252) The answer of the origin card's **Ask an approver**: how many deciders were\ne-mailed (a second ask mails nobody — the claim keeps the notifier from repeating it).",
+        "required": [
+          "asked"
+        ],
+        "properties": {
+          "asked": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "AskBody": {
         "type": "object",

@@ -9,6 +9,7 @@ import { activeTurnId, type TranscriptState } from "@/lib/chat/transcript";
 import { AccessRequestCard } from "./access-request-card";
 import { JumpToLatest } from "./jump-to-latest";
 import { MessageGroup, StreamingBubble } from "./message-group";
+import { PEER_DECIDED_CODE, PEER_WAITING_CODE, PeerApprovalCard, PeerApprovalOutcome } from "./peer-approval-card";
 import { ContinueNotice, RedactedRow, SystemRow, TypingRow } from "./status-rows";
 import type { AgentIdent } from "./types";
 
@@ -204,6 +205,15 @@ export function TranscriptView({
                       <span data-testid="access-request-outcome">{s(p.text)}</span>
                     </SystemRow>
                   );
+                }
+                // (FIX-252) A delegated task's approval at the origin: the wait is a card whose
+                // buttons follow the reader's rights at the approval's workspace; its outcome is
+                // the settled line.
+                if (s(p.code) === PEER_WAITING_CODE) {
+                  return <PeerApprovalCard key={r.key} ev={r.ev} events={state.events} />;
+                }
+                if (s(p.code) === PEER_DECIDED_CODE) {
+                  return <PeerApprovalOutcome key={r.key} ev={r.ev} />;
                 }
                 return <SystemRow key={r.key}>{s(p.text)}</SystemRow>;
               }
