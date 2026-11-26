@@ -773,6 +773,89 @@ pub async fn cancel_by_requester(
     }
 }
 
+/// (FIX-252) The origin card's **Ask an approver**, shared by the channel button and the web
+/// route: e-mails the people with `can_approve` in the approval's workspace at once — the same
+/// mail the notifier sends, claimed so the sweep does not repeat it. It grants nobody a right;
+/// a failed mail is logged and never fails the ask. Returns the deciders e-mailed.
+pub async fn ask_approvers(
+    s: &crate::app::AppState,
+    a: &aurora_db::repo::approvals::ApprovalRow,
+) -> Result<usize, ApiError> {
+    let deciders = aurora_db::repo::approval_notify::deciders(
+        &s.pool,
+        a.org_id,
+        a.workspace_id,
+        a.conversation_id,
+    )
+    .await?;
+    let u = ask_mail_facts(&s.pool, a).await?;
+    let mut mailed = 0usize;
+    for d in &deciders {
+        // The ask is the approval's initial mail: claiming it keeps the notifier from sending
+        // the same mail again after the delay.
+        if aurora_db::repo::approval_notify::claim(&s.pool, a.id, d.user_id, "gateway", "mail")
+            .await?
+        {
+            mailed += 1;
+            let mail = crate::domains::approvals::notify::approval_mail(
+                &s.config.external_url,
+                &d.email,
+                &u,
+                0,
+            );
+            if let Err(e) = s.mailer.send(mail).await {
+                // A failed notice never fails or undoes the ask.
+                tracing::error!(error = %e, "approval ask e-mail send failed");
+            }
+        }
+    }
+    Ok(mailed)
+}
+
+/// (FIX-252) The mail facts of a peer approval's **Ask an approver**: the same sanitized facts
+/// the approval notifier sends (title as one line, never a request body or summary field).
+async fn ask_mail_facts(
+    pool: &PgPool,
+    a: &aurora_db::repo::approvals::ApprovalRow,
+) -> Result<aurora_db::repo::approval_notify::Unseen, ApiError> {
+    let (workspace_name, workspace_slug, org_slug) =
+        aurora_db::repo::approval_notify::workspace_labels(pool, a.workspace_id)
+            .await?
+            .unwrap_or_else(|| ("the workspace".into(), "workspace".into(), "org".into()));
+    let (org_name,): (String,) = sqlx::query_as("SELECT name FROM organizations WHERE id = $1")
+        .bind(a.org_id)
+        .fetch_one(pool)
+        .await
+        .map_err(DbError::from)?;
+    let title = match a.summary.get("source").and_then(|v| v.as_str()) {
+        Some("generic") | None => format!("send a {} request to {}", a.method, a.host),
+        _ => a
+            .summary
+            .get("title")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("send a {} request to {}", a.method, a.host)),
+    };
+    Ok(aurora_db::repo::approval_notify::Unseen {
+        id: a.id,
+        kind: "gateway".into(),
+        org_id: a.org_id,
+        workspace_id: a.workspace_id,
+        agent_id: a.agent_id,
+        conversation_id: a.conversation_id,
+        batch_id: a.batch_id.clone(),
+        title,
+        rule_name: a.rule_name.clone(),
+        expires_at: a.deadline,
+        agent_name: a.agent_name.clone().unwrap_or_else(|| "unknown".into()),
+        workspace_name,
+        workspace_slug,
+        org_name,
+        org_slug,
+    })
+}
+
 /// (FIX-252) The origin side of an approval raised in a task conversation, called from the
 /// approval transcript writers (`approvals/transcript.rs`) so the decision transaction, the bus
 /// listener and the sweeps all reach it without duplicating: a `peer_waiting_for_approval`
@@ -799,7 +882,9 @@ pub async fn approval_notice(
     };
     let a = crate::domains::approvals::dto::Approval::from(row.clone());
     let action = sanitize::one_line(&a.sentence.action, 120);
-    let mut extra = json!({"approval_id": row.id});
+    // The target workspace, so the web card asks the API whether its reader may decide there
+    // (never inferred client-side) and can name it.
+    let mut extra = json!({"approval_id": row.id, "workspace_id": row.workspace_id});
     let (code, line) = match row.status.as_str() {
         "pending" => {
             let asker = agent(conn, task.from_agent_id).await?;

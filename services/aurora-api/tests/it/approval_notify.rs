@@ -454,3 +454,132 @@ async fn a_requester_who_is_also_a_decider_gets_one_mail() {
     assert_eq!(h.mail.sent().len(), 1);
     assert_eq!(h.mail.sent()[0].to, "req@x.io");
 }
+
+/// (FIX-252) The requester's mail follows the deciders' rule: while a live surface already
+/// shows the card — here the origin card posted to the thread they asked in — nothing is sent;
+/// once the surface is gone the mail goes out after the same delay.
+#[tokio::test]
+async fn a_live_card_at_the_origin_keeps_the_requesters_mail_quiet() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    // The origin card finished posting: the person asked in that thread and sees it there.
+    let integ = Uuid::now_v7();
+    sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', '{}', 'active')")
+        .bind(vec![0u8; 32]).execute(h.pool()).await.unwrap();
+    sqlx::query("INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label, config, credentials_ref, status) VALUES ($1,$2,'chat','T','T','{}','x','active')")
+        .bind(integ).bind(f.org).execute(h.pool()).await.unwrap();
+    let op = Uuid::now_v7();
+    sqlx::query("INSERT INTO channel_ops (id, connector_id, integration_id, kind, payload, dedupe_key, status) VALUES ($1,'chat',$2,'message.post','{}','k1','done')")
+        .bind(op).bind(integ).execute(h.pool()).await.unwrap();
+    let card = Uuid::now_v7();
+    sqlx::query("INSERT INTO channel_cards (id, subject_kind, subject_id, integration_id, post_op_id, space_ref, thread_ref, state) VALUES ($1,'approval',$2,$3,$4,'C','t','posted')")
+        .bind(card).bind(id).bind(integ).bind(op).execute(h.pool()).await.unwrap();
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0, "card delivered");
+    assert!(h.mail.sent().is_empty());
+    // The surface goes away (the post was withdrawn): the mail is the fallback.
+    sqlx::query("DELETE FROM channel_cards WHERE id = $1")
+        .bind(card)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(h.mail.sent().len(), 1);
+    assert_eq!(h.mail.sent()[0].to, "req@x.io");
+}
+
+/// (FIX-252) A requester watching the approvals page live (a fresh watcher row of their own,
+/// possible only when they can decide there) is not mailed about the wait either.
+#[tokio::test]
+async fn a_requester_watching_live_is_not_mailed() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", Some("approver")).await;
+    peer_approval(&h, &f, requester).await;
+    sqlx::query("INSERT INTO approval_watchers (replica_id, user_id, workspace_id, last_seen_at) VALUES ($1,$2,$3,now())")
+        .bind(Uuid::now_v7()).bind(requester).bind(f.ws).execute(h.pool()).await.unwrap();
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0);
+    assert!(h.mail.sent().is_empty());
+}
+
+/// (FIX-252) The web card's **Ask an approver** route serves the stored requester and nobody
+/// else (the route inventory's REQUESTER list): the ask mails the deciders at once (claimed,
+/// so the notifier does not repeat it), another person's and an org admin's session find
+/// nothing (404), another user's API key never reaches the session-only route, and the
+/// requester can ask.
+#[tokio::test]
+async fn the_ask_route_serves_the_stored_requester_only() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    person(&h, &f, "appr@x.io", "member", Some("approver")).await;
+    let id = peer_approval(&h, &f, requester).await;
+    let uri = format!("/v1/approvals/{id}/ask-approver");
+    let (_, tok) = h.good_session(requester).await;
+    // The person who asked: the deciders are e-mailed at once.
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("cookie", &cookie(&tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["asked"], 1, "{v}");
+    assert_eq!(h.mail.sent().len(), 1);
+    assert_eq!(h.mail.sent()[0].to, "appr@x.io");
+    // Claimed: a second ask mails nobody (and the notifier will not repeat it).
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("cookie", &cookie(&tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["asked"], 0, "{v}");
+    assert_eq!(h.mail.sent().len(), 1);
+    // Another person: not their task, 404.
+    let other = person(&h, &f, "other@x.io", "member", None).await;
+    let (_, other_tok) = h.good_session(other).await;
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("cookie", &cookie(&other_tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    // An org admin with no workspace binding: no administrative right reaches this route.
+    let admin = h.user("admin@x.io", false).await;
+    h.member(f.org, admin, "admin", "active").await;
+    let (_, admin_tok) = h.good_session(admin).await;
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("cookie", &cookie(&admin_tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    // Another user's API key: the route takes sessions only.
+    let (_, key) = h.api_key(other, f.org, Some(f.ws), false).await;
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("authorization", &bearer(&key)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(v["error"]["code"], "session_required", "{v}");
+    assert_eq!(h.mail.sent().len(), 1);
+}

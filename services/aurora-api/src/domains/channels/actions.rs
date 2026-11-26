@@ -29,9 +29,8 @@ use aurora_db::repo::channel_cards as card_repo;
 use aurora_db::repo::channel_inbox::InboxRow;
 use aurora_db::repo::channel_integrations::IntegrationRow;
 use aurora_db::repo::{
-    action_approvals, agent_links, agents, approval_notify, approvals, channel_integrations,
-    channel_presences, dm_defaults, link_requests, peer_tasks, reach_grants, space_bindings, turns,
-    user_links, users,
+    action_approvals, agent_links, agents, approvals, channel_integrations, channel_presences,
+    dm_defaults, link_requests, peer_tasks, reach_grants, space_bindings, turns, user_links, users,
 };
 use aurora_protocol::connector::ActionInvoked;
 use chrono::{DateTime, Utc};
@@ -380,26 +379,7 @@ impl Click<'_> {
                 }
                 drop(tx);
                 self.consume(claims, exp).await?;
-                let deciders =
-                    approval_notify::deciders(&s.pool, a.org_id, a.workspace_id, a.conversation_id)
-                        .await?;
-                let u = ask_mail_facts(&s.pool, &a).await?;
-                for d in &deciders {
-                    // The ask is the approval's initial mail: claiming it keeps the notifier
-                    // from sending the same mail again after the delay.
-                    if approval_notify::claim(&s.pool, a.id, d.user_id, "gateway", "mail").await? {
-                        let mail = crate::domains::approvals::notify::approval_mail(
-                            &s.config.external_url,
-                            &d.email,
-                            &u,
-                            0,
-                        );
-                        if let Err(e) = s.mailer.send(mail).await {
-                            // A failed notice never fails or undoes the ask.
-                            tracing::error!(error = %e, "approval ask e-mail send failed");
-                        }
-                    }
-                }
+                crate::domains::peer_tasks::service::ask_approvers(s, &a).await?;
                 audit::record(
                     s,
                     AuditEvent::by(c, "approval.ask_approver")
@@ -769,48 +749,4 @@ impl Done {
             text: Some(text),
         }
     }
-}
-
-/// (FIX-252) The mail facts of a peer approval's **Ask an approver**: the same sanitized facts
-/// the approval notifier sends (title as one line, never a request body or summary field).
-async fn ask_mail_facts(
-    pool: &sqlx::PgPool,
-    a: &approvals::ApprovalRow,
-) -> Result<approval_notify::Unseen, ApiError> {
-    let (workspace_name, workspace_slug, org_slug) =
-        approval_notify::workspace_labels(pool, a.workspace_id)
-            .await?
-            .unwrap_or_else(|| ("the workspace".into(), "workspace".into(), "org".into()));
-    let (org_name,): (String,) = sqlx::query_as("SELECT name FROM organizations WHERE id = $1")
-        .bind(a.org_id)
-        .fetch_one(pool)
-        .await
-        .map_err(DbError::from)?;
-    let title = match a.summary.get("source").and_then(|v| v.as_str()) {
-        Some("generic") | None => format!("send a {} request to {}", a.method, a.host),
-        _ => a
-            .summary
-            .get("title")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("send a {} request to {}", a.method, a.host)),
-    };
-    Ok(approval_notify::Unseen {
-        id: a.id,
-        kind: "gateway".into(),
-        org_id: a.org_id,
-        workspace_id: a.workspace_id,
-        agent_id: a.agent_id,
-        conversation_id: a.conversation_id,
-        batch_id: a.batch_id.clone(),
-        title,
-        rule_name: a.rule_name.clone(),
-        expires_at: a.deadline,
-        agent_name: a.agent_name.clone().unwrap_or_else(|| "unknown".into()),
-        workspace_name,
-        workspace_slug,
-        org_name,
-        org_slug,
-    })
 }

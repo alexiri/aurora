@@ -990,3 +990,54 @@ async fn a_pending_approval_keeps_the_task_open_when_the_receiving_turn_ends() {
         0
     );
 }
+
+/// (FIX-252) The cancel route's authorization is the stored requester and nobody else (the
+/// route inventory's REQUESTER list): another person and an org admin find nothing (404 — the
+/// task is not even revealed), another user's API key never reaches the session-only route,
+/// and the person who asked cancels from it.
+#[tokio::test]
+async fn the_cancel_route_serves_the_stored_requester_only() {
+    use crate::common::{ORIGIN, bearer};
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let uri = format!("/v1/peer-tasks/{task}/cancel");
+    // Another person (a member of the other workspace): not their task, 404.
+    let (s, v) = d.rig.post(&d.rig.q, &uri, None).await;
+    assert_eq!(s, 404, "{v}");
+    assert_eq!(d.rig.task_status(task).await, "open");
+    // An org admin with no workspace binding: no administrative right reaches this route.
+    let admin = d.rig.h.user("admin@x.io", false).await;
+    d.rig.h.member(d.rig.org, admin, "admin", "active").await;
+    let (_, admin_tok) = d.rig.h.good_session(admin).await;
+    let (s, v) = d
+        .rig
+        .h
+        .call_tok(&admin_tok, http::Method::POST, &uri, Some(json!({})))
+        .await;
+    assert_eq!(s, 404, "{v}");
+    assert_eq!(d.rig.task_status(task).await, "open");
+    // Another user's API key: the route takes sessions only.
+    let (_, key) = d
+        .rig
+        .h
+        .api_key(d.rig.q.id, d.rig.org, Some(d.rig.ws2), false)
+        .await;
+    let (s, _, v) = d
+        .rig
+        .h
+        .send(
+            http::Method::POST,
+            &uri,
+            &[("authorization", &bearer(&key)), ("origin", ORIGIN)],
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s.as_u16(), 403, "{v}");
+    assert_eq!(v["error"]["code"], "session_required", "{v}");
+    assert_eq!(d.rig.task_status(task).await, "open");
+    // The person who asked: cancelled.
+    let (s, v) = d.rig.post(&d.rig.p, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["status"], "cancelled");
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+}

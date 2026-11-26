@@ -315,6 +315,13 @@ pub struct BatchDecided {
     pub decided: u32,
 }
 
+/// (FIX-252) The answer of the origin card's **Ask an approver**: how many deciders were
+/// e-mailed (a second ask mails nobody — the claim keeps the notifier from repeating it).
+#[derive(Serialize, ToSchema)]
+pub struct AskApprovers {
+    pub asked: u32,
+}
+
 /// SSE `data:` payload of `event: approval` (C-10).
 #[derive(Serialize, ToSchema)]
 pub struct ApprovalEvent {

@@ -1485,6 +1485,9 @@ const ROWS: &[Row] = &[
     // all: another person's session finds nothing (404, the id is not a seeded one here). The
     // requester-only ladder is it/channels_cards.rs (the card tests) and it/peer_tasks.rs.
     r("POST", "/v1/peer-tasks/{id}/cancel", G::Auth, true),
+    // (FIX-252) The web origin card's Ask an approver: the stored requester of the peer task
+    // the approval was raised in; sessions only. The ladder is it/approval_notify.rs.
+    r("POST", "/v1/approvals/{id}/ask-approver", G::Auth, true),
     // (P5-REFINE-9, C-1083, C-1084, SEC-143) the agent timeline: `can_use`; its stream is
     // session-only. Rows of conversations the reader may not see: tests/it/timeline.rs.
     r("GET", "/v1/agents/{agent}/timeline", G::WsUse, false),
