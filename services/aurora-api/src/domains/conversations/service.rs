@@ -3,6 +3,7 @@ use super::dto::{
 };
 use crate::app::AppState;
 use crate::audit::{AuditActor, AuditEvent, Outcome};
+use crate::domains::schedules::once;
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
 use aurora_core::limits::{ATTACH_IN_COUNT, TURN_TEXT_MAX};
@@ -17,6 +18,7 @@ use aurora_db::repo::transcript;
 use aurora_db::repo::turns::{self, Created, NewTurn, TurnRow};
 use aurora_db::repo::users;
 use aurora_db::repo::workspaces;
+use chrono::Utc;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -1426,6 +1428,98 @@ pub async fn send_now(state: &AppState, c: &Caller, id: Uuid) -> Result<Turn, Ap
     notify_work(&mut tx).await?;
     tx.commit().await.map_err(DbError::from)?;
     Ok(row.into())
+}
+
+/// (FIX-253, D-490) The "Remind it in 15 minutes" action on the `no_wakeup` notice: one one-time
+/// schedule 15 minutes ahead in this conversation for the same agent, attributed to the person
+/// who pressed it (the same right as sending a message there). Idempotent per turn: the durable
+/// `no_wakeup_set` notice records the time, and a second press — by anyone — returns it without
+/// creating another schedule.
+pub async fn remind_in_15_minutes(
+    state: &AppState,
+    c: &Caller,
+    id: Uuid,
+    turn_id: Uuid,
+) -> Result<super::dto::ReminderSet, ApiError> {
+    load_conversation_for_write(state, c, id).await?;
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    convs::lock(&mut tx, id).await?;
+    if let Some(when) = sqlx::query_scalar::<_, String>(
+        "SELECT payload->>'reminder_for' FROM transcript_events
+          WHERE conversation_id = $1 AND type = 'notice'
+            AND payload->>'code' = 'no_wakeup_set' AND payload->>'turn_id' = $2
+          ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(id)
+    .bind(turn_id.to_string())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(DbError::from)?
+    {
+        return Ok(super::dto::ReminderSet { reminder_for: when });
+    }
+    let t = turns::get(&mut *tx, turn_id)
+        .await?
+        .filter(|t| t.role == "turn" && t.conversation_id == id)
+        .ok_or_else(|| ApiError::not_found("Turn not found."))?;
+    // The action exists only on the self-check notice; anything else is a client bug.
+    let offered = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+            SELECT 1 FROM transcript_events
+             WHERE conversation_id = $1 AND type = 'notice'
+               AND payload->>'code' = 'no_wakeup' AND payload->>'turn_id' = $2
+         )",
+    )
+    .bind(id)
+    .bind(turn_id.to_string())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(DbError::from)?;
+    if !offered {
+        return Err(ApiError::conflict(
+            "reminder_not_offered",
+            "This turn has no reminder notice.",
+        ));
+    }
+    let agent = agents::get(&mut *tx, t.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    let tz = users::timezone(&mut *tx, c.user_id)
+        .await?
+        .unwrap_or_else(|| "UTC".to_owned());
+    let at = Utc::now() + chrono::Duration::minutes(15);
+    let run_at = once::local_of(at, &tz);
+    let when = run_at[11..16].to_owned();
+    crate::domains::schedules::service::create_in_tx(
+        &mut tx,
+        &agent,
+        crate::domains::schedules::service::Create {
+            name: "Reminder".to_owned(),
+            prompt: "Reminder: you said you would continue, but nothing was set to wake you. \
+                     Pick up where you left off."
+                .to_owned(),
+            cron: None,
+            run_at: Some(run_at),
+            timezone: Some(tz),
+            gate_command: None,
+            gate_description: None,
+            anchor: "creator",
+        },
+        Some(c.user_id),
+        Some(id),
+    )
+    .await?;
+    transcript::append_durable_event(
+        &mut tx,
+        id,
+        Some(t.id),
+        "notice",
+        &json!({"code": "no_wakeup_set", "turn_id": t.id, "reminder_for": when,
+            "text": format!("A reminder is set for {when}.")}),
+    )
+    .await?;
+    tx.commit().await.map_err(DbError::from)?;
+    Ok(super::dto::ReminderSet { reminder_for: when })
 }
 
 /// `POST /conversations/{id}/continue` (C-27): reset the app-turn streak and append the durable

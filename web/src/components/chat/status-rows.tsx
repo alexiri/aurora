@@ -452,3 +452,39 @@ export function BackgroundActivityNotice({ text, turnId, requested = false }: { 
     </Notice>
   );
 }
+
+/**
+ * (FIX-253, D-490) The self-check notice ("… said it would continue, but nothing is set to wake
+ * it") with its **Remind it in 15 minutes** action: one press sets one one-time reminder for the
+ * agent in this conversation, attributed to the presser (the POST is idempotent per turn). The
+ * button is disabled once the durable `no_wakeup_set` notice exists — it reads
+ * **"A reminder is set for HH:MM."** on its own line.
+ */
+export function NoWakeupNotice({ text, convId, turnId, set = false }: { text: string; convId: string; turnId: string; set?: boolean }) {
+  const [err, setErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Notice className="mx-auto flex max-w-chat-notice flex-wrap items-center gap-2" data-testid="no-wakeup">
+      <p className="min-w-0 flex-1">{text}</p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy || set}
+        onClick={() => {
+          setBusy(true);
+          setErr(null);
+          chatApi
+            .remind(convId, turnId)
+            .catch(setErr)
+            .finally(() => setBusy(false));
+        }}>
+        Remind it in 15 minutes
+      </Button>
+      {err ? (
+        <p role="alert" className="w-full text-danger-ink">
+          {err instanceof ApiError ? err.message : "Could not set the reminder."}
+        </p>
+      ) : null}
+    </Notice>
+  );
+}

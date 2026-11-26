@@ -22292,6 +22292,104 @@
         ]
       }
     },
+    "/v1/conversations/{id}/reminder": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "(FIX-253, D-490) The \"Remind it in 15 minutes\" action on the `no_wakeup` notice: one one-time\nschedule 15 minutes ahead in this conversation, attributed to the caller; a second press\nreturns the already-set time.",
+        "operationId": "remindConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReminderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReminderSet"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "reminder_not_offered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/conversations/{id}/stream": {
       "get": {
         "tags": [
@@ -70613,6 +70711,32 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "ReminderRequest": {
+        "type": "object",
+        "description": "(FIX-253, D-490) `POST /conversations/{id}/reminder` body: the turn whose \"nothing is set to\nwake it\" notice the button sits on.",
+        "required": [
+          "turn_id"
+        ],
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ReminderSet": {
+        "type": "object",
+        "description": "(FIX-253, D-490) The reminder the notice's action set (or already had set).",
+        "required": [
+          "reminder_for"
+        ],
+        "properties": {
+          "reminder_for": {
+            "type": "string",
+            "description": "The local wall time the reminder fires at (\"HH:MM\")."
           }
         }
       },

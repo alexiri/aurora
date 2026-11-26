@@ -41,6 +41,31 @@ test("once stopped the row mutes away and the durable line stays", async ({ page
   await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
 });
 
+// (FIX-253, D-490) The self-check notice with its **Remind it in 15 minutes** action; the durable
+// `no_wakeup_set` notice disables the button.
+const wakeup: Ev = { seq: 3, type: "notice", ts: at(4), payload: { code: "no_wakeup", turn_id: "t1", text: "Daneel said it would continue, but nothing is set to wake it." } };
+const reminderSet: Ev = { seq: 4, type: "notice", ts: at(1), payload: { code: "no_wakeup_set", turn_id: "t1", reminder_for: "09:15", text: "A reminder is set for 09:15." } };
+
+test("the reminder notice offers Remind it in 15 minutes and posts once", async ({ page }) => {
+  const posts: string[] = [];
+  await openChat(page, "light", fx([said, done, wakeup]), `?c=${MINE.id}`);
+  await page.route("**/v1/conversations/*/reminder", async (route) => {
+    posts.push(new URL(route.request().url()).pathname);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ reminder_for: "09:15" }) });
+  });
+  const row = page.getByTestId("no-wakeup");
+  await expect(row).toContainText("said it would continue, but nothing is set to wake it");
+  await row.getByRole("button", { name: "Remind it in 15 minutes" }).click();
+  await expect.poll(() => posts).toHaveLength(1);
+});
+
+test("once the reminder is set the button is out and the durable line says the time", async ({ page }) => {
+  await openChat(page, "light", fx([said, done, wakeup, reminderSet]), `?c=${MINE.id}`);
+  const row = page.getByTestId("no-wakeup");
+  await expect(page.getByText("A reminder is set for 09:15.")).toBeVisible();
+  await expect(row.getByRole("button", { name: "Remind it in 15 minutes" })).toBeDisabled();
+});
+
 /** Accessibility of the running-entry row, in both schemes. */
 for (const scheme of ["light", "dark"] as const) {
   test(`background activity row has no serious axe violations (${scheme})`, async ({ page }) => {

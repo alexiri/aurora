@@ -104,3 +104,55 @@ describe("background activity notice (FIX-253, D-490)", () => {
     expect(calls.some((c) => c.method === "POST" && c.path === "/v1/turns/t1/abort")).toBe(false);
   });
 });
+
+// (FIX-253, D-490) The self-check notice with its **Remind it in 15 minutes** action: one press
+// sets one one-time reminder; the durable `no_wakeup_set` notice disables it.
+describe("reminder notice (FIX-253, D-490)", () => {
+  const noWakeup = e(2, "notice", {
+    code: "no_wakeup",
+    turn_id: "t1",
+    text: "Daneel said it would continue, but nothing is set to wake it.",
+  });
+
+  it("offers Remind it in 15 minutes and posts to the conversation's reminder route", async () => {
+    st.events = [
+      e(1, "turn.finished", { turn_id: "t1", status: "done" }),
+      { ...noWakeup },
+    ];
+    const calls = mock({ "POST /v1/conversations/c1/reminder": () => json(200, { reminder_for: "23:50" }) });
+    pane();
+    const row = screen.getByTestId("no-wakeup");
+    expect(within(row).getByText(/said it would continue/)).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button", { name: "Remind it in 15 minutes" }));
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.path === "/v1/conversations/c1/reminder")).toBe(true),
+    );
+  });
+
+  it("disables the button once the durable no_wakeup_set notice exists", () => {
+    st.events = [
+      { ...noWakeup },
+      e(3, "notice", { code: "no_wakeup_set", turn_id: "t1", reminder_for: "23:50", text: "A reminder is set for 23:50." }),
+    ];
+    const calls = mock();
+    pane();
+    expect(screen.getByText("A reminder is set for 23:50.")).toBeTruthy();
+    const row = screen.getByTestId("no-wakeup");
+    const remind = within(row).getByRole("button", { name: "Remind it in 15 minutes" }) as HTMLButtonElement;
+    expect(remind.disabled).toBe(true);
+    fireEvent.click(remind);
+    expect(calls.some((c) => c.path === "/v1/conversations/c1/reminder")).toBe(false);
+  });
+
+  it("a set notice of another turn leaves this notice's button alone", () => {
+    st.events = [
+      { ...noWakeup },
+      e(3, "notice", { code: "no_wakeup_set", turn_id: "t2", reminder_for: "23:50", text: "A reminder is set for 23:50." }),
+    ];
+    mock();
+    pane();
+    const row = screen.getByTestId("no-wakeup");
+    const remind = within(row).getByRole("button", { name: "Remind it in 15 minutes" }) as HTMLButtonElement;
+    expect(remind.disabled).toBe(false);
+  });
+});

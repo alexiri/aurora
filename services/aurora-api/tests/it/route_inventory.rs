@@ -242,6 +242,7 @@ const OWN: &[(&str, &[&str])] = &[
     ("/conversations/{id}/continue", &["post"]),
     ("/conversations/{id}/followups", &["get"]),
     ("/conversations/{id}/messages", &["post"]),
+    ("/conversations/{id}/reminder", &["post"]),
     ("/turns/{id}/abort", &["post"]),
     ("/turns/{id}/redact", &["post"]),
     ("/turns/{id}/send-now", &["post"]),

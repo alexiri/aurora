@@ -9,7 +9,7 @@ import { activeTurnId, type TranscriptState } from "@/lib/chat/transcript";
 import { AccessRequestCard } from "./access-request-card";
 import { JumpToLatest } from "./jump-to-latest";
 import { MessageGroup, StreamingBubble } from "./message-group";
-import { BackgroundActivityNotice, ContinueNotice, RedactedRow, SystemRow, TypingRow } from "./status-rows";
+import { BackgroundActivityNotice, ContinueNotice, NoWakeupNotice, RedactedRow, SystemRow, TypingRow } from "./status-rows";
 import type { AgentIdent } from "./types";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -202,6 +202,18 @@ export function TranscriptView({
                   const later = (code: string) => state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === code);
                   if (later("background_stopped")) return null;
                   return <BackgroundActivityNotice key={r.key} text={s(p.text)} turnId={s(p.turn_id)} requested={later("background_stop_requested")} />;
+                }
+                // (FIX-253, D-490) The self-check notice with its **Remind it in 15 minutes**
+                // action; the durable `no_wakeup_set` notice of the same turn disables the button.
+                if (s(p.code) === "no_wakeup") {
+                  const set = state.events.some(
+                    (e) =>
+                      (e.seq ?? 0) > (r.ev.seq ?? 0) &&
+                      e.type === "notice" &&
+                      s(e.payload.code) === "no_wakeup_set" &&
+                      s(e.payload.turn_id) === s(p.turn_id),
+                  );
+                  return <NoWakeupNotice key={r.key} text={s(p.text)} convId={convId} turnId={s(p.turn_id)} set={set} />;
                 }
                 // (P5-UX-17, C-984) An agent's request for access is a card; its outcome is one line.
                 if (s(p.code) === "app_connection_requested" || s(p.code) === "secret_proposed") {
