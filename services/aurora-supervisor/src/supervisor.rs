@@ -14,6 +14,7 @@ use aurora_protocol::runner::{
     TurnDeliver, TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
+use serde_json::{Map, Value, json};
 use tokio::sync::{Mutex, Notify, mpsc};
 use tokio::time::{Instant, interval, sleep_until};
 use uuid::Uuid;
@@ -1064,15 +1065,40 @@ impl TurnTask {
             let mut s = self.session.lock().await;
             s.run_turn(self.input.clone()).await
         };
-        let (status, err_code, err_msg, usage) = match started {
+        let (status, err_code, err_msg, usage, n) = match started {
             Err(e) => (
                 TurnStatus::Failed,
                 Some(classify_error(&e.code)),
                 Some(e.message),
                 None,
+                0u64,
             ),
             Ok(stream) => self.pump(stream, &turn_ref).await,
         };
+        // (FIX-253, D-490) Nothing happens unseen: the harness child's own background work is
+        // listed at turn end, while the turn still owns the event stream on the API side, so the
+        // conversation gets one visible entry (with Stop) for what keeps running after the reply.
+        let backgrounds = self.session.lock().await.background_work();
+        if !backgrounds.is_empty() {
+            let items: Vec<Value> = backgrounds
+                .iter()
+                .map(|w| json!({ "command": w.command, "started_at": w.started_at }))
+                .collect();
+            // A static, grammar-checked code; "background" is well inside the bound.
+            let kind = match aurora_protocol::runner::Code::new("background") {
+                Ok(k) => k,
+                Err(_) => unreachable!("the static background code is short enough"),
+            };
+            self.send(SupervisorToRunner::TurnEvent(TurnEvent {
+                turn_id: self.turn_id,
+                n: n + 1,
+                event: aurora_protocol::runner::HarnessEventWire {
+                    kind,
+                    data: Map::from_iter([("items".to_owned(), json!(items))]),
+                },
+            }))
+            .await;
+        }
         self.cred.set_context(None);
         self.db_turns.end(self.turn_id);
 
@@ -1110,11 +1136,13 @@ impl TurnTask {
         Option<&'static str>,
         Option<String>,
         Option<serde_json::Value>,
+        u64,
     ) {
         let mut n = 0u64;
         let mut tick = interval(self.progress);
         tick.tick().await;
         let mut abort_deadline: Option<Instant> = None;
+        let out = |n: u64, s: TurnStatus, c: Option<&'static str>, m: Option<String>, u: Option<serde_json::Value>| (s, c, m, u, n);
         loop {
             let deadline = async {
                 match abort_deadline {
@@ -1126,21 +1154,21 @@ impl TurnTask {
                 ev = stream.recv() => {
                     let aborted = self.aborted.load(Ordering::SeqCst);
                     match ev {
-                        None => return if aborted {
-                            (TurnStatus::Aborted, None, None, None)
+                        None => return out(n, if aborted {
+                            TurnStatus::Aborted
                         } else {
-                            (TurnStatus::Failed, Some("harness_failed"), Some("harness ended without a result".into()), None)
-                        },
-                        Some(HarnessEvent::Done { usage }) => return if aborted {
-                            (TurnStatus::Aborted, None, None, usage)
+                            TurnStatus::Failed
+                        }, if aborted { None } else { Some("harness_failed") }, if aborted { None } else { Some("harness ended without a result".into()) }, None),
+                        Some(HarnessEvent::Done { usage }) => return out(n, if aborted {
+                            TurnStatus::Aborted
                         } else {
-                            (TurnStatus::Done, None, None, usage)
-                        },
-                        Some(HarnessEvent::Error { code: c, message }) => return if aborted {
-                            (TurnStatus::Aborted, None, None, None)
+                            TurnStatus::Done
+                        }, None, None, usage),
+                        Some(HarnessEvent::Error { code: c, message }) => return out(n, if aborted {
+                            TurnStatus::Aborted
                         } else {
-                            (TurnStatus::Failed, Some(classify_error(&c)), Some(message), None)
-                        },
+                            TurnStatus::Failed
+                        }, if aborted { None } else { Some(classify_error(&c)) }, if aborted { None } else { Some(message) }, None),
                         Some(HarnessEvent::SessionRef { session_ref }) => {
                             self.report_session(Some(session_ref)).await;
                         }
@@ -1167,7 +1195,7 @@ impl TurnTask {
                 _ = self.abort.notified(), if abort_deadline.is_none() => {
                     abort_deadline = Some(Instant::now() + ABORT_GRACE);
                 }
-                _ = deadline => return (TurnStatus::Aborted, None, None, None),
+                _ = deadline => return out(n, TurnStatus::Aborted, None, None, None),
             }
         }
     }

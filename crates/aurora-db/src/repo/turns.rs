@@ -295,6 +295,35 @@ pub async fn request_abort(conn: &mut PgConnection, id: Uuid) -> Result<Option<T
     get(conn, id).await
 }
 
+/// (FIX-253, D-490) Set the abort flag on a **finished** turn so the due-work dispatch releases
+/// the conversation's idle harness session and its background work with it. Only a turn that has
+/// an unstopped Background activity entry qualifies; the dispatch clears the flag when it has
+/// claimed the release, so this fires once.
+pub async fn request_background_stop(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<TurnRow>, DbError> {
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE turns SET abort_requested_at = COALESCE(abort_requested_at, now()), updated_at = now()
+         WHERE id = $1 AND role = 'turn' AND status NOT IN {ACTIVE}
+           AND EXISTS (
+             SELECT 1 FROM transcript_events e
+             WHERE e.conversation_id = turns.conversation_id AND e.turn_id = turns.id
+               AND e.type = 'notice' AND e.payload->>'code' = 'background_activity'
+               AND NOT EXISTS (
+                 SELECT 1 FROM transcript_events e2
+                 WHERE e2.conversation_id = e.conversation_id AND e2.seq > e.seq
+                   AND e2.type = 'notice' AND e2.payload->>'code' = 'background_stopped'))"
+    )))
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get(conn, id).await
+}
+
 /// Set the send-now flag on an active turn (idempotent).
 pub async fn request_send_now(
     conn: &mut PgConnection,

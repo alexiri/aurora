@@ -566,6 +566,92 @@ async fn turn_events(r: &Rig, turn: &str) -> Vec<(String, Value)> {
     .unwrap()
 }
 
+/// The `background_activity` / `background_stopped` notices of the test conversation, in order.
+async fn background_notices(r: &Rig) -> Vec<(String, Value)> {
+    sqlx::query_as::<_, (String, Value)>(
+        "SELECT payload->>'code', payload FROM transcript_events
+         WHERE type = 'notice' AND payload->>'code' IN ('background_activity','background_stopped')
+         ORDER BY seq",
+    )
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap()
+}
+
+/// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
+/// `background` turn event: one visible **Background activity** notice (deduped while it keeps
+/// running), and Stop on a finished turn records `background_stopped` and dispatches one
+/// `session.release` — the child's background work dies with the session.
+#[tokio::test]
+async fn background_activity_is_visible_deduped_and_stoppable() {
+    let r = rig().await;
+    let lv = r.boot("bg").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+
+    let bg = |n: u64| {
+        ev(
+            n,
+            "background",
+            json!({"items": [{"command": "npm run e2e:full", "started_at": 1700000000u64}]}),
+        )
+    };
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [bg(1)]}),
+    )
+    .await;
+    let notices = background_notices(&r).await;
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(notices[0].0, "background_activity");
+    assert_eq!(
+        notices[0].1["text"],
+        "Background activity, still running: `npm run e2e:full`"
+    );
+    assert_eq!(notices[0].1["items"][0]["command"], "npm run e2e:full");
+
+    // Still running at the next turn end: one entry, not two.
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [bg(2)]}),
+    )
+    .await;
+    assert_eq!(background_notices(&r).await.len(), 1);
+
+    // Stop on the finished turn: the mark, then one session.release (claimed once).
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    let evs = background_notices(&r).await;
+    assert_eq!(evs.len(), 2, "{evs:?}");
+    assert_eq!(evs[1].0, "background_stopped");
+    let items = r.work().await;
+    let rel = items.iter().find(|i| i["kind"] == "session.release").unwrap();
+    assert_eq!(
+        rel["conversation_id"],
+        json!(lv.conv),
+        "the idle session of the conversation is released"
+    );
+    assert!(
+        r.work().await.iter().all(|i| i["kind"] != "session.release"),
+        "claimed once"
+    );
+
+    // Without an unstopped entry the same right is the ordinary finished-turn refusal.
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 409, "{v}");
+}
+
 /// (P5-REFINE-7, C-1075) Stop keeps what was written (`partial: true`) and leaves the
 /// `turn_stopped` mark before `turn.finished`; a queued turn stopped before it ran gets the
 /// mark alone.

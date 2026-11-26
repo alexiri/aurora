@@ -188,6 +188,17 @@ async fn arm4_signals(
             WorkItemBody::TurnSendNow(TurnRef { turn_id: t.turn_id }),
         ));
     }
+    // (FIX-253, D-490) Stop of the **Background activity** of a finished turn: release the
+    // conversation's idle harness session; the child's background work dies with it.
+    for t in hosted::claim_background_stops(tx, runner, replica, ARM_LIMIT).await? {
+        items.push(item(
+            t.sandbox_id,
+            t.boot_id,
+            WorkItemBody::SessionRelease(aurora_protocol::runner::SessionRelease {
+                conversation_id: t.conversation_id,
+            }),
+        ));
+    }
     Ok(())
 }
 

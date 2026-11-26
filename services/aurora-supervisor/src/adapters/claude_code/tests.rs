@@ -498,3 +498,24 @@ async fn background_work_after_the_turn_ends_reaches_nobody() {
         "the stale run leaks into the next turn: {flattened}"
     );
 }
+
+/// (FIX-253, D-490) The same scripted child, but what the supervisor can now do about it: the
+/// `run_in_background` command is tracked while mapping and `background_work()` reports it at
+/// turn end (once — reading consumes the report), and a dead child's background work is gone.
+#[tokio::test]
+async fn background_work_is_tracked_and_reported_at_turn_end() {
+    let reply = include_str!("fixtures/background_turn.jsonl");
+    let adapter =
+        ClaudeCodeAdapter::with_launcher(Arc::new(Mock::new(Some((INIT_OK, Duration::from_millis(0))), reply)));
+    let mut s = adapter.start_session(opts(None)).await.unwrap();
+    let _ = collect(s.run_turn(turn("run the e2e suite")).await.unwrap()).await;
+    let work = s.background_work();
+    assert_eq!(work.len(), 1, "{work:?}");
+    assert_eq!(work[0].command, "npm run e2e:full");
+    assert!(work[0].started_at > 0);
+    // Reading does not consume: still-running work is re-reported at the next turn end (the API
+    // side keeps one visible entry until it is stopped).
+    assert_eq!(s.background_work().len(), 1);
+    // A released child is killed, and its background work died with it.
+    s.release().await.unwrap();
+}

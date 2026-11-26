@@ -1362,7 +1362,24 @@ pub async fn abort(state: &AppState, c: &Caller, id: Uuid) -> Result<Turn, ApiEr
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     convs::lock(&mut tx, t.conversation_id).await?;
     let Some(row) = turns::request_abort(&mut tx, id).await? else {
-        return Err(finished());
+        // (FIX-253, D-490) The same right, one more meaning: stopping a finished turn whose
+        // Background activity entry still stands releases the conversation's idle harness
+        // session, and the child's background work with it.
+        let Some(row) = turns::request_background_stop(&mut tx, id).await? else {
+            return Err(finished());
+        };
+        transcript::append_durable_event(
+            &mut tx,
+            row.conversation_id,
+            Some(row.id),
+            "notice",
+            &json!({"code": "background_stopped", "turn_id": row.id,
+                "text": "Background activity stopped."}),
+        )
+        .await?;
+        let out = turns::get(&mut *tx, row.id).await?.unwrap_or(row);
+        tx.commit().await.map_err(DbError::from)?;
+        return Ok(out.into());
     };
     let row = if row.status == "queued" {
         finish_turn(&mut tx, id, "aborted", None, None, None)

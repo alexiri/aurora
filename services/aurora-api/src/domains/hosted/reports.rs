@@ -520,6 +520,60 @@ async fn one_event(
             )
             .await?;
         }
+        // (FIX-253, D-490) The harness child's own background work, listed by the supervisor at
+        // turn end: one visible **Background activity** entry in the conversation while nothing
+        // else stands, so the reader can see what keeps running and stop it.
+        "background" => {
+            let Some(items) = d.get("items").and_then(Value::as_array) else {
+                return Ok(());
+            };
+            let items: Vec<Value> = items
+                .iter()
+                .filter_map(|i| {
+                    let command = sanitize::one_line(i.get("command")?.as_str()?, 200);
+                    (!command.is_empty()).then(|| {
+                        json!({"command": command,
+                            "started_at": i.get("started_at").and_then(Value::as_u64).unwrap_or(0)})
+                    })
+                })
+                .collect();
+            if items.is_empty() {
+                return Ok(());
+            }
+            let live = sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM transcript_events e
+                 WHERE e.conversation_id = $1 AND e.type = 'notice'
+                   AND e.payload->>'code' = 'background_activity'
+                   AND NOT EXISTS (
+                     SELECT 1 FROM transcript_events e2
+                     WHERE e2.conversation_id = e.conversation_id AND e2.seq > e.seq
+                       AND e2.type = 'notice' AND e2.payload->>'code' = 'background_stopped')",
+            )
+            .bind(cid)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(aurora_db::DbError::from)?;
+            if live > 0 {
+                return Ok(());
+            }
+            let list: Vec<String> = items
+                .iter()
+                .map(|i| format!("`{}`", i["command"].as_str().unwrap_or_default()))
+                .collect();
+            conv::append_event(
+                tx,
+                cid,
+                Some(turn),
+                "notice",
+                &json!({
+                    "code": "background_activity",
+                    "turn_id": turn,
+                    "items": items,
+                    "text": format!("Background activity, still running: {}", list.join(", ")),
+                }),
+            )
+            .await?;
+        }
         "usage" => {
             if let Some(u) = d.get("usage").filter(|u| u.is_object()) {
                 // (P5-USAGE-1, C-1001, D-359(d)) Reduced by the trust rule when it is stored, so a turn
