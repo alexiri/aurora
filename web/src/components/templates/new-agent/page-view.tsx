@@ -24,7 +24,6 @@ import { Button } from "@/components/ui/button";
 import { Fold } from "@/components/ui/fold";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
-import { SecretOnce } from "@/components/ui/secret-once";
 import { Stepper } from "@/components/ui/stepper";
 import { showUndoToast } from "@/components/ui/undo-toast";
 
@@ -33,6 +32,7 @@ import { AboutStep } from "./about-step";
 import { AccountsStep, resolveEntry, type AccountEntryState } from "./accounts-step";
 import { AutomationsStep, automationEnabled, type AutomationState, type TemplateAutomation } from "./automations-step";
 import { ReviewStep } from "./review-step";
+import { WebhookSecretDialog } from "./webhook-secret-dialog";
 import { asTemplateInputs } from "./words";
 
 // P6-TPL-4 Part B1, C-1116: **Use this template** opens this page. It has the fold **About this template** (the
@@ -57,6 +57,10 @@ const PLANNED_AGENT_ID = "00000000-0000-0000-0000-000000000000";
 interface WebhookSecret {
   name: string;
   secret: string;
+  kind: string;
+  enabled: boolean;
+  agentName: string;
+  handle: string;
 }
 
 /** The four-step page that creates an agent from a template (C-1116). */
@@ -87,8 +91,9 @@ export function NewAgentFromTemplateView() {
   const [createError, setCreateError] = useState<ApiError | null>(null);
   /** A 409 `template_version_changed`: the plan was replaced; the person checks the changes and creates again. */
   const [updated, setUpdated] = useState(false);
-  /** The new webhook secrets, shown one after another (each once), then the agent's chat opens. */
+  /** The new webhook secrets, shown one after another (each once), then the agent's chat opens; `secretAt` is which one is up. */
   const [secrets, setSecrets] = useState<WebhookSecret[] | null>(null);
+  const [secretAt, setSecretAt] = useState(0);
   const [created, setCreated] = useState<CreatedFromTemplate | null>(null);
   /** The account-only connect journey the Accounts step opened: the entry and the app it is for. */
   const [connect, setConnect] = useState<{ index: number; appId: string } | null>(null);
@@ -178,10 +183,13 @@ export function NewAgentFromTemplateView() {
     setErrors({});
     try {
       const res = await create.mutateAsync(body);
-      const made = res.webhooks.filter((w) => w.secret).map((w) => ({ name: w.webhook.name, secret: w.secret! }));
+      const made: WebhookSecret[] = res.webhooks
+        .filter((w) => w.secret)
+        .map((w) => ({ name: w.webhook.name, secret: w.secret!, kind: w.webhook.verification.kind, enabled: w.webhook.enabled, agentName: res.agent.name, handle: res.agent.handle }));
       if (made.length > 0) {
         setCreated(res);
         setSecrets(made);
+        setSecretAt(0);
       } else {
         finish(res);
       }
@@ -190,11 +198,12 @@ export function NewAgentFromTemplateView() {
     }
   };
 
-  const finish = (res: CreatedFromTemplate) => {
+  const finish = (res: CreatedFromTemplate, dest?: string) => {
     setSecrets(null);
+    setSecretAt(0);
     setCreated(null);
     showUndoToast(`${res.agent.name} is ready`);
-    router.push(routes.agent(res.agent.handle));
+    router.push(dest ?? routes.agent(res.agent.handle));
   };
 
   const mapCreateError = (err: unknown) => {
@@ -344,16 +353,21 @@ export function NewAgentFromTemplateView() {
           onClose={() => closeJourney(connect.index, connect.appId)}
         />
       ) : null}
-      {secrets && secrets.length > 0 && secrets[0] ? (
-        <SecretOnce
-          secret={secrets[0].secret}
-          title={`Webhook ${secrets[0].name}`}
+      {secrets && secrets.length > 0 && secrets[secretAt] ? (
+        <WebhookSecretDialog
+          webhook={secrets[secretAt]}
+          index={secretAt}
+          count={secrets.length}
+          org={org}
+          ws={ws}
           onClose={() => {
-            const rest = secrets.slice(1);
-            if (rest.length === 0) {
-              if (created) finish(created);
-            } else setSecrets(rest);
+            if (secretAt + 1 < secrets.length) setSecretAt(secretAt + 1);
+            else if (created) finish(created);
           }}
+          // Only on the last secret: following the link ends the flow on the agent's Automations page instead of its chat.
+          onOpenAutomations={
+            secretAt + 1 === secrets.length && created ? () => finish(created, routes.agent(created.agent.handle, { tab: "automations" })) : undefined
+          }
         />
       ) : null}
     </div>
