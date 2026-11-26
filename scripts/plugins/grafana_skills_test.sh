@@ -602,6 +602,12 @@ if body.get("missingSeriesEvalsToResolve") != 2:
 for gone in ("id", "updated", "provenance"):
     if gone in body:
         problems.append(f"read-only field {gone} sent back")
+# The per-step fields the server adds to every stored step model: the script strips them
+# like the other read-only fields, so the resend is the script's shape again.
+for i, s in enumerate(body.get("data") or []):
+    for gone in ("intervalMs", "maxDataPoints"):
+        if gone in (s.get("model") or {}):
+            problems.append(f"step {i} model carries {gone}")
 if len(problems) == 0:
     sys.exit(0)
 print("; ".join(problems), file=sys.stderr)

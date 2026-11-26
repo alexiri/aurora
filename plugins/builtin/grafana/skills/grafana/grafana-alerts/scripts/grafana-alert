@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""grafana-alert: managed Grafana alert rules; see SKILL.md. Exit: 0 ok, 1 call failed, 2 usage."""
+"""grafana-alert: managed Grafana alert rules; see SKILL.md. Exit: 0 ok, 1 failed, 2 usage."""
 import argparse
 import datetime as dt
 import json
@@ -17,6 +17,8 @@ ACCOUNT = None
 FOLDER_CAP, SERVICE_CAP = 10, 5
 MIN_EVAL_S, MIN_FOR_S = 60, 120
 STRIP = ("id", "updated", "updatedBy", "created", "createdBy", "version", "provenance", "metadata")
+# Read-only fields the server adds to every stored step model.
+STEP_STRIP = ("intervalMs", "maxDataPoints")
 
 
 def clean(v):
@@ -212,7 +214,7 @@ def cmd_create(a):
 
 
 def read_managed(a):
-    """The rule behind a.uid; refuses anything this agent does not manage."""
+    """The rule behind a.uid; refuses anything the agent does not manage."""
     if not UID_RE.match(a.uid or "") or len(a.uid) > 40:
         die("the rule uid is 1 to 40 letters, digits, dashes or underscores")
     rule = send("get_alert_rule", None, f"uid={a.uid}")
@@ -230,7 +232,7 @@ SHAPE_ANNOTATIONS = {"summary", "expires"}
 
 
 def check_shape(rule):
-    """Refuses a rule that left the shape the script builds; such a rule is never resent."""
+    """Refuses a rule that left the shape the script builds; it is never resent."""
     why = ("record" in rule and "a recording rule (`record`)"
            or len(rule.get("data") or []) != 3
            and "not the script's one query with its reduce and threshold"
@@ -249,8 +251,8 @@ def check_shape(rule):
 def expiry_of(rule):
     """The expiry, read from the `expires` label only; the annotation is a copy for people.
 
-    The script writes both the same, so a rule whose label and annotation disagree was changed
-    outside it and the label may no longer be the truth; such a rule is refused.
+    The script writes both the same, so a rule whose copies disagree was changed outside it
+    and the label may no longer be the truth; such a rule is refused.
     """
     lab = (rule.get("labels") or {}).get("expires")
     ann = (rule.get("annotations") or {}).get("expires")
@@ -262,9 +264,13 @@ def expiry_of(rule):
 
 
 def apply_change(rule, a):
-    """The rule's body with the asked changes; refuses an expiry extension without --renew."""
+    """The rule's body with the asked changes; an expiry extension needs --renew."""
     check_shape(rule)
     body = {k: v for k, v in rule.items() if k not in STRIP}
+    for s in body.get("data") or []:
+        m = s.get("model") if isinstance(s, dict) else None
+        if isinstance(m, dict):
+            for k in STEP_STRIP: m.pop(k, None)
     old = expiry_of(rule)
     if a.expires:
         exp = (today() + dt.timedelta(days=days_of(a.expires))).isoformat()
