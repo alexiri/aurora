@@ -194,8 +194,8 @@ async fn arm4_signals(
     // (FIX-253, D-490) Stop of the **Background activity** of a finished turn: release the
     // conversation's idle harness session; the child's background work dies with it. Re-sent
     // each lease until the supervisor acknowledges the release (FIX-253 review).
-    for t in hosted::claim_background_stops(tx, runner, replica, RELEASE_LEASE_SECS, ARM_LIMIT)
-        .await?
+    for t in
+        hosted::claim_background_stops(tx, runner, replica, RELEASE_LEASE_SECS, ARM_LIMIT).await?
     {
         items.push(item(
             t.sandbox_id,

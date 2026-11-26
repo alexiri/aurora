@@ -56,7 +56,10 @@ async fn kill_group(mut child: tokio::process::Child) {
     if let Some(g) = group {
         let _ = rustix::process::kill_process_group(g, rustix::process::Signal::HUP);
     }
-    if tokio::time::timeout(KILL_GRACE, child.wait()).await.is_err() {
+    if tokio::time::timeout(KILL_GRACE, child.wait())
+        .await
+        .is_err()
+    {
         if let Some(g) = group {
             let _ = rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
         }

@@ -592,14 +592,16 @@ async fn a_release_is_acknowledged_and_a_running_turn_defers_it() {
     c.deliver(TURN, "[[say: a]] [[sleep: 1s]] [[say: b]]", "auc_t")
         .await;
     c.next_of("turn.event").await;
-    c.send("session.release", json!({"conversation_id": CONV})).await;
+    c.send("session.release", json!({"conversation_id": CONV}))
+        .await;
     assert_eq!(
         c.next_of("session.released").await["ok"],
         false,
         "a turn is running: the release waits for it"
     );
     assert_eq!(c.next_of("turn.result").await["status"], "done");
-    c.send("session.release", json!({"conversation_id": CONV})).await;
+    c.send("session.release", json!({"conversation_id": CONV}))
+        .await;
     assert_eq!(
         c.next_of("session.released").await["ok"],
         true,

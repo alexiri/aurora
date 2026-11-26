@@ -18,10 +18,9 @@ use crate::runner::{
     Code, ExecEof, ExecExit, ExecOpen, ExecOpened, ExecRefused, GateResult, HomeSync, HomeSynced,
     MemoryWrite, PortsState, PreviewStartFrame, ProcessStates, PtyClose, PtyCredit, PtyOpen,
     PtyOpened, PtyRefused, PtyResize, SandboxStatus, SendNowResult, SessionPurge, SessionPurged,
-    SessionReleased,
-    SessionRelease, SessionReport, SteerResult, StreamClose, StreamCredit, StreamOpen,
-    StreamOpened, StreamRefused, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice,
-    TurnRef, TurnResult, WatchFired,
+    SessionRelease, SessionReleased, SessionReport, SteerResult, StreamClose, StreamCredit,
+    StreamOpen, StreamOpened, StreamRefused, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage,
+    TurnNotice, TurnRef, TurnResult, WatchFired,
 };
 use crate::tools::{ToolCallBody, ToolError, ToolResult};
 

@@ -549,7 +549,7 @@ pub async fn claim_background_stops(
          UPDATE turns t SET steer_delivered_at = now(), updated_at = now()
          FROM cand, sandboxes s WHERE t.id = cand.id AND s.agent_id = t.agent_id
          RETURNING t.id AS turn_id, t.conversation_id, s.id AS sandbox_id, s.boot_id"
-        .to_owned(),
+            .to_owned(),
     ))
     .bind(runner)
     .bind(replica)

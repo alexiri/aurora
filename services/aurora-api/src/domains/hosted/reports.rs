@@ -234,8 +234,8 @@ pub async fn apply(
             )
         }
         ReportBody::SessionReleased(sr) => {
-            let done = complete_background_stop(tx, facts.agent_id, sr.conversation_id, sr.ok)
-                .await?;
+            let done =
+                complete_background_stop(tx, facts.agent_id, sr.conversation_id, sr.ok).await?;
             res(
                 r,
                 if done {

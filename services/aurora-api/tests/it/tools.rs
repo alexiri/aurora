@@ -602,7 +602,9 @@ async fn a_peer_turn_sets_only_one_time_wakeups_and_at_most_three_open_ones() {
         let a = &a;
         let (conv, turn) = (conv, turn);
         async move {
-            let (s, v) = r.tool(call_in(a, conv, turn, "schedule_create", args)).await;
+            let (s, v) = r
+                .tool(call_in(a, conv, turn, "schedule_create", args))
+                .await;
             assert_eq!(s, 200, "{v}");
             v
         }
@@ -638,19 +640,14 @@ async fn a_peer_turn_sets_only_one_time_wakeups_and_at_most_three_open_ones() {
     }
     let v = call(json!({"name": "w3", "prompt": "p", "run_at": "2026-12-01T09:00"})).await;
     assert_eq!(v["ok"], false, "{v}");
-    assert!(
-        v.to_string().contains("three open wake-ups"),
-        "{v}"
-    );
+    assert!(v.to_string().contains("three open wake-ups"), "{v}");
 
     // Finishing one frees a slot.
-    sqlx::query(
-        "UPDATE schedules SET completed_at = now() WHERE name = 'w0' AND agent_id = $1",
-    )
-    .bind(a.agent)
-    .execute(r.h.pool())
-    .await
-    .unwrap();
+    sqlx::query("UPDATE schedules SET completed_at = now() WHERE name = 'w0' AND agent_id = $1")
+        .bind(a.agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
     let v = call(json!({"name": "w4", "prompt": "p", "run_at": "2026-12-01T09:00"})).await;
     assert_eq!(v["ok"], true, "{v}");
 }

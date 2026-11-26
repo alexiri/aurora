@@ -229,8 +229,11 @@ impl PlatformTool for CreateT {
         }
         // (FIX-253 review) A task conversation is capped: at most 3 open one-time wake-ups.
         if from_task
-            && aurora_db::repo::schedules::open_once_count_from(&ctx.agent.pool, ctx.conversation_id)
-                .await?
+            && aurora_db::repo::schedules::open_once_count_from(
+                &ctx.agent.pool,
+                ctx.conversation_id,
+            )
+            .await?
                 >= 3
         {
             return Err(ToolError::Failed(

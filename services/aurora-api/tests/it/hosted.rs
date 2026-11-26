@@ -588,7 +588,8 @@ async fn background_activity_commands_are_masked_and_capped() {
     let lv = r.boot("bgmask").await;
     let d = r.deliver().await;
     let turn = d["turn_id"].as_str().unwrap().to_owned();
-    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn})).await;
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
     let mut items: Vec<Value> = vec![
         json!({"command": "curl -H 'Authorization: aub_secret123' https://x", "started_at": 1700000000u64}),
         json!({"command": "API_KEY=hunter2 ./deploy.sh", "started_at": 1700000000u64}),
@@ -606,7 +607,10 @@ async fn background_activity_commands_are_masked_and_capped() {
     assert_eq!(evs.len(), 1, "{evs:?}");
     let items = evs[0].1["items"].as_array().unwrap();
     assert_eq!(items.len(), 10, "at most 10 items: {items:?}");
-    assert_eq!(items[0]["command"], "curl -H 'Authorization: aub_*** https://x", "{items:?}");
+    assert_eq!(
+        items[0]["command"], "curl -H 'Authorization: aub_*** https://x",
+        "{items:?}"
+    );
     assert_eq!(items[1]["command"], "API_KEY=*** ./deploy.sh", "{items:?}");
     let long = items[2]["command"].as_str().unwrap();
     assert!(
@@ -626,7 +630,8 @@ async fn an_aborted_turns_stop_does_not_release_the_background_activity() {
     let lv = r.boot("bgnostop").await;
     let d = r.deliver().await;
     let turn = d["turn_id"].as_str().unwrap().to_owned();
-    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn})).await;
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
     r.report(
         &lv,
         json!({"kind": "turn.events", "turn_id": turn, "events": [ev(
@@ -646,16 +651,18 @@ async fn an_aborted_turns_stop_does_not_release_the_background_activity() {
         json!({"kind": "turn.result", "turn_id": turn, "status": "aborted"}),
     )
     .await;
-    let (armed,): (bool,) = sqlx::query_as(
-        "SELECT abort_requested_at IS NOT NULL FROM turns WHERE id = $1::uuid",
-    )
-    .bind(&turn)
-    .fetch_one(r.h.pool())
-    .await
-    .unwrap();
+    let (armed,): (bool,) =
+        sqlx::query_as("SELECT abort_requested_at IS NOT NULL FROM turns WHERE id = $1::uuid")
+            .bind(&turn)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
     assert!(!armed, "the answer-Stop is cleared at finish");
     assert!(
-        r.work().await.iter().all(|i| i["kind"] != "session.release"),
+        r.work()
+            .await
+            .iter()
+            .all(|i| i["kind"] != "session.release"),
         "no background-stop release is dispatched"
     );
     let codes: Vec<String> = background_notices(&r)
@@ -790,7 +797,8 @@ async fn a_deferred_background_stop_stays_requested_until_acknowledged() {
     let lv = r.boot("bgdefer").await;
     let d = r.deliver().await;
     let turn = d["turn_id"].as_str().unwrap().to_owned();
-    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn})).await;
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
     r.report(
         &lv,
         json!({"kind": "turn.events", "turn_id": turn, "events": [ev(
@@ -809,17 +817,20 @@ async fn a_deferred_background_stop_stays_requested_until_acknowledged() {
         .await;
     assert_eq!(s, 202, "{v}");
     assert_eq!(
-        background_notices(&r).await.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(),
+        background_notices(&r)
+            .await
+            .iter()
+            .map(|n| n.0.as_str())
+            .collect::<Vec<_>>(),
         ["background_activity", "background_stop_requested"]
     );
     // The release is claimed but deferred: the request stays armed.
-    let (armed,): (bool,) = sqlx::query_as(
-        "SELECT abort_requested_at IS NOT NULL FROM turns WHERE id = $1::uuid",
-    )
-    .bind(&turn)
-    .fetch_one(r.h.pool())
-    .await
-    .unwrap();
+    let (armed,): (bool,) =
+        sqlx::query_as("SELECT abort_requested_at IS NOT NULL FROM turns WHERE id = $1::uuid")
+            .bind(&turn)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
     assert!(armed, "the request stays armed while in flight");
     let st = r
         .report(
@@ -827,9 +838,16 @@ async fn a_deferred_background_stop_stays_requested_until_acknowledged() {
             json!({"kind": "session.released", "conversation_id": lv.conv, "ok": false}),
         )
         .await;
-    assert_eq!(st, "duplicate", "the deferral changed nothing (like a purge)");
     assert_eq!(
-        background_notices(&r).await.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(),
+        st, "duplicate",
+        "the deferral changed nothing (like a purge)"
+    );
+    assert_eq!(
+        background_notices(&r)
+            .await
+            .iter()
+            .map(|n| n.0.as_str())
+            .collect::<Vec<_>>(),
         ["background_activity", "background_stop_requested"],
         "a deferral writes no stopped notice"
     );
