@@ -249,7 +249,7 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
     out.push_str(&format!("body={}\n", String::from_utf8_lossy(&body)));
     // (lane review 2026-11-25) The response-projection tests: a contact-point-like answer with
     // settings a projected tool's caller must never see, and a non-JSON one (fail closed).
-    if parts.uri.path() == "/cps" || parts.uri.path() == "/raw" {
+    if parts.uri.path() == "/cps" || parts.uri.path() == "/raw" || parts.uri.path() == "/cpskey" {
         return Ok(Response::new(Full::new(Bytes::from_static(
             CONTACT_POINTS.as_bytes(),
         ))));

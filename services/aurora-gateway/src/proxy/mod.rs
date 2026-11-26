@@ -537,7 +537,7 @@ impl Proxy {
                 .iter()
                 .any(|c| c.status == status.as_u16() && c.body_contains.is_some());
             let (parts, inc) = resp.into_parts();
-            let body: Body = inc.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync();
+            let body: Body = boxed_body(inc);
             let (prefix, replay) = if need_body {
                 let (p, _, b) = crate::decide::buffer_prefix(body, STALE_BODY_PEEK).await;
                 (p, b)
@@ -560,7 +560,14 @@ impl Proxy {
                         wire.upstream_answered(&r2);
                         wire.replaced("stale_retry");
                         return self
-                            .finish(r2, hook, response_headers, upgrade_fut, kill, wire)
+                            .finish(
+                                r2.map(boxed_body),
+                                hook,
+                                response_headers,
+                                upgrade_fut,
+                                kill,
+                                wire,
+                            )
                             .await;
                     }
                     Err(e) => {
@@ -572,51 +579,29 @@ impl Proxy {
                     }
                 }
             }
-            let mut resp = Response::from_parts(parts, replay);
-            if let Some(h) = &hook {
-                match echo_check(&h.echo_needles(), resp).await {
-                    Ok(r) => resp = r,
-                    Err(e) => {
-                        wire.replaced("echo_check");
-                        if let Some(h) = hook {
-                            h.on_error(&e);
-                        }
-                        return guidance::response(&e);
-                    }
-                }
-            }
-            // (lane review 2026-11-25) A tool that declares a response projection has every
-            // answer reduced to the projected paths, here too (the retried answer is the
-            // caller's answer).
-            if let Some(h) = &hook
-                && let Some(paths) = h.response_project()
-                && resp.status().is_success()
-            {
-                resp = match project_response(paths, resp).await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        wire.replaced("response_projection");
-                        if let Some(h) = hook {
-                            h.on_error(&e);
-                        }
-                        return guidance::response(&e);
-                    }
-                };
-            }
-            if let Some(h) = hook
-                && let Some(replacement) = h.on_response(resp.status(), resp.headers())
-            {
-                wire.replaced("guidance");
-                return replacement;
-            }
-            for (k, v) in &response_headers {
-                resp.headers_mut().insert(k.clone(), v.clone());
-            }
-            hygiene::strip_hop_by_hop(resp.headers_mut());
-            return resp;
+            // The same response path as the retry's answer — `finish` scrubs the echo
+            // needles, applies a tool's response projection, replaces guidance and strips the
+            // hop-by-hop headers, so the answer the caller gets is the same either way.
+            return self
+                .finish(
+                    Response::from_parts(parts, replay),
+                    hook,
+                    response_headers,
+                    upgrade_fut,
+                    kill,
+                    wire,
+                )
+                .await;
         }
-        self.finish(resp, hook, response_headers, upgrade_fut, kill, wire)
-            .await
+        self.finish(
+            resp.map(boxed_body),
+            hook,
+            response_headers,
+            upgrade_fut,
+            kill,
+            wire,
+        )
+        .await
     }
 
     /// (D-251) The LDAP lane: read the (small) JSON body, run one search, answer as JSON; the
@@ -651,10 +636,13 @@ impl Proxy {
         resp
     }
 
-    /// 14-15. guidance replacement, request log, upgrade bridging, response hygiene.
+    /// 14-15. echo scrub, response projection, guidance replacement, request log, upgrade
+    /// bridging, response hygiene. Every upstream answer goes through this one response path
+    /// (the stale-retry's answer included), so a needle answer is scrubbed and a projected
+    /// tool's answer is reduced no matter which return produced it.
     async fn finish(
         &self,
-        resp: Response<hyper::body::Incoming>,
+        resp: Response<Body>,
         hook: Option<Box<dyn crate::pipeline::PostHook>>,
         response_headers: http::HeaderMap,
         upgrade_fut: Option<hyper::upgrade::OnUpgrade>,
@@ -673,12 +661,16 @@ impl Proxy {
             }
             return guidance::response(&e);
         }
-        // (FIX-104, SEC-01) A credential placed in the URL never comes back to the agent.
         let needles = hook.as_ref().map(|h| h.echo_needles()).unwrap_or_default();
+        // (FIX-104, SEC-01) A credential placed in the URL never comes back to the agent; and
+        // (lane review 2026-11-25) a tool that declares a response projection has every answer
+        // reduced to the projected paths for every caller: the body is buffered up to
+        // `PROJECT_BODY_MAX`, parsed and rewritten; anything else is withheld instead of
+        // forwarded. Both run on this one path — a needle answer is scrubbed, then a
+        // projected one is reduced, on every return.
+        let mut resp = resp;
         if !needles.is_empty() && resp.status() != http::StatusCode::SWITCHING_PROTOCOLS {
-            let (parts, inc) = resp.into_parts();
-            let body: Body = inc.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync();
-            let mut checked = match echo_check(&needles, Response::from_parts(parts, body)).await {
+            resp = match echo_check(&needles, resp).await {
                 Ok(r) => r,
                 Err(e) => {
                     wire.replaced("echo_check");
@@ -688,27 +680,7 @@ impl Proxy {
                     return guidance::response(&e);
                 }
             };
-            if let Some(h) = hook
-                && let Some(replacement) = h.on_response(checked.status(), checked.headers())
-            {
-                wire.replaced("guidance");
-                return replacement;
-            }
-            for (k, v) in &response_headers {
-                checked.headers_mut().insert(k.clone(), v.clone());
-            }
-            hygiene::strip_hop_by_hop(checked.headers_mut());
-            return checked;
         }
-        let (parts, inc) = resp.into_parts();
-        let mut resp = Response::from_parts(
-            parts,
-            inc.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync(),
-        );
-        // (lane review 2026-11-25) A tool that declares a response projection has every answer
-        // reduced to the projected paths for every caller, here on the response path: the body
-        // is buffered up to `PROJECT_BODY_MAX`, parsed and rewritten; anything else is
-        // withheld instead of forwarded.
         if let Some(h) = &hook
             && let Some(paths) = h.response_project()
             && resp.status().is_success()
@@ -774,6 +746,12 @@ impl Proxy {
 /// Bytes of a response body searched for an injected value (docs/17 SEC-01); what follows is
 /// streamed on unchecked.
 const ECHO_BODY_CHECK: usize = 64 * 1024;
+
+/// The body the gateway forwards on: boxed so `finish` can hold, scrub and rewrite it (every
+/// upstream answer goes through that one response path).
+fn boxed_body(inc: Incoming) -> Body {
+    inc.map_err(|e| -> BoxError { Box::new(e) }).boxed_unsync()
+}
 
 /// Bytes of a response body the gateway buffers whole to apply a tool's response projection;
 /// a longer answer is withheld (fail closed), never streamed unchecked.
