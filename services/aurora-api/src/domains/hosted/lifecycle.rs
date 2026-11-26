@@ -134,11 +134,79 @@ pub async fn finish(
     for id in ids {
         credentials::notify_gateway_invalidate(&mut *conn, "credential", id).await?;
     }
+    // (FIX-253, D-490) The self-check reads whether an open obligation existed at turn end,
+    // before the hooks below close any of it.
+    let obligation_open = open_obligation(conn, &row).await?;
     crate::domains::schedules::fire::on_turn_finished(conn, &row).await?;
     crate::domains::webhooks::on_turn_finished(conn, &row).await?;
     crate::domains::peer_tasks::service::on_turn_finished(conn, &row).await?;
     crate::domains::channels::mirror::on_turn_finished(conn, &row).await?;
+    if obligation_open {
+        no_wakeup_notice(conn, &row).await?;
+    }
     Ok(Some(row))
+}
+
+/// (FIX-253, D-490) The self-check's signal, never word heuristics on the reply: this agent
+/// turn ended `done` inside a delegated task's conversation whose peer task is still open —
+/// the agent owes the task's report and nothing else will wake it for the task. (On the asking
+/// side the task's own report follow-up is the wake, so it is not a notice case.)
+#[allow(clippy::type_complexity)]
+async fn open_obligation(conn: &mut PgConnection, t: &TurnRow) -> Result<bool, ApiError> {
+    if t.status != "done" || t.speaker_kind != "agent" {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM peer_tasks pt
+            WHERE pt.task_conversation_id = $1 AND pt.status = 'open'
+         )",
+    )
+    .bind(t.conversation_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(aurora_db::DbError::from)?)
+}
+
+/// (FIX-253, D-490) One visible notice after an agent turn that ended with an open obligation
+/// and nothing set to wake the agent; the web offers a one-time reminder under it. Nothing is
+/// recorded when a watch or a schedule is already set.
+async fn no_wakeup_notice(conn: &mut PgConnection, t: &TurnRow) -> Result<(), ApiError> {
+    let wake_registered = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM watches w
+            WHERE w.conversation_id = $1 AND w.status = 'armed'
+         ) OR EXISTS (
+            SELECT 1 FROM schedules s
+            WHERE s.origin_conversation_id = $1 AND s.enabled AND s.completed_at IS NULL
+         )",
+    )
+    .bind(t.conversation_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(aurora_db::DbError::from)?;
+    if wake_registered {
+        return Ok(());
+    }
+    let name = aurora_db::repo::agents::get(&mut *conn, t.agent_id)
+        .await?
+        .map(|a| a.name)
+        .unwrap_or_else(|| "The agent".to_owned());
+    conv::append_event(
+        conn,
+        t.conversation_id,
+        Some(t.id),
+        "notice",
+        &json!({
+            "code": "no_wakeup",
+            "text": format!("{name} said it would continue, but nothing is set to wake it."),
+            "agent_id": t.agent_id,
+            "agent_name": name,
+            "turn_id": t.id,
+        }),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Fail a turn with an `error` event followed by `turn.finished`.

@@ -752,6 +752,62 @@ async fn message_in_task_needs_the_matching_open_task() {
     assert_eq!(used, 1);
 }
 
+/// (FIX-253, D-490) The platform's self-check: an agent turn that ends with the task still open
+/// and nothing set to wake the agent gets one visible reminder notice; a schedule anchored to
+/// the conversation is a wake, so no notice; a failed turn and a person turn never get one.
+#[tokio::test]
+async fn a_turn_ending_with_an_open_task_and_no_wake_posts_the_reminder_notice() {
+    use aurora_api::domains::hosted::lifecycle;
+    let d = duo().await;
+    let task = Rig::id(&d.send("one").await["peer_task_id"]);
+    let pc = d.rig.peer_conversation(task).await;
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+
+    // A failed turn is not a promise: no notice (the task still closes as today).
+    let turn = d.rig.running_turn(pc).await.unwrap();
+    lifecycle::finish(&mut conn, turn, "failed", Some("x"), None, None)
+        .await
+        .unwrap();
+    assert_eq!(d.rig.notices(pc, "no_wakeup").await.len(), 0);
+
+    // A `done` agent turn with the task open and no wake: exactly one notice, naming the agent.
+    let task2 = Rig::id(&d.send("two").await["peer_task_id"]);
+    let pc2 = d.rig.peer_conversation(task2).await;
+    let turn2 = d.rig.running_turn(pc2).await.unwrap();
+    lifecycle::finish(&mut conn, turn2, "done", None, None, None)
+        .await
+        .unwrap();
+    let notices = d.rig.notices(pc2, "no_wakeup").await;
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["agent_id"], json!(d.b));
+    assert!(
+        notices[0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Agent bravo said it would continue, but nothing is set to wake it")
+    );
+    assert_eq!(notices[0]["turn_id"], json!(turn2));
+
+    let task3 = Rig::id(&d.send("three").await["peer_task_id"]);
+    let pc3 = d.rig.peer_conversation(task3).await;
+    sqlx::query(
+        "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, run_at, creator_user_id, origin_conversation_id)
+         VALUES ($1,$2,'check','Look again.',NULL,'UTC', now() + interval '15 minutes', $3, $4)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(d.b)
+    .bind(d.rig.p.id)
+    .bind(pc3)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    let turn3 = d.rig.running_turn(pc3).await.unwrap();
+    lifecycle::finish(&mut conn, turn3, "done", None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(d.rig.notices(pc3, "no_wakeup").await.len(), 0);
+}
+
 #[tokio::test]
 async fn receiver_turn_ending_without_a_report_closes_the_task_once() {
     use aurora_api::domains::hosted::lifecycle;
