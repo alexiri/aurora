@@ -282,6 +282,83 @@ mod tests {
         ));
     }
 
+    /// (FIX-253) Stop reaches the harness's own background work: the claude-code child runs in its
+    /// own process group, so a command it started in the background (a `run_in_background` shell)
+    /// shares the group and dies when the session is released — no leftover pid.
+    #[tokio::test]
+    async fn claude_code_release_kills_the_childs_background_work() {
+        fn gone(pid: u32) -> bool {
+            !std::path::Path::new(&format!("/proc/{pid}")).exists()
+        }
+        let l = claude_code::launcher::ProcessLauncher {
+            program: "/bin/sh".into(),
+        };
+        let spec = claude_code::config::LaunchSpec {
+            // The fake harness: a background child (its own shell) that outlives the reply, then
+            // the harness idles on like the CLI does between turns.
+            args: vec![
+                "-c".into(),
+                "/bin/sleep 300 & echo $!; exec /bin/sleep 600".into(),
+            ],
+            env: vec![],
+            cwd: std::env::temp_dir(),
+            conversation_id: uuid::Uuid::now_v7(),
+        };
+        let mut io = claude_code::launcher::Launcher::launch(&l, spec)
+            .await
+            .unwrap();
+        let bg: u32 = tokio::time::timeout(std::time::Duration::from_secs(20), io.lines.recv())
+            .await
+            .expect("the fake harness printed no background pid")
+            .expect("closed")
+            .trim()
+            .parse()
+            .expect("a pid");
+        assert!(!gone(bg), "the background child is not running");
+        (io.kill)();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !gone(bg) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "background pid {bg} survived the release"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// (FIX-253) Releasing an idle child with no background work still works: the group kill finds
+    /// nothing else and the launch ends cleanly.
+    #[tokio::test]
+    async fn claude_code_release_of_an_idle_child_with_no_background_work_still_works() {
+        let l = claude_code::launcher::ProcessLauncher {
+            program: "/bin/sh".into(),
+        };
+        let spec = claude_code::config::LaunchSpec {
+            args: vec!["-c".into(), "echo ready; exec /bin/sleep 600".into()],
+            env: vec![],
+            cwd: std::env::temp_dir(),
+            conversation_id: uuid::Uuid::now_v7(),
+        };
+        let mut io = claude_code::launcher::Launcher::launch(&l, spec)
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(20), io.lines.recv())
+                .await
+                .expect("no line")
+                .expect("closed")
+                .trim(),
+            "ready"
+        );
+        (io.kill)();
+        // The child is gone: its stdout closed after the kill.
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while io.lines.recv().await.is_some() {}
+        })
+        .await
+        .expect("the child did not end after the release");
+    }
+
     #[test]
     fn known_ids_resolve_when_the_runtime_is_present() {
         for id in KNOWN {

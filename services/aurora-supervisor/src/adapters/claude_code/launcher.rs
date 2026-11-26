@@ -44,6 +44,26 @@ impl Default for ProcessLauncher {
     }
 }
 
+/// Grace between the group's HUP and the KILL (the same as `ExecProc` in `crate::exec`).
+const KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// (FIX-253) Kills the whole process group: HUP, a short grace for a clean exit, then KILL. The
+/// child leads the group, so its `run_in_background` shells die with it instead of being orphaned.
+async fn kill_group(mut child: tokio::process::Child) {
+    let group = child
+        .id()
+        .and_then(|p| rustix::process::Pid::from_raw(p as i32));
+    if let Some(g) = group {
+        let _ = rustix::process::kill_process_group(g, rustix::process::Signal::HUP);
+    }
+    if tokio::time::timeout(KILL_GRACE, child.wait()).await.is_err() {
+        if let Some(g) = group {
+            let _ = rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
+        }
+        let _ = child.wait().await;
+    }
+}
+
 #[async_trait]
 impl Launcher for ProcessLauncher {
     async fn launch(&self, spec: LaunchSpec) -> Result<ChildIo, HarnessError> {
@@ -54,7 +74,11 @@ impl Launcher for ProcessLauncher {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .kill_on_drop(true)
+            // (FIX-253) The child leads its own process group: a `run_in_background` shell it
+            // starts shares the group, so releasing the session stops the background work too —
+            // the same pattern as `ExecProc` in `crate::exec`.
+            .process_group(0);
         let mut child = cmd.spawn().map_err(|e| {
             HarnessError::new(
                 "harness_failed",
@@ -94,7 +118,7 @@ impl Launcher for ProcessLauncher {
             let _registration = registration;
             tokio::select! {
                 _ = child.wait() => {}
-                _ = kill_rx => { let _ = child.kill().await; }
+                _ = kill_rx => kill_group(child).await,
             }
         });
         Ok(ChildIo {
