@@ -217,13 +217,40 @@ it cannot send Aurora's signed format, so do not use Grafana's HMAC signature se
    throwaway label, in the agent's folder) and watch it fire: Grafana's *Alert rules* list shows
    the rule firing, and Aurora's webhook **Deliveries** shows the delivery and its thread with the
    payload inside (marked as untrusted data). Delete the test rule from the rule's menu when you
-   are done. When nothing arrives, look at, in this order: the contact point's **Test** result in
-   Grafana, the rule's state in *Alert rules* (firing? or is the rule paused or failing?), and in
-   Aurora the webhook's **Deliveries** (nothing at all means Grafana never sent; a refused row says
-   why) and whether the webhook is paused or the agent frozen.
+   are done.
 7. **Turning it off:** pause the webhook in Aurora (its `…` menu) or delete the contact point in
    Grafana. Neither deletes the agent's rules; they expire by themselves, and you can see and
    delete them in *Alerting*, *Alert rules*, filtered by the agent's folder.
+
+### Checklist
+
+Follow these in order; each is one thing to look at or do.
+
+1. Aurora: the agent's webhook exists and is switched on; its address and secret are copied.
+2. Grafana: a contact point with the agent's name, integration **Webhook**, **URL** the Aurora
+   address, **HTTP Method** POST.
+3. **Authentication Header Scheme** `Bearer`, **Authentication Header Credentials** the Aurora
+   secret.
+4. **Max Alerts** 10, **Disable resolved message** on.
+5. **Test** answers in Grafana, and Aurora's **Deliveries** shows the test as accepted.
+6. No notification policy to make. The agent's rules name the contact point.
+7. The service account is a Viewer with Edit on the agent's one folder (*Alert rules* above).
+8. A harmless test rule from the agent fires, and its delivery reaches the agent's thread.
+
+### If nothing arrives
+
+- **The contact point's Test fails or shows nothing:** Grafana's own result next to **Test**, and
+  Aurora's webhook **Deliveries** (nothing there means Grafana never sent).
+- **The webhook is paused (or the agent frozen):** the webhook's row in the agent's *Automations*.
+- **Wrong secret:** Deliveries shows a refused row saying so; check **Authentication Header
+  Credentials**, or make a new secret with *New secret…* and paste it.
+- **The rule names a different contact point:** the rule's *Configure notifications* in *Alert
+  rules* (the name must equal the contact point's name exactly).
+- **The rule is paused or failing:** its state in *Alert rules*.
+- **The alert is still pending:** the rule's `for` duration has not passed yet; the state shows
+  *Pending* until it does.
+- **Grafana sent, or tried to:** the rule's *State history* (the *Alert state history* view) in
+  Grafana.
 
 ## Limits
 
