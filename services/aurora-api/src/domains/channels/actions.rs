@@ -371,11 +371,18 @@ impl Click<'_> {
                 let Some(conv) = a.conversation_id else {
                     return refuse("invalid_token", "This action is not valid.");
                 };
-                if peer_tasks::by_task_conversation(&mut *tx, conv)
-                    .await?
-                    .is_none()
-                {
+                // (FIX-252 review) The ask is the requester's button, like Cancel the task
+                // (the route inventory classifies both requester-only): any other linked
+                // person gets the ephemeral refusal and the single-use button stays usable
+                // (the token is consumed only after this check).
+                let Some(pt) = peer_tasks::by_task_conversation(&mut *tx, conv).await? else {
                     return refuse("invalid_token", "This action is not valid.");
+                };
+                if pt.requester_user_id != Some(c.user_id) {
+                    return refuse(
+                        "forbidden",
+                        "Only the person who asked for this task can ask for an approver.",
+                    );
                 }
                 drop(tx);
                 self.consume(claims, exp).await?;

@@ -1701,6 +1701,32 @@ async fn peer_ask_an_approver_emails_the_deciders_once() {
     assert_eq!(action, "approval.ask_approver");
 }
 
+/// (FIX-252 review) Ask an approver is the requester's button, like Cancel: any other linked
+/// person's click is an ephemeral refusal and the single-use button stays usable.
+#[tokio::test]
+async fn peer_ask_an_approver_is_the_requesters_only() {
+    let w = W::new(&FULL).await;
+    let (id, _task, _origin) = w.peer_approval("group", w.outsider).await;
+    w.fanout().await;
+    w.deliver().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let tok = W::token(&op, "Ask an approver");
+    // Not the requester: refused, nothing burned, nobody e-mailed.
+    let out = w.click(w.integ, &tok, "U_MEMBER", None).await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("forbidden")),
+        "{out}"
+    );
+    assert_eq!(w.h.mail.sent().len(), 0);
+    assert_eq!(w.token_uses().await, 0);
+    assert_eq!(w.status("approvals", id).await, "pending");
+    // The requester still can ask (the button was not consumed).
+    let out = w.click(w.integ, &tok, "U_OUT", None).await;
+    assert_eq!(out["result"], "done", "{out}");
+    assert_eq!(w.h.mail.sent().len(), 2);
+}
+
 /// (FIX-252) Ask an approver on a card that is not a peer-origin card is not valid.
 #[tokio::test]
 async fn peer_ask_an_approver_needs_a_peer_origin_card() {
