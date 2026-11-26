@@ -216,6 +216,21 @@ async fn agent_list_for_an_administrator_carries_no_brief() {
         .execute(w.h.pool())
         .await
         .unwrap();
+    // An agent frozen through the route by the admin (whose label is an e-mail address).
+    let frozen_agent: Uuid = sqlx::query_scalar("SELECT id FROM agents WHERE workspace_id = $1")
+        .bind(w.personal)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) =
+        w.h.call_tok(
+            &w.admin_tok,
+            Method::POST,
+            &format!("/v1/agents/{frozen_agent}/freeze"),
+            Some(json!({"reason": "FIX-246 check"})),
+        )
+        .await;
+    assert!((200..300).contains(&s), "{v}");
     let (_, carol_tok) = w.h.good_session(w.carol).await;
     for (ws, person_tok) in [(w.personal, &w.bob_tok), (w.shared, &carol_tok)] {
         let uri = format!("/v1/workspaces/{ws}/agents");
@@ -242,6 +257,15 @@ async fn agent_list_for_an_administrator_carries_no_brief() {
                 assert_eq!(a["brief"], json!(""));
                 assert!(a["byo"].is_null());
                 assert!(a.get("frozen").is_some() && a.get("effective_frozen").is_some());
+                if a["id"] == json!(frozen_agent) {
+                    assert_eq!(a["effective_frozen"], json!(true), "{a}");
+                    assert_eq!(a["frozen"]["reason"], json!("FIX-246 check"));
+                    assert_eq!(a["frozen"]["level"], json!("agent"));
+                    assert!(
+                        !a["frozen"]["by_label"].as_str().unwrap().contains('@'),
+                        "no e-mail address as a label: {a}"
+                    );
+                }
             }
         }
         // An ordinary member without access keeps today's 404.

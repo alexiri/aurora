@@ -346,6 +346,15 @@ async fn list_agents(
         })
         .collect();
     crate::domains::freeze::service::decorate_agents(&state, &mut items).await?;
+    if administer_only {
+        // The freezer's e-mail stays out: the name in `by` is the label here.
+        for f in items.iter_mut().filter_map(|a| a.frozen.as_mut()) {
+            f.by_label =
+                f.by.as_ref()
+                    .map(|p| p.display_name.clone())
+                    .unwrap_or_default();
+        }
+    }
     Ok(Json(Page {
         items,
         next_cursor: page.next_cursor,

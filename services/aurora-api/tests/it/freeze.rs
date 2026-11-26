@@ -314,7 +314,8 @@ async fn lifting_needs_at_least_the_authority_that_froze() {
             None,
         )
         .await;
-    assert_eq!(s, 403);
+    // (FIX-246) The agent list answers an administrator, metadata only.
+    assert_eq!(s, 200);
     let (s, v) = w.call(w.org_owner, Method::GET, &org_uri, None).await;
     assert_eq!((s, v["frozen"]["level"].as_str()), (200, Some("org")));
     // Operator listing shows it; unknown ids are 404; non-admins are refused.
