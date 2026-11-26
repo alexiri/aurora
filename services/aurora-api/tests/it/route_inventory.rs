@@ -462,6 +462,14 @@ async fn seed_world() -> World {
         .fetch_one(h.pool())
         .await
         .unwrap();
+    // (FIX-246) A BYO agent, so the agent list's BYO view exists to be withheld.
+    h.byo_agent(org, ws, "inv-byo", "Inventory BYO").await;
+    // (FIX-246) A person-written brief: the agent list answers an administrator without it.
+    sqlx::query("UPDATE agents SET brief = 'MATRIX-agent-brief-content' WHERE workspace_id=$1")
+        .bind(ws)
+        .execute(h.pool())
+        .await
+        .unwrap();
 
     // The protagonist: an org admin with no binding anywhere (C-1160), a `{user}` target and a
     // content author, both bound members.
@@ -637,6 +645,7 @@ async fn seed_world() -> World {
             "MATRIX-schedule-prompt-content".into(),
             "MATRIX-run-result-content".into(),
             "MATRIX-webhook-instructions-content".into(),
+            "MATRIX-agent-brief-content".into(),
         ],
     }
 }
@@ -772,6 +781,9 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
     // (FIX-236, C-1165) The people list is a READAUTH route now, but an administrator without
     // own access still gets its contentless success through the route's administer fallback.
     rows.push(("get".to_owned(), "/workspaces/{ws}/access"));
+    // (FIX-246) The agent list is READAUTH too, with the same administer fallback, but the
+    // administrator's rows carry no brief (the marker check below).
+    rows.push(("get".to_owned(), "/workspaces/{ws}/agents"));
     rows.sort_by_key(|(m, p)| phase(m, p));
     let own_rows: Vec<(String, &'static str)> = OWN
         .iter()
@@ -808,6 +820,15 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
                 !text.contains(marker),
                 "ADMINISTER {m} {p} leaked content marker {marker}: {text}"
             );
+        }
+        if *p == "/workspaces/{ws}/agents" {
+            // The BYO agent is listed, and its governance view is withheld.
+            let items = v["items"].as_array().unwrap();
+            assert!(
+                items.iter().any(|a| a["kind"] == "byo"),
+                "the BYO agent is listed: {v}"
+            );
+            assert!(items.iter().all(|a| a["byo"].is_null()), "no BYO view: {v}");
         }
         // The by-email row for the pending-delete later in the walk.
         if *p == "/workspaces/{ws}/access/by-email" {
@@ -938,8 +959,8 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
             assert_eq!(s, 200, "OWN {m} {p}: the personal stream stays open");
             continue;
         }
-        if p == "/workspaces/{ws}/access" {
-            // (FIX-236, C-1165) A READAUTH route, walked with the administered rows above for
+        if p == "/workspaces/{ws}/access" || p == "/workspaces/{ws}/agents" {
+            // (FIX-236, C-1165; FIX-246) A READAUTH route, walked with the administered rows above for
             // its fallback: here it is the emergency reader's row, skipped for this admin.
             continue;
         }
@@ -1095,6 +1116,20 @@ async fn emergency_reader_reads_the_readauth_routes_and_is_refused_everywhere_el
                 assert!(
                     v.to_string().contains("MATRIX-message-content"),
                     "the emergency reader reads the direct conversation's transcript: {v}"
+                );
+            }
+            if *p == "/workspaces/{ws}/agents" {
+                assert!(
+                    v.to_string().contains("MATRIX-agent-brief-content"),
+                    "the emergency reader reads the agents' briefs: {v}"
+                );
+                assert!(
+                    v["items"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|a| a["kind"] == "byo" && !a["byo"].is_null()),
+                    "the emergency reader sees the BYO view: {v}"
                 );
             }
             if *p == "/agents/{agent}/memories" {

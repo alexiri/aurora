@@ -108,6 +108,7 @@ mod plugins_upgrade;
 mod policy;
 mod preview_auth;
 mod previews;
+mod resolve_administer;
 mod route_inventory;
 mod runner_plane;
 mod runner_rig;
