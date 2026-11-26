@@ -259,6 +259,16 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
             b"<html>not json</html>",
         ))));
     }
+    // A projected tool whose upstream answers with an error: the error body (here one that
+    // repeats the credential the request carried and the settings a projection exists to
+    // keep from the caller) never passed the projection, so the gateway withholds it.
+    if parts.uri.path() == "/cpserr" {
+        let mut r = Response::new(Full::new(Bytes::from_static(
+            br#"{"error":"not found","credential":"T","settings":{"token":"s"}}"#,
+        )));
+        *r.status_mut() = http::StatusCode::NOT_FOUND;
+        return Ok(r);
+    }
     // (FIX-104) The gateway withholds a response that echoes a value it put in the URL; a test
     // that wants to see the whole request asks for it hex-encoded (`x-echo-hex`).
     if parts.headers.contains_key("x-echo-hex") {

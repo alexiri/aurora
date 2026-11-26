@@ -683,8 +683,28 @@ impl Proxy {
         }
         if let Some(h) = &hook
             && let Some(paths) = h.response_project()
-            && resp.status().is_success()
         {
+            if !resp.status().is_success() {
+                // The projection exists because the tool's answer must reach no caller
+                // whole; its error answers carry the same kind of content and never pass
+                // the projection, so the body is withheld and replaced with a short fixed
+                // note that carries the upstream status.
+                let status = resp.status();
+                let e = ApiError::new(
+                    status,
+                    "tool_error_withheld",
+                    format!(
+                        "The tool answered {} {}; its error body is withheld.",
+                        status.as_u16(),
+                        status.canonical_reason().unwrap_or("unknown")
+                    ),
+                );
+                wire.replaced("tool_error_withheld");
+                if let Some(h) = hook {
+                    h.on_error(&e);
+                }
+                return guidance::response(&e);
+            }
             resp = match project_response(paths, resp).await {
                 Ok(r) => r,
                 Err(e) => {

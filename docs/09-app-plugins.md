@@ -327,7 +327,9 @@ with settings may declare the `$`-paths every item keeps (plain member names, 1 
 segments — no wildcards, no filters); the gateway reduces every answer to those paths on the
 response path, for every caller: the body is buffered whole (at most 1 MiB), parsed and
 rewritten, and an answer that is truncated, not JSON or not in the projected shape is withheld
-with `502 tool_response_unprojectable` instead of forwarded. The agent CLI reduces what it saves
+with `502 tool_response_unprojectable` instead of forwarded. An upstream error on a projected
+tool is withheld the same way — its body never passed the projection — and is replaced with a
+short fixed note carrying the upstream status (`tool_error_withheld`). The agent CLI reduces what it saves
 and prints the same way. Absent = the answer is forwarded as it arrived (and no change to the
 package's snapshot hash). Built-in user: `grafana` (1.8.0: `list_contact_points`, whose answer
 keeps only each contact point's name and type, so the endpoint's settings and secrets reach no

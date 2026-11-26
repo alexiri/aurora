@@ -16,6 +16,9 @@ fn projection_tools() -> Value {
         {"id": "raw", "name": "r", "host": "127.0.0.1", "path": "/raw", "methods": ["GET"]},
         // A projected tool whose upstream answer is not the shape it projects.
         {"id": "cpsbad", "name": "b", "host": "127.0.0.1", "path": "/cpsbad", "methods": ["GET"],
+         "project": ["$.name", "$.type"]},
+        // A projected tool whose upstream answers with an error.
+        {"id": "cpserr", "name": "e", "host": "127.0.0.1", "path": "/cpserr", "methods": ["GET"],
          "project": ["$.name", "$.type"]}
     ]}})
 }
@@ -36,7 +39,7 @@ async fn start_projection() -> Env {
         r.ws.derived.push((
             Uuid::now_v7(),
             json!({"name":"d1","enabled":true,"identities":[],"action":"allow",
-                   "targets":[{"type":"connection","id":c.id,"tools":["cps","raw","cpsbad"]}]}),
+                   "targets":[{"type":"connection","id":c.id,"tools":["cps","raw","cpsbad","cpserr"]}]}),
         ));
         r.conns.push(c);
         r
@@ -80,6 +83,21 @@ async fn an_answer_the_gateway_cannot_project_is_withheld() {
     assert_eq!(r.status, 502, "fail closed: {}", r.body);
     assert_eq!(r.code(), "tool_response_unprojectable", "{}", r.body);
     assert!(!r.body.contains("not json"), "{}", r.body);
+}
+
+// The projection holds for a tool's error answers too: the upstream's error body never
+// passed the projection, so on a projected tool it is withheld and replaced with a short
+// fixed note that carries the upstream status.
+#[tokio::test]
+async fn an_upstream_error_on_a_projected_tool_withholds_its_body() {
+    let env = start_projection().await;
+    let r = get(&env, "/cpserr", "").await;
+    assert_eq!(r.status, 404, "the upstream status stands: {}", r.body);
+    assert_eq!(r.code(), "tool_error_withheld", "{}", r.body);
+    // None of the error body reaches the caller.
+    assert!(!r.body.contains("credential"), "{}", r.body);
+    assert!(!r.body.contains("settings"), "{}", r.body);
+    assert!(!r.body.contains("not found"), "{}", r.body);
 }
 
 // A request whose URL carries a connection value (the host injects it as a query parameter)
