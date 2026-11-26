@@ -311,11 +311,11 @@ pub(super) async fn agent_ai_keys(
     Path(agent): Path<Uuid>,
 ) -> Result<Json<AgentAiKeys>, ApiError> {
     let a = load_agent(&s, &c, agent).await?;
+    let auth = c.workspace(&s, a.workspace_id).await?;
+    require_own(&auth)?;
     if a.kind != "hosted" {
         return Err(ApiError::not_found("Agent has no sandbox."));
     }
-    let auth = c.workspace(&s, a.workspace_id).await?;
-    require_own(&auth)?;
     let harness = a
         .harness
         .clone()

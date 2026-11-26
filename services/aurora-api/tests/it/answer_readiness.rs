@@ -488,8 +488,14 @@ async fn ai_keys_a_member_who_cannot_own_is_refused_and_a_non_hosted_agent_is_no
         .execute(r.h.pool())
         .await
         .unwrap();
-    let (s, _) = get_ai_keys(&r, &r.cookie, byo).await;
-    assert_eq!(s, 404);
+    // Refused alike: the kind of the agent is not told to someone who may not grant.
+    let (s2, v2) = get_ai_keys(&r, &r.cookie, byo).await;
+    assert_eq!(s2, s, "{v2}");
+    assert_eq!(v2["error"], v["error"], "{v2}");
+
+    // An owner who may grant is told there is no sandbox.
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, byo).await;
+    assert_eq!(s, 404, "{v}");
 }
 
 #[tokio::test]
