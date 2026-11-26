@@ -17,7 +17,7 @@ use aurora_db::DbError;
 use aurora_db::repo::approvals::ApprovalRow;
 use aurora_db::repo::conversations as convs;
 use serde_json::json;
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -128,7 +128,28 @@ pub async fn write(
     // (FIX-252) An approval raised in a peer task conversation also reports to the origin
     // conversation the person asked in (the waiting notice, then the outcome). A no-op for
     // every other conversation; the notice's own existence check keeps redelivery harmless.
-    crate::domains::peer_tasks::service::approval_notice(tx, row).await?;
+    // (FIX-252 review) Best-effort: a notice must never fail or undo a decision. The savepoint
+    // keeps the decision's transaction usable after a failed notice write: the notice's own
+    // writes roll back, the error is logged, and the decision (and everything written with it)
+    // commits.
+    let mut sp = match tx.begin().await {
+        Ok(sp) => sp,
+        Err(e) => {
+            tracing::warn!(approval = %row.id, error = %e, "peer approval origin notice: no savepoint");
+            return Ok(());
+        }
+    };
+    match crate::domains::peer_tasks::service::approval_notice(&mut sp, row).await {
+        Ok(()) => {
+            if let Err(e) = sp.commit().await {
+                tracing::warn!(approval = %row.id, error = %e, "peer approval origin notice: commit failed");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(approval = %row.id, error = %e, "peer approval origin notice failed; decision kept");
+            let _ = sp.rollback().await;
+        }
+    }
     Ok(())
 }
 

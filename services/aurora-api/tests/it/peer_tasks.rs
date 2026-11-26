@@ -1041,3 +1041,61 @@ async fn the_cancel_route_serves_the_stored_requester_only() {
     assert_eq!(v["status"], "cancelled");
     assert_eq!(d.rig.task_status(task).await, "cancelled");
 }
+
+/// (FIX-252 review) A DB error writing the origin notice never fails or undoes the decision:
+/// the notice is best-effort (logged and skipped), the decision commits with its audit row.
+#[tokio::test]
+async fn a_failing_origin_notice_does_not_fail_the_decision() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    // The waiting notice went out before the trouble starts.
+    d.report_approval(id).await;
+    d.rig.finish_turn(d.turn).await;
+    // From here the database refuses every origin notice (`peer_*`) write.
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION aurora_peer_notice_fail() RETURNS trigger AS $$
+         BEGIN IF NEW.type = 'notice' AND NEW.payload->>'code' LIKE 'peer_%'
+         THEN RAISE EXCEPTION 'test: refused notice'; END IF; RETURN NEW; END;
+         $$ LANGUAGE plpgsql",
+    )
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER aurora_peer_notice_trg BEFORE INSERT ON transcript_events
+         FOR EACH ROW EXECUTE FUNCTION aurora_peer_notice_fail()",
+    )
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    // The person who can approve decides; the decision itself goes through.
+    let (s, v) = d
+        .rig
+        .post(
+            &d.rig.p,
+            &format!("/v1/approvals/{id}/decision"),
+            Some(json!({"decision": "approve"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (status,): (String,) =
+        sqlx::query_as("SELECT status FROM approvals WHERE id = $1")
+            .bind(id)
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(status, "approved");
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM audit_log WHERE action = 'approval.decide'",
+    )
+    .fetch_one(d.rig.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "the decision committed with its audit row");
+    // The refused notice never landed in the origin conversation.
+    assert_eq!(
+        d.rig.notices(d.conv, "peer_approval_decided").await.len(),
+        0
+    );
+}
