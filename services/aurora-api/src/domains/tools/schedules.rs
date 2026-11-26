@@ -221,8 +221,9 @@ impl PlatformTool for CreateT {
             ));
         }
         // (FIX-253 review) A delegated task ends; a repeating schedule from its peer turn would
-        // keep running as the requester without the task. From a peer turn: one-time only.
-        if from_task && a.run_at.is_none() {
+        // keep running as the requester without the task. From a peer turn: one-time only — a
+        // request that carries a `cron` is recurring, `run_at` alone (or nothing) is not.
+        if from_task && a.cron.is_some() {
             return Err(ToolError::Failed(
                 "a delegated task can only set a one-time wake-up: give `run_at` (a repeating schedule belongs to the person themselves).".into(),
             ));
