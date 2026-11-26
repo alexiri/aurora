@@ -565,9 +565,14 @@ pub struct RequesterWaiting {
     pub requester_user_id: Uuid,
 }
 
+/// (FIX-252) A gateway approval raised in a peer task conversation, still `pending` after
+/// `delay_secs`, with the person who asked and a push subscription: the requester's devices are
+/// pushed after the same delay as every approval push — unless they are watching live (the
+/// deciders' rule): a watcher row of their own seen within `watcher_ttl_secs`.
 pub async fn waiting_for_requesters(
     pool: &PgPool,
     delay_secs: f64,
+    watcher_ttl_secs: f64,
     limit: i64,
 ) -> Result<Vec<RequesterWaiting>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(
@@ -585,9 +590,14 @@ pub async fn waiting_for_requesters(
            AND NOT EXISTS (SELECT 1 FROM approval_push_claims c \
                            WHERE c.approval_id = a.id AND c.user_id = pt.requester_user_id \
                              AND c.stage = 'initial') \
-         ORDER BY a.created_at LIMIT $2",
+           AND NOT EXISTS (SELECT 1 FROM approval_watchers wt \
+                           WHERE wt.workspace_id = a.workspace_id \
+                             AND wt.user_id = pt.requester_user_id \
+                             AND wt.last_seen_at > now() - make_interval(secs => $2)) \
+         ORDER BY a.created_at LIMIT $3",
     ))
     .bind(delay_secs)
+    .bind(watcher_ttl_secs)
     .bind(limit)
     .fetch_all(pool)
     .await?)

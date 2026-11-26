@@ -1172,3 +1172,33 @@ async fn a_requester_served_as_a_decider_is_not_pushed_twice() {
     .unwrap();
     assert_eq!(sweep(&w).await, 0);
 }
+
+/// (FIX-252) The requester's push follows the deciders' rule: while they are watching live (a
+/// fresh watcher row of their own — possible only when they can decide there) nothing is
+/// pushed; once the watcher goes stale the push goes out after the same delay.
+#[tokio::test]
+async fn a_requester_watching_live_is_not_pushed() {
+    let w = world().await;
+    let req = person(&w, "req@x.io", "owner").await;
+    register(&w, &req, "/p1", true).await;
+    let id = peer_approval(&w, req.id).await;
+    sqlx::query("INSERT INTO approval_watchers (replica_id, user_id, workspace_id, last_seen_at) VALUES ($1,$2,$3,now())")
+        .bind(Uuid::now_v7()).bind(req.id).bind(w.f.ws).execute(w.h.pool()).await.unwrap();
+    age(&w).await;
+    assert_eq!(sweep(&w).await, 0);
+    // The watcher goes stale: the push is the fallback (one push — the shared claim).
+    sqlx::query("UPDATE approval_watchers SET last_seen_at = now() - interval '1 hour'")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert!(sweep(&w).await > 0);
+    let (stage, delivery): (String, String) = sqlx::query_as(
+        "SELECT stage, delivery FROM approval_push_claims WHERE approval_id = $1 AND user_id = $2",
+    )
+    .bind(id)
+    .bind(req.id)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((stage.as_str(), delivery.as_str()), ("initial", "push"));
+}

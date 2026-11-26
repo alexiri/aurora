@@ -296,9 +296,15 @@ pub async fn notify_once(s: &AppState) -> Result<usize, ApiError> {
         }
     }
     // (FIX-252) The person who asked for a peer task hears about the approval wait through their
-    // own channels, after the same delay; the shared claim serves a requester-decider once.
-    for u in &repo::unseen_for_requesters(&s.pool, APPROVAL_NOTIFY_DELAY.as_secs_f64(), SWEEP_LIMIT)
-        .await?
+    // own channels, after the same delay and under the deciders' rule (a live surface showing
+    // the card keeps them quiet); the shared claim serves a requester-decider once.
+    for u in &repo::unseen_for_requesters(
+        &s.pool,
+        APPROVAL_NOTIFY_DELAY.as_secs_f64(),
+        APPROVAL_WATCHER_TTL.as_secs_f64(),
+        SWEEP_LIMIT,
+    )
+    .await?
     {
         if !repo::claim(&s.pool, u.id, u.requester_user_id, "gateway", "mail").await? {
             continue; // served as a decider, or another replica won

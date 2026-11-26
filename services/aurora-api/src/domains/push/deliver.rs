@@ -814,14 +814,19 @@ pub async fn sweep_once(state: &AppState) -> Result<usize, ApiError> {
 }
 
 /// (FIX-252) One push per device of the person who asked for a peer task whose approval is
-/// waiting, after the same delay as every approval push; the hourly cap folds the rest (the
-/// dashboard and the origin conversation still show the card). The shared `(approval, user,
-/// stage)` claim serves a requester who is also a decider once. Returns the pushes attempted.
+/// waiting, after the same delay as every approval push and under the deciders' rule (a watcher
+/// row of their own keeps them quiet); the hourly cap folds the rest (the dashboard and the
+/// origin conversation still show the card). The shared `(approval, user, stage)` claim serves
+/// a requester who is also a decider once. Returns the pushes attempted.
 async fn serve_requesters(state: &AppState) -> Result<usize, ApiError> {
     let mut sent = 0;
-    for w in
-        &repo::waiting_for_requesters(&state.pool, APPROVAL_PUSH_DELAY.as_secs_f64(), SWEEP_LIMIT)
-            .await?
+    for w in &repo::waiting_for_requesters(
+        &state.pool,
+        APPROVAL_PUSH_DELAY.as_secs_f64(),
+        APPROVAL_WATCHER_TTL.as_secs_f64(),
+        SWEEP_LIMIT,
+    )
+    .await?
     {
         if repo::claimed(&state.pool, w.id, w.requester_user_id, "initial").await? {
             continue; // served as a decider, or another replica won

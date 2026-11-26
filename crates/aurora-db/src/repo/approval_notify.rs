@@ -114,6 +114,17 @@ pub struct Unseen {
     pub org_slug: String,
 }
 
+/// A channel card for the approval whose `message.post` op finished: the people in that
+/// conversation already see the card, so it is a live delivery surface (the card half of the
+/// notify rule, shared by the deciders' and the requester's sweeps).
+fn posted_card(kind: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM channel_cards cc JOIN channel_ops co ON co.id = cc.post_op_id \
+           WHERE cc.subject_kind = '{kind}' AND cc.subject_id = a.id \
+             AND co.status = 'done' AND cc.state IN ('posted', 'settled'))"
+    )
+}
+
 /// Pending approvals older than `delay_secs` that are still decidable, have not been served yet
 /// and have **no live delivery surface**: (a) no channel card whose `message.post` op finished,
 /// and (b) no decider holding a watcher row seen within `ttl_secs`.
@@ -128,13 +139,6 @@ pub async fn unseen(
            AND wt.last_seen_at > now() - make_interval(secs => $2) AND {})",
         may_decide("wt.user_id")
     );
-    let card = |kind: &str| {
-        format!(
-            "EXISTS (SELECT 1 FROM channel_cards cc JOIN channel_ops co ON co.id = cc.post_op_id \
-               WHERE cc.subject_kind = '{kind}' AND cc.subject_id = a.id \
-                 AND co.status = 'done' AND cc.state IN ('posted', 'settled'))"
-        )
-    };
     let gateway = format!(
         "SELECT a.id, 'gateway'::text AS kind, a.org_id, a.workspace_id, a.agent_id, \
             a.conversation_id, a.batch_id, \
@@ -152,7 +156,7 @@ pub async fn unseen(
            AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
                            WHERE n.approval_id = a.id AND n.stage = 'initial') \
            AND NOT {} AND NOT {watcher}",
-        card("approval")
+        posted_card("approval")
     );
     let action = format!(
         "SELECT a.id, 'action'::text AS kind, w.org_id, a.workspace_id, a.agent_id, \
@@ -167,7 +171,7 @@ pub async fn unseen(
            AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
                            WHERE n.approval_id = a.id AND n.stage = 'initial') \
            AND NOT {} AND NOT {watcher}",
-        card("action_approval")
+        posted_card("action_approval")
     );
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, kind, org_id, workspace_id, agent_id, conversation_id, batch_id, title, \
@@ -184,9 +188,10 @@ pub async fn unseen(
 
 /// (FIX-252) A gateway approval raised in a peer task conversation, still `pending` after
 /// `delay_secs`, with the person who asked for the task and their e-mail: the requester hears
-/// about the wait through their own channels once the delay passes, whatever surfaces the
-/// approval already has (the origin card is at the thread they asked in — this is the push and
-/// the e-mail's turn). Only users who have not turned approval e-mails off.
+/// about the wait through their own channels once the delay passes — unless a live surface
+/// already shows the card, the deciders' rule: the origin card posted to the thread they asked
+/// in, or a watcher row of their own seen within `ttl_secs` (they are looking at the approvals
+/// page). Only users who have not turned approval e-mails off.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct RequesterUnseen {
     pub id: Uuid,
@@ -206,9 +211,13 @@ pub struct RequesterUnseen {
 pub async fn unseen_for_requesters(
     pool: &PgPool,
     delay_secs: f64,
+    ttl_secs: f64,
     limit: i64,
 ) -> Result<Vec<RequesterUnseen>, DbError> {
-    Ok(sqlx::query_as(sqlx::AssertSqlSafe(
+    let watcher = "EXISTS (SELECT 1 FROM approval_watchers wt WHERE wt.workspace_id = a.workspace_id \
+           AND wt.user_id = pt.requester_user_id \
+           AND wt.last_seen_at > now() - make_interval(secs => $2))";
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT a.id, a.org_id, a.workspace_id, \
             CASE WHEN COALESCE(a.summary->>'source', 'generic') = 'generic' \
                  THEN 'send a ' || a.method || ' request to ' || a.host \
@@ -230,9 +239,12 @@ pub async fn unseen_for_requesters(
            AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
                            WHERE n.approval_id = a.id AND n.user_id = u.id \
                              AND n.stage = 'initial') \
-         ORDER BY a.created_at LIMIT $2",
-    ))
+           AND NOT {} AND NOT {watcher} \
+         ORDER BY a.created_at LIMIT $3",
+        posted_card("approval")
+    )))
     .bind(delay_secs)
+    .bind(ttl_secs)
     .bind(limit)
     .fetch_all(pool)
     .await?)
