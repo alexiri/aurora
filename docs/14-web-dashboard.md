@@ -171,9 +171,17 @@ to do its own way. A page uses these; a new page never invents its own. (Mock-up
   control that saves on its own (a switch, a select in a row, the avatar, an access level) shows the small
   **InlineSaved** next to it. `ApplyBar` is retired.
 - **One-time secrets.** `SecretOnce` (`ui/secret-once.tsx`) shows every key, token, signing secret and
-  webhook URL: the value in a mono box that scrolls and never wraps, **Copy** → **Copied**; closing (the X,
-  Escape, the overlay or the button) before it was copied asks "You haven't copied it. Close anyway?" with
-  **Copy** and **Close anyway**. The value lives only in the opener's state.
+  webhook URL: the value in a mono box that scrolls and never wraps, and a **Copy** button that gives
+  feedback on every click — **Copied** with a check for about two seconds, then **Copy again**; every
+  click copies again, and the screen-reader status line announces each copy in changing words. A
+  browser that refuses the write (or has no async clipboard: a focus trap, an iframe, a non-secure
+  context) falls back to selecting the text and `execCommand("copy")`, and shows "Your browser blocked
+  copying; select the text instead."; the button stays **Copy**. Closing (the X, Escape, the overlay or
+  the button) before it was copied asks "You haven't copied it. Close anyway?" with **Copy** and
+  **Close anyway**. The value lives only in the opener's state. A one-time secret dialog is never a
+  bare code: it says what the value is, why it must be copied now and where it goes (the new-agent
+  webhook secret dialog is the pattern: a one-sentence lead, a short list of steps, "Webhook 1 of 2"
+  when a template made several).
 - **Confirm ladder.** Undoable actions (pause, remove from a list, turn off) do not ask: a toast with
   **Undo** (`useUndoToast`, six seconds; it can carry a check mark and one link, as Run now's "Started · Open the
   conversation"). Reversible but disruptive actions (rotate, promote, pause an
