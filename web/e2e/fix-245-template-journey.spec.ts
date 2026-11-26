@@ -2,7 +2,7 @@ import { expect as baseExpect, test, type Page } from "@playwright/test";
 
 import { serious } from "./support/axe";
 import { id } from "./support/mock-api";
-import { CANVAS, overflow } from "./support/open";
+import { overflow } from "./support/open";
 import { mockAgentTemplates } from "./support/agent-templates";
 import { mockWorkspaceTemplates } from "./support/new-agent-templates";
 
