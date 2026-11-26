@@ -462,6 +462,8 @@ async fn seed_world() -> World {
         .fetch_one(h.pool())
         .await
         .unwrap();
+    // (FIX-246) A BYO agent, so the agent list's BYO view exists to be withheld.
+    h.byo_agent(org, ws, "inv-byo", "Inventory BYO").await;
     // (FIX-246) A person-written brief: the agent list answers an administrator without it.
     sqlx::query("UPDATE agents SET brief = 'MATRIX-agent-brief-content' WHERE workspace_id=$1")
         .bind(ws)
@@ -819,6 +821,15 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
                 "ADMINISTER {m} {p} leaked content marker {marker}: {text}"
             );
         }
+        if *p == "/workspaces/{ws}/agents" {
+            // The BYO agent is listed, and its governance view is withheld.
+            let items = v["items"].as_array().unwrap();
+            assert!(
+                items.iter().any(|a| a["kind"] == "byo"),
+                "the BYO agent is listed: {v}"
+            );
+            assert!(items.iter().all(|a| a["byo"].is_null()), "no BYO view: {v}");
+        }
         // The by-email row for the pending-delete later in the walk.
         if *p == "/workspaces/{ws}/access/by-email" {
             let (s, v) =
@@ -1111,6 +1122,14 @@ async fn emergency_reader_reads_the_readauth_routes_and_is_refused_everywhere_el
                 assert!(
                     v.to_string().contains("MATRIX-agent-brief-content"),
                     "the emergency reader reads the agents' briefs: {v}"
+                );
+                assert!(
+                    v["items"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|a| a["kind"] == "byo" && !a["byo"].is_null()),
+                    "the emergency reader sees the BYO view: {v}"
                 );
             }
             if *p == "/agents/{agent}/memories" {
