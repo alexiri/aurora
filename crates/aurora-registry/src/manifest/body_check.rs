@@ -336,7 +336,21 @@ mod tests {
             "entry_member": {
                 "data": [
                     { "at": 0, "member": "model",
-                      "keys": ["editorMode", "expr", "instant", "legendFormat", "refId"] }
+                      "keys": ["editorMode", "expr", "instant", "legendFormat", "refId"] },
+                    { "at": 1, "member": "model",
+                      "keys": ["conditions", "datasource", "expression", "reducer", "refId", "type"],
+                      "value": { "key": "type", "value": "reduce" } },
+                    { "at": 1, "member": "model/conditions/0",
+                      "keys": ["evaluator", "operator", "query", "reducer", "type"] },
+                    { "at": 1, "member": "model/conditions/0/evaluator",
+                      "keys": ["params", "type"] },
+                    { "at": 2, "member": "model",
+                      "keys": ["conditions", "datasource", "expression", "refId", "type"],
+                      "value": { "key": "type", "value": "threshold" } },
+                    { "at": 2, "member": "model/conditions/0",
+                      "keys": ["evaluator", "operator", "query", "reducer", "type"] },
+                    { "at": 2, "member": "model/conditions/0/evaluator",
+                      "keys": ["params", "type"] }
                 ]
             },
             "only_keys": {
@@ -349,14 +363,31 @@ mod tests {
     }
 
     /// One `data` step the way the script's builder sends it: the first step queries the named
-    /// data source, the steps after it are the receiver's own reduce and threshold steps.
+    /// data source, the steps after it are the receiver's own reduce and threshold steps, with
+    /// the conditions the approval card reads its comparison and threshold from.
     fn step(ref_id: &str, ds: &str) -> Value {
         let mut s = json!({
             "refId": ref_id, "datasourceUid": ds, "queryType": "",
             "relativeTimeRange": { "from": 300, "to": 0 },
         });
         if ds == "__expr__" {
-            s["model"] = json!({ "expression": ref_id, "type": "reduce", "refId": ref_id });
+            let mut m = json!({
+                "conditions": [{
+                    "evaluator": { "params": [], "type": "gt" },
+                    "operator": { "type": "and" },
+                    "query": { "params": [ref_id] },
+                    "reducer": { "params": [], "type": "last" },
+                    "type": "query"
+                }],
+                "datasource": { "type": "__expr__", "uid": "__expr__" },
+                "expression": if ref_id == "B" { "A" } else { "B" },
+                "refId": ref_id,
+                "type": if ref_id == "B" { "reduce" } else { "threshold" },
+            });
+            if ref_id == "B" {
+                m["reducer"] = json!("last");
+            }
+            s["model"] = m;
         } else {
             s["model"] = json!({ "expr": "up", "instant": true, "refId": ref_id });
         }
@@ -387,6 +418,19 @@ mod tests {
             c.violation(serde_json::to_vec(&body).unwrap().as_slice(), false),
             None
         );
+        // The rule read back before an update: the first step's model carries no refId
+        // (Grafana stores the model without it), everything else is the script's shape.
+        let mut data = steps();
+        data[0]
+            .as_object_mut()
+            .unwrap()
+            .get_mut("model")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("refId");
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        assert_eq!(c.violation(b.as_slice(), false), None);
     }
 
     #[test]
@@ -460,6 +504,61 @@ mod tests {
         let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
         let why = c.violation(b.as_slice(), false).unwrap();
         assert!(why.contains("must be a JSON object"), "{why}");
+    }
+
+    #[test]
+    fn the_expression_steps_are_the_ones_the_script_builds() {
+        let c = check();
+        // The script's reduce and threshold steps pass with the whole body.
+        let b = serde_json::to_vec(&json!({ "data": steps() })).unwrap();
+        assert_eq!(c.violation(b.as_slice(), false), None);
+        // The reduce step's model carrying another expression type is refused (a `math` step
+        // computes whatever it likes while the card shows the threshold step's comparison).
+        for (i, ty) in [(1usize, "math"), (1, "Reduce"), (2, "threshold\u{0}") ] {
+            let mut data = steps();
+            data[i]["model"]["type"] = json!(ty);
+            let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+            let why = c.violation(b.as_slice(), false).unwrap();
+            assert!(
+                why.contains("type"),
+                "step {i} with model type {ty:?} passed: {why}"
+            );
+        }
+        // The threshold step's model type is pinned the same way.
+        let mut data = steps();
+        data[2]["model"]["type"] = json!("reduce");
+        let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+        assert!(c.violation(b.as_slice(), false).is_some());
+    }
+
+    #[test]
+    fn the_expression_steps_refuse_case_variants_of_the_checked_keys() {
+        let c = check();
+        // A second spelling of a checked key at any level the card reads: the receiver's
+        // parser keeps the last case-insensitive match, so the real conditions (or the real
+        // threshold) would hide behind the ones the card shows.
+        for (i, place, key) in [
+            (1usize, "model", "Conditions"),
+            (1, "model", "Type"),
+            (2, "model/conditions/0", "Evaluator"),
+            (2, "model/conditions/0/evaluator", "Params"),
+        ] {
+            let mut data = steps();
+            let mut cur = data[i].get_mut("model").unwrap();
+            for seg in place.split('/').skip(1) {
+                cur = match seg.parse::<usize>() {
+                    Ok(n) => cur.get_mut(n).unwrap(),
+                    Err(_) => cur.get_mut(seg).unwrap(),
+                };
+            }
+            cur.as_object_mut().unwrap().insert(key.into(), json!({}));
+            let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
+            let why = c.violation(b.as_slice(), false).unwrap();
+            assert!(
+                why.contains(&format!("`{key}`")),
+                "{place}/{key} passed: {why}"
+            );
+        }
     }
 
     #[test]

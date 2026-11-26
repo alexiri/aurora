@@ -181,6 +181,16 @@ apps:
               entry_member:
                 data:
                   - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                  # The two expression steps the receiver runs itself: each model is what the
+                  # script's builder sends, its `type` is the one the script builds, and the
+                  # conditions the card reads its comparison and threshold from carry no
+                  # second spelling for the receiver's parser to prefer.
+                  - { at: 1, member: model, keys: [conditions, datasource, expression, reducer, refId, type], value: { key: type, value: reduce } }
+                  - { at: 1, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
+                  - { at: 1, member: model/conditions/0/evaluator, keys: [params, type] }
+                  - { at: 2, member: model, keys: [conditions, datasource, expression, refId, type], value: { key: type, value: threshold } }
+                  - { at: 2, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
+                  - { at: 2, member: model/conditions/0/evaluator, keys: [params, type] }
           - id: update_alert_rule
             description: "Changes one Grafana-managed alert rule the agent manages (sends the whole rule the grafana-alerts script read and changed)."
             name: Change an alert rule
@@ -203,6 +213,16 @@ apps:
               entry_member:
                 data:
                   - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                  # The two expression steps the receiver runs itself: each model is what the
+                  # script's builder sends, its `type` is the one the script builds, and the
+                  # conditions the card reads its comparison and threshold from carry no
+                  # second spelling for the receiver's parser to prefer.
+                  - { at: 1, member: model, keys: [conditions, datasource, expression, reducer, refId, type], value: { key: type, value: reduce } }
+                  - { at: 1, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
+                  - { at: 1, member: model/conditions/0/evaluator, keys: [params, type] }
+                  - { at: 2, member: model, keys: [conditions, datasource, expression, refId, type], value: { key: type, value: threshold } }
+                  - { at: 2, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
+                  - { at: 2, member: model/conditions/0/evaluator, keys: [params, type] }
           - { id: delete_alert_rule, description: "Deletes one Grafana-managed alert rule the agent manages.", name: Delete an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [DELETE] }
     approvals:
       create_annotation:
