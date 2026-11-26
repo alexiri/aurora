@@ -297,8 +297,9 @@ pub async fn request_abort(conn: &mut PgConnection, id: Uuid) -> Result<Option<T
 
 /// (FIX-253, D-490) Set the abort flag on a **finished** turn so the due-work dispatch releases
 /// the conversation's idle harness session and its background work with it. Only a turn that has
-/// an unstopped Background activity entry qualifies; the dispatch clears the flag when it has
-/// claimed the release, so this fires once.
+/// an unstopped Background activity entry qualifies, and only once: the **Stop requested** mark
+/// the first request leaves stands until the supervisor's release is acknowledged
+/// (FIX-253 review) — until then the request is in flight, never re-armed by a second Stop.
 pub async fn request_background_stop(
     conn: &mut PgConnection,
     id: Uuid,
@@ -313,7 +314,8 @@ pub async fn request_background_stop(
                AND NOT EXISTS (
                  SELECT 1 FROM transcript_events e2
                  WHERE e2.conversation_id = e.conversation_id AND e2.seq > e.seq
-                   AND e2.type = 'notice' AND e2.payload->>'code' = 'background_stopped'))"
+                   AND e2.type = 'notice'
+                   AND e2.payload->>'code' IN ('background_stopped', 'background_stop_requested')))"
     )))
     .bind(id)
     .execute(&mut *conn)

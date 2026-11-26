@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use aurora_protocol::runner::{
     Code, Gate, GateOutcome, HarnessId, HarnessInfo, HomeSynced, PortsState, SendNowOutcome,
-    SendNowResult, SessionPurged, SessionReport, SteerOutcome, SteerResult, SupervisorReady,
-    TurnDeliver, TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
+    SendNowResult, SessionPurged, SessionReleased, SessionReport, SteerOutcome, SteerResult,
+    SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use serde_json::{Map, Value, json};
@@ -388,20 +388,30 @@ impl Supervisor {
         }
     }
 
-    /// Releases one conversation's harness session; one with a running turn is never interrupted.
+    /// Releases one conversation's harness session; one with a running turn is never interrupted
+    /// (the release waits for it — the request comes again). The outcome is reported
+    /// (`session.released`): the API records the **Background activity stopped** notice only on
+    /// an acknowledged release (FIX-253 review).
     async fn release_session(&mut self, conversation_id: Uuid) {
-        if self
+        let ok = if self
             .turns
             .values()
             .any(|t| t.conversation_id == conversation_id)
         {
-            return;
-        }
-        if let Some(e) = self.sessions.remove(&conversation_id)
-            && let Ok(m) = Arc::try_unwrap(e.session)
-        {
-            let _ = m.into_inner().release().await;
-        }
+            false
+        } else {
+            if let Some(e) = self.sessions.remove(&conversation_id)
+                && let Ok(m) = Arc::try_unwrap(e.session)
+            {
+                let _ = m.into_inner().release().await;
+            }
+            true
+        };
+        self.send(SupervisorToRunner::SessionReleased(SessionReleased {
+            conversation_id,
+            ok,
+        }))
+        .await;
     }
 
     /// (P5-GUIDE-7, C-654) A sync changed what new sessions are told (core descriptors or the

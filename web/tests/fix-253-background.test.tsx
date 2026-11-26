@@ -80,4 +80,27 @@ describe("background activity notice (FIX-253, D-490)", () => {
     expect(screen.getByText("Background activity stopped.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
   });
+
+  // (FIX-253 review) While the release is in flight the entry says **Stop requested** and the
+  // button is out: the durable stopped notice comes only with the supervisor's acknowledgement.
+  it("shows Stop requested and disables the button until the release is acknowledged", () => {
+    st.events = [
+      e(1, "turn.finished", { turn_id: "t1", status: "done" }),
+      e(2, "notice", {
+        code: "background_activity",
+        turn_id: "t1",
+        text: "Background activity, still running: `npm run e2e:full`",
+        items: [{ command: "npm run e2e:full", started_at: 1700000000 }],
+      }),
+      e(3, "notice", { code: "background_stop_requested", turn_id: "t1", text: "Stop requested." }),
+    ];
+    const calls = mock({ "POST /v1/turns/t1/abort": () => json(202, { id: "t1", abort_requested: true }) });
+    pane();
+    expect(screen.getByText("Stop requested.")).toBeTruthy();
+    const row = screen.getByTestId("background-activity");
+    const stop = within(row).getByRole("button", { name: "Stop" }) as HTMLButtonElement;
+    expect(stop.disabled).toBe(true);
+    fireEvent.click(stop);
+    expect(calls.some((c) => c.method === "POST" && c.path === "/v1/turns/t1/abort")).toBe(false);
+  });
 });

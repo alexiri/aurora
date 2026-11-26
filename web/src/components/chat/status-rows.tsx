@@ -421,9 +421,10 @@ export function SystemRow({ children }: { children: React.ReactNode }) {
 /**
  * (FIX-253, D-490) The **Background activity** notice: what the harness child keeps doing after
  * the turn ended, with Stop. The row stays (the transcript renders it muted once the durable
- * `background_stopped` notice exists); the button is only for a still-running entry.
+ * `background_stopped` notice exists); the button is only for a still-running entry, and is
+ * disabled while the release is in flight (the **Stop requested** notice stands, FIX-253 review).
  */
-export function BackgroundActivityNotice({ text, turnId }: { text: string; turnId: string }) {
+export function BackgroundActivityNotice({ text, turnId, requested = false }: { text: string; turnId: string; requested?: boolean }) {
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   return (
@@ -432,7 +433,7 @@ export function BackgroundActivityNotice({ text, turnId }: { text: string; turnI
       <Button
         size="sm"
         variant="outline"
-        disabled={busy}
+        disabled={busy || requested}
         onClick={() => {
           setBusy(true);
           setErr(null);

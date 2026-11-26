@@ -18,6 +18,7 @@ use crate::runner::{
     Code, ExecEof, ExecExit, ExecOpen, ExecOpened, ExecRefused, GateResult, HomeSync, HomeSynced,
     MemoryWrite, PortsState, PreviewStartFrame, ProcessStates, PtyClose, PtyCredit, PtyOpen,
     PtyOpened, PtyRefused, PtyResize, SandboxStatus, SendNowResult, SessionPurge, SessionPurged,
+    SessionReleased,
     SessionRelease, SessionReport, SteerResult, StreamClose, StreamCredit, StreamOpen,
     StreamOpened, StreamRefused, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnNotice,
     TurnRef, TurnResult, WatchFired,
@@ -220,6 +221,7 @@ tagged_open! {
         SendNowResult(SendNowResult) = "send_now.result",
         Session(SessionReport) = "session",
         SessionPurged(SessionPurged) = "session.purged",
+        SessionReleased(SessionReleased) = "session.released",
         // (phase 4, P4-HAR, D-153) boot refusal before `ready`: `{ state: "failed", reason_code:
         // "harness_unsupported", message }`; the runner forwards it as the sandbox's status.
         SandboxStatus(SandboxStatus) = "sandbox.status",

@@ -597,6 +597,15 @@ pub struct SessionPurged {
     pub ok: bool,
 }
 
+/// (FIX-253 review) Outcome of a [`SessionRelease`]: `ok = true` means the conversation's harness
+/// session is released (its background work with it); `ok = false` means a turn is still running
+/// and the release waits for it — the request is re-sent after its lease.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionReleased {
+    pub conversation_id: Uuid,
+    pub ok: bool,
+}
+
 /// (phase 4, P4-PRV-1, D-145) On-demand start of a share's app: the work item the API enqueues
 /// when the share's port is not listening. The command text never travels on the wire: the
 /// supervisor looks the command up in its in-memory share list (home-sync part `previews`).
@@ -1408,6 +1417,7 @@ tagged_open! {
         SendNowResult(SendNowResult) = "send_now.result",
         Session(SessionReport) = "session",
         SessionPurged(SessionPurged) = "session.purged",
+        SessionReleased(SessionReleased) = "session.released",
         ProcessState(ProcessStates) = "process.state",
         WatchFired(WatchFired) = "watch.fired",
         GateResult(GateResult) = "gate.result",

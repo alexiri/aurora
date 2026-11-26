@@ -195,12 +195,13 @@ export function TranscriptView({
                   if (!reset) return <ContinueNotice key={r.key} text={s(p.text)} convId={convId} />;
                 }
                 // (FIX-253, D-490) Background activity: the Stop button only while nothing stands;
-                // a later durable `background_stopped` notice mutes the row.
+                // a durable `background_stop_requested` notice disables it until the acknowledged
+                // release, and a later durable `background_stopped` notice mutes the row.
                 if (s(p.code) === "background_activity") {
                   // The durable `background_stopped` notice is the visible line; the entry row mutes away.
-                  const stopped = state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === "background_stopped");
-                  if (stopped) return null;
-                  return <BackgroundActivityNotice key={r.key} text={s(p.text)} turnId={s(p.turn_id)} />;
+                  const later = (code: string) => state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === code);
+                  if (later("background_stopped")) return null;
+                  return <BackgroundActivityNotice key={r.key} text={s(p.text)} turnId={s(p.turn_id)} requested={later("background_stop_requested")} />;
                 }
                 // (P5-UX-17, C-984) An agent's request for access is a card; its outcome is one line.
                 if (s(p.code) === "app_connection_requested" || s(p.code) === "secret_proposed") {

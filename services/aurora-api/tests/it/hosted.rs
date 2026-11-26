@@ -566,11 +566,12 @@ async fn turn_events(r: &Rig, turn: &str) -> Vec<(String, Value)> {
     .unwrap()
 }
 
-/// The `background_activity` / `background_stopped` notices of the test conversation, in order.
+/// The `background_*` notices of the test conversation, in order.
 async fn background_notices(r: &Rig) -> Vec<(String, Value)> {
     sqlx::query_as::<_, (String, Value)>(
         "SELECT payload->>'code', payload FROM transcript_events
-         WHERE type = 'notice' AND payload->>'code' IN ('background_activity','background_stopped')
+         WHERE type = 'notice' AND payload->>'code' IN
+           ('background_activity','background_stop_requested','background_stopped')
          ORDER BY seq",
     )
     .fetch_all(r.h.pool())
@@ -580,8 +581,9 @@ async fn background_notices(r: &Rig) -> Vec<(String, Value)> {
 
 /// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
 /// `background` turn event: one visible **Background activity** notice (deduped while it keeps
-/// running), and Stop on a finished turn records `background_stopped` and dispatches one
-/// `session.release` — the child's background work dies with the session.
+/// running), and Stop on a finished turn records **Stop requested** and dispatches one
+/// `session.release` (re-sent on its lease until acknowledged) — the durable **stopped** notice
+/// is written only when the supervisor acknowledges the release (FIX-253 review).
 #[tokio::test]
 async fn background_activity_is_visible_deduped_and_stoppable() {
     let r = rig().await;
@@ -620,7 +622,8 @@ async fn background_activity_is_visible_deduped_and_stoppable() {
     .await;
     assert_eq!(background_notices(&r).await.len(), 1);
 
-    // Stop on the finished turn: the mark, then one session.release (claimed once).
+    // Stop on the finished turn: the request mark, then one session.release (sent once per
+    // lease until acknowledged).
     r.report(
         &lv,
         json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
@@ -632,7 +635,8 @@ async fn background_activity_is_visible_deduped_and_stoppable() {
     assert_eq!(s, 202, "{v}");
     let evs = background_notices(&r).await;
     assert_eq!(evs.len(), 2, "{evs:?}");
-    assert_eq!(evs[1].0, "background_stopped");
+    assert_eq!(evs[1].0, "background_stop_requested", "{evs:?}");
+    assert_eq!(evs[1].1["text"], "Stop requested.");
     let items = r.work().await;
     let rel = items
         .iter()
@@ -648,7 +652,35 @@ async fn background_activity_is_visible_deduped_and_stoppable() {
             .await
             .iter()
             .all(|i| i["kind"] != "session.release"),
-        "claimed once"
+        "sent once per lease, not every poll"
+    );
+
+    // Not acknowledged yet: the entry still stands, only **Stop requested**.
+    assert_eq!(background_notices(&r).await.len(), 2);
+
+    // The supervisor acknowledges the release: the durable **stopped** notice, once.
+    let st = r
+        .report(
+            &lv,
+            json!({"kind": "session.released", "conversation_id": lv.conv, "ok": true}),
+        )
+        .await;
+    assert_eq!(st, "applied", "{st}");
+    r.report(
+        &lv,
+        json!({"kind": "session.released", "conversation_id": lv.conv, "ok": true}),
+    )
+    .await;
+    let evs = background_notices(&r).await;
+    assert_eq!(evs.len(), 3, "{evs:?}");
+    assert_eq!(evs[2].0, "background_stopped");
+    assert_eq!(evs[2].1["text"], "Background activity stopped.");
+    assert!(
+        r.work()
+            .await
+            .iter()
+            .all(|i| i["kind"] != "session.release"),
+        "the acknowledged request is closed"
     );
 
     // Without an unstopped entry the same right is the ordinary finished-turn refusal.
@@ -656,6 +688,68 @@ async fn background_activity_is_visible_deduped_and_stoppable() {
         .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
         .await;
     assert_eq!(s, 409, "{v}");
+}
+
+/// (FIX-253 review) A deferred background stop (the supervisor could not release yet — a turn
+/// was running) stays **requested**: no stopped notice, the request stays armed, and only the
+/// later acknowledgement writes the **stopped** notice.
+#[tokio::test]
+async fn a_deferred_background_stop_stays_requested_until_acknowledged() {
+    let r = rig().await;
+    let lv = r.boot("bgdefer").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn})).await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [ev(
+            1, "background",
+            json!({"items": [{"command": "npm run e2e:full", "started_at": 1700000000u64}]}),
+        )]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    assert_eq!(
+        background_notices(&r).await.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(),
+        ["background_activity", "background_stop_requested"]
+    );
+    // The release is claimed but deferred: the request stays armed.
+    let (armed,): (bool,) = sqlx::query_as(
+        "SELECT abort_requested_at IS NOT NULL FROM turns WHERE id = $1::uuid",
+    )
+    .bind(&turn)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(armed, "the request stays armed while in flight");
+    let st = r
+        .report(
+            &lv,
+            json!({"kind": "session.released", "conversation_id": lv.conv, "ok": false}),
+        )
+        .await;
+    assert_eq!(st, "duplicate", "the deferral changed nothing (like a purge)");
+    assert_eq!(
+        background_notices(&r).await.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(),
+        ["background_activity", "background_stop_requested"],
+        "a deferral writes no stopped notice"
+    );
+    // The release finally happens (the turn ended): the acknowledgement closes the request.
+    r.report(
+        &lv,
+        json!({"kind": "session.released", "conversation_id": lv.conv, "ok": true}),
+    )
+    .await;
+    let evs = background_notices(&r).await;
+    assert_eq!(evs.last().unwrap().0, "background_stopped", "{evs:?}");
 }
 
 /// (P5-REFINE-7, C-1075) Stop keeps what was written (`partial: true`) and leaves the

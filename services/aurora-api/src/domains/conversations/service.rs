@@ -1368,13 +1368,15 @@ pub async fn abort(state: &AppState, c: &Caller, id: Uuid) -> Result<Turn, ApiEr
         let Some(row) = turns::request_background_stop(&mut tx, id).await? else {
             return Err(finished());
         };
+        // (FIX-253 review) The release has not happened yet: the entry says **Stop requested**
+        // until the supervisor's acknowledged release writes the **stopped** notice.
         transcript::append_durable_event(
             &mut tx,
             row.conversation_id,
             Some(row.id),
             "notice",
-            &json!({"code": "background_stopped", "turn_id": row.id,
-                "text": "Background activity stopped."}),
+            &json!({"code": "background_stop_requested", "turn_id": row.id,
+                "text": "Stop requested."}),
         )
         .await?;
         let out = turns::get(&mut *tx, row.id).await?.unwrap_or(row);
