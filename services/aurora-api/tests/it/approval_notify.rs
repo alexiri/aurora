@@ -347,3 +347,110 @@ async fn stream_registers_a_watcher_and_created_carries_only_the_notice() {
         "{seen}"
     );
 }
+
+// ---------------------------------------------------------------- FIX-252: the requester
+
+/// A pending gateway approval raised in a peer task conversation that `requester` asked for.
+async fn peer_approval(h: &Harness, f: &crate::approvals::Fx, requester: Uuid) -> Uuid {
+    let p = h.pool();
+    let from = crate::approvals::agent(h, f.org, f.ws, "delegator").await;
+    let (a, b) = if from < f.agent {
+        (from, f.agent)
+    } else {
+        (f.agent, from)
+    };
+    let link = Uuid::now_v7();
+    sqlx::query("INSERT INTO agent_links (id, agent_a_id, agent_b_id, policy_a, policy_b) VALUES ($1,$2,$3,'allow','allow')")
+        .bind(link).bind(a).bind(b).execute(p).await.unwrap();
+    let origin = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'api',$1::text, now())",
+    )
+    .bind(origin).bind(from).bind(f.ws).execute(p).await.unwrap();
+    let task = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'peer',$1::text, now())",
+    )
+    .bind(task).bind(f.agent).bind(f.ws).execute(p).await.unwrap();
+    sqlx::query(
+        "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
+            origin_conversation_id, task_conversation_id, status, message_budget, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'open',20, now() + interval '1 day')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(link)
+    .bind(from)
+    .bind(f.agent)
+    .bind(requester)
+    .bind(origin)
+    .bind(task)
+    .execute(p)
+    .await
+    .unwrap();
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, gateway_instance_id, conversation_id,
+            method, host, path, summary, status, deadline)
+         VALUES ($1,$2,$3,$4,$5,$6,'POST','api.example.com','/x',
+            '{\"title\":\"Deploy\",\"fields\":[{\"label\":\"k\",\"value\":\"SECRETFIELD\"}],\"source\":\"template\"}',
+            'pending', now() + interval '10 minutes')",
+    )
+    .bind(id).bind(f.org).bind(f.ws).bind(f.agent).bind(f.gw).bind(task)
+    .execute(p).await.unwrap();
+    id
+}
+
+/// (FIX-252) The person who asked for the task is mailed about the approval wait once — after
+/// the same delay as every approval mail, with the one-line facts only (D-178), whatever
+/// surfaces the approval already has.
+#[tokio::test]
+async fn the_requester_of_a_peer_task_is_mailed_about_the_wait_once() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    // No decider binding in the workspace at all: the decider mail serves nobody.
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0);
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    let mails = h.mail.sent();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, "req@x.io");
+    assert!(
+        mails[0]
+            .subject
+            .contains("Your delegated task is waiting for an approval"),
+        "{}",
+        mails[0].subject
+    );
+    assert!(
+        mails[0].body.contains("What: Bot wants to Deploy"),
+        "{}",
+        mails[0].body
+    );
+    assert!(!mails[0].body.contains("SECRETFIELD"), "{}", mails[0].body);
+    assert!(
+        mails[0].link.ends_with(&format!("/approvals?focus={id}")),
+        "{}",
+        mails[0].link
+    );
+    // Claimed: the next sweep does not repeat it.
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0);
+    assert_eq!(h.mail.sent().len(), 1);
+}
+
+/// (FIX-252) A requester who is also a decider is served once: the mail claim is the shared
+/// `(approval, user, stage)` row.
+#[tokio::test]
+async fn a_requester_who_is_also_a_decider_gets_one_mail() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", Some("approver")).await;
+    peer_approval(&h, &f, requester).await;
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(h.mail.sent().len(), 1);
+    assert_eq!(h.mail.sent()[0].to, "req@x.io");
+}

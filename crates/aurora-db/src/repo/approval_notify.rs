@@ -182,6 +182,62 @@ pub async fn unseen(
     .await?)
 }
 
+/// (FIX-252) A gateway approval raised in a peer task conversation, still `pending` after
+/// `delay_secs`, with the person who asked for the task and their e-mail: the requester hears
+/// about the wait through their own channels once the delay passes, whatever surfaces the
+/// approval already has (the origin card is at the thread they asked in — this is the push and
+/// the e-mail's turn). Only users who have not turned approval e-mails off.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RequesterUnseen {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub workspace_id: Uuid,
+    pub title: String,
+    pub rule_name: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub agent_name: String,
+    pub workspace_name: String,
+    pub workspace_slug: String,
+    pub org_slug: String,
+    pub requester_user_id: Uuid,
+    pub requester_email: String,
+}
+
+pub async fn unseen_for_requesters(
+    pool: &PgPool,
+    delay_secs: f64,
+    limit: i64,
+) -> Result<Vec<RequesterUnseen>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(
+        "SELECT a.id, a.org_id, a.workspace_id, \
+            CASE WHEN COALESCE(a.summary->>'source', 'generic') = 'generic' \
+                 THEN 'send a ' || a.method || ' request to ' || a.host \
+                 ELSE COALESCE(NULLIF(a.summary->>'title', ''), 'send a ' || a.method || ' request to ' || a.host) \
+            END AS title, \
+            a.rule_name, a.deadline AS expires_at, \
+            COALESCE(ag.name, 'An agent') AS agent_name, w.name AS workspace_name, \
+            w.slug AS workspace_slug, o.slug AS org_slug, \
+            pt.requester_user_id, u.email::text AS requester_email \
+         FROM approvals a \
+         JOIN peer_tasks pt ON pt.task_conversation_id = a.conversation_id \
+         JOIN users u ON u.id = pt.requester_user_id \
+         JOIN workspaces w ON w.id = a.workspace_id \
+         JOIN organizations o ON o.id = w.org_id \
+         LEFT JOIN agents ag ON ag.id = a.agent_id \
+         WHERE a.status = 'pending' AND a.deadline > now() \
+           AND a.created_at <= now() - make_interval(secs => $1) \
+           AND u.disabled_at IS NULL AND u.approval_email_enabled \
+           AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
+                           WHERE n.approval_id = a.id AND n.user_id = u.id \
+                             AND n.stage = 'initial') \
+         ORDER BY a.created_at LIMIT $2",
+    ))
+    .bind(delay_secs)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// Someone who may be e-mailed about an approval.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Decider {

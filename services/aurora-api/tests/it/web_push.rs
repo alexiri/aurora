@@ -1075,3 +1075,100 @@ async fn an_unreadable_operator_key_refuses_start_naming_the_variable() {
         .expect("unset");
     assert!(err.contains("AURORA_NO_SUCH_VARIABLE"), "{err}");
 }
+
+// ---------------------------------------------------------------- FIX-252: the requester
+
+/// A pending gateway approval raised in a peer task conversation that `requester` asked for.
+pub(crate) async fn peer_approval(w: &W, requester: Uuid) -> Uuid {
+    let p = w.h.pool();
+    let from = crate::approvals::agent(&w.h, w.f.org, w.f.ws, "delegator").await;
+    let (a, b) = if from < w.f.agent {
+        (from, w.f.agent)
+    } else {
+        (w.f.agent, from)
+    };
+    let link = Uuid::now_v7();
+    sqlx::query("INSERT INTO agent_links (id, agent_a_id, agent_b_id, policy_a, policy_b) VALUES ($1,$2,$3,'allow','allow')")
+        .bind(link).bind(a).bind(b).execute(p).await.unwrap();
+    let origin = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'api',$1::text, now())",
+    )
+    .bind(origin).bind(from).bind(w.f.ws).execute(p).await.unwrap();
+    let task = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'peer',$1::text, now())",
+    )
+    .bind(task).bind(w.f.agent).bind(w.f.ws).execute(p).await.unwrap();
+    sqlx::query(
+        "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
+            origin_conversation_id, task_conversation_id, status, message_budget, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'open',20, now() + interval '1 day')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(link)
+    .bind(from)
+    .bind(w.f.agent)
+    .bind(requester)
+    .bind(origin)
+    .bind(task)
+    .execute(p)
+    .await
+    .unwrap();
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, gateway_instance_id, conversation_id,
+            method, host, path, summary, status, deadline)
+         VALUES ($1,$2,$3,$4,$5,$6,'POST','api.example.com','/x',
+            '{\"title\":\"Push to GitLab\",\"source\":\"generic\"}','pending', now() + interval '10 minutes')",
+    )
+    .bind(id).bind(w.f.org).bind(w.f.ws).bind(w.f.agent).bind(w.f.gw).bind(task)
+    .execute(p).await.unwrap();
+    id
+}
+
+/// (FIX-252) The person who asked for the task has their devices pushed about the approval wait
+/// once, though they are no decider of the workspace — and the next sweep does not repeat it.
+#[tokio::test]
+async fn the_requester_of_a_peer_task_is_pushed_about_the_wait_once() {
+    let w = world().await;
+    let req = person(&w, "req@x.io", "member").await;
+    register(&w, &req, "/p1", true).await;
+    let id = peer_approval(&w, req.id).await;
+    age(&w).await;
+    assert!(sweep(&w).await > 0);
+    let (stage, delivery): (String, String) = sqlx::query_as(
+        "SELECT stage, delivery FROM approval_push_claims WHERE approval_id = $1 AND user_id = $2",
+    )
+    .bind(id)
+    .bind(req.id)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((stage.as_str(), delivery.as_str()), ("initial", "push"));
+    // Claimed: the next sweep adds nothing.
+    assert_eq!(sweep(&w).await, 0);
+}
+
+/// (FIX-252) The push claim is the shared `(approval, user, stage)` row: a requester who was
+/// already served as a decider is not pushed twice.
+#[tokio::test]
+async fn a_requester_served_as_a_decider_is_not_pushed_twice() {
+    let w = world().await;
+    let req = person(&w, "req@x.io", "owner").await;
+    register(&w, &req, "/p1", true).await;
+    let id = peer_approval(&w, req.id).await;
+    age(&w).await;
+    sqlx::query(
+        "INSERT INTO approval_push_claims (approval_id, user_id, stage, kind, delivery) \
+         VALUES ($1,$2,'initial','gateway','push')",
+    )
+    .bind(id)
+    .bind(req.id)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(sweep(&w).await, 0);
+}
