@@ -62,7 +62,8 @@ export function soleAgentOf(items: Pick<Account, "agents">[]): string | undefine
  * words; **Give <Agent> this key** grants it and closes with the toast) or **Add a new key**
  * (today's service choice and form, unchanged). With no existing key, or without an agent, the
  * dialog opens straight on today's form. Keys exist at two scopes only — the organization's and
- * the workspace's; there are no instance-level keys.
+ * the workspace's; there are no instance-level keys. When every listed key is unusable, the
+ * dialog opens straight on the form too.
  */
 function AddKeyDialog({ scope, orgId, agent, onClose }: { scope: SecretScope; orgId: string; agent?: { id: string; name: string }; onClose: () => void }) {
   const { footer, target } = useFooterSlot();
@@ -87,7 +88,7 @@ function AddKeyDialog({ scope, orgId, agent, onClose }: { scope: SecretScope; or
   let body: ReactNode;
   if (agent && keys.isPending) {
     body = <Loading variant="rows" label="Loading your keys…" />;
-  } else if (agent && choice === null && items.length > 0) {
+  } else if (agent && choice === null && items.some((k) => k.usable)) {
     body = (
       <ChoiceCards<"pick" | "new" | "">
         legend={`Give ${agent.name} an AI key`}

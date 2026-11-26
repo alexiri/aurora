@@ -111,6 +111,14 @@ describe("the Add an AI key dialog with existing keys (FIX-249)", () => {
     expect(await screen.findByRole("button", { name: /^Next$/ })).toBeDisabled();
   });
 
+  it("only unusable keys: today's flow, straight on the service choice", async () => {
+    aiKeys([key("k3", "Old key", "organization", { usable: false, reason: "It does not work with this agent's model tool." })]);
+    routes["GET /v1/llm/providers"] = providers;
+    await openDialog();
+    expect(await screen.findByText("Which service is this key for?")).toBeInTheDocument();
+    expect(screen.queryByText("Use a key you already have")).toBeNull();
+  });
+
   it("no existing key: today's flow only, straight on the service choice", async () => {
     aiKeys([]);
     routes["GET /v1/llm/providers"] = providers;
