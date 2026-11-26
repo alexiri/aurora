@@ -199,7 +199,15 @@ apps:
             methods: [PUT]
             body_check:
               refuse_keys: [record]
-              allow_keys: [orgID, title, ruleGroup, folderUID, condition, data, for, noDataState, execErrState, isPaused, labels, annotations, notification_settings, uid]
+              # The rule is the one the script read back, so the keys it accepts are the
+              # script's own plus what a recent Grafana adds to a rule it answers: the change
+              # tool takes `keep_firing_for` (a duration the server answers with on every read,
+              # which the script resends unchanged — a person may have set it) and, when the
+              # server runs the feature, `missingSeriesEvalsToResolve` (a count). Neither
+              # routes anything, so both pass through as read: the create tool does not take
+              # them, because a rule the script builds carries neither. A `record` block and
+              # everything not listed stay refused.
+              allow_keys: [orgID, title, ruleGroup, folderUID, condition, data, for, noDataState, execErrState, isPaused, keep_firing_for, missingSeriesEvalsToResolve, labels, annotations, notification_settings, uid]
               only_keys:
                 labels: [managed_by, expires, service]
                 annotations: [summary, expires]

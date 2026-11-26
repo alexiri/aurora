@@ -23,7 +23,7 @@ trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR" "$WORK/bin" "$WORK/bodies"
 export STUB_FIX="$FIX" STUB_LOG="$WORK/calls.log" STUB_BODIES="$WORK/bodies"
-unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE STUB_RECORD_RULE STUB_MISMATCH_RULE STUB_NOEXPIRY_RULE
+unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE STUB_RECORD_RULE STUB_MISMATCH_RULE STUB_NOEXPIRY_RULE STUB_GRAFANA12_RULE
 
 # The stub: `aurora-agent call grafana <operation> [name=value ...] [--body @file] [--account A] --out FILE`.
 cat > "$WORK/bin/aurora-agent" <<'STUB'
@@ -47,7 +47,7 @@ case "$op" in
   get_current_org) cp "$STUB_FIX/get_current_org.json" "$out" ;;
   list_contact_points) if [ -n "${STUB_NO_CP:-}" ]; then echo '[]' > "$out"; else cp "$STUB_FIX/list_contact_points.json" "$out"; fi ;;
   list_alert_rules) cp "$STUB_FIX/list_alert_rules${STUB_RULES:+-$STUB_RULES}.json" "$out" ;;
-  get_alert_rule) if [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; elif [ -n "${STUB_RECORD_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_record.json" "$out"; elif [ -n "${STUB_MISMATCH_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_mismatch.json" "$out"; elif [ -n "${STUB_NOEXPIRY_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_noexpiry.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
+  get_alert_rule) if [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; elif [ -n "${STUB_RECORD_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_record.json" "$out"; elif [ -n "${STUB_MISMATCH_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_mismatch.json" "$out"; elif [ -n "${STUB_NOEXPIRY_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_noexpiry.json" "$out"; elif [ -n "${STUB_GRAFANA12_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_grafana12.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
   list_alert_rule_states) cp "$STUB_FIX/list_alert_rule_states.json" "$out" ;;
   create_alert_rule|update_alert_rule)
     n=$(find "$STUB_BODIES" -type f | wc -l)
@@ -585,6 +585,29 @@ print("; ".join(problems), file=sys.stderr)
 sys.exit(1)
 PY
 then ok "update sends the changed rule (new title, for, receiver, expiry), read-only fields stripped"; else bad "update body differs"; fi
+
+# a rule read back from a newer Grafana carries fields the script never writes (keep_firing_for,
+# missingSeriesEvalsToResolve); update still accepts it and sends them back unchanged
+reset
+if STUB_GRAFANA12_RULE=1 AL update tripwire-p95 --managed-by night --folder night-folder --title "p95 over 3s" --for 10m \
+  --receiver nightmanager --expires 7d --renew --reason "keep the tripwire a week longer" >"$WORK/out" \
+  && python3 -I - "$WORK/bodies/body-1.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1]))
+problems = []
+if body.get("keep_firing_for") != "0s":
+    problems.append(f"keep_firing_for {body.get('keep_firing_for')!r}")
+if body.get("missingSeriesEvalsToResolve") != 2:
+    problems.append(f"missingSeriesEvalsToResolve {body.get('missingSeriesEvalsToResolve')!r}")
+for gone in ("id", "updated", "provenance"):
+    if gone in body:
+        problems.append(f"read-only field {gone} sent back")
+if len(problems) == 0:
+    sys.exit(0)
+print("; ".join(problems), file=sys.stderr)
+sys.exit(1)
+PY
+then ok "update accepts a rule read back with keep_firing_for and missingSeriesEvalsToResolve, read-only fields stripped"; else bad "update of the newer Grafana rule differs"; fi
 
 # expire deletes only the expired managed ones, each delete still held for approval
 reset

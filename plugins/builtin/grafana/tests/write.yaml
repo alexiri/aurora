@@ -321,6 +321,51 @@
     headers: { content-type: application/json }
     body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto","refId":"A","intervalMs":1000}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
   expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+# Changing a rule sends the whole rule the script read back. A recent Grafana answers a rule
+# read with fields the script never builds (keep_firing_for always, and, when the server runs
+# the feature, missingSeriesEvalsToResolve): the script resends them unchanged — they are part
+# of the rule the person could have set, and neither routes anything — so the check accepts
+# them on the change tool and the read-only fields (id, updated, provenance) stay stripped.
+- name: "update_alert_rule: a rule read back with keep_firing_for and missingSeriesEvalsToResolve is held for approval"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","keep_firing_for":"0s","missingSeriesEvalsToResolve":2,"noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect:
+    app: grafana
+    tool: update_alert_rule
+    summary:
+      title: "change an alert rule"
+      fields:
+        Rule: "tripwire-p95"
+        Title: "p95 over 3s"
+        Folder: "night-folder"
+        Group: "agent-night"
+        Evaluate for: "600s"
+        Data source: "prom-main"
+        Query: "max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))"
+        Comparison: "gt"
+        Threshold: "3"
+        Condition step: "C"
+        No data state: "NoData"
+        On query error: "Error"
+        Paused: "false"
+        Managed by: "night"
+        Service: "api"
+        Expires: "2026-12-02"
+        Summary: "p95 over 3s"
+        Expires annotation: "2026-12-02"
+        Receiver: "nightmanager"
+- name: "refused create_alert_rule: a rule made with keep_firing_for (the script builds none)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","keep_firing_for":"5m","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
 # The two expression steps the receiver runs itself: each model is the object the script's
 # builder sends, its `type` is the one the script builds (reduce, threshold), and the
 # conditions the approval card reads its comparison and threshold from carry no second
