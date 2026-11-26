@@ -514,7 +514,7 @@ mod tests {
         assert_eq!(c.violation(b.as_slice(), false), None);
         // The reduce step's model carrying another expression type is refused (a `math` step
         // computes whatever it likes while the card shows the threshold step's comparison).
-        for (i, ty) in [(1usize, "math"), (1, "Reduce"), (2, "threshold\u{0}") ] {
+        for (i, ty) in [(1usize, "math"), (1, "Reduce"), (2, "threshold\u{0}")] {
             let mut data = steps();
             data[i]["model"]["type"] = json!(ty);
             let b = serde_json::to_vec(&json!({ "data": data })).unwrap();
