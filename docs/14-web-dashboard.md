@@ -933,6 +933,16 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     - Members without `can_approve` see the same card with "Waiting for an
       approver" and no buttons.
     - Once decided, the card collapses to one line with the decision chip.
+    - (FIX-252, D-489) **A delegated task's approval**, at the origin the task
+      was asked in, reads as a `pending` panel with a Waiting badge and the
+      one line the notice carries ("Fixer is waiting for your approval to
+      push to GitLab (asked for by Daneel)"). The buttons follow the reader's
+      rights **at the approval's workspace** (the workspace hook's answer,
+      never inferred in the client): Approve and Deny for someone with
+      `can_approve` there, otherwise Ask an approver ("Asked an approver."
+      once sent) and Cancel the task. A later `peer_approval_decided` or
+      `peer_task_closed` notice folds the card; the outcome is one line — a
+      chip (Approved, Denied, Expired, Cancelled) and the notice's text.
   - **Attachments.**
     - In a message, a file is a card: a type-icon tile, the name, the size
       and type, and a Download icon button with an `aria-label`. An image
