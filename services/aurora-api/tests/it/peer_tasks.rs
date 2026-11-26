@@ -785,3 +785,208 @@ async fn receiver_turn_ending_without_a_report_closes_the_task_once() {
     assert_eq!(d.rig.notices(d.conv, "peer_task_report").await.len(), 1);
     assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 1);
 }
+
+// ------------------------------------------------- FIX-252: approvals report to the origin
+
+impl Duo {
+    /// A gateway approval raised in `task`'s peer conversation: the receiving agent's own
+    /// approval, the one the person must decide. Returns the approval id.
+    async fn approval(&self, task: Uuid) -> Uuid {
+        let p = self.rig.h.pool();
+        let gw = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO gateway_instances (id, hostname, version, started_at, last_seen_at)
+             VALUES ($1,'h','0',now(),now())",
+        )
+        .bind(gw)
+        .execute(p)
+        .await
+        .unwrap();
+        let id = Uuid::now_v7();
+        let pc = self.rig.peer_conversation(task).await;
+        let ws = self.rig.agent_ws(self.b).await;
+        let turn = self.rig.running_turn(pc).await;
+        sqlx::query(
+            "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, turn_id,
+                gateway_instance_id, method, host, path, summary, status, deadline)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,'POST','api.example.com','/x',
+                '{\"title\":\"Push to GitLab\",\"source\":\"generic\"}','pending',
+                now() + interval '5 minutes')",
+        )
+        .bind(id)
+        .bind(self.rig.org)
+        .bind(ws)
+        .bind(self.b)
+        .bind(pc)
+        .bind(turn)
+        .bind(gw)
+        .execute(p)
+        .await
+        .unwrap();
+        id
+    }
+
+    /// Run the writer the bus listener runs: the transcript events travel with the origin
+    /// notices, so this is the one entry point the tests need.
+    async fn report_approval(&self, id: Uuid) {
+        aurora_api::domains::approvals::transcript::write_current(&self.rig.h.state, id)
+            .await
+            .unwrap();
+    }
+}
+
+/// (FIX-252) An approval raised in the task conversation posts `peer_waiting_for_approval` to
+/// the origin conversation the person asked in — once, with the agent, the action in words and
+/// who asked — and no follow-up turn (the person is in the thread or gets the card).
+#[tokio::test]
+async fn an_approval_in_the_task_conversation_reports_waiting_to_the_origin_once() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    // The person's turn finished while the approval waited: still no follow-up turn.
+    d.rig.finish_turn(d.turn).await;
+    d.report_approval(id).await;
+    let waiting = d.rig.notices(d.conv, "peer_waiting_for_approval").await;
+    assert_eq!(waiting.len(), 1);
+    let text = waiting[0]["text"].as_str().unwrap();
+    assert!(
+        text.contains("is waiting for your approval to send a POST request to api.example.com"),
+        "{text}"
+    );
+    assert!(text.contains("(asked for by Agent alpha"), "{text}");
+    assert_eq!(waiting[0]["approval_id"], json!(id));
+    assert_eq!(waiting[0]["peer_task_id"], json!(task));
+    // Redelivery (the bus listener re-runs, the sweeps re-write) adds nothing.
+    d.report_approval(id).await;
+    assert_eq!(
+        d.rig
+            .notices(d.conv, "peer_waiting_for_approval")
+            .await
+            .len(),
+        1
+    );
+    // The peer conversation keeps its own transcript event; the waiting notice is the origin's.
+    let pc = d.rig.peer_conversation(task).await;
+    assert!(
+        d.rig
+            .events(pc)
+            .await
+            .iter()
+            .any(|(t, _)| t == "approval.pending")
+    );
+    assert_eq!(
+        d.rig.notices(pc, "peer_waiting_for_approval").await.len(),
+        0
+    );
+    // No follow-up turn: the origin conversation has only the person's turn.
+    assert_eq!(d.rig.turns(d.conv).await.len(), 1);
+}
+
+/// (FIX-252) Deciding the approval posts `peer_approval_decided` to the origin conversation and
+/// the delegating agent gets its follow-up turn (as a completion report does).
+#[tokio::test]
+async fn deciding_the_approval_reports_the_outcome_and_wakes_the_delegating_agent() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    d.report_approval(id).await;
+    // The person's turn has finished; the answer wakes the delegating agent.
+    d.rig.finish_turn(d.turn).await;
+    sqlx::query(
+        "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
+            decided_at=now() WHERE id=$1",
+    )
+    .bind(id)
+    .bind(d.rig.p.id)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    d.report_approval(id).await;
+    let decided = d.rig.notices(d.conv, "peer_approval_decided").await;
+    assert_eq!(decided.len(), 1);
+    assert_eq!(decided[0]["outcome"], json!("approved"));
+    assert!(
+        decided[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("was approved by"),
+        "{}",
+        decided[0],
+    );
+    // The follow-up turn for the delegating agent.
+    let turns = d.rig.turns(d.conv).await;
+    assert!(
+        turns
+            .iter()
+            .any(|(_, _, kind, text)| *kind == "system" && text.contains("Peer task update")),
+        "{turns:?}"
+    );
+    // The waiting notice was not repeated.
+    assert_eq!(
+        d.rig
+            .notices(d.conv, "peer_waiting_for_approval")
+            .await
+            .len(),
+        1
+    );
+}
+
+/// (FIX-252) An approval that ran out reports the outcome to the origin too.
+#[tokio::test]
+async fn an_expired_approval_reports_the_outcome_to_the_origin() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    sqlx::query("UPDATE approvals SET status='expired', decided_at=now() WHERE id=$1")
+        .bind(id)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    d.report_approval(id).await;
+    let decided = d.rig.notices(d.conv, "peer_approval_decided").await;
+    assert_eq!(decided.len(), 1);
+    assert_eq!(decided[0]["outcome"], json!("expired"));
+    assert!(
+        decided[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("expired without a decision"),
+        "{}",
+        decided[0],
+    );
+}
+
+/// (FIX-252) A task whose task conversation holds a pending approval is NOT closed by the end
+/// of the receiving turn; cancelling it (the requester's way out) still works and abandons the
+/// approval without a decided notice.
+#[tokio::test]
+async fn a_pending_approval_keeps_the_task_open_when_the_receiving_turn_ends() {
+    use aurora_api::domains::hosted::lifecycle;
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    let pc = d.rig.peer_conversation(task).await;
+    let turn = d.rig.running_turn(pc).await.unwrap();
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    lifecycle::finish(&mut conn, turn, "done", None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(d.rig.task_status(task).await, "open");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
+    // The requester cancels: the task closes, the approval is abandoned, no decided notice.
+    peers::cancel(&mut conn, d.a, task).await.unwrap().unwrap();
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT status FROM approvals WHERE id = $1")
+            .bind(id)
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap(),
+        "abandoned"
+    );
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 1);
+    assert_eq!(
+        d.rig.notices(d.conv, "peer_approval_decided").await.len(),
+        0
+    );
+}

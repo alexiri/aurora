@@ -549,7 +549,7 @@ async fn close_inner(
             format!("Task to {who} was closed: it used up its budget of {n} messages."),
         ),
     };
-    post_report(conn, &closed, code, &line, report.as_deref()).await?;
+    post_report(conn, &closed, code, &line, report.as_deref(), None).await?;
     // (FIX-252) The task ended without its approvals: any approval still pending in its
     // conversation is abandoned (the origin card settles, the outcome notices stop).
     let abandoned = aurora_db::repo::approvals::abandon_pending_of_conversation(
@@ -563,6 +563,28 @@ async fn close_inner(
     Ok(Some(closed))
 }
 
+/// The one durable notice in the origin conversation.
+async fn post_notice(
+    conn: &mut PgConnection,
+    task: &PeerTaskRow,
+    code: &str,
+    line: &str,
+    extra: Option<Value>,
+) -> Result<(), ApiError> {
+    if !convs::lock(&mut *conn, task.origin_conversation_id).await? {
+        return Ok(());
+    }
+    let mut payload = json!({"code": code, "text": line, "peer_task_id": task.id,
+        "status": task.status});
+    if let Some(map) = extra.as_ref().and_then(|e| e.as_object()) {
+        for (k, v) in map {
+            payload[k] = v.clone();
+        }
+    }
+    conv::append_event(conn, task.origin_conversation_id, None, "notice", &payload).await?;
+    Ok(())
+}
+
 /// The one report: a durable `notice` in the origin conversation, plus a system follow-up turn
 /// when the origin conversation has no live turn (the origin turn has finished).
 async fn post_report(
@@ -571,16 +593,13 @@ async fn post_report(
     code: &str,
     line: &str,
     report: Option<&str>,
+    extra: Option<Value>,
 ) -> Result<(), ApiError> {
-    if !convs::lock(&mut *conn, task.origin_conversation_id).await? {
-        return Ok(());
-    }
-    let mut payload = json!({"code": code, "text": line, "peer_task_id": task.id,
-        "status": task.status});
+    let mut extra = extra.unwrap_or_else(|| json!({}));
     if let Some(r) = report {
-        payload["report"] = json!(r);
+        extra["report"] = json!(r);
     }
-    conv::append_event(conn, task.origin_conversation_id, None, "notice", &payload).await?;
+    post_notice(conn, task, code, line, Some(extra)).await?;
     if turns::active_turn(&mut *conn, task.origin_conversation_id)
         .await?
         .is_some()
@@ -754,6 +773,91 @@ pub async fn cancel_by_requester(
     }
 }
 
+/// (FIX-252) The origin side of an approval raised in a task conversation, called from the
+/// approval transcript writers (`approvals/transcript.rs`) so the decision transaction, the bus
+/// listener and the sweeps all reach it without duplicating: a `peer_waiting_for_approval`
+/// notice when the approval is raised (no follow-up turn — the person is already in the thread
+/// or gets the card), and a `peer_approval_decided` notice with the delegating agent's
+/// follow-up turn when it is answered or expires (as `post_report` does for completion).
+/// Idempotent: the notice's existence check makes redelivery harmless. D-178: the line carries
+/// the agent, the action in words and who asked — never the request's fields.
+pub async fn approval_notice(
+    conn: &mut PgConnection,
+    row: &aurora_db::repo::approvals::ApprovalRow,
+) -> Result<(), ApiError> {
+    if !matches!(
+        row.status.as_str(),
+        "pending" | "approved" | "denied" | "expired"
+    ) {
+        return Ok(());
+    }
+    let Some(cid) = row.conversation_id else {
+        return Ok(());
+    };
+    let Some(task) = repo::by_task_conversation(&mut *conn, cid).await? else {
+        return Ok(());
+    };
+    let a = crate::domains::approvals::dto::Approval::from(row.clone());
+    let action = sanitize::one_line(&a.sentence.action, 120);
+    let mut extra = json!({"approval_id": row.id});
+    let (code, line) = match row.status.as_str() {
+        "pending" => {
+            let asker = agent(conn, task.from_agent_id).await?;
+            (
+                "peer_waiting_for_approval",
+                format!(
+                    "{} is waiting for your approval to {} (asked for by {})",
+                    a.sentence.agent.name,
+                    action,
+                    agent_label(&asker)
+                ),
+            )
+        }
+        "approved" | "denied" => {
+            extra["outcome"] = json!(row.status);
+            let by = row
+                .decided_by_name
+                .as_deref()
+                .map(|n| format!(" by {}", sanitize::one_line(n, 120)))
+                .unwrap_or_default();
+            (
+                "peer_approval_decided",
+                format!("The approval to {action} was {}{by}.", row.status),
+            )
+        }
+        _ => {
+            extra["outcome"] = json!("expired");
+            (
+                "peer_approval_decided",
+                format!("The approval to {action} expired without a decision."),
+            )
+        }
+    };
+    let line = sanitize::one_line(&line, 240);
+    // One notice per (code, approval): the decision transaction, the bus listener and the sweeps
+    // all reach this, and one pass can write both the `pending` transcript event and the outcome
+    // (an expired row the listener never saw waiting), so the event's own check is not enough.
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM transcript_events WHERE conversation_id = $1 \
+         AND type = 'notice' AND payload->>'code' = $2 AND payload->>'approval_id' = $3)",
+    )
+    .bind(task.origin_conversation_id)
+    .bind(code)
+    .bind(row.id.to_string())
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(DbError::from)?;
+    if exists {
+        return Ok(());
+    }
+    if row.status == "pending" {
+        // The person is already in the thread or gets the card: no follow-up turn.
+        post_notice(conn, &task, code, &line, Some(extra)).await
+    } else {
+        post_report(conn, &task, code, &line, None, Some(extra)).await
+    }
+}
+
 // ---------------------------------------------------------------- turn hook
 
 /// Hook from `lifecycle::finish`: the receiving agent's turn in a task conversation ended while
@@ -768,6 +872,14 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
         return Ok(());
     };
     if task.status != "open" {
+        return Ok(());
+    }
+    // (FIX-252) A task waiting for an approval is not cancelled by the end of the receiving
+    // turn: the approval's own decision or deadline ends the wait (FIX-253 generalizes the
+    // waiting state).
+    if aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, t.conversation_id)
+        .await?
+    {
         return Ok(());
     }
     let why = match t.status.as_str() {

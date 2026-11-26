@@ -660,6 +660,21 @@ pub async fn abandon_pending_of_conversation(
     Ok(all)
 }
 
+/// (FIX-252) Whether the conversation still holds a `pending` approval: a peer task whose task
+/// conversation does is not closed by the end of the receiving turn — the approval's own
+/// decision or deadline ends the wait.
+pub async fn has_pending_in_conversation<'e, E: sqlx::PgExecutor<'e>>(
+    exec: E,
+    conversation_id: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM approvals WHERE conversation_id = $1 AND status = 'pending')",
+    )
+    .bind(conversation_id)
+    .fetch_one(exec)
+    .await?)
+}
+
 /// (P4-011B-2, C-828) Ready grants past `resume_expires_at` -> `resume_state = 'expired'`.
 /// Returns `(id, workspace_id, conversation_id)`.
 pub async fn expire_resume_windows(

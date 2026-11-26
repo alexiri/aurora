@@ -125,6 +125,10 @@ pub async fn write(
         Kind::Expired(reason) => payload["reason"] = json!(reason),
     }
     conv::append_event(tx, cid, row.turn_id, ty, &payload).await?;
+    // (FIX-252) An approval raised in a peer task conversation also reports to the origin
+    // conversation the person asked in (the waiting notice, then the outcome). A no-op for
+    // every other conversation; the notice's own existence check keeps redelivery harmless.
+    crate::domains::peer_tasks::service::approval_notice(tx, row).await?;
     Ok(())
 }
 
