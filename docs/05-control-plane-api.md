@@ -97,7 +97,7 @@ matrix:
 ### Request scoping
 
 - Paths carry ids (`/v1/workspaces/{workspace_id}/…`, `/v1/agents/{agent_id}`).
-  `GET /v1/resolve?org=<slug>&workspace=<slug>` maps dashboard slugs to ids.
+  `GET /v1/resolve?org=<slug>&workspace=<slug>` maps dashboard slugs to ids; an organization owner or admin resolves any workspace of their organization they manage (id, slug, name only), and everyone else gets the same 404 as for an unknown slug.
 - Every handler resolves the target's workspace/org from the database and runs
   the permission check of `04 §Permission matrix`; a workspace key used on
   another workspace's resource → 403 `workspace_mismatch`.
