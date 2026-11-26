@@ -590,7 +590,14 @@ or delete them; if one looks wrong or out of date, say so.\n\n",
         None => o.push_str("No schedules are set.\n\n"),
     }
 
-    o.push_str("## Background processes\n\nStart long-running work with the process tools so it survives between turns and you can watch it.\n\n");
+    o.push_str(
+        "## Waiting and background work\n\nStart long-running work with the process tools so it \
+survives between turns, and watch what you started with `process_watch`: when the watch fires, a \
+turn starts for you, so you can react and report. For something that runs elsewhere (a pipeline, \
+a review you are waiting on) set a one-time schedule with `schedule_create` and `run_at` to look \
+again later. Never end a turn with \"I will report when it is done\" unless you have set up what \
+will wake you; say in your reply what will wake you and when.\n\n",
+    );
 
     o.push_str("## Machine\n\n");
     let _ = writeln!(o, "- Home: /workspace");

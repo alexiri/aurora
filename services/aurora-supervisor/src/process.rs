@@ -717,7 +717,8 @@ impl ProcessManager {
             ),
             d(
                 "process_watch",
-                "Wake the agent when a process prints a pattern, is silent for a while, or exits. Fires once.",
+                "Wake the agent when a process prints a pattern, is silent for a while, or exits. \
+The wake starts a turn for you, so you can react and report. Fires once.",
                 json!({"type":"object","additionalProperties":false,"required":["id","kind"],"properties":{
                     "id":{"type":"string"},
                     "kind":{"type":"string","enum":["pattern","silence","exit"]},
