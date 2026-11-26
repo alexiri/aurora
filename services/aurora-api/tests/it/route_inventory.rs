@@ -157,6 +157,9 @@ const OWN: &[(&str, &[&str])] = &[
     // The GET is a READAUTH route (C-1165); configuring and deleting stay own.
     ("/agents/{agent}", &["patch", "delete"]),
     ("/agents/{agent}/answer-readiness", &["get"]),
+    // (FIX-249, C-1168) The keys the agent does not have yet, metadata only: an own owner's route,
+    // like the grant it feeds.
+    ("/agents/{agent}/ai-keys", &["get"]),
     ("/agents/{agent}/apps/{app}/access", &["get"]),
     ("/agents/{agent}/avatar", &["get", "put", "delete"]),
     ("/agents/{agent}/byo", &["put"]),

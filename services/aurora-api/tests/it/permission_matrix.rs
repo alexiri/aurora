@@ -1321,6 +1321,8 @@ const ROWS: &[Row] = &[
         G::WsUse,
         false,
     ),
+    // (FIX-249, C-1168) The keys the agent could be given: `can_own`, like the grant route.
+    r("GET", "/v1/agents/{agent}/ai-keys", G::WsOwn, false),
     r("GET", "/v1/agents/{agent}/grants", G::WsOwn, false),
     r(
         "PUT",

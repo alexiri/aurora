@@ -1790,6 +1790,28 @@ export interface paths {
         patch: operations["updateAgent"];
         trace?: never;
     };
+    "/v1/agents/{agent}/ai-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The AI keys this agent does **not** have yet that exist in its organization or workspace
+         *     (`can_own` on the agent's workspace, the grant route's refusal for everyone else; FIX-249,
+         *     C-1168). The starter key first, then the dispatcher's order; a key the dispatcher cannot use
+         *     is listed with its reason instead of being dropped. Metadata only, at most 50.
+         */
+        get: operations["getAgentAiKeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/answer-readiness": {
         parameters: {
             query?: never;
@@ -7957,6 +7979,30 @@ export interface components {
          * @enum {string}
          */
         AgentAccessLevel: "read" | "ask" | "act" | "custom" | "use";
+        /**
+         * @description (FIX-249, C-1168) One AI key that exists in the agent's organization or workspace and is not
+         *     granted to the agent yet. Metadata only: never the value, never an endpoint address.
+         */
+        AgentAiKey: {
+            name: string;
+            /** @description Why not, in short plain words (the dispatcher's own reason); `null` when usable. */
+            reason?: string | null;
+            /** @description `organization` | `workspace`. */
+            scope: string;
+            /** Format: uuid */
+            secret_id: string;
+            /** @description One of the organization's starter keys. */
+            starter: boolean;
+            /** @description Whether the dispatcher could use this key for the agent now. */
+            usable: boolean;
+        };
+        /**
+         * @description The answer of `GET /v1/agents/{agent}/ai-keys`: the starter key first, then the dispatcher's
+         *     order, at most 50.
+         */
+        AgentAiKeys: {
+            items: components["schemas"]["AgentAiKey"][];
+        };
         /** @description A link seen from one of its two agents. */
         AgentLink: {
             /** Format: date-time */
@@ -25516,6 +25562,64 @@ export interface operations {
                 };
             };
             /** @description Not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    getAgentAiKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentAiKeys"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found, not hosted, or not visible */
             404: {
                 headers: {
                     [name: string]: unknown;

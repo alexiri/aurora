@@ -847,6 +847,20 @@ pub fn usable<'a>(
         .collect()
 }
 
+/// (FIX-249) Every candidate key with the dispatcher's own per-key readiness, in the dispatcher's
+/// order (`provider_preference`, oldest first; the workspace key first on its endpoint) — including
+/// the keys that cannot be used, with their [`Reason`]. Used by `GET /v1/agents/{agent}/ai-keys`,
+/// which explains the unusable ones instead of dropping them; never a copy of the check.
+pub fn key_states<'a>(
+    state: &AppState,
+    llm: &'a ProviderRegistry,
+    eff: &EffectiveGovernance,
+    harness: &str,
+    cands: Vec<LlmCandidate>,
+) -> Vec<KeyState<'a>> {
+    keys_of(state, llm, eff, harness, cands)
+}
+
 fn keys_of<'a>(
     state: &AppState,
     llm: &'a ProviderRegistry,
