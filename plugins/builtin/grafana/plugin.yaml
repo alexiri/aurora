@@ -259,6 +259,12 @@ apps:
                   - { at: 2, member: model, keys: [conditions, datasource, expression, refId, type], value: { key: type, value: threshold } }
                   - { at: 2, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
                   - { at: 2, member: model/conditions/0/evaluator, keys: [params, type] }
+              # The two keys a newer server answers with are scalars when it adds them: the
+              # duration is a string (or a number for seconds) and the count is an integer.
+              # A body carrying either as an object is refused, whatever its keys say. The
+              # card does not show them: it holds at most 20 fields and this tool needs the
+              # slot for the rule's uid, so two pass-through values stay off it.
+              kinds: { keep_firing_for: [string, number], missingSeriesEvalsToResolve: [integer] }
           - { id: delete_alert_rule, description: "Deletes one Grafana-managed alert rule the agent manages.", name: Delete an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [DELETE] }
     approvals:
       create_annotation:

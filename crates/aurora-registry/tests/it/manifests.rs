@@ -42,6 +42,37 @@ fn a_tool_project_of_plain_paths_is_valid() {
     assert!(v.is_empty(), "{v:#?}");
 }
 
+// A `kinds` rule type-checks the keys a newer server adds to a read-back: the key names an
+// identifier and carries at least one kind.
+#[test]
+fn a_body_check_kinds_rule_is_valid() {
+    let v = run(&METHODS.replace(
+        "connect_methods: [token] }",
+        "connect_methods: [token], body_check: { allow_keys: [title, keep_firing_for], kinds: { keep_firing_for: [string, number] } } }",
+    ));
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn a_body_check_kinds_rule_that_allows_no_kind_is_invalid() {
+    let v = run(&METHODS.replace(
+        "connect_methods: [token] }",
+        "connect_methods: [token], body_check: { kinds: { keep_firing_for: [] } } }",
+    ));
+    let got: BTreeSet<&str> = v.iter().map(|x| x.code).collect();
+    assert_eq!(got, BTreeSet::from(["body_check_kinds"]), "{v:#?}");
+}
+
+#[test]
+fn a_body_check_kinds_key_that_is_not_an_identifier_is_invalid() {
+    let v = run(&METHODS.replace(
+        "connect_methods: [token] }",
+        "connect_methods: [token], body_check: { kinds: { bad-key: [string] } } }",
+    ));
+    let got: BTreeSet<&str> = v.iter().map(|x| x.code).collect();
+    assert_eq!(got, BTreeSet::from(["body_check_key"]), "{v:#?}");
+}
+
 #[test]
 fn invalid_fixtures_yield_expected_code() {
     let table: &[(&str, &str)] = &[

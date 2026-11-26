@@ -400,6 +400,24 @@
         Expires: "2026-12-02"
         Summary: "p95 over 3s"
         Receiver: "nightmanager"
+# The keys a newer server answers with are scalars: a body that carries either as an object
+# (or the count with a fractional part) is refused before the approval.
+- name: "refused update_alert_rule: keep_firing_for carried as an object"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","keep_firing_for":{"for":"5m"},"noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: missingSeriesEvalsToResolve with a fractional part"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","keep_firing_for":"0s","missingSeriesEvalsToResolve":2.5,"noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
 - name: "refused create_alert_rule: a rule made with keep_firing_for (the script builds none)"
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request:

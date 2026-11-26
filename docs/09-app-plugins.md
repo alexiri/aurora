@@ -291,7 +291,10 @@ path (member names and indexes) the way `only_keys` does — no keys but the lis
 when `value` is set, its `key` with exactly that scalar — and an `entry_at` rule pins one
 entry's key, on the entry itself or along such a path, to exactly that scalar; a `value` rule
 pins a top-level key the body must carry with exactly that scalar (a body without it is refused
-too). Fail
+too). A `kinds` rule checks a top-level key's JSON type when the body carries it — one of
+`string`, `number`, `integer` or `boolean` (an integer is a number without a fractional part);
+a key the body does not carry is allowed, and a value of another kind, such as an object where
+a duration belongs, is refused. Fail
 closed: an absent, truncated, non-JSON or non-object body is refused too. Receivers match object
 key names without regard to case and keep the last match, so a key the case-folded form of which
 (the Kelvin sign U+212A and the long s U+017F fold to `k` and `s`) equals a checked or allowed key

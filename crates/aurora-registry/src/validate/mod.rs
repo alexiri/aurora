@@ -1719,6 +1719,39 @@ fn method_rules(cx: &mut Ctx<'_>) {
                             );
                         }
                     }
+                    if bc.kinds.len() > 8 {
+                        cx.v(
+                            "body_check_kinds",
+                            &format!("{bp}/kinds"),
+                            format!("tool `{}`: `kinds` covers at most 8 keys", it.id),
+                        );
+                    }
+                    for (k, kinds) in &bc.kinds {
+                        name!("kinds", k);
+                        if kinds.is_empty() {
+                            cx.v(
+                                "body_check_kinds",
+                                &format!("{bp}/kinds/{k}"),
+                                format!("tool `{}`: `kinds.{k}` allows at least one kind", it.id),
+                            );
+                        }
+                        if kinds.len() > 4 {
+                            cx.v(
+                                "body_check_kinds",
+                                &format!("{bp}/kinds/{k}"),
+                                format!("tool `{}`: `kinds.{k}` allows at most 4 kinds", it.id),
+                            );
+                        }
+                        for (a, kind) in kinds.iter().enumerate() {
+                            if kinds[..a].contains(kind) {
+                                cx.v(
+                                    "body_check_kinds",
+                                    &format!("{bp}/kinds/{k}"),
+                                    format!("tool `{}`: `kinds.{k}` names `{kind:?}` twice", it.id),
+                                );
+                            }
+                        }
+                    }
                     for (k, pins) in &bc.entry_at {
                         name!("entry_at", k);
                         if pins.is_empty() {

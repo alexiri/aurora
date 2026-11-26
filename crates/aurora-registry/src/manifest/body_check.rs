@@ -59,6 +59,45 @@ pub struct BodyCheck {
     /// refused too.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub value: BTreeMap<String, serde_json::Value>,
+    /// A key whose value, when the body carries it, must be of one of the listed JSON
+    /// kinds (a duration a newer server answers with is a string or a number, never an
+    /// object; a count it adds is an integer). A key the body does not carry is allowed:
+    /// the server adds these keys only when it runs the feature.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub kinds: BTreeMap<String, Vec<JsonKind>>,
+}
+
+/// A JSON kind a [`BodyCheck::kinds`] rule allows for a key's value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JsonKind {
+    String,
+    Number,
+    Integer,
+    Boolean,
+}
+
+impl JsonKind {
+    /// Whether `v` is of this kind: an `integer` is a JSON number without a fractional
+    /// part, so `2.5` is a number and never an integer.
+    fn matches(self, v: &serde_json::Value) -> bool {
+        match self {
+            Self::String => v.is_string(),
+            Self::Number => v.is_number(),
+            Self::Integer => v.is_i64() || v.is_u64(),
+            Self::Boolean => v.is_boolean(),
+        }
+    }
+
+    /// The kind's name in a refusal message.
+    fn name(self) -> &'static str {
+        match self {
+            Self::String => "a string",
+            Self::Number => "a number",
+            Self::Integer => "an integer",
+            Self::Boolean => "a boolean",
+        }
+    }
 }
 
 /// An entry rule of [`BodyCheck::entry_at`]: the entry at `at` (0 counts the first)
@@ -130,7 +169,8 @@ impl BodyCheck {
                 + self.entry_keys.len()
                 + self.entry_value.len()
                 + self.entry_at.len()
-                + self.value.len(),
+                + self.value.len()
+                + self.kinds.len(),
         );
         known.extend(self.refuse_keys.iter().map(String::as_str));
         known.extend(self.allow_keys.iter().map(String::as_str));
@@ -140,6 +180,7 @@ impl BodyCheck {
         known.extend(self.entry_value.keys().map(String::as_str));
         known.extend(self.entry_at.keys().map(String::as_str));
         known.extend(self.value.keys().map(String::as_str));
+        known.extend(self.kinds.keys().map(String::as_str));
         let mut hit: Option<(&String, &str)> = None;
         for k in obj.keys() {
             if let Some(same) = known.iter().find(|s| fold(s) == fold(k) && **s != *k) {
@@ -315,6 +356,24 @@ impl BodyCheck {
                 }
                 Some(_) => return Some(format!("`{k}` must be a JSON array")),
             }
+        }
+        // The kind checks run before the pins: a key a newer server adds to a rule it
+        // answers may carry a scalar of the declared kind only, whatever its value.
+        for (k, kinds) in &self.kinds {
+            let Some(v) = obj.get(k) else {
+                continue;
+            };
+            if kinds.iter().any(|kind| kind.matches(v)) {
+                continue;
+            }
+            let allowed = kinds
+                .iter()
+                .map(|kind| kind.name())
+                .collect::<Vec<_>>()
+                .join(" or ");
+            return Some(format!(
+                "`{k}` carries `{v}`: this tool sends `{k}` as {allowed} there"
+            ));
         }
         // The pins run last: a body that fails a shape rule above is refused for that, and
         // a pinned key's folded spellings are refused by the fold checks those rules already
@@ -1023,5 +1082,75 @@ mod tests {
         // Absent `only_keys` members are allowed (the script sets `service` only when given).
         let b = serde_json::to_vec(&json!({ "condition": "C", "data": steps() })).unwrap();
         assert_eq!(c.violation(b.as_slice(), false), None);
+    }
+
+    // A `kinds` check of the keys a newer server adds to a rule it answers: the script
+    // resends them unchanged, so neither may carry an object, and a count may not arrive
+    // with a fractional part or as a string.
+    fn kinds_check() -> BodyCheck {
+        serde_json::from_value(json!({
+            "allow_keys": ["title", "keep_firing_for", "missingSeriesEvalsToResolve"],
+            "kinds": {
+                "keep_firing_for": ["string", "number"],
+                "missingSeriesEvalsToResolve": ["integer"]
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_kinds_key_carries_the_declared_kind_when_present() {
+        let c = kinds_check();
+        // Keys the body does not carry are allowed (the server adds them only sometimes).
+        assert_eq!(c.violation(br#"{"title":"r"}"#, false), None);
+        // The declared kinds pass.
+        assert_eq!(
+            c.violation(
+                br#"{"title":"r","keep_firing_for":"5m","missingSeriesEvalsToResolve":2}"#,
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            c.violation(br#"{"title":"r","keep_firing_for":5}"#, false),
+            None
+        );
+        assert_eq!(
+            c.violation(br#"{"title":"r","missingSeriesEvalsToResolve":0}"#, false),
+            None
+        );
+    }
+
+    #[test]
+    fn a_kinds_key_of_another_kind_is_refused() {
+        let c = kinds_check();
+        // An object where a scalar belongs.
+        let b = br#"{"title":"r","keep_firing_for":{"for":"5m"}}"#;
+        assert!(c
+            .violation(b, false)
+            .unwrap()
+            .contains("`keep_firing_for` carries `{\"for\":\"5m\"}`: this tool sends `keep_firing_for` as a string or a number there"));
+        // A fractional number is not an integer, and neither is a string.
+        let b = br#"{"title":"r","missingSeriesEvalsToResolve":2.5}"#;
+        assert!(c
+            .violation(b, false)
+            .unwrap()
+            .contains("`missingSeriesEvalsToResolve` carries `2.5`: this tool sends `missingSeriesEvalsToResolve` as an integer there"));
+        let b = br#"{"title":"r","missingSeriesEvalsToResolve":"2"}"#;
+        assert!(c
+            .violation(b, false)
+            .unwrap()
+            .contains("`missingSeriesEvalsToResolve` carries `\"2\"`: this tool sends `missingSeriesEvalsToResolve` as an integer there"));
+    }
+
+    #[test]
+    fn a_spelling_that_folds_onto_a_kinds_key_is_refused() {
+        let c = kinds_check();
+        let b = br#"{"title":"r","KEEP_FIRING_FOR":"5m"}"#;
+        assert!(
+            c.violation(b, false)
+                .unwrap()
+                .contains("which the receiver reads as `keep_firing_for`")
+        );
     }
 }
