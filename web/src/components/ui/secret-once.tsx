@@ -18,7 +18,7 @@ export function useSecretCopy(secret: string | null) {
   const [used, setUsed] = useState(false);
   const [copies, setCopies] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const boxRef = useRef<HTMLCodeElement | null>(null);
+  const boxRef = useRef<HTMLElement | null>(null);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -105,7 +105,7 @@ export function SecretBox({
   /** How many copies have succeeded, for the screen-reader line's wording. */
   copies?: number;
   /** Ref on the box, for the select-and-execCommand copy fallback. */
-  boxRef?: RefObject<HTMLCodeElement | null>;
+  boxRef?: RefObject<HTMLElement | null>;
 }) {
   const label = state === "copied" ? "Copied" : used ? "Copy again" : copyLabel;
   return (
