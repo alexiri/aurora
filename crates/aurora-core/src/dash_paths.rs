@@ -50,6 +50,25 @@ pub fn admin_internet_access() -> String {
     "/admin/internet-access".into()
 }
 
+/// The review of one agent template version (C-1114, FIX-245): a sub-page of What agents may do ›
+/// Agent templates. The attention items and notices link it (`web` `adminRoutes.templateReview`).
+#[must_use]
+pub fn template_version_review(template_id: &str, version: &str) -> String {
+    format!("/admin/internet-access/templates/{template_id}/{version}")
+}
+
+/// The Administration page a chat platform is connected on.
+#[must_use]
+pub fn admin_chat_platforms() -> String {
+    "/admin/chat-platforms".into()
+}
+
+/// The organization's page a chat platform is connected on.
+#[must_use]
+pub fn org_chat_platforms(org: &str) -> String {
+    format!("{}/chat-platforms", org_overview(org))
+}
+
 // ---- Organization ----
 
 #[must_use]
@@ -208,5 +227,60 @@ mod tests {
             ws_approvals("acme", "main", Some("r1")),
             "/o/acme/w/main/approvals?focus=r1"
         );
+        assert_eq!(admin_chat_platforms(), "/admin/chat-platforms");
+        assert_eq!(org_chat_platforms("acme"), "/o/acme/chat-platforms");
+        assert_eq!(
+            template_version_review("nightmanager", "1.4.0"),
+            "/admin/internet-access/templates/nightmanager/1.4.0"
+        );
+    }
+
+    // (FIX-245) Every path the API, the gateway and the attention items and notices emit must be a
+    // page the dashboard's route table knows, or its link 404s. The table of prefixes mirrors
+    // `web/src/lib/routes.ts`: the Administration tree, an organization/workspace tree and the
+    // account pages. Every builder above is listed; a new page builder joins the list here.
+    #[test]
+    fn every_path_starts_with_a_route_the_dashboard_knows() {
+        const KNOWN_PREFIXES: [&str; 3] = ["/admin", "/o/", "/account"];
+        let paths = [
+            admin_apps("advanced"),
+            admin_oauth_clients(),
+            admin_self_hosted(),
+            admin_app_package("pkg"),
+            admin_people("organizations"),
+            admin_ai_models(),
+            admin_internet_access(),
+            template_version_review("t", "1.4.0"),
+            admin_chat_platforms(),
+            org_overview("acme"),
+            org_apps("acme", "apps"),
+            org_oauth_clients("acme"),
+            org_self_hosted("acme"),
+            org_app_setup("acme", "app1"),
+            org_people("acme", "members"),
+            org_ai_models("acme"),
+            org_internet_access("acme"),
+            org_settings("acme", "secret-stores"),
+            org_chat_platforms("acme"),
+            ws_overview("acme", "main"),
+            ws_agents("acme", "main"),
+            ws_agent_access("acme", "main", "a1"),
+            ws_agent_connect("acme", "main", "a1", "app1"),
+            ws_apps("acme", "main", "apps"),
+            ws_accounts("acme", "main"),
+            ws_connect("acme", "main", "app1"),
+            ws_reconnect("acme", "main", "c1"),
+            ws_app_setup("acme", "main", "app1"),
+            ws_people("acme", "main"),
+            ws_settings("acme", "main", "web-address"),
+            ws_internet_access("acme", "main"),
+            ws_approvals("acme", "main", None),
+        ];
+        for p in paths {
+            assert!(
+                KNOWN_PREFIXES.iter().any(|prefix| p.starts_with(prefix)),
+                "`{p}` is not a dashboard route"
+            );
+        }
     }
 }

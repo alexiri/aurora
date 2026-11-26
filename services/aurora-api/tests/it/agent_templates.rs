@@ -2751,8 +2751,10 @@ async fn template_attention_items_appear_and_disappear() {
     let items = template_attention(&w).await;
     assert_eq!(items.len(), 1, "{items:?}");
     assert_eq!(items[0]["decision"], true, "{items:?}");
+    // (FIX-245) The topic is the page that resolves the item: What agents may do, not Apps.
+    assert_eq!(items[0]["topic"], "internet-access", "{items:?}");
     assert_eq!(
-        items[0]["href"], "/admin/agent-templates/t/versions/1.0.0",
+        items[0]["href"], "/admin/internet-access/templates/t/1.0.0",
         "{items:?}"
     );
     assert!(
@@ -2800,8 +2802,9 @@ async fn template_attention_items_appear_and_disappear() {
             .contains("waiting for its package"),
         "{items:?}"
     );
+    assert_eq!(items[0]["topic"], "internet-access", "{items:?}");
     assert_eq!(
-        items[0]["href"], "/admin/agent-templates/t/versions/1.1.0",
+        items[0]["href"], "/admin/internet-access/templates/t/1.1.0",
         "{items:?}"
     );
 

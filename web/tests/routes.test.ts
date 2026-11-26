@@ -16,6 +16,8 @@ describe("route helper (C-960)", () => {
     expect(adminRoutes.package("p/1")).toBe("/admin/apps/packages/p%2F1");
     expect(adminRoutes.organization("o1")).toBe("/admin/people/organizations/o1");
     expect(adminRoutes.skillLibraries()).toBe("/admin/skill-libraries");
+    // (FIX-245) The same path the backend pins in `dash_paths.rs` (`template_version_review`): the
+    // attention endpoint's href and this route cannot drift apart.
     expect(adminRoutes.templateReview("schedule-manager", "1.2.0")).toBe("/admin/internet-access/templates/schedule-manager/1.2.0");
     expect(orgRoutes("acme").people("members")).toBe("/o/acme/people?tab=members");
     expect(orgRoutes("acme").group("g1")).toBe("/o/acme/people/groups/g1");

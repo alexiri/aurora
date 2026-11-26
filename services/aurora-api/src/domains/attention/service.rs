@@ -49,6 +49,8 @@ pub const TOPIC_PEOPLE: &str = "people";
 pub const TOPIC_APPROVALS: &str = "approvals";
 pub const TOPIC_ACCOUNTS: &str = "accounts";
 pub const TOPIC_AGENTS: &str = "agents";
+/// What agents may do (`/admin/internet-access`), the page that resolves a template version.
+pub const TOPIC_AGENT_POLICY: &str = "internet-access";
 
 /// `open` (default) or `done`; 400 otherwise.
 pub fn parse_state(state: Option<&str>) -> Result<bool, ApiError> {
@@ -225,10 +227,10 @@ fn request_item(
     let (label, href) = match (r.subject.as_str(), at, org_slug) {
         ("chat_platform", RequestLevel::Administration, _) => (
             "Connect a chat platform",
-            "/admin/chat-platforms".to_owned(),
+            dash_paths::admin_chat_platforms(),
         ),
         ("chat_platform", _, Some(o)) => {
-            ("Connect a chat platform", format!("/o/{o}/chat-platforms"))
+            ("Connect a chat platform", dash_paths::org_chat_platforms(o))
         }
         ("ai_key", _, Some(o)) => ("Add an AI key", dash_paths::org_ai_models(o)),
         ("ai_key", _, None) => ("Add an AI key", dash_paths::admin_ai_models()),
