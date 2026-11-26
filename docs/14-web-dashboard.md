@@ -1300,6 +1300,7 @@ unified by D-407 (P5-REFINE-1).
 | **Your account** | — | the signed-in person's own Aurora account (`/account`). It is always "your account", so it is never confused with a connected account | Use |
 | **Agent templates** | Agent presets, Agent blueprints | ready-made agents an instance admin brings in from a git repository and approves version by version; people create an agent from one in a few steps | Use |
 | **More templates…** | Template gallery, Template picker | the chip in the New agent dialog that opens the workspace's offered templates as cards; a card opens its details first, then the four-step page makes the agent | Use |
+| **Start from a template** | Template gallery, Browse templates | the button beside **New agent** on the Agents page that opens the same cards as **More templates…**; always there, also when nothing is approved yet — the empty gallery says why, and an administrator is sent to the Agent templates tab | Use |
 | **Template repository** | Template source | the git repository a set of agent templates comes from; Administration checks it and holds every new version until it is reviewed | Expert |
 | **Waiting for review** | Pending approval | a new template version an instance admin must read and approve before it is offered; people keep using the offered version meanwhile | Expert |
 | **Waiting for its package** | Awaiting package | a version Aurora has read whose package the repository has not published yet | Expert |

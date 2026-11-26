@@ -1,15 +1,19 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { AgentsList } from "@/components/agents-list";
 import { ErrorState, Loading } from "@/components/states";
+import { TemplateGalleryDialog } from "@/components/templates/gallery";
 import { AltitudeScope, MoreControlsLine } from "@/components/ui/altitude";
+import { Button } from "@/components/ui/button";
 import { MainAction } from "@/components/ui/main-action";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAgentNeedsCounts } from "@/lib/api/agent-needs";
 import { useApprovalsStream } from "@/lib/api/approvals";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
+import { wsRoutes } from "@/lib/routes";
 import { whoCanFromContacts } from "@/lib/who-can";
 
 import { CreateAgentDialog } from "./create-agent-dialog";
@@ -18,6 +22,32 @@ import { CreateAgentDialog } from "./create-agent-dialog";
 function ApprovalsStreamOpen({ wsId }: { wsId: string }) {
   useApprovalsStream(wsId);
   return null;
+}
+
+/**
+ * (FIX-245) **Start from a template**, beside **New agent**: the gallery of the workspace's offered
+ * templates, always present — also when nothing is approved yet, because the empty gallery says why.
+ * Choosing a card's **Use this template** opens the four-step page.
+ */
+function StartFromTemplate({ wsId, org, ws }: { wsId: string; org: string; ws: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button variant="outline" onClick={() => setOpen(true)}>
+        Start from a template
+      </Button>
+      <TemplateGalleryDialog
+        open={open}
+        onOpenChange={setOpen}
+        wsId={wsId}
+        onUse={(templateId) => {
+          setOpen(false);
+          router.push(wsRoutes(org, ws).newAgent(templateId));
+        }}
+      />
+    </>
+  );
 }
 
 export function AgentsView() {
@@ -40,9 +70,12 @@ export function AgentsView() {
         description="The agents in this workspace."
         actions={
           workspace.data ? (
-            <MainAction canAct={workspace.data.my_role === "owner"} whoCan={whoCanFromContacts("workspace_owner", workspace.data.contacts, "add_agent")}>
-              <CreateAgentDialog wsId={wsId} />
-            </MainAction>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <StartFromTemplate wsId={wsId} org={org} ws={ws} />
+              <MainAction canAct={workspace.data.my_role === "owner"} whoCan={whoCanFromContacts("workspace_owner", workspace.data.contacts, "add_agent")}>
+                <CreateAgentDialog wsId={wsId} />
+              </MainAction>
+            </div>
           ) : null
         }
         className="mb-2"
