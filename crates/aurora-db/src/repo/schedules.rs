@@ -398,10 +398,17 @@ pub async fn origin_for_run(
     let (Some(origin), Some(creator)) = (s.origin_conversation_id, s.creator_user_id) else {
         return Ok(None);
     };
+    // (FIX-253, D-490) A schedule made in a delegated task's conversation belongs to the task's
+    // requester and wakes in that conversation while the task is not closed; a closed task's
+    // conversation is nobody's chat any more.
     Ok(sqlx::query_scalar(
-        "SELECT id FROM conversations
-         WHERE id = $1 AND agent_id = $2 AND kind = 'direct' AND direct_user_id = $3
-           AND archived_at IS NULL",
+        "SELECT c.id FROM conversations c
+         WHERE c.id = $1 AND c.agent_id = $2 AND c.archived_at IS NULL
+           AND ((c.kind = 'direct' AND c.direct_user_id = $3)
+             OR (c.kind = 'peer' AND EXISTS (
+               SELECT 1 FROM peer_tasks t
+               WHERE t.task_conversation_id = c.id AND t.requester_user_id = $3
+                 AND t.status NOT IN ('completed', 'cancelled', 'expired'))))",
     )
     .bind(origin)
     .bind(s.agent_id)

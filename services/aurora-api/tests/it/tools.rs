@@ -160,6 +160,11 @@ fn call(b: &Booted, tool: &str, args: Value) -> Value {
            "conversation_id": b.conv, "turn_id": b.turn, "tool": tool, "args": args})
 }
 
+fn call_in(b: &Booted, conv: Uuid, turn: Uuid, tool: &str, args: Value) -> Value {
+    json!({"sandbox_id": b.sandbox, "boot_id": b.boot, "call_id": "c1",
+           "conversation_id": conv, "turn_id": turn, "tool": tool, "args": args})
+}
+
 #[tokio::test]
 async fn catalogue_lists_available_tools_with_schemas() {
     let r = rig().await;
@@ -399,6 +404,156 @@ async fn a_frozen_agent_cannot_use_platform_tools() {
         .unwrap();
     let (s, v) = r.tool(call(&a, "list_agents", json!({}))).await;
     assert_eq!(s, 200, "{v}");
+}
+
+/// (FIX-253, D-490) `schedule_create` from a delegated task's conversation (a peer turn, no
+/// speaker): the schedule belongs to the task's requester and its origin is the task
+/// conversation, and the wake runs there while the task is not closed. Without a requester, or
+/// with a requester who cannot use the agent, it refuses.
+#[tokio::test]
+async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+
+    // A peer task conversation of a1 with an agent-speaker turn, and the open task behind it.
+    let peer = |status, requester: Option<Uuid>| {
+        let r = &r;
+        async move { peer_task_conv(r, a.agent, requester, status).await }
+    };
+
+    // The wake: a one-time schedule from the peer turn belongs to the requester, origin the task
+    // conversation, and `origin_for_run` sends the fire there while the task is open.
+    let (conv, turn) = peer("open", Some(requester)).await;
+    let (s, v) = r
+        .tool(call_in(&a, conv, turn, "schedule_create",
+            json!({"name": "check", "prompt": "Look again.", "run_at": "2026-12-01T09:00"})))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let row: (Option<Uuid>, Option<Uuid>) = sqlx::query_as(
+        "SELECT creator_user_id, origin_conversation_id FROM schedules ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(row, (Some(requester), Some(conv)));
+    let schedule: Uuid =
+        sqlx::query_scalar("SELECT id FROM schedules ORDER BY created_at DESC LIMIT 1")
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let row = aurora_db::repo::schedules::get(&mut *conn, schedule).await.unwrap().unwrap();
+    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut *conn, &row).await.unwrap();
+    assert_eq!(fire_at, Some(conv));
+    drop(conn);
+    // A closed task's conversation is nobody's chat any more.
+    sqlx::query("UPDATE peer_tasks SET status = 'completed' WHERE task_conversation_id = $1")
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let row = aurora_db::repo::schedules::get(&mut *conn, schedule).await.unwrap().unwrap();
+    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut *conn, &row).await.unwrap();
+    assert_eq!(fire_at, None);
+    drop(conn);
+
+    // A peer turn with no requester still refuses.
+    let (conv, turn) = peer("open", None).await;
+    let (s, v) = r
+        .tool(call_in(&a, conv, turn, "schedule_create",
+            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"})))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+
+    // A requester who cannot use the agent never gets the schedule.
+    let stranger = r.h.user("stranger@x.io", false).await;
+    r.h.member(r.org, stranger, "member", "active").await;
+    let (conv, turn) = peer("open", Some(stranger)).await;
+    sqlx::query("UPDATE peer_tasks SET requester_user_id = $1 WHERE task_conversation_id = $2")
+        .bind(stranger)
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = r
+        .tool(call_in(&a, conv, turn, "schedule_create",
+            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"})))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    assert!(v.to_string().contains("can no longer use this agent"), "{v}");
+}
+
+/// A `peer` conversation of `agent` with an agent-speaker turn, and an open peer task behind it
+/// (requester `None` = the refusal case).
+async fn peer_task_conv(
+    r: &Rig,
+    agent: Uuid,
+    requester: Option<Uuid>,
+    status: &str,
+) -> (Uuid, Uuid) {
+    let conv = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'peer',$1::text, now())",
+    )
+    .bind(conv)
+    .bind(agent)
+    .bind(r.ws)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let turn = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text)
+         VALUES ($1,$2,$3,'turn','running','{}','agent','a1','working')",
+    )
+    .bind(turn)
+    .bind(conv)
+    .bind(agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let other = r.h.hosted_agent(r.org, r.ws, &format!("peer-{}", Uuid::now_v7().simple())).await;
+    let (x, y) = if agent < other {
+        (agent, other)
+    } else {
+        (other, agent)
+    };
+    let link = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO agent_links (id, agent_a_id, agent_b_id, policy_a, policy_b)
+         VALUES ($1,$2,$3,'allow','allow')",
+    )
+    .bind(link)
+    .bind(x)
+    .bind(y)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let task = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
+            origin_conversation_id, task_conversation_id, status, message_budget, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,5, now() + interval '1 hour')",
+    )
+    .bind(task)
+    .bind(link)
+    .bind(other)
+    .bind(agent)
+    .bind(requester)
+    .bind(conv)
+    .bind(conv)
+    .bind(status)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    (conv, turn)
 }
 
 struct Slow;

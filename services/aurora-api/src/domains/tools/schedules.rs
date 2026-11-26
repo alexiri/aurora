@@ -5,6 +5,7 @@ use crate::domains::schedules::once;
 use crate::domains::schedules::service::{self, Create, Patch};
 use aurora_core::ApiError;
 use aurora_db::repo::schedules::ScheduleRow;
+use aurora_db::repo::peer_tasks;
 use aurora_db::repo::{agents, turns, users, workspaces};
 use aurora_protocol::tools::{JsonContent, ToolContent};
 use serde::Deserialize;
@@ -66,6 +67,18 @@ async fn speaker(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
             .and_then(|t| t.speaker_user_id),
         None => None,
     })
+}
+
+/// (FIX-253, D-490) The person a schedule created in this turn belongs to: the speaker, or —
+/// in a delegated task's conversation (a peer or system turn there, no speaker) — the peer
+/// task's requester: the schedule runs as them. `None` when there is no such person.
+async fn creator(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
+    if let Some(u) = speaker(ctx).await? {
+        return Ok(Some(u));
+    }
+    Ok(peer_tasks::by_task_conversation(&ctx.agent.pool, ctx.conversation_id)
+        .await?
+        .and_then(|t| t.requester_user_id))
 }
 
 /// (P5-SCHED-ONCE, C-1094) The tools' default time zone: the speaker's own (`users.timezone`,
@@ -158,8 +171,9 @@ impl PlatformTool for CreateT {
          person's, the zone of Now above); it runs once. For repeating work set `cron` (5 fields, \
          e.g. `0 10 27 11 *` = every year on 27 November at 10:00; at most every 5 minutes). A \
          one-time schedule made in a person's own chat runs in that chat, so your answer reaches \
-         them there. Optional gate_command runs first; empty output or {\"wake_agent\": false} \
-         skips the run.",
+         them there. In a delegated task's conversation the schedule belongs to the task's \
+         requester and its wake runs in the task conversation. Optional gate_command runs first; \
+         empty output or {\"wake_agent\": false} skips the run.",
         json!({"type": "object", "additionalProperties": false,
             "required": ["name", "prompt"],
             "properties": {"name": {"type": "string"}, "prompt": {"type": "string"},
@@ -177,11 +191,19 @@ impl PlatformTool for CreateT {
             .await?
             .ok_or_else(|| ToolError::Failed("Unknown agent.".into()))?;
         // A schedule turn has no speaker, so a run can never schedule itself again (SEC-144).
-        let Some(creator) = speaker(ctx).await? else {
+        // (FIX-253, D-490) In a delegated task's conversation the schedule belongs to the
+        // task's requester: it runs as them, so they must still be able to use this agent
+        // (re-checked here and again at fire time, never widened).
+        let Some(creator) = creator(ctx).await? else {
             return Err(ToolError::Failed(
-                "Schedules can only be created while a person is talking to you.".into(),
+                "Schedules can only be created for a person: the one talking with you, or the requester of this task.".into(),
             ));
         };
+        if !aurora_db::authz::can_use(&ctx.agent.pool, creator, agent.workspace_id).await? {
+            return Err(ToolError::Failed(
+                "The person this schedule would belong to can no longer use this agent.".into(),
+            ));
+        }
         let timezone = match a.timezone {
             Some(t) => t,
             None => default_tz(ctx, &agent, creator).await?,
