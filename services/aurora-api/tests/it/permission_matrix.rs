@@ -1481,6 +1481,10 @@ const ROWS: &[Row] = &[
     r("PATCH", "/v1/eval-schedules/{id}", G::WsUse, false),
     r("DELETE", "/v1/eval-schedules/{id}", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/peer-tasks", G::WsUse, false),
+    // (FIX-252) The stored requester only — a session-only route with no workspace right at
+    // all: another person's session finds nothing (404, the id is not a seeded one here). The
+    // requester-only ladder is it/channels_cards.rs (the card tests) and it/peer_tasks.rs.
+    r("POST", "/v1/peer-tasks/{id}/cancel", G::Auth, true),
     // (P5-REFINE-9, C-1083, C-1084, SEC-143) the agent timeline: `can_use`; its stream is
     // session-only. Rows of conversations the reader may not see: tests/it/timeline.rs.
     r("GET", "/v1/agents/{agent}/timeline", G::WsUse, false),

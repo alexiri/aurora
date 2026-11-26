@@ -1,7 +1,8 @@
 use super::dto::{ListQuery, PeerTask, STATUSES};
 use crate::app::AppState;
 use crate::domains::conversations::service::load_agent;
-use crate::http::auth::Caller;
+use crate::domains::peer_tasks::service as peers;
+use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::{Page, Pagination};
@@ -12,7 +13,51 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use uuid::Uuid;
 
 pub fn router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(list_peer_tasks))
+    OpenApiRouter::new()
+        .routes(routes!(list_peer_tasks))
+        .routes(routes!(cancel_peer_task))
+}
+
+/// (FIX-252) The person who asked for a peer task cancels it (the origin card's button and the
+/// web card): sessions only, the stored requester only — nobody else's task is revealed (404).
+#[utoipa::path(post, path = "/peer-tasks/{id}/cancel", operation_id = "cancelPeerTask", tag = "peer-tasks",
+    params(("id" = Uuid, Path, description = "Peer task id")),
+    responses((status = 200, body = PeerTask), (status = 400, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope), (status = 409, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn cancel_peer_task(
+    c: SessionCaller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<PeerTask>, ApiError> {
+    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
+    let row = match peers::cancel_by_requester(&mut conn, c.user_id, id).await? {
+        peers::RequesterCancel::Done(t) => t,
+        peers::RequesterCancel::AlreadyClosed => {
+            return Err(ApiError::conflict(
+                "already_closed",
+                "This task is already closed.",
+            ));
+        }
+        peers::RequesterCancel::NotYours => {
+            return Err(ApiError::not_found("Peer task not found."));
+        }
+    };
+    // The task's workspace is the sending agent's; the audit row names the task. The requester
+    // identity was already checked by `cancel_by_requester`, so the agent row is only read for
+    // the audit labels — the requester can always cancel, whatever their access is now.
+    let from_agent = row.from_agent_id;
+    if let Some(from) = aurora_db::repo::agents::get(&s.pool, from_agent).await? {
+        crate::audit::record(
+            &s,
+            crate::audit::AuditEvent::by(&c.0, "peer_task.cancel")
+                .org(from.org_id)
+                .workspace(from.workspace_id)
+                .target("peer_task", row.id)
+                .metadata(serde_json::json!({"via": "dashboard"})),
+        );
+    }
+    Ok(Json(PeerTask::from_row(row, from_agent)))
 }
 
 /// Peer tasks the agent requested or received, newest first.

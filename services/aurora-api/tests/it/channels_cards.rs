@@ -26,6 +26,7 @@ struct W {
     conv: Uuid,
     owner: Uuid,
     member: Uuid,
+    outsider: Uuid,
     gw: Uuid,
 }
 
@@ -105,6 +106,7 @@ impl W {
             conv,
             owner,
             member,
+            outsider,
             gw,
         }
     }
@@ -241,6 +243,15 @@ impl W {
         .fetch_one(self.pool())
         .await
         .unwrap()
+    }
+
+    /// The status of a peer task, by its task conversation.
+    async fn task_status(&self, task_conversation: Uuid) -> String {
+        sqlx::query_scalar("SELECT status FROM peer_tasks WHERE task_conversation_id=$1")
+            .bind(task_conversation)
+            .fetch_one(self.pool())
+            .await
+            .unwrap()
     }
 
     async fn token_uses(&self) -> i64 {
@@ -1354,9 +1365,9 @@ async fn dm_approval_card_click_by_non_participant_is_refused() {
 impl W {
     /// (FIX-252) An approval raised in a peer task conversation: `task` (the receiver's `peer`
     /// conversation) has no thread link; `origin` (where the person asked) has one of `origin_kind`.
-    /// Delegating agent: `agent2`; receiving agent (the approval's): `agent`. Returns
-    /// `(approval id, task conversation, origin conversation)`.
-    async fn peer_approval(&self, origin_kind: &str) -> (Uuid, Uuid, Uuid) {
+    /// Delegating agent: `agent2`; receiving agent (the approval's): `agent`; `requester` is the
+    /// person who asked. Returns `(approval id, task conversation, origin conversation)`.
+    async fn peer_approval(&self, origin_kind: &str, requester: Uuid) -> (Uuid, Uuid, Uuid) {
         let p = self.pool();
         let origin = Uuid::now_v7();
         sqlx::query(
@@ -1417,7 +1428,7 @@ impl W {
         .bind(link)
         .bind(self.agent2)
         .bind(self.agent)
-        .bind(self.member)
+        .bind(requester)
         .bind(origin)
         .bind(task)
         .execute(p)
@@ -1450,7 +1461,7 @@ impl W {
 #[tokio::test]
 async fn peer_approval_card_goes_to_the_origin_thread_and_names_the_delegating_agent() {
     let w = W::new(&FULL).await;
-    let (id, _task, _origin) = w.peer_approval("group").await;
+    let (id, _task, _origin) = w.peer_approval("group", w.member).await;
     w.fanout().await;
     w.fanout().await; // idempotent: still exactly one card
     let posts = w.ops("message.post").await;
@@ -1469,8 +1480,9 @@ async fn peer_approval_card_goes_to_the_origin_thread_and_names_the_delegating_a
         "{title}"
     );
     assert!(title.contains("(asked for by "), "{title}");
-    // D-178: a shared origin shows no request fields.
-    assert!(W::tokens(op).iter().map(|t| &t.0).eq(["Allow once", "Block"]));
+    // D-178: a shared origin shows no request fields. The requester (`member`) is an approver in
+    // the approval's workspace, so the card offers Approve and Deny.
+    assert!(W::tokens(op).iter().map(|t| &t.0).eq(["Approve", "Deny"]));
     assert!(!serde_json::to_string(&op).unwrap().contains("x/y"));
     let card: (String, String) =
         sqlx::query_as("SELECT subject_kind, state FROM channel_cards WHERE subject_id=$1")
@@ -1485,7 +1497,7 @@ async fn peer_approval_card_goes_to_the_origin_thread_and_names_the_delegating_a
 #[tokio::test]
 async fn peer_approval_card_in_a_direct_origin_carries_the_details() {
     let w = W::new(&FULL).await;
-    w.peer_approval("direct").await;
+    w.peer_approval("direct", w.member).await;
     w.fanout().await;
     let op = w.ops("message.post").await.pop().unwrap().1;
     let blocks = op["content"]["card"]["blocks"].as_array().unwrap();
@@ -1500,7 +1512,7 @@ async fn peer_approval_card_in_a_direct_origin_carries_the_details() {
 #[tokio::test]
 async fn peer_approval_without_an_origin_link_posts_nothing() {
     let w = W::new(&FULL).await;
-    let (_id, _task, origin) = w.peer_approval("group").await;
+    let (_id, _task, origin) = w.peer_approval("group", w.member).await;
     sqlx::query("DELETE FROM thread_links WHERE conversation_id = $1")
         .bind(origin)
         .execute(w.pool())
@@ -1520,11 +1532,191 @@ async fn peer_approval_without_an_origin_link_posts_nothing() {
 #[tokio::test]
 async fn peer_approval_card_needs_an_active_integration() {
     let w = W::new(&FULL).await;
-    w.peer_approval("group").await;
+    w.peer_approval("group", w.member).await;
     sqlx::query("UPDATE channel_integrations SET status='disabled'")
         .execute(w.pool())
         .await
         .unwrap();
     w.fanout().await;
     assert_eq!(w.ops("message.post").await.len(), 0);
+}
+
+/// (FIX-252) A requester **with** `can_approve` at the approval's workspace decides from the
+/// origin card (Approve); being the requester grants nothing beyond what they already had.
+#[tokio::test]
+async fn peer_requester_with_can_approve_decides_from_the_origin_card() {
+    let w = W::new(&FULL).await;
+    let (id, _task, _origin) = w.peer_approval("group", w.member).await;
+    w.fanout().await;
+    w.deliver().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let out = w
+        .click(w.integ, &W::token(&op, "Approve"), "U_MEMBER", None)
+        .await;
+    assert_eq!(out["result"], "done", "{out}");
+    let (st, by, via): (String, Option<Uuid>, Option<String>) =
+        sqlx::query_as("SELECT status, decided_by_user_id, decided_via FROM approvals WHERE id=$1")
+            .bind(id)
+            .fetch_one(w.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        (st.as_str(), by, via.as_deref()),
+        ("approved", Some(w.member), Some("channel"))
+    );
+}
+
+/// (FIX-252) A requester **without** `can_approve` gets Ask an approver and Cancel the task
+/// instead of Approve/Deny; deciding from the card is refused and grants nothing.
+#[tokio::test]
+async fn peer_requester_without_can_approve_gets_ask_an_approver_and_cancel() {
+    let w = W::new(&FULL).await;
+    let (id, task, _origin) = w.peer_approval("group", w.outsider).await;
+    w.fanout().await;
+    w.deliver().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let labels: Vec<_> = W::tokens(&op).into_iter().map(|t| t.0).collect();
+    assert_eq!(labels, ["Ask an approver", "Cancel the task"]);
+    let ctx = op["content"]["card"]["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["type"] == "context")
+        .unwrap()["text"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(ctx.contains("Ask an approver of"), "{ctx}");
+    // The decide route still refuses a plain member (RFE-012): no right gained by the card. The
+    // card shows no Approve button, so the token is minted directly.
+    let tok = w
+        .minter(w.integ)
+        .mint(
+            id,
+            ActionKind::ApprovalDecide {
+                decision: Decision::Approve,
+            },
+        )
+        .unwrap();
+    let out = w.click(w.integ, &tok, "U_OUT", None).await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("forbidden")),
+        "{out}"
+    );
+    assert_eq!(w.status("approvals", id).await, "pending");
+    assert_eq!(w.task_status(task).await, "open");
+    assert_eq!(w.token_uses().await, 0);
+}
+
+/// (FIX-252) Cancel the task: the requester's click closes the task (its close line goes to the
+/// origin) and the pending approval is abandoned; a different person's click is refused.
+#[tokio::test]
+async fn peer_cancel_the_task_is_the_requesters_only_and_abandons_the_approval() {
+    let w = W::new(&FULL).await;
+    let (id, task, _origin) = w.peer_approval("group", w.outsider).await;
+    w.fanout().await;
+    w.deliver().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let tok = W::token(&op, "Cancel the task");
+    // Not the requester: refused, nothing burned.
+    let out = w.click(w.integ, &tok, "U_MEMBER", None).await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("forbidden")),
+        "{out}"
+    );
+    assert_eq!(w.status("approvals", id).await, "pending");
+    assert_eq!(w.task_status(task).await, "open");
+    // The requester cancels.
+    let out = w.click(w.integ, &tok, "U_OUT", None).await;
+    assert_eq!(out["result"], "done", "{out}");
+    assert_eq!(w.task_status(task).await, "cancelled");
+    assert_eq!(w.status("approvals", id).await, "abandoned");
+    // The close line reached the origin conversation.
+    let origin: Uuid = sqlx::query_scalar(
+        "SELECT origin_conversation_id FROM peer_tasks WHERE task_conversation_id = $1",
+    )
+    .bind(task)
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    let lines: Vec<Value> = sqlx::query_scalar(
+        "SELECT payload FROM transcript_events WHERE conversation_id = $1 AND type = 'notice'
+          AND payload->>'code' = 'peer_task_closed' ORDER BY seq",
+    )
+    .bind(origin)
+    .fetch_all(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(lines.len(), 1);
+    // The origin card settles to the abandoned line.
+    w.fanout().await;
+    let upd = w.ops("message.update").await;
+    assert!(
+        upd.iter()
+            .any(|(_, p, _)| serde_json::to_string(p).unwrap().contains("abandoned"))
+    );
+}
+
+/// (FIX-252) Ask an approver: the click e-mails the people with `can_approve` in the approval's
+/// workspace at once (claimed, so the notifier's delayed mail does not repeat it) and is audited.
+#[tokio::test]
+async fn peer_ask_an_approver_emails_the_deciders_once() {
+    let w = W::new(&FULL).await;
+    let (id, _task, _origin) = w.peer_approval("group", w.outsider).await;
+    w.fanout().await;
+    w.deliver().await;
+    let op = w.ops("message.post").await.pop().unwrap().1;
+    let tok = W::token(&op, "Ask an approver");
+    let out = w.click(w.integ, &tok, "U_OUT", None).await;
+    assert_eq!(out["result"], "done", "{out}");
+    let to: Vec<String> = w.h.mail.sent().into_iter().map(|m| m.to).collect();
+    // Both people with `can_approve` at the approval's workspace: the owner binding and the
+    // approver binding (D-477).
+    assert_eq!(to, vec!["owner@x.io".to_owned(), "member@x.io".to_owned()]);
+    assert!(w.h.mail.sent()[0].subject.contains("Approval needed"));
+    let claimed: Option<String> =
+        sqlx::query_scalar("SELECT delivery FROM approval_notifications WHERE approval_id = $1")
+            .bind(id)
+            .fetch_optional(w.pool())
+            .await
+            .unwrap();
+    assert_eq!(claimed.as_deref(), Some("mail"));
+    // Single use: the button cannot ask again.
+    let out = w.click(w.integ, &tok, "U_OUT", None).await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("already_used")),
+        "{out}"
+    );
+    assert_eq!(w.h.mail.sent().len(), 2);
+    let (action,): (String,) = sqlx::query_as(
+        "SELECT action FROM audit_log WHERE action = 'approval.ask_approver'
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(w.pool())
+    .await
+    .unwrap();
+    assert_eq!(action, "approval.ask_approver");
+}
+
+/// (FIX-252) Ask an approver on a card that is not a peer-origin card is not valid.
+#[tokio::test]
+async fn peer_ask_an_approver_needs_a_peer_origin_card() {
+    let w = W::new(&FULL).await;
+    let (id, _op) = w.approval_card().await;
+    // Mint an ask token bound to this (non-peer) approval and click it.
+    let tok = w
+        .minter(w.integ)
+        .mint(id, aurora_channels::ActionKind::PeerTaskAskApprover)
+        .unwrap();
+    let out = w.click(w.integ, &tok, "U_MEMBER", None).await;
+    assert_eq!(
+        (out["result"].as_str(), out["reason"].as_str()),
+        (Some("refused"), Some("invalid_token")),
+        "{out}"
+    );
+    assert_eq!(w.status("approvals", id).await, "pending");
+    assert_eq!(w.token_uses().await, 0);
 }

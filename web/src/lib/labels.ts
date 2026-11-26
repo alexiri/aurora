@@ -566,6 +566,9 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "ssh_key.delete": { sentence: (actor, t) => `${actor} removed ${t ? `the SSH key ${t}` : "an SSH key"}`, weight: "important" },
   "approval.decide": { sentence: (actor) => `${actor} answered an approval`, weight: "routine" },
   "action_approval.decide": { sentence: (actor) => `${actor} answered an approval`, weight: "routine" },
+  // (FIX-252) From a delegated task's origin card: ask the deciders by mail, or give up.
+  "approval.ask_approver": { sentence: (actor) => `${actor} asked for an approver on an approval`, weight: "routine" },
+  "peer_task.cancel": { sentence: (actor) => `${actor} cancelled a delegated task`, weight: "routine" },
   "skill.library.add": { sentence: (actor, t) => `${actor} added ${t ? `the skill library ${t}` : "a skill library"}`, weight: "routine" },
   // (P6-TPL-2, C-1106) The instance administrators' template catalogue and the organizations' switches.
   "agent_template.approve": named("approved a new version of", "the template", "a template", "important"),

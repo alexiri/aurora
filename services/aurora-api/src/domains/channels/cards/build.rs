@@ -50,10 +50,18 @@ pub fn parked_sentence(resume_window_secs: u64) -> String {
 
 /// (FIX-252) The extra facts of an approval raised in a peer task: its card at the origin
 /// conversation says the receiving agent is waiting and who asked for it (the delegating agent's
-/// label, never the requester's e-mail).
+/// label, never the requester's e-mail). The buttons follow the **requester's** rights at the
+/// approval's (target) workspace: with `can_approve` the card offers Approve and Deny (the decide
+/// route and the click handler re-check at decide time; being the requester grants nothing);
+/// without, it says who can and offers Ask an approver and Cancel the task.
 pub struct PeerOrigin {
     /// `<Agent name> (@handle)`, sanitized, of the agent the task was asked through.
     pub asked_for_by: String,
+    /// The target workspace's name, for the "Ask an approver of …" line.
+    pub workspace_name: String,
+    /// Whether the requester has `can_approve` in the approval's workspace (read at post time;
+    /// every decide is re-checked there).
+    pub requester_may_decide: bool,
 }
 
 /// Gateway approval card: header, summary title (and fields in a 1:1 conversation), context,
@@ -116,20 +124,53 @@ pub fn approval(
         " · Expires {}",
         row.deadline.format("%Y-%m-%d %H:%M UTC")
     ));
-    // Phase 2, RFE-012: who may decide.
-    ctx.push_str(" · Needs an approver");
+    let mut items = Vec::new();
+    match peer {
+        // (FIX-252) The requester may decide: the same decide route as every card; the handler
+        // re-checks `can_approve` at the approval's workspace at click time.
+        Some(p) if p.requester_may_decide => {
+            ctx.push_str(" · Needs an approver");
+            items = decide_buttons(
+                m,
+                row.id,
+                |decision| ActionKind::ApprovalDecide { decision },
+                ("Approve", "Deny"),
+            )?;
+        }
+        // (FIX-252) The requester may not decide: the card says who can, links the approvals
+        // page and offers Ask an approver and Cancel the task. Nobody gains a right.
+        Some(p) => {
+            ctx.push_str(&format!(
+                " · Ask an approver of {}",
+                sanitize::label(&p.workspace_name)
+            ));
+            items.push(ButtonItem::new(
+                "Ask an approver",
+                ButtonStyle::Primary,
+                m.mint(row.id, ActionKind::PeerTaskAskApprover)?,
+            ));
+            items.push(ButtonItem::new(
+                "Cancel the task",
+                ButtonStyle::Danger,
+                m.mint(row.id, ActionKind::PeerTaskCancel)?,
+            ));
+        }
+        None => {
+            ctx.push_str(" · Needs an approver");
+            items = decide_buttons(
+                m,
+                row.id,
+                |decision| ActionKind::ApprovalDecide { decision },
+                ("Allow once", "Block"),
+            )?;
+        }
+    }
     blocks.push(Block::context(&ctx));
     if row.parked {
         blocks.push(Block::text(&parked_sentence(resume_window_secs)));
     }
-    let mut items = decide_buttons(
-        m,
-        row.id,
-        |decision| ActionKind::ApprovalDecide { decision },
-        ("Allow once", "Block"),
-    )?;
-    if let (Some(batch), Some(total)) = (&row.batch_id, row.batch_total)
-        && total > 1
+    if let Some(batch) = &row.batch_id
+        && row.batch_total.is_some_and(|total| total > 1)
     {
         items.extend(decide_buttons(
             m,

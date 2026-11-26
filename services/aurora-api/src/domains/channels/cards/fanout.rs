@@ -127,8 +127,22 @@ async fn post_approval(state: &AppState, id: Uuid) -> Result<bool, ApiError> {
             let asked = agents::get(&mut *tx, pt.from_agent_id)
                 .await?
                 .map(|a| crate::domains::peer_tasks::service::agent_label(&a));
+            // (FIX-252) The card's buttons follow the requester's rights at the approval's
+            // workspace, read at post time; every decide re-checks them there.
+            let requester_may_decide = match pt.requester_user_id {
+                Some(u) => aurora_db::authz::can_approve(&state.pool, u, row.workspace_id)
+                    .await
+                    .unwrap_or(false),
+                None => false,
+            };
+            let workspace_name =
+                aurora_db::repo::approval_notify::workspace_labels(&state.pool, row.workspace_id)
+                    .await?
+                    .map_or_else(|| "the workspace".into(), |w| w.0);
             Some(build::PeerOrigin {
                 asked_for_by: asked.unwrap_or_else(|| "another agent".into()),
+                workspace_name,
+                requester_may_decide,
             })
         }
         None => None,

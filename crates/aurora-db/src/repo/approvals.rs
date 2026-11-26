@@ -637,6 +637,29 @@ pub async fn end_parked_of(
     Ok(all)
 }
 
+/// (FIX-252) Every `pending` approval raised in one conversation (a peer task's) is abandoned
+/// when the task ends without it (the requester cancelled the task, it expired or ran out of
+/// budget) — parked or not. Returns the ended rows; the caller runs in its transaction, the
+/// `abandoned` bus events go out with it.
+pub async fn abandon_pending_of_conversation(
+    tx: &mut sqlx::PgConnection,
+    conversation_id: Uuid,
+) -> Result<Vec<Ended>, DbError> {
+    let rows: Vec<EndedRow> = sqlx::query_as(sqlx::AssertSqlSafe(
+        "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \
+         updated_at = now() WHERE status = 'pending' AND conversation_id = $1 \
+         RETURNING id, workspace_id, conversation_id, parked",
+    ))
+    .bind(conversation_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let all = ended(rows, false);
+    for e in &all {
+        notify_tx(&mut *tx, e.id, e.workspace_id, "abandoned").await?;
+    }
+    Ok(all)
+}
+
 /// (P4-011B-2, C-828) Ready grants past `resume_expires_at` -> `resume_state = 'expired'`.
 /// Returns `(id, workspace_id, conversation_id)`.
 pub async fn expire_resume_windows(

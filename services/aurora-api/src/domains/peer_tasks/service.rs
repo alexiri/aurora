@@ -550,6 +550,16 @@ async fn close_inner(
         ),
     };
     post_report(conn, &closed, code, &line, report.as_deref()).await?;
+    // (FIX-252) The task ended without its approvals: any approval still pending in its
+    // conversation is abandoned (the origin card settles, the outcome notices stop).
+    let abandoned = aurora_db::repo::approvals::abandon_pending_of_conversation(
+        conn,
+        closed.task_conversation_id,
+    )
+    .await?;
+    for e in &abandoned {
+        tracing::info!(approval = %e.id, task = %closed.id, "peer task closed with a pending approval abandoned");
+    }
     Ok(Some(closed))
 }
 
@@ -713,6 +723,34 @@ pub async fn cancel(
     match close_with_promotion(conn, &task, &Close::Cancelled(None)).await? {
         Some(t) => Ok(Ok(t)),
         None => Ok(Err("The task is already closed.".into())),
+    }
+}
+
+/// (FIX-252) How a requester-side cancel ended: the task, already closed, or no such task of
+/// theirs (the stored requester is the fire-time identity; nobody else may cancel).
+#[allow(clippy::large_enum_variant)] // one short-lived row per call; the other variants are tiny
+pub enum RequesterCancel {
+    Done(PeerTaskRow),
+    AlreadyClosed,
+    NotYours,
+}
+
+/// (FIX-252) The person who asked cancels their task from the origin card or the web route:
+/// only the stored `requester_user_id`, and only while the task is open.
+pub async fn cancel_by_requester(
+    conn: &mut PgConnection,
+    user: Uuid,
+    id: Uuid,
+) -> Result<RequesterCancel, ApiError> {
+    let Some(task) = repo::get_for_update(&mut *conn, id)
+        .await?
+        .filter(|t| t.requester_user_id == Some(user))
+    else {
+        return Ok(RequesterCancel::NotYours);
+    };
+    match close_with_promotion(conn, &task, &Close::Cancelled(None)).await? {
+        Some(t) => Ok(RequesterCancel::Done(t)),
+        None => Ok(RequesterCancel::AlreadyClosed),
     }
 }
 

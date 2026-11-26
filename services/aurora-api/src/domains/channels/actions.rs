@@ -19,6 +19,7 @@ use crate::domains::action_approvals::dto::ActionDecision;
 use crate::domains::agent_links::dto::{LinkPolicy, SetPolicyBody};
 use crate::domains::approvals::dto::Decision as GateDecision;
 use crate::domains::connectors::inbox::{InboxError, InboxHandler};
+use crate::domains::peer_tasks::service as peers;
 use crate::http::auth::{Caller, Principal};
 use aurora_channels::{ActionKind, ActionToken, Content, Decision, TokenError};
 use aurora_core::ApiError;
@@ -28,8 +29,9 @@ use aurora_db::repo::channel_cards as card_repo;
 use aurora_db::repo::channel_inbox::InboxRow;
 use aurora_db::repo::channel_integrations::IntegrationRow;
 use aurora_db::repo::{
-    action_approvals, agent_links, agents, approvals, channel_integrations, channel_presences,
-    dm_defaults, link_requests, reach_grants, space_bindings, turns, user_links, users,
+    action_approvals, agent_links, agents, approval_notify, approvals, channel_integrations,
+    channel_presences, dm_defaults, link_requests, peer_tasks, reach_grants, space_bindings, turns,
+    user_links, users,
 };
 use aurora_protocol::connector::ActionInvoked;
 use chrono::{DateTime, Utc};
@@ -354,6 +356,100 @@ impl Click<'_> {
                 crate::domains::action_approvals::service::decide(s, c, a.id, d).await?;
                 Ok(Done::new("action_approval.decide"))
             }
+            // (FIX-252) The peer-origin card's Ask an approver: e-mails the people with
+            // `can_approve` in the approval's workspace now (the same mail the notifier sends,
+            // claimed so the sweep does not repeat it). It grants nobody a right; the button is
+            // single-use like every card action, so one card asks once.
+            ActionKind::PeerTaskAskApprover => {
+                let a = approvals::get(&s.pool, claims.subject_id)
+                    .await?
+                    .ok_or_else(gone)?;
+                if a.status != "pending" {
+                    return refuse("not_found", "That request no longer exists.");
+                }
+                let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+                // The ask exists only on a peer-origin card; anything else is not valid.
+                let Some(conv) = a.conversation_id else {
+                    return refuse("invalid_token", "This action is not valid.");
+                };
+                if peer_tasks::by_task_conversation(&mut *tx, conv)
+                    .await?
+                    .is_none()
+                {
+                    return refuse("invalid_token", "This action is not valid.");
+                }
+                drop(tx);
+                self.consume(claims, exp).await?;
+                let deciders =
+                    approval_notify::deciders(&s.pool, a.org_id, a.workspace_id, a.conversation_id)
+                        .await?;
+                let u = ask_mail_facts(&s.pool, &a).await?;
+                for d in &deciders {
+                    // The ask is the approval's initial mail: claiming it keeps the notifier
+                    // from sending the same mail again after the delay.
+                    if approval_notify::claim(&s.pool, a.id, d.user_id, "gateway", "mail").await? {
+                        let mail = crate::domains::approvals::notify::approval_mail(
+                            &s.config.external_url,
+                            &d.email,
+                            &u,
+                            0,
+                        );
+                        if let Err(e) = s.mailer.send(mail).await {
+                            // A failed notice never fails or undoes the ask.
+                            tracing::error!(error = %e, "approval ask e-mail send failed");
+                        }
+                    }
+                }
+                audit::record(
+                    s,
+                    AuditEvent::by(c, "approval.ask_approver")
+                        .org(a.org_id)
+                        .workspace(a.workspace_id)
+                        .target("approval", a.id)
+                        .metadata(json!({"via": "channel", "peer_task": true})),
+                );
+                Ok(Done::new("approval.ask_approver"))
+            }
+            // (FIX-252) The peer-origin card's Cancel the task: the person who asked for the
+            // task only (the stored requester, checked here); the task closes with its close
+            // line to the origin and its pending approval is abandoned.
+            ActionKind::PeerTaskCancel => {
+                let a = approvals::get(&s.pool, claims.subject_id)
+                    .await?
+                    .ok_or_else(gone)?;
+                if a.status != "pending" {
+                    return refuse("not_found", "That request no longer exists.");
+                }
+                let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+                let Some(conv) = a.conversation_id else {
+                    return refuse("invalid_token", "This action is not valid.");
+                };
+                let Some(pt) = peer_tasks::by_task_conversation(&mut *tx, conv).await? else {
+                    return refuse("invalid_token", "This action is not valid.");
+                };
+                if pt.requester_user_id != Some(c.user_id) {
+                    return refuse(
+                        "forbidden",
+                        "Only the person who asked for this task can cancel it.",
+                    );
+                }
+                self.consume(claims, exp).await?;
+                let closed =
+                    peers::close_with_promotion(&mut tx, &pt, &peers::Close::Cancelled(None))
+                        .await?;
+                tx.commit().await.map_err(DbError::from)?;
+                if let Some(t) = closed {
+                    audit::record(
+                        s,
+                        AuditEvent::by(c, "peer_task.cancel")
+                            .org(a.org_id)
+                            .workspace(a.workspace_id)
+                            .target("peer_task", t.id)
+                            .metadata(json!({"via": "channel"})),
+                    );
+                }
+                Ok(Done::new("peer_approval.cancel"))
+            }
             ActionKind::ReachDecide { decision } => {
                 let g = reach_grants::get(&s.pool, claims.subject_id)
                     .await?
@@ -673,4 +769,48 @@ impl Done {
             text: Some(text),
         }
     }
+}
+
+/// (FIX-252) The mail facts of a peer approval's **Ask an approver**: the same sanitized facts
+/// the approval notifier sends (title as one line, never a request body or summary field).
+async fn ask_mail_facts(
+    pool: &sqlx::PgPool,
+    a: &approvals::ApprovalRow,
+) -> Result<approval_notify::Unseen, ApiError> {
+    let (workspace_name, workspace_slug, org_slug) =
+        approval_notify::workspace_labels(pool, a.workspace_id)
+            .await?
+            .unwrap_or_else(|| ("the workspace".into(), "workspace".into(), "org".into()));
+    let (org_name,): (String,) = sqlx::query_as("SELECT name FROM organizations WHERE id = $1")
+        .bind(a.org_id)
+        .fetch_one(pool)
+        .await
+        .map_err(DbError::from)?;
+    let title = match a.summary.get("source").and_then(|v| v.as_str()) {
+        Some("generic") | None => format!("send a {} request to {}", a.method, a.host),
+        _ => a
+            .summary
+            .get("title")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("send a {} request to {}", a.method, a.host)),
+    };
+    Ok(approval_notify::Unseen {
+        id: a.id,
+        kind: "gateway".into(),
+        org_id: a.org_id,
+        workspace_id: a.workspace_id,
+        agent_id: a.agent_id,
+        conversation_id: a.conversation_id,
+        batch_id: a.batch_id.clone(),
+        title,
+        rule_name: a.rule_name.clone(),
+        expires_at: a.deadline,
+        agent_name: a.agent_name.clone().unwrap_or_else(|| "unknown".into()),
+        workspace_name,
+        workspace_slug,
+        org_name,
+        org_slug,
+    })
 }
