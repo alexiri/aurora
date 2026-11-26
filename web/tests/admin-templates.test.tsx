@@ -348,6 +348,24 @@ describe("Agent templates: templates list", () => {
     return bodies;
   }
 
+  // (FIX-245) The waiting versions sit at the top of the tab as a "Needs you" strip, a Review button each.
+  it("puts the versions waiting for review at the top as a Needs you strip, and nothing when none wait", async () => {
+    renderTemplates([
+      adminTemplate({ versions: [pending] }),
+      adminTemplate({ template_id: "second", name: "Second", offered: false }),
+    ]);
+    const strip = await screen.findByTestId("templates-needs-you");
+    expect(within(strip).getAllByTestId("needs-review-row")).toHaveLength(1);
+    expect(within(strip).getAllByTestId("needs-review-row")[0]!.textContent).toContain("is waiting for review");
+    const link = within(strip).getByRole("link", { name: "Review" });
+    expect(link.getAttribute("href")).toBe("/admin/internet-access/templates/schedule-manager/1.1.0");
+
+    cleanup();
+    renderTemplates([adminTemplate()]);
+    await screen.findByRole("table", { name: "Agent templates of this instance" });
+    expect(screen.queryByTestId("templates-needs-you")).toBeNull();
+  });
+
   it("shows the chips of C-1114: waiting for review with the count and the review link, waiting for its package, removed, head problems", async () => {
     renderTemplates([
       adminTemplate({
