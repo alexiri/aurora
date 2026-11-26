@@ -157,20 +157,29 @@ use Grafana's HMAC signature settings.
    longer have the secret, choose *New secret…* in the webhook's `…` menu and copy the new one; the
    old one stops working at once.
 2. **In Grafana:** open *Alerts & IRM*, *Alerting*, *Notification configuration* and the
-   *Contact points* tab, then choose **+ Add contact point**.
-   - **Name**: the name the agent expects (for a NightManager agent: the one in its notes, in the
-     template's example `aurora-nightmanager`).
-   - **Integration**: **Webhook**. **URL**: the Aurora address. **HTTP Method**: **POST**.
-   - **Authentication Header Scheme**: `Bearer` (the default), and **Authentication Header
-     Credentials**: the Aurora secret. Do not use Basic Authentication, and do not put the secret
-     in the URL.
-   - Optional settings: switch **Disable resolved message** on (a resolved notice would wake the
-     agent for nothing); set **Max alerts** (for example 10) so one notification does not carry a
-     hundred alerts; leave the message template at the default — the payload the agent reads is the
-     default JSON.
-   - Choose **Test** (Aurora answers the test delivery), then **Save contact point**. Back in
-     Aurora, the webhook's **Deliveries** shows the test and how it was answered — accepted, or
-     refused with the reason in words (wrong secret, paused, payload too large).
+   *Contact points* tab, then choose **+ Add contact point**. Fill the form in this order:
+   1. **Name**: the name the agent expects (for a NightManager agent: the one in its notes, in the
+      template's example `aurora-nightmanager`). The agent's rules name the contact point by this
+      name, so it must match exactly.
+   2. **Integration**: **Webhook**.
+   3. **URL**: the address you copied from Aurora. Never put the secret in the URL.
+   4. **HTTP Method**: **POST**: the webhook receives its alerts as a POST.
+   5. **Authentication Header Scheme**: `Bearer` (Grafana's default). Aurora checks an
+      `Authorization: Bearer` header. Do not use Basic Authentication: Grafana takes either that or
+      the header, not both.
+   6. **Authentication Header Credentials**: the secret you copied from Aurora.
+   7. **Max Alerts**: **10**. One notification then carries at most 10 alerts. Any alerts beyond
+      that are left out, and the payload's `truncatedAlerts` says how many were left out: the
+      agent reads that number and looks the rest up itself. Grafana says `0` means no limit: do
+      not use it, because a flood of alerts would arrive as one very large message.
+   8. **Disable resolved message**: switch it **on**. A "resolved" notice would wake the agent for
+      nothing.
+   9. Leave everything else at its default, including the message and title templates (the
+      payload the agent reads is Grafana's default JSON) and the TLS settings. Do not use the
+      HMAC signature settings: Aurora cannot verify Grafana's signature.
+   10. Choose **Test** (Aurora answers the test delivery), then **Save contact point**. Back in
+      Aurora, the webhook's **Deliveries** shows the test and how it was answered: accepted, or
+      refused with the reason in words (wrong secret, paused, payload too large).
 3. **Route notifications to it.** Either
    - the rule names the contact point itself (in the rule form, *Select contact point*; Grafana 11
      and later) — this is what the agent's rules do: the receiver a rule names **is** a contact
