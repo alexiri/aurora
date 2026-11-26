@@ -504,6 +504,16 @@ fn connect_method_rules_reject_each_invalid_case() {
             ),
             "body_check_entry_member",
         ),
+        // An `entry_value` rule forces a key onto every entry from `from` on: the key must be
+        // one `entry_keys` lists, or the two rules contradict each other.
+        (
+            "an entry_value key that entry_keys does not list",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_keys: { data: [refId] }, entry_value: { data: { from: 1, key: datasourceUid, value: __expr__ } } } }",
+            ),
+            "body_check_entry_value",
+        ),
         // (lane review 2026-11-25) A `project` selects named fields of every answer item:
         // plain `$`-paths only, at most 8.
         (

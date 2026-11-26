@@ -1559,6 +1559,23 @@ fn method_rules(cx: &mut Ctx<'_>) {
                     for (k, ev) in &bc.entry_value {
                         name!("entry_value", k);
                         name!("entry_value", &ev.key);
+                        // The rule forces `key` onto every entry from `from` on: a key the
+                        // matching `entry_keys` does not list would have the two rules refuse
+                        // every body, whatever it carries.
+                        if !bc
+                            .entry_keys
+                            .get(k)
+                            .is_some_and(|allowed| allowed.contains(&ev.key))
+                        {
+                            cx.v(
+                                "body_check_entry_value",
+                                &format!("{bp}/entry_value/{k}/key"),
+                                format!(
+                                    "tool `{}`: `entry_value.{k}.key` names `{}`, which `entry_keys.{k}` does not list",
+                                    it.id, ev.key
+                                ),
+                            );
+                        }
                         if ev.from > 64 {
                             cx.v(
                                 "body_check_entry_value",
