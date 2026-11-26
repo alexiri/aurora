@@ -419,7 +419,7 @@ mod tests {
             None
         );
         // The rule read back before an update: the first step's model carries no refId
-        // (Grafana stores the model without it), everything else is the script's shape.
+        // (the server stores the model without it), everything else is the script's shape.
         let mut data = steps();
         data[0]
             .as_object_mut()
@@ -438,7 +438,7 @@ mod tests {
         let c = check();
         // The script's own first step (the builder sends editorMode, expr, instant,
         // legendFormat, refId) passes, and so does the rule read back before an update,
-        // whose model carries no refId (Grafana stores the model without it).
+        // whose model carries no refId (the server stores the model without it).
         for model in [
             json!({ "editorMode": "code", "expr": "up", "instant": true,
                     "legendFormat": "__auto", "refId": "A" }),
