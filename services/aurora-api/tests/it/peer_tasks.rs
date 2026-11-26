@@ -1079,19 +1079,17 @@ async fn a_failing_origin_notice_does_not_fail_the_decision() {
         )
         .await;
     assert_eq!(s, 200, "{v}");
-    let (status,): (String,) =
-        sqlx::query_as("SELECT status FROM approvals WHERE id = $1")
-            .bind(id)
+    let (status,): (String,) = sqlx::query_as("SELECT status FROM approvals WHERE id = $1")
+        .bind(id)
+        .fetch_one(d.rig.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(status, "approved");
+    let (n,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM audit_log WHERE action = 'approval.decide'")
             .fetch_one(d.rig.h.pool())
             .await
             .unwrap();
-    assert_eq!(status, "approved");
-    let (n,): (i64,) = sqlx::query_as(
-        "SELECT count(*) FROM audit_log WHERE action = 'approval.decide'",
-    )
-    .fetch_one(d.rig.h.pool())
-    .await
-    .unwrap();
     assert_eq!(n, 1, "the decision committed with its audit row");
     // The refused notice never landed in the origin conversation.
     assert_eq!(
