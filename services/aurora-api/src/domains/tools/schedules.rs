@@ -70,15 +70,25 @@ async fn speaker(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
 }
 
 /// (FIX-253, D-490) The person a schedule created in this turn belongs to: the speaker, or —
-/// in a delegated task's conversation (a peer or system turn there, no speaker) — the peer
-/// task's requester: the schedule runs as them. `None` when there is no such person.
+/// on a peer turn (`speaker_kind=agent`) of a delegated task that is still open — the peer
+/// task's requester: the schedule runs as them. Every other turn without a speaker (a fired
+/// schedule or watch, a webhook, a turn of a closed task) refuses: a wake never schedules
+/// itself again (SEC-144), and a closed task's conversation is nobody's chat.
 async fn creator(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
-    if let Some(u) = speaker(ctx).await? {
+    let turn = match ctx.turn_id {
+        Some(t) => turns::get(&ctx.agent.pool, t).await?,
+        None => None,
+    };
+    if let Some(u) = turn.as_ref().and_then(|t| t.speaker_user_id) {
         return Ok(Some(u));
+    }
+    if !turn.is_some_and(|t| t.speaker_kind == "agent") {
+        return Ok(None);
     }
     Ok(
         peer_tasks::by_task_conversation(&ctx.agent.pool, ctx.conversation_id)
             .await?
+            .filter(|task| task.status == "open")
             .and_then(|t| t.requester_user_id),
     )
 }

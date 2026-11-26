@@ -517,6 +517,75 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
     );
 }
 
+/// (FIX-253 review) Only a peer turn of a task that is still open may schedule for the
+/// requester: a closed, cancelled or expired task refuses, and a speakerless watch or schedule
+/// turn fired in the task conversation refuses (a wake never schedules itself again).
+#[tokio::test]
+async fn only_a_peer_turn_of_an_open_task_schedules_for_the_requester() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req2@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+
+    // A closed, cancelled or expired task's conversation is nobody's chat any more.
+    for status in ["completed", "cancelled", "expired"] {
+        let (conv, turn) = peer_task_conv(&r, a.agent, Some(requester), status).await;
+        let (s, v) = r
+            .tool(call_in(
+                &a,
+                conv,
+                turn,
+                "schedule_create",
+                json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+            ))
+            .await;
+        assert_eq!(s, 200, "{status}: {v}");
+        assert_eq!(v["ok"], false, "{status}: {v}");
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules")
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "{status}");
+    }
+
+    // A watch or schedule turn fired in the task conversation has no speaker: it must not
+    // schedule itself again.
+    let (conv, _) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    sqlx::query("UPDATE turns SET status = 'done' WHERE conversation_id = $1")
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let fired = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text)
+         VALUES ($1,$2,$3,'turn','running','{}','system','Watch','A watch you set fired.')",
+    )
+    .bind(fired)
+    .bind(conv)
+    .bind(a.agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (s, v) = r
+        .tool(call_in(
+            &a,
+            conv,
+            fired,
+            "schedule_create",
+            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        ))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
 /// A `peer` conversation of `agent` with an agent-speaker turn, and an open peer task behind it
 /// (requester `None` = the refusal case).
 async fn peer_task_conv(
