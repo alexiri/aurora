@@ -9,7 +9,7 @@ import { activeTurnId, type TranscriptState } from "@/lib/chat/transcript";
 import { AccessRequestCard } from "./access-request-card";
 import { JumpToLatest } from "./jump-to-latest";
 import { MessageGroup, StreamingBubble } from "./message-group";
-import { ContinueNotice, RedactedRow, SystemRow, TypingRow } from "./status-rows";
+import { BackgroundActivityNotice, ContinueNotice, RedactedRow, SystemRow, TypingRow } from "./status-rows";
 import type { AgentIdent } from "./types";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -193,6 +193,14 @@ export function TranscriptView({
                   // Only offer Continue until a later durable reset notice (C-27) exists.
                   const reset = state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === "app_turn_cap_reset");
                   if (!reset) return <ContinueNotice key={r.key} text={s(p.text)} convId={convId} />;
+                }
+                // (FIX-253, D-490) Background activity: the Stop button only while nothing stands;
+                // a later durable `background_stopped` notice mutes the row.
+                if (s(p.code) === "background_activity") {
+                  // The durable `background_stopped` notice is the visible line; the entry row mutes away.
+                  const stopped = state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === "background_stopped");
+                  if (stopped) return null;
+                  return <BackgroundActivityNotice key={r.key} text={s(p.text)} turnId={s(p.turn_id)} />;
                 }
                 // (P5-UX-17, C-984) An agent's request for access is a card; its outcome is one line.
                 if (s(p.code) === "app_connection_requested" || s(p.code) === "secret_proposed") {
