@@ -505,6 +505,92 @@ async fn a_requester_watching_live_is_not_mailed() {
     assert!(h.mail.sent().is_empty());
 }
 
+/// A posted card for `approval` whose `message.post` op is done (the FIX-252 review's card
+/// fixtures: the same shape `fanout` writes, at whatever thread the post went to).
+async fn posted_card(h: &Harness, approval: Uuid, org: Uuid) {
+    let integ = Uuid::now_v7();
+    sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', '{}', 'active')")
+        .bind(vec![0u8; 32]).execute(h.pool()).await.unwrap();
+    sqlx::query("INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label, config, credentials_ref, status) VALUES ($1,$2,'chat','T','T','{}','x','active')")
+        .bind(integ).bind(org).execute(h.pool()).await.unwrap();
+    let op = Uuid::now_v7();
+    sqlx::query("INSERT INTO channel_ops (id, connector_id, integration_id, kind, payload, dedupe_key, status) VALUES ($1,'chat',$2,'message.post','{}','k1','done')")
+        .bind(op).bind(integ).execute(h.pool()).await.unwrap();
+    sqlx::query("INSERT INTO channel_cards (id, subject_kind, subject_id, integration_id, post_op_id, space_ref, thread_ref, state) VALUES ($1,'approval',$2,$3,$4,'C','t','posted')")
+        .bind(Uuid::now_v7()).bind(approval).bind(integ).bind(op).execute(h.pool()).await.unwrap();
+}
+
+// ------------------------------------------------- FIX-252 review: the approvers' mail
+
+/// (FIX-252 review a) A peer approval whose card was posted to the REQUESTER'S origin thread
+/// still e-mails the approvers after the delay: the card at the origin is for the requester,
+/// not for the approvers, so it is no live surface for them (D-178's push went out, the mail
+/// never did).
+#[tokio::test]
+async fn the_origin_card_does_not_keep_the_approvers_mail_quiet() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    person(&h, &f, "appr@x.io", "member", Some("approver")).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    posted_card(&h, id, f.org).await;
+    age(&h).await;
+    assert_eq!(
+        notify_once(&h.state).await.unwrap(),
+        1,
+        "approvers mailed despite the origin card"
+    );
+    assert_eq!(recipients(&h), BTreeSet::from(["appr@x.io".to_owned()]));
+}
+
+/// (FIX-252 review b) The requester's claim (their own channels, another replica) must never
+/// suppress the approvers' mail: only a decider's own claim counts.
+#[tokio::test]
+async fn the_requesters_claim_does_not_suppress_the_approvers_mail() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    person(&h, &f, "appr@x.io", "member", Some("approver")).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    // The requester's sweep ran first and claimed the mail.
+    sqlx::query(
+        "INSERT INTO approval_notifications (approval_id, user_id, kind, sent_at, delivery) \
+         VALUES ($1,$2,'gateway',now(),'mail')",
+    )
+    .bind(id)
+    .bind(requester)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(recipients(&h), BTreeSet::from(["appr@x.io".to_owned()]));
+}
+
+/// (FIX-252 review c) And the reverse: an approver's claim must not suppress the requester's
+/// mail (that query only ever looks at the requester's own row).
+#[tokio::test]
+async fn an_approvers_claim_does_not_suppress_the_requesters_mail() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let approver = person(&h, &f, "appr@x.io", "member", Some("approver")).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    // A decider was served by another replica.
+    sqlx::query(
+        "INSERT INTO approval_notifications (approval_id, user_id, kind, sent_at, delivery) \
+         VALUES ($1,$2,'gateway',now(),'mail')",
+    )
+    .bind(id)
+    .bind(approver)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(recipients(&h), BTreeSet::from(["req@x.io".to_owned()]));
+}
+
 /// (FIX-252) The web card's **Ask an approver** route serves the stored requester and nobody
 /// else (the route inventory's REQUESTER list): the ask mails the deciders at once (claimed,
 /// so the notifier does not repeat it), another person's and an org admin's session find

@@ -125,9 +125,29 @@ fn posted_card(kind: &str) -> String {
     )
 }
 
+/// (FIX-252 review) The card half of the notify rule for the DECIDERS' queries: a card counts
+/// only when it was posted to the approval's OWN conversation. The FIX-252 origin card is
+/// posted to the requester's thread (a peer task conversation has no thread link of its own,
+/// so every card of such an approval is the origin card) — the approvers are not in that
+/// conversation, and the card there must not keep their mail quiet. The requester's own query
+/// keeps the wider [`posted_card`]: the origin card is exactly that surface for them.
+fn posted_card_at_own(kind: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM channel_cards cc JOIN channel_ops co ON co.id = cc.post_op_id \
+           WHERE cc.subject_kind = '{kind}' AND cc.subject_id = a.id \
+             AND co.status = 'done' AND cc.state IN ('posted', 'settled') \
+             AND NOT EXISTS (SELECT 1 FROM peer_tasks pt2 \
+                               WHERE pt2.task_conversation_id = a.conversation_id))"
+    )
+}
+
 /// Pending approvals older than `delay_secs` that are still decidable, have not been served yet
-/// and have **no live delivery surface**: (a) no channel card whose `message.post` op finished,
-/// and (b) no decider holding a watcher row seen within `ttl_secs`.
+/// and have **no live delivery surface**: (a) no channel card whose `message.post` op finished
+/// at the approval's own conversation ([`posted_card_at_own`]; FIX-252 review — the origin card
+/// is for the requester), and (b) no decider holding a watcher row seen within `ttl_secs`.
+/// (FIX-252 review) "Not served" means no **decider's own** initial claim: the requester's
+/// claim (their own channels) must never suppress an approver's mail, and an approver's claim
+/// never suppresses the requester's (that query checks its own user's row).
 pub async fn unseen(
     pool: &PgPool,
     delay_secs: f64,
@@ -139,6 +159,9 @@ pub async fn unseen(
            AND wt.last_seen_at > now() - make_interval(secs => $2) AND {})",
         may_decide("wt.user_id")
     );
+    // A claim suppresses only when its user may decide the approval (a decider was served);
+    // the requester's claim leaves the approvers' mail alone.
+    let claimed = may_decide("n.user_id");
     let gateway = format!(
         "SELECT a.id, 'gateway'::text AS kind, a.org_id, a.workspace_id, a.agent_id, \
             a.conversation_id, a.batch_id, \
@@ -154,9 +177,10 @@ pub async fn unseen(
          WHERE a.status = 'pending' AND a.deadline > now() \
            AND a.created_at <= now() - make_interval(secs => $1) \
            AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
-                           WHERE n.approval_id = a.id AND n.stage = 'initial') \
+                           WHERE n.approval_id = a.id AND n.stage = 'initial' \
+                              AND {claimed}) \
            AND NOT {} AND NOT {watcher}",
-        posted_card("approval")
+        posted_card_at_own("approval")
     );
     let action = format!(
         "SELECT a.id, 'action'::text AS kind, w.org_id, a.workspace_id, a.agent_id, \
@@ -169,9 +193,10 @@ pub async fn unseen(
          WHERE a.status = 'pending' AND a.expires_at > now() \
            AND a.created_at <= now() - make_interval(secs => $1) \
            AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
-                           WHERE n.approval_id = a.id AND n.stage = 'initial') \
+                           WHERE n.approval_id = a.id AND n.stage = 'initial' \
+                              AND {claimed}) \
            AND NOT {} AND NOT {watcher}",
-        posted_card("action_approval")
+        posted_card_at_own("action_approval")
     );
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, kind, org_id, workspace_id, agent_id, conversation_id, batch_id, title, \
