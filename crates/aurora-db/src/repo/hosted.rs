@@ -532,7 +532,7 @@ pub async fn claim_background_stops(
     replica: Uuid,
     limit: i64,
 ) -> Result<Vec<TurnSignal>, DbError> {
-    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(
         "WITH cand AS (SELECT t.id FROM turns t JOIN sandboxes s ON s.agent_id = t.agent_id
              WHERE t.role = 'turn' AND t.status NOT IN ('dispatched','running')
                AND t.abort_requested_at IS NOT NULL
@@ -545,7 +545,8 @@ pub async fn claim_background_stops(
          UPDATE turns t SET abort_requested_at = NULL, updated_at = now()
          FROM cand, sandboxes s WHERE t.id = cand.id AND s.agent_id = t.agent_id
          RETURNING t.id AS turn_id, t.conversation_id, s.id AS sandbox_id, s.boot_id"
-    )))
+        .to_owned(),
+    ))
     .bind(runner)
     .bind(replica)
     .bind(limit)

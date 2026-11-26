@@ -454,7 +454,7 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
         .await
         .unwrap()
         .unwrap();
-    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut *conn, &row)
+    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut conn, &row)
         .await
         .unwrap();
     assert_eq!(fire_at, Some(conv));
@@ -470,7 +470,7 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
         .await
         .unwrap()
         .unwrap();
-    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut *conn, &row)
+    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut conn, &row)
         .await
         .unwrap();
     assert_eq!(fire_at, None);
