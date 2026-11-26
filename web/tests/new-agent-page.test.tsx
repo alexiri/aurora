@@ -397,21 +397,87 @@ describe("the four-step page (C-1116)", () => {
     });
   });
 
-  it("a webhook's secret is shown once, then the agent's chat opens", async () => {
+  it("a webhook's secret is shown once, with the explanation, then the agent's chat opens", async () => {
     const created = {
       agent: { id: "a2", name: "Rex", handle: "rex", kind: "hosted" },
       grants: [], notes: [], skills: [],
-      webhooks: [{ webhook: { id: "wh1", name: "Alerts" }, url: "/v1/workspaces/w1/webhooks/wh1", secret: "whsec_123" }],
+      webhooks: [
+        {
+          webhook: { id: "wh1", name: "Alerts", verification: { kind: "hmac_sha256", header: "X-Signature", format: "sha256=<hex>" }, enabled: false },
+          url: "/v1/workspaces/w1/webhooks/wh1",
+          secret: "whsec_123",
+        },
+      ],
     };
     openPlan({ "POST /v1/workspaces/w1/agents/from-template": () => json(201, created) });
     await gotoReview();
     fireEvent.click(await screen.findByRole("button", { name: "Create" }));
     expect((await screen.findByTestId("secret-key")).textContent).toBe("whsec_123");
-    expect(screen.getAllByText("Webhook Alerts").length).toBeGreaterThan(0);
+    // Not a bare code: what it is, why now, where it goes, and that the webhook starts paused.
+    expect(screen.getByRole("heading", { name: "Secret for the webhook “Alerts” of Rex" })).toBeTruthy();
+    expect(screen.getByText("The sender of this webhook must present this secret with every alert, so Aurora knows the alert is genuine and wakes Rex.")).toBeTruthy();
+    expect(screen.getByText("Copy it now: it is shown only this once and cannot be read again. If it is lost, make a new one by editing the webhook.")).toBeTruthy();
+    expect(screen.getByText("Paste it into the sender as its signing secret: the sender signs every alert with it, and Aurora checks the signature header.")).toBeTruthy();
+    expect(screen.getByText(/The webhook starts Paused/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Rex's Automations page" })).toHaveAttribute("href", "/o/acme/w/main/agents/rex?tab=automations");
     expect(push).not.toHaveBeenCalled();
     // Closing without copying asks first.
     fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
     expect(screen.getByText("You haven't copied it. Close anyway?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
+    expect(push).toHaveBeenCalledWith("/o/acme/w/main/agents/rex");
+    expect(screen.queryByTestId("secret-key")).toBeNull();
+  });
+
+  it("a bearer webhook's secret says to paste it as the Bearer token of the sender's contact point", async () => {
+    const created = {
+      agent: { id: "a2", name: "Rex", handle: "rex", kind: "hosted" },
+      grants: [], notes: [], skills: [],
+      webhooks: [
+        {
+          webhook: { id: "wh1", name: "Grafana alert", verification: { kind: "bearer", header: "Authorization", format: "Bearer <secret>" }, enabled: false },
+          url: "/v1/workspaces/w1/webhooks/wh1",
+          secret: "whsec_123",
+        },
+      ],
+    };
+    openPlan({ "POST /v1/workspaces/w1/agents/from-template": () => json(201, created) });
+    await gotoReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("heading", { name: "Secret for the webhook “Grafana alert” of Rex" })).toBeTruthy();
+    expect(screen.getByText("Paste it into the sender as the Bearer token of its contact point: the sender puts it in the Authorization header of every alert.")).toBeTruthy();
+  });
+
+  it("several webhooks show one secret after another, counted, and the link comes only on the last", async () => {
+    const created = {
+      agent: { id: "a2", name: "Rex", handle: "rex", kind: "hosted" },
+      grants: [], notes: [], skills: [],
+      webhooks: [
+        {
+          webhook: { id: "wh1", name: "Alerts", verification: { kind: "hmac_sha256", header: "X-Signature", format: "sha256=<hex>" }, enabled: false },
+          url: "/v1/workspaces/w1/webhooks/wh1",
+          secret: "whsec_1",
+        },
+        {
+          webhook: { id: "wh2", name: "Pager", verification: { kind: "bearer", header: "Authorization", format: "Bearer <secret>" }, enabled: false },
+          url: "/v1/workspaces/w1/webhooks/wh2",
+          secret: "whsec_2",
+        },
+      ],
+    };
+    openPlan({ "POST /v1/workspaces/w1/agents/from-template": () => json(201, created) });
+    await gotoReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+    expect((await screen.findByTestId("secret-key")).textContent).toBe("whsec_1");
+    expect(screen.getByTestId("webhook-secret-count").textContent).toBe("Webhook 1 of 2");
+    // Not the last one: no link that would silently drop the second secret.
+    expect(screen.queryByRole("link", { name: "Rex's Automations page" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
+    expect((await screen.findByTestId("secret-key")).textContent).toBe("whsec_2");
+    expect(screen.getByTestId("webhook-secret-count").textContent).toBe("Webhook 2 of 2");
+    expect(screen.getByRole("link", { name: "Rex's Automations page" })).toHaveAttribute("href", "/o/acme/w/main/agents/rex?tab=automations");
+    fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
     fireEvent.click(screen.getByRole("button", { name: "Close anyway" }));
     expect(push).toHaveBeenCalledWith("/o/acme/w/main/agents/rex");
     expect(screen.queryByTestId("secret-key")).toBeNull();

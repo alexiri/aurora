@@ -13,7 +13,7 @@ import { CloseAnywayConfirm, SecretBox, useSecretCopy } from "@/components/ui/se
  * anyway?" before the button closes without a copy.
  */
 export function SigningSecretOnce({ secret, onDone, doneLabel = "I have saved it" }: { secret: string; onDone: () => void; doneLabel?: string }) {
-  const { used, state, copy } = useSecretCopy(secret);
+  const { used, state, copies, copy, boxRef } = useSecretCopy(secret);
   const [asking, setAsking] = useState(false);
   return (
     <div className="space-y-3" data-testid="signing-secret-once">
@@ -21,7 +21,7 @@ export function SigningSecretOnce({ secret, onDone, doneLabel = "I have saved it
         <strong className="font-semibold">This will not be shown again.</strong> Copy the signing secret now and give it to the receiver, which uses it to check the{" "}
         <span className="font-mono">X-Aurora-Signature</span> header. If you lose it, make a new one by editing the webhook.
       </Notice>
-      <SecretBox secret={secret} used={used} state={state} onCopy={copy} copyLabel="Copy" />
+      <SecretBox secret={secret} used={used} state={state} onCopy={copy} copyLabel="Copy" copies={copies} boxRef={boxRef} />
       {asking && !used ? <CloseAnywayConfirm onCopy={copy} onClose={onDone} /> : null}
       <Button type="button" onClick={() => (used ? onDone() : setAsking(true))}>
         {doneLabel}
