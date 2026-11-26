@@ -1008,9 +1008,10 @@ pub async fn finish_turn(
     aurora_db::repo::usage::record_turn(&mut *conn, turn_id).await?;
     // (P5-REFINE-7, C-1075) A person's Stop leaves a mark, after the partial answer the answer
     // rule already wrote. Endings with their own notice (freeze, deprovision: an error code) and
-    // turns nobody asked to stop get none.
+    // turns nobody asked to stop get none. Read from the pre-finish row: the terminal transition
+    // clears the flag (FIX-253 review), the mark still says that the answer was stopped.
     if status == "aborted"
-        && row.abort_requested_at.is_some()
+        && t.abort_requested_at.is_some()
         && matches!(row.error_code.as_deref(), None | Some("aborted"))
     {
         transcript::append_durable_event(

@@ -262,9 +262,12 @@ pub async fn finish(
             constraint: Some("turns_finish_status".into()),
         });
     }
+    // (FIX-253 review) The answer's Stop ends at the terminal transition: a leftover flag would
+    // arm the background-stop dispatch for a turn whose Background activity entry only says what
+    // kept running. A stop of the finished turn's entry sets the flag again afterwards.
     let done = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE turns SET status = $2, error_code = $3, error_message = $4, usage = COALESCE($5, usage),
-            finished_at = now(), updated_at = now()
+            abort_requested_at = NULL, finished_at = now(), updated_at = now()
          WHERE id = $1 AND role = 'turn' AND status IN {ACTIVE}"
     )))
     .bind(id)

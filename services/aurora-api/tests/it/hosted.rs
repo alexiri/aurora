@@ -616,6 +616,60 @@ async fn background_activity_commands_are_masked_and_capped() {
     );
 }
 
+/// (FIX-253 review) A turn's own Stop ends at the terminal transition: an aborted turn's
+/// `abort_requested_at` is cleared at finish, so the answer-Stop never turns into a
+/// background-stop request — the **Background activity** entry stands with its Stop, no release
+/// is dispatched and no stopped notice appears by itself.
+#[tokio::test]
+async fn an_aborted_turns_stop_does_not_release_the_background_activity() {
+    let r = rig().await;
+    let lv = r.boot("bgnostop").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn})).await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [ev(
+            1, "background",
+            json!({"items": [{"command": "npm run e2e:full", "started_at": 1700000000u64}]}),
+        )]}),
+    )
+    .await;
+    // The person stops the answer while it runs.
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    // The turn ends aborted.
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "aborted"}),
+    )
+    .await;
+    let (armed,): (bool,) = sqlx::query_as(
+        "SELECT abort_requested_at IS NOT NULL FROM turns WHERE id = $1::uuid",
+    )
+    .bind(&turn)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert!(!armed, "the answer-Stop is cleared at finish");
+    assert!(
+        r.work().await.iter().all(|i| i["kind"] != "session.release"),
+        "no background-stop release is dispatched"
+    );
+    let codes: Vec<String> = background_notices(&r)
+        .await
+        .iter()
+        .map(|n| n.0.clone())
+        .collect();
+    assert_eq!(
+        codes,
+        ["background_activity"],
+        "no stop request, no stopped notice: {codes:?}"
+    );
+}
+
 /// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
 /// `background` turn event: one visible **Background activity** notice (deduped while it keeps
 /// running), and Stop on a finished turn records **Stop requested** and dispatches one
