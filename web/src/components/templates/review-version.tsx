@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Fold } from "@/components/ui/fold";
 import { Lines } from "@/components/ui/lines";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
@@ -18,9 +19,14 @@ import {
   useRejectTemplateVersion,
   useTemplateVersion,
   type FileView,
+  type TemplateAppEntryView,
+  type TemplateAutomationView,
   type TemplateContentView,
+  type TemplateInputView,
+  type TemplateSkillRefView,
   type TemplateVersionDetail,
 } from "@/lib/api/agent-templates";
+import { diffTemplateContent, type AppNamer, type TemplateChange } from "@/lib/template-diff";
 import { adminRoutes } from "@/lib/routes";
 import { formatCount } from "@/lib/format-date";
 
@@ -28,51 +34,8 @@ import { TemplateReadme } from "./template-readme";
 import { useAppName, versionStatusWords } from "./words";
 
 // The review of one version (C-1114): everything of `TemplateContentView` in full, all of it marked
-// as text from the source at the commit, the diff against the offered version, and the decision.
-// Every part is data — the review only ever reads.
-
-// The C-1104 shapes passed through as stored (`content_json`): the review reads them as data.
-interface InputView {
-  id: string;
-  label: string;
-  help: string | null;
-  kind: string;
-  required: boolean;
-  pattern: string | null;
-  max_length: number | null;
-  options: string[] | null;
-  default: string | null;
-}
-interface AppToolsView {
-  allow: string[];
-  ask: string[];
-}
-interface AppEntryView {
-  app?: string;
-  any_of?: string[];
-  required: boolean;
-  level: string;
-  tools?: AppToolsView | null;
-  why: string;
-}
-interface SkillRefView {
-  kind: string;
-  address?: string;
-  ref?: string | null;
-  path?: string | null;
-  skill?: string;
-  name?: string;
-  required: boolean;
-  why: string;
-}
-interface AutomationView {
-  kind: string;
-  name: string;
-  prompt?: string;
-  cron?: string;
-  instructions?: string;
-  verification?: string;
-}
+// as text from the source at the commit, what changed against the version people use now, and the
+// decision. Every part is data — the review only ever reads.
 
 const LEVEL_WORDS: Record<string, string> = { read: "Read", ask: "Ask", act: "Act" };
 const VERIFICATION_WORDS: Record<string, string> = {
@@ -102,35 +65,73 @@ function TextFile({ f, label }: { f: FileView; label: string }) {
   );
 }
 
-/** One text part of the diff against the offered version: only the parts that differ. */
-function diffParts(base: TemplateContentView, next: TemplateContentView): { label: string; old: string; new: string }[] {
-  const parts: { label: string; old: string; new: string }[] = [];
-  if (base.instructions !== next.instructions) parts.push({ label: "Instructions", old: base.instructions, new: next.instructions });
-  const names = new Set([...base.skills.map((s) => s.name), ...next.skills.map((s) => s.name)]);
-  for (const name of names) {
-    const b = base.skills.find((s) => s.name === name);
-    const n = next.skills.find((s) => s.name === name);
-    if (b?.body !== n?.body) parts.push({ label: `Skill ${name}`, old: b?.body ?? "", new: n?.body ?? "" });
-    const paths = new Set([...(b?.files ?? []).map((f) => f.path), ...(n?.files ?? []).map((f) => f.path)]);
-    for (const p of paths) {
-      const bf = b?.files.find((f) => f.path === p)?.text ?? null;
-      const nf = n?.files.find((f) => f.path === p)?.text ?? null;
-      if (bf !== nf) parts.push({ label: `Skill ${name} · ${p}`, old: bf ?? "", new: nf ?? "" });
-    }
+/** The change of one part, in words when there is no text to diff. */
+function changeWords(c: TemplateChange): string {
+  if (c.detail) return c.detail;
+  switch (c.kind) {
+    case "added":
+      return "New in this version.";
+    case "removed":
+      return "Not in this version any more.";
+    default:
+      return "It changed.";
   }
-  const helperPaths = new Set([...base.helpers.map((f) => f.path), ...next.helpers.map((f) => f.path)]);
-  for (const p of helperPaths) {
-    const b = base.helpers.find((f) => f.path === p)?.text ?? null;
-    const n = next.helpers.find((f) => f.path === p)?.text ?? null;
-    if (b !== n) parts.push({ label: `Helper file ${p}`, old: b ?? "", new: n ?? "" });
-  }
-  const keys = new Set([...base.memories.map((m) => m.key), ...next.memories.map((m) => m.key)]);
-  for (const k of keys) {
-    const b = base.memories.find((m) => m.key === k)?.content ?? "";
-    const n = next.memories.find((m) => m.key === k)?.content ?? "";
-    if (b !== n) parts.push({ label: `Memory ${k}`, old: b, new: n });
-  }
-  return parts;
+}
+
+/** One changed part: its heading, the change in words, and the whole-line diff (nothing summarized). */
+function ChangeView({ c }: { c: TemplateChange }) {
+  return (
+    <section aria-label={`Changes to ${c.label}`} className="space-y-1" data-testid="diff-change">
+      <h3 className="text-sm font-semibold text-ink">{c.label}</h3>
+      {c.detail ? <p className="text-sm text-ink-2">{c.detail}</p> : null}
+      {c.old != null || c.new != null ? <Lines old={c.old ?? ""} next={c.new ?? ""} label={`Diff of ${c.label}`} /> : null}
+    </section>
+  );
+}
+
+/** What changed since the version people use now (FIX-247): first the summary, then the changes that
+ * widen what the agent can do or reach, then every other changed part, with the untouched parts
+ * collapsed. The full content below stays where it is. */
+function WhatChanged({ base, next, baseVersion, appName }: { base: TemplateContentView; next: TemplateContentView; baseVersion: string; appName: AppNamer }) {
+  const d = diffTemplateContent(base, next, appName);
+  return (
+    <Section id="what-changed" title={`What changed since ${baseVersion}`} description={d.changes.length === 0 ? undefined : "Every line that differs, old against new."}>
+      {d.changes.length === 0 ? (
+        <p data-testid="diff-empty">Nothing changed: this version matches {baseVersion}.</p>
+      ) : (
+        <div className="space-y-6">
+          <p className="text-sm text-ink-2" data-testid="diff-summary">
+            {d.summary}.
+          </p>
+          {d.attention.length > 0 ? (
+            <section aria-label="Look at these first" data-testid="diff-attention" className="space-y-2 rounded-card border border-line bg-surface p-4">
+              <h3 className="font-display text-base font-semibold text-ink">Look at these first</h3>
+              <p className="text-sm text-ink-2">These widen what the agent can do or reach.</p>
+              <ul className="space-y-1 text-sm">
+                {d.attention.map((c) => (
+                  <li key={c.part}>
+                    <span className="font-medium text-ink">{c.label}</span> — {changeWords(c)}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          <div className="space-y-6">
+            {d.changes
+              .filter((c) => !c.attention)
+              .map((c) => (
+                <ChangeView key={c.part} c={c} />
+              ))}
+          </div>
+          {d.unchanged.length > 0 ? (
+            <Fold summary={`Unchanged: ${d.unchanged.join(", ")}`} data-testid="diff-unchanged">
+              <p className="pt-2 text-sm text-ink-2">These parts are the same as in {baseVersion}.</p>
+            </Fold>
+          ) : null}
+        </div>
+      )}
+    </Section>
+  );
 }
 
 /** Every part of one version, in full (C-1114). `<Agent>` is the agent the template would create. */
@@ -168,7 +169,7 @@ function Content({ d }: { d: TemplateVersionDetail }) {
       </Section>
       <Section id="skill-refs" title="Skills from libraries" description="What the agent reads from a skill library instead of carrying its own copy.">
         <ul className="space-y-2">
-          {(c.skill_refs as SkillRefView[]).map((r, i) => (
+          {(c.skill_refs as TemplateSkillRefView[]).map((r, i) => (
             <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm" data-testid="template-skill-ref">
               <p className="font-medium text-ink">
                 {r.kind === "library" ? r.skill : r.name} <Badge tone="neutral">{r.kind === "library" ? "Library" : "Organization"}</Badge>{" "}
@@ -213,7 +214,7 @@ function Content({ d }: { d: TemplateVersionDetail }) {
       </Section>
       <Section id="automations" title="Automations" description={`What ${agent} does on its own.`}>
         <ul className="space-y-2">
-          {(c.automations as AutomationView[]).map((a, i) => (
+          {(c.automations as TemplateAutomationView[]).map((a, i) => (
             <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm">
               <p className="font-medium text-ink">
                 {a.name} <Badge tone="neutral">{a.kind === "schedule" ? "Schedule" : "Webhook"}</Badge>
@@ -236,7 +237,7 @@ function Content({ d }: { d: TemplateVersionDetail }) {
       </Section>
       <Section id="apps" title="Apps" description={`What ${agent} may reach, and how much.`}>
         <ul className="space-y-2">
-          {(c.apps as AppEntryView[]).map((a, i) => (
+          {(c.apps as TemplateAppEntryView[]).map((a, i) => (
             <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm">
               <p className="font-medium text-ink">
                 {a.app ? nameOf(a.app) : (a.any_of ?? []).map(nameOf).join(" or ")} <Badge tone="neutral">{a.required ? "Required" : "Optional"}</Badge>
@@ -253,7 +254,7 @@ function Content({ d }: { d: TemplateVersionDetail }) {
       </Section>
       <Section id="inputs" title="Inputs" description="What the person creating an agent from this template is asked.">
         <ul className="space-y-2">
-          {(c.inputs as InputView[]).map((i) => (
+          {(c.inputs as TemplateInputView[]).map((i) => (
             <li key={i.id} className="rounded-card border border-line bg-surface p-4 text-sm">
               <p className="font-medium text-ink">
                 {i.label} <span className="font-mono text-xs text-muted">{i.id}</span> <Badge tone="neutral">{i.required ? "Required" : "Optional"}</Badge>
@@ -296,15 +297,18 @@ function AboutThisTemplate({ readme }: { readme: string }) {
   );
 }
 
-/** The review page's body (C-1114): the version in full, the diff against the offered version, Approve / Reject. */
+/** The review page's body (C-1114): what changed against the version people use now, the version in
+ * full, and Approve / Reject. */
 export function TemplateVersionReview({ templateId, version }: { templateId: string; version: string }) {
   const q = useTemplateVersion(templateId, version);
   const list = useAdminTemplates();
   const approve = useApproveTemplateVersion(templateId, version);
   const reject = useRejectTemplateVersion(templateId, version);
+  const appName = useAppName();
   const [confirmReject, setConfirmReject] = useState(false);
   const d = q.data;
   const current = list.data?.items.find((t) => t.template_id === templateId)?.current_version ?? null;
+  const firstVersion = list.data != null && current == null;
   const offered = useTemplateVersion(current && current !== version ? templateId : undefined, current ?? undefined);
   const stale = approve.error instanceof ApiError && approve.error.status === 409;
   const title = d ? `${d.content?.name ?? templateId} ${version}` : `${templateId} ${version}`;
@@ -334,8 +338,9 @@ export function TemplateVersionReview({ templateId, version }: { templateId: str
           {d.status === "pending_approval" && current && current !== version ? (
             <Notice role="status">People keep using {current} until you approve this one.</Notice>
           ) : null}
+          {firstVersion ? <Notice role="status">This is the first version: nothing to compare with.</Notice> : null}
+          {offered.data?.content ? <WhatChanged base={offered.data.content} next={d.content} baseVersion={current!} appName={appName} /> : null}
           <Content d={d} />
-          {offered.data?.content ? <DiffAgainstOffered offered={offered.data.content} next={d.content} offeredVersion={current!} /> : null}
           {d.status === "pending_approval" ? (
             <div className="flex flex-wrap items-center justify-end gap-2" data-testid="template-decision">
               <Button type="button" variant="outline" disabled={reject.isPending || approve.isPending} onClick={() => setConfirmReject(true)}>
@@ -364,20 +369,5 @@ export function TemplateVersionReview({ templateId, version }: { templateId: str
         </>
       ) : null}
     </div>
-  );
-}
-
-/** The diff of every text part against the offered version (C-1114): whole lines, nothing summarized. */
-function DiffAgainstOffered({ offered, next, offeredVersion }: { offered: TemplateContentView; next: TemplateContentView; offeredVersion: string }) {
-  const parts = diffParts(offered, next);
-  return (
-    <Section id="diff" title={`Changes against ${offeredVersion}`} description={parts.length === 0 ? "The content matches the offered version." : "Every line that differs, old against new."}>
-      {parts.map((p) => (
-        <section key={p.label} aria-label={`Changes to ${p.label}`} className="space-y-1">
-          <h3 className="text-sm font-semibold text-ink">{p.label}</h3>
-          <Lines old={p.old} next={p.new} label={`Diff of ${p.label}`} />
-        </section>
-      ))}
-    </Section>
   );
 }
