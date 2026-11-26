@@ -586,6 +586,75 @@ async fn only_a_peer_turn_of_an_open_task_schedules_for_the_requester() {
     assert_eq!(n, 0);
 }
 
+/// (FIX-253 review) From a delegated task's peer turn only a one-time wake-up (`run_at`) is
+/// possible: a recurring schedule would outlive the task, running as the requester. And a task
+/// conversation is capped at 3 open one-time schedules (finished ones don't count).
+#[tokio::test]
+async fn a_peer_turn_sets_only_one_time_wakeups_and_at_most_three_open_ones() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req3@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+    let (conv, turn) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    let call = |args: Value| {
+        let r = &r;
+        let a = &a;
+        let (conv, turn) = (conv, turn);
+        async move {
+            let (s, v) = r.tool(call_in(a, conv, turn, "schedule_create", args)).await;
+            assert_eq!(s, 200, "{v}");
+            v
+        }
+    };
+
+    // A recurring schedule from a peer turn is refused.
+    for args in [
+        json!({"name": "n", "prompt": "p", "cron": "0 10 27 11 *"}),
+        // A request for both is recurring too.
+        json!({"name": "n", "prompt": "p", "cron": "0 10 27 11 *", "run_at": "2026-12-01T09:00"}),
+    ] {
+        let v = call(args).await;
+        assert_eq!(v["ok"], false, "{v}");
+        assert!(
+            v.to_string()
+                .contains("a delegated task can only set a one-time wake-up"),
+            "{v}"
+        );
+    }
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "nothing was created");
+
+    // The cap: three open one-time schedules, then the fourth refuses.
+    for i in 0..3 {
+        let v = call(json!({
+            "name": format!("w{i}"), "prompt": "p", "run_at": "2026-12-01T09:00"
+        }))
+        .await;
+        assert_eq!(v["ok"], true, "{v}");
+    }
+    let v = call(json!({"name": "w3", "prompt": "p", "run_at": "2026-12-01T09:00"})).await;
+    assert_eq!(v["ok"], false, "{v}");
+    assert!(
+        v.to_string().contains("three open wake-ups"),
+        "{v}"
+    );
+
+    // Finishing one frees a slot.
+    sqlx::query(
+        "UPDATE schedules SET completed_at = now() WHERE name = 'w0' AND agent_id = $1",
+    )
+    .bind(a.agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let v = call(json!({"name": "w4", "prompt": "p", "run_at": "2026-12-01T09:00"})).await;
+    assert_eq!(v["ok"], true, "{v}");
+}
+
 /// A `peer` conversation of `agent` with an agent-speaker turn, and an open peer task behind it
 /// (requester `None` = the refusal case).
 async fn peer_task_conv(

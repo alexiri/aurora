@@ -69,18 +69,19 @@ async fn speaker(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
     })
 }
 
-/// (FIX-253, D-490) The person a schedule created in this turn belongs to: the speaker, or —
-/// on a peer turn (`speaker_kind=agent`) of a delegated task that is still open — the peer
-/// task's requester: the schedule runs as them. Every other turn without a speaker (a fired
-/// schedule or watch, a webhook, a turn of a closed task) refuses: a wake never schedules
-/// itself again (SEC-144), and a closed task's conversation is nobody's chat.
-async fn creator(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
+/// (FIX-253, D-490) The person a schedule created in this turn belongs to, and whether it is the
+/// delegated-task fallback: the speaker, or — on a peer turn (`speaker_kind=agent`) of a
+/// delegated task that is still open — the peer task's requester: the schedule runs as them.
+/// Every other turn without a speaker (a fired schedule or watch, a webhook, a turn of a closed
+/// task) refuses: a wake never schedules itself again (SEC-144), and a closed task's
+/// conversation is nobody's chat.
+async fn creator(ctx: &ToolCallContext) -> Result<Option<(Uuid, bool)>, ToolError> {
     let turn = match ctx.turn_id {
         Some(t) => turns::get(&ctx.agent.pool, t).await?,
         None => None,
     };
     if let Some(u) = turn.as_ref().and_then(|t| t.speaker_user_id) {
-        return Ok(Some(u));
+        return Ok(Some((u, false)));
     }
     if !turn.is_some_and(|t| t.speaker_kind == "agent") {
         return Ok(None);
@@ -89,7 +90,8 @@ async fn creator(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
         peer_tasks::by_task_conversation(&ctx.agent.pool, ctx.conversation_id)
             .await?
             .filter(|task| task.status == "open")
-            .and_then(|t| t.requester_user_id),
+            .and_then(|t| t.requester_user_id)
+            .map(|u| (u, true)),
     )
 }
 
@@ -184,7 +186,9 @@ impl PlatformTool for CreateT {
          e.g. `0 10 27 11 *` = every year on 27 November at 10:00; at most every 5 minutes). A \
          one-time schedule made in a person's own chat runs in that chat, so your answer reaches \
          them there. In a delegated task's conversation the schedule belongs to the task's \
-         requester and its wake runs in the task conversation. Optional gate_command runs first; \
+         requester and its wake runs in the task conversation — and only a one-time `run_at` \
+         wake is possible from there (at most three open ones): a repeating schedule belongs \
+         to the person themselves. Optional gate_command runs first; \
          empty output or {\"wake_agent\": false} skips the run.",
         json!({"type": "object", "additionalProperties": false,
             "required": ["name", "prompt"],
@@ -206,7 +210,7 @@ impl PlatformTool for CreateT {
         // (FIX-253, D-490) In a delegated task's conversation the schedule belongs to the
         // task's requester: it runs as them, so they must still be able to use this agent
         // (re-checked here and again at fire time, never widened).
-        let Some(creator) = creator(ctx).await? else {
+        let Some((creator, from_task)) = creator(ctx).await? else {
             return Err(ToolError::Failed(
                 "Schedules can only be created for a person: the one talking with you, or the requester of this task.".into(),
             ));
@@ -214,6 +218,23 @@ impl PlatformTool for CreateT {
         if !aurora_db::authz::can_use(&ctx.agent.pool, creator, agent.workspace_id).await? {
             return Err(ToolError::Failed(
                 "The person this schedule would belong to can no longer use this agent.".into(),
+            ));
+        }
+        // (FIX-253 review) A delegated task ends; a repeating schedule from its peer turn would
+        // keep running as the requester without the task. From a peer turn: one-time only.
+        if from_task && a.run_at.is_none() {
+            return Err(ToolError::Failed(
+                "a delegated task can only set a one-time wake-up: give `run_at` (a repeating schedule belongs to the person themselves).".into(),
+            ));
+        }
+        // (FIX-253 review) A task conversation is capped: at most 3 open one-time wake-ups.
+        if from_task
+            && aurora_db::repo::schedules::open_once_count_from(&ctx.agent.pool, ctx.conversation_id)
+                .await?
+                >= 3
+        {
+            return Err(ToolError::Failed(
+                "This task already has three open wake-ups: finish one (or ask the person to) before setting another.".into(),
             ));
         }
         let timezone = match a.timezone {

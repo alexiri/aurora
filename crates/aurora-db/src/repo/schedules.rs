@@ -121,6 +121,22 @@ pub async fn count_for_agent<'e, E: PgExecutor<'e>>(exec: E, agent: Uuid) -> Res
     .await?)
 }
 
+/// (FIX-253 review) The open one-time schedules created from one conversation (a delegated
+/// task's conversation is capped on those).
+pub async fn open_once_count_from<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation: Uuid,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM schedules
+          WHERE origin_conversation_id = $1 AND run_at IS NOT NULL AND cron IS NULL
+            AND completed_at IS NULL",
+    )
+    .bind(conversation)
+    .fetch_one(exec)
+    .await?)
+}
+
 pub async fn insert(conn: &mut PgConnection, n: &NewSchedule<'_>) -> Result<ScheduleRow, DbError> {
     let id = Uuid::now_v7();
     sqlx::query(
