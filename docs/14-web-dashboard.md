@@ -603,7 +603,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
     `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; beside it
     the one action the API chose for the viewer (`fix`): **Give <Agent> the <key name>** (one click, "<Agent> can answer now",
-    the header turns Ready), **Add a key** (organization owners and admins: the organization's AI keys) or **Ask an admin**
+    the header turns Ready; beside it a quiet **Use another key** menu when the agent's organization or workspace holds
+    another key it does not have yet — the other usable keys by name with their scope in words (**Organization key**,
+    **Workspace key**), each granting in one click with the same toast, and the keys that cannot be used as disabled rows
+    with the reason in plain words, FIX-249, C-1168), **Add a key** (organization owners and admins: the organization's AI keys) or **Ask an admin**
     (subject `ai_key`, with the optional reason, C-1081); with **no AI key at all** the empty chat says **"<Agent> has no AI
     model yet"** with the same action and the composer is off (access-3, D-414)) → **Needs you** → **Working** → **Starting its computer…** (spinner, `aria-live` polite) →
     **Asleep** → **Ready**; **Ready only when the computer answers** (`SandboxView.computer.ready`, C-1059). Without computer
@@ -1284,6 +1287,8 @@ unified by D-407 (P5-REFINE-1).
 | **How to call it** | curl command, webhook docs | what a sender must send to a webhook | Set up |
 | **New automation** | New schedule, New webhook (as header buttons) | the one button of the Automations page | Use |
 | **Which service is this key for?** | Provider endpoint | the choice in the AI key dialog | Set up |
+| **Use a key you already have**, **Use another key**; **Give <Agent> this key** | Grant an existing key, Pick a key | give the agent an AI key that exists in its organization or workspace and is not its yet, from a list that marks the starter and disables a key it cannot use with its reason in plain words (FIX-249, C-1168) | Use |
+| **Organization key**, **Workspace key** | Org key, Team key | the scope of an AI key in the give-a-key lists | Use |
 | **Sign-in app** | OAuth client, Google sign-in as a thing to set up | what lets people sign in to an app (the Administration tab id stays `oauth-clients`) | Set up |
 | **Chat platform**; **Chat platform host** on the Administration machinery page | Connector, connector host, integration, Channels | the platform a person connects (Mattermost and similar) | Use |
 | **Web address** | Workspace address, URL name, slug | a workspace's address, shown as the full URL | Set up |
@@ -2973,7 +2978,11 @@ list of the earlier draft.
   line: "Daneel thinks with claude-sonnet through this key."
 - **Add** has two entries: **Connect an app or website** (the journey, §3) and **Add an AI key**. On an
   agent's Access tab the button is **Give <Agent> an app** (the same journey), with **Add an AI key** in
-  its menu.
+  its menu. On an agent's page, when the organization or the workspace holds a key the agent does not
+  have yet, **Add an AI key** opens on a first choice: **Use a key you already have** (the list, the
+  starter marked, a key that cannot be used disabled with its reason in plain words; picking one and
+  **Give <Agent> this key** grants it and closes with the toast) or **Add a new key** (today's service
+  choice and key fields, unchanged); with no such key it opens straight on today's flow (FIX-249, C-1168).
 - **Giving access.** Every picker that asks "which agents" preselects the agent whose page opened it,
   otherwise the only agent the person may choose when there is exactly one, otherwise none. The button
   names the result: **Give Daneel access**. When agents of more than one workspace are listed, each row

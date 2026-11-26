@@ -144,12 +144,23 @@ any time.
 
 ## Send alerts to an agent
 
-An agent's alert rule notifies a **contact point**, and only a person can create one. This
-walkthrough makes a contact point that calls the agent's webhook in Aurora. The steps were checked
-against Grafana 13's documentation (November 2026); Grafana's wording is quoted as its current UI
-uses it. Aurora verifies the webhook with an `Authorization: Bearer` header (the password kind),
-which Grafana's webhook contact point can send; it cannot send Aurora's signed format, so do not
-use Grafana's HMAC signature settings.
+> **Who does what.** You make one thing in Grafana: the contact point. The agent makes the alert
+> rules (in its own folder) and each rule names that contact point. You do not need a notification
+> policy for the agent's rules, and the agent never creates or changes contact points, policies,
+> mute timings or silences.
+
+This applies to **Grafana 11 and later** (simplified routing: a rule names its contact point in
+*Configure notifications*). Find your Grafana's version in the help menu (the question mark at the
+top right). The steps follow Grafana's v12.4 and latest alerting documentation, whose setting names
+are used below. Grafana's documentation does not describe a rule's `notification_settings` in the
+provisioning API: that part is verified only against the offline fixtures, not yet on a live Grafana
+server (like the Viewer account's folder permission above), so try one rule from the agent
+(step 6) before you rely on it.
+
+A contact point alone sends nothing: something must route alerts to it. For the agent's rules that
+is the rule itself, which names the contact point. Aurora verifies the webhook with an
+`Authorization: Bearer` header (the password kind), which Grafana's webhook contact point can send;
+it cannot send Aurora's signed format, so do not use Grafana's HMAC signature settings.
 
 1. **In Aurora:** open the agent's page, *Automations*, and the webhook ("Grafana alert" on an
    agent from the NightManager template). If it is paused, turn it on. Copy its **address** and its
@@ -157,33 +168,48 @@ use Grafana's HMAC signature settings.
    longer have the secret, choose *New secret…* in the webhook's `…` menu and copy the new one; the
    old one stops working at once.
 2. **In Grafana:** open *Alerts & IRM*, *Alerting*, *Notification configuration* and the
-   *Contact points* tab, then choose **+ Add contact point**.
-   - **Name**: the name the agent expects (for a NightManager agent: the one in its notes, in the
-     template's example `aurora-nightmanager`).
-   - **Integration**: **Webhook**. **URL**: the Aurora address. **HTTP Method**: **POST**.
-   - **Authentication Header Scheme**: `Bearer` (the default), and **Authentication Header
-     Credentials**: the Aurora secret. Do not use Basic Authentication, and do not put the secret
-     in the URL.
-   - Optional settings: switch **Disable resolved message** on (a resolved notice would wake the
-     agent for nothing); set **Max alerts** (for example 10) so one notification does not carry a
-     hundred alerts; leave the message template at the default — the payload the agent reads is the
-     default JSON.
-   - Choose **Test** (Aurora answers the test delivery), then **Save contact point**. Back in
-     Aurora, the webhook's **Deliveries** shows the test and how it was answered — accepted, or
-     refused with the reason in words (wrong secret, paused, payload too large).
-3. **Route notifications to it.** Either
-   - the rule names the contact point itself (in the rule form, *Select contact point*; Grafana 11
-     and later) — this is what the agent's rules do: the receiver a rule names **is** a contact
-     point's name, and the helper script checks it exists before it creates the rule; or
-   - on older Grafana, a **notification policy**: in *Notification configuration*, *Notification
-     policies*, add a policy whose matcher is the label the agent's rules carry
-     (`managed_by = nightmanager` in the template's example) and whose contact point is the one you
-     made. Tell which Grafana you have from its version, shown in the help menu.
-4. **Timing that protects you:** on the notification policy (or the rule's route settings), set a
-   **repeat interval of at least 4 hours**, so a rule that stays firing does not wake the agent
-   every few minutes, and leave the group wait and group interval at their defaults unless you know
-   otherwise. Aurora also records a repeated identical delivery as a duplicate without waking the
-   agent — but a payload that changes every time is a new delivery.
+   *Contact points* tab, then choose **+ Add contact point**. Fill the form in this order:
+   1. **Name**: the name the agent expects (for a NightManager agent: the one in its notes, in the
+      template's example `aurora-nightmanager`). The agent's rules name the contact point by this
+      name, so it must match exactly.
+   2. **Integration**: **Webhook**.
+   3. **URL**: the address you copied from Aurora. Never put the secret in the URL.
+   4. **HTTP Method**: **POST**: the webhook receives its alerts as a POST.
+   5. **Authentication Header Scheme**: `Bearer` (Grafana's default). Aurora checks an
+      `Authorization: Bearer` header. Do not use Basic Authentication: Grafana takes either that or
+      the header, not both.
+   6. **Authentication Header Credentials**: the secret you copied from Aurora.
+   7. **Max Alerts**: **10**. One notification then carries at most 10 alerts. Any alerts beyond
+      that are left out, and the payload's `truncatedAlerts` says how many were left out: the
+      agent reads that number and looks the rest up itself. Grafana says `0` means no limit: do
+      not use it, because a flood of alerts would arrive as one very large message.
+   8. **Disable resolved message**: switch it **on**. A "resolved" notice would wake the agent for
+      nothing.
+   9. Leave everything else at its default, including the message and title templates (the
+      payload the agent reads is Grafana's default JSON) and the TLS settings. Do not use the
+      HMAC signature settings: Aurora cannot verify Grafana's signature.
+   10. Choose **Test** (Aurora answers the test delivery), then **Save contact point**. Back in
+      Aurora, the webhook's **Deliveries** shows the test and how it was answered: accepted, or
+      refused with the reason in words (wrong secret, paused, payload too large).
+3. **Routing: nothing for you to do.** The agent's rules are created with the contact point's name
+   in their notification settings (in Grafana's rule form: *Configure notifications*, **Default**,
+   the contact point selected). Grafana then sends that rule's alerts to that contact point and
+   does not use notification policies for it. The helper script checks that a contact point of that
+   name exists before it creates the rule. So you make no notification policy, and the agent makes
+   none either.
+4. **Timing:** a rule that names a contact point is grouped and repeated by Grafana's own defaults
+   for such rules (group wait 30 seconds, group interval 5 minutes, repeat interval 4 hours), and
+   the agent cannot change them: the script refuses any notification setting except the contact
+   point. A rule that stays firing therefore reaches the agent about every 4 hours. Aurora also
+   records a repeated identical delivery as a duplicate without waking the agent, but a payload
+   that changes every time is a new delivery.
+
+   *If you use notification policies anyway:* a rule that names a contact point bypasses the
+   policy tree, so your policies, their matchers and their mute timings do not apply to the
+   agent's rules. Routing the agent's rules through the tree instead (a rule with no contact point
+   of its own, matched by a policy) is a different setup that is not supported: the script always
+   requires a contact point, and the agent cannot set grouping, timing, mute timings or silences
+   on a rule.
 5. **Folder and token** for the agent's rules: the folder named for the agent, the service account
    left a **Viewer** with Edit on that one folder only, and its token in the agent's Grafana
    connection — *Alert rules* above has the steps.
@@ -191,13 +217,40 @@ use Grafana's HMAC signature settings.
    throwaway label, in the agent's folder) and watch it fire: Grafana's *Alert rules* list shows
    the rule firing, and Aurora's webhook **Deliveries** shows the delivery and its thread with the
    payload inside (marked as untrusted data). Delete the test rule from the rule's menu when you
-   are done. When nothing arrives, look at, in this order: the contact point's **Test** result in
-   Grafana, the rule's state in *Alert rules* (firing? or is the rule paused or failing?), and in
-   Aurora the webhook's **Deliveries** (nothing at all means Grafana never sent; a refused row says
-   why) and whether the webhook is paused or the agent frozen.
+   are done.
 7. **Turning it off:** pause the webhook in Aurora (its `…` menu) or delete the contact point in
    Grafana. Neither deletes the agent's rules; they expire by themselves, and you can see and
    delete them in *Alerting*, *Alert rules*, filtered by the agent's folder.
+
+### Checklist
+
+Follow these in order; each is one thing to look at or do.
+
+1. Aurora: the agent's webhook exists and is switched on; its address and secret are copied.
+2. Grafana: a contact point with the agent's name, integration **Webhook**, **URL** the Aurora
+   address, **HTTP Method** POST.
+3. **Authentication Header Scheme** `Bearer`, **Authentication Header Credentials** the Aurora
+   secret.
+4. **Max Alerts** 10, **Disable resolved message** on.
+5. **Test** answers in Grafana, and Aurora's **Deliveries** shows the test as accepted.
+6. No notification policy to make. The agent's rules name the contact point.
+7. The service account is a Viewer with Edit on the agent's one folder (*Alert rules* above).
+8. A harmless test rule from the agent fires, and its delivery reaches the agent's thread.
+
+### If nothing arrives
+
+- **The contact point's Test fails or shows nothing:** Grafana's own result next to **Test**, and
+  Aurora's webhook **Deliveries** (nothing there means Grafana never sent).
+- **The webhook is paused (or the agent frozen):** the webhook's row in the agent's *Automations*.
+- **Wrong secret:** Deliveries shows a refused row saying so; check **Authentication Header
+  Credentials**, or make a new secret with *New secret…* and paste it.
+- **The rule names a different contact point:** the rule's *Configure notifications* in *Alert
+  rules* (the name must equal the contact point's name exactly).
+- **The rule is paused or failing:** its state in *Alert rules*.
+- **The alert is still pending:** the rule's `for` duration has not passed yet; the state shows
+  *Pending* until it does.
+- **Grafana sent, or tried to:** the rule's *State history* (the *Alert state history* view) in
+  Grafana.
 
 ## Limits
 

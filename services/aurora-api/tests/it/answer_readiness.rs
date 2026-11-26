@@ -303,3 +303,249 @@ async fn the_cannot_answer_item_is_since_the_key_was_taken_away() {
     let age = chrono::Utc::now() - since(&ws_attention(&r, &owner).await);
     assert!(age < chrono::Duration::minutes(5), "{age}");
 }
+
+// ---- FIX-249 (C-1168): `GET /v1/agents/{agent}/ai-keys` — the keys this agent does not have yet,
+// the starter first, the dispatcher's order and reasons behind it. Metadata only, `can_own`. ----
+
+async fn get_ai_keys(r: &Rig, ck: &str, agent: Uuid) -> (u16, Value) {
+    let (s, _, v) =
+        r.h.send(
+            Method::GET,
+            &format!("/v1/agents/{agent}/ai-keys"),
+            &[("cookie", ck), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    (s.as_u16(), v)
+}
+
+/// A workspace-level LLM key on the `anthropic` endpoint; granted to `agent` when given.
+async fn ws_key(r: &Rig, name: &str, agent: Option<Uuid>) -> Uuid {
+    let sec = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, workspace_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id,
+            host_pattern, injection, value_source, value_ref, status)
+         VALUES ($1,$2,$3,$4,'llm','anthropic','api_key','anthropic','api.anthropic.com','{}','managed','x','active')",
+    )
+    .bind(sec)
+    .bind(r.org)
+    .bind(r.ws)
+    .bind(name)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    if let Some(a) = agent {
+        sqlx::query(
+            "INSERT INTO grants (id, workspace_id, agent_id, secret_id) VALUES ($1,$2,$3,$4)",
+        )
+        .bind(Uuid::now_v7())
+        .bind(r.ws)
+        .bind(a)
+        .bind(sec)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    }
+    sec
+}
+
+/// Makes `starter` the organization's starter key (the placement row the starter_ids read).
+async fn make_starter(r: &Rig, starter: Uuid) {
+    sqlx::query(
+        "INSERT INTO instance_placement (singleton, mode, default_org_id, default_org_role, shared_workspaces,
+            personal_enabled, personal_role, name_template, starter_grants, updated_at)
+         VALUES (true, 'shared_org', $1, 'member', '[]'::jsonb, true, 'owner', '{name}', $2, now())
+         ON CONFLICT (singleton) DO UPDATE SET default_org_id = $1, starter_grants = $2",
+    )
+    .bind(r.org)
+    .bind(serde_json::json!([{"kind": "secret", "id": starter}]))
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+}
+
+fn items_of(v: &Value) -> &[Value] {
+    v["items"].as_array().unwrap()
+}
+
+/// A workspace owner's session cookie: the route is `can_own`, like the grant route it feeds
+/// (`r.cookie` is a plain member and stays the refusal check).
+async fn owner_ck(r: &Rig) -> String {
+    let owner = r.h.user("ws-owner@x.io", false).await;
+    r.h.member(r.org, owner, "member", "active").await;
+    r.h.bind_ws(r.ws, owner, "owner").await;
+    let (_, sess) = r.h.good_session(owner).await;
+    cookie(&sess)
+}
+
+#[tokio::test]
+async fn ai_keys_two_usable_keys_the_starter_first() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    let first = org_key(&r, "First key", "active", None).await;
+    let starter = org_key(&r, "Starter key", "active", None).await;
+    make_starter(&r, starter).await;
+
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, a).await;
+    assert_eq!(s, 200, "{v}");
+    let items = items_of(&v);
+    assert_eq!(items.len(), 2, "{v}");
+    assert_eq!(items[0]["secret_id"], starter.to_string(), "{v}");
+    assert_eq!(items[0]["name"], "Starter key");
+    assert_eq!(items[0]["scope"], "organization");
+    assert_eq!(items[0]["starter"], true);
+    assert_eq!(items[0]["usable"], true);
+    assert_eq!(items[0]["reason"], Value::Null);
+    assert_eq!(items[1]["secret_id"], first.to_string(), "{v}");
+    assert_eq!(items[1]["starter"], false);
+    assert_eq!(items[1]["usable"], true);
+}
+
+#[tokio::test]
+async fn ai_keys_an_unusable_key_is_listed_with_its_reason_in_words() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    // A key whose provider is not the one its endpoint serves: the dispatcher's `provider_disabled`.
+    let sec = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id,
+            host_pattern, injection, value_source, value_ref, status)
+         VALUES ($1,$2,'OpenAI key','llm','openai','api_key','anthropic','api.anthropic.com','{}','managed','x','active')",
+    )
+    .bind(sec)
+    .bind(r.org)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, a).await;
+    assert_eq!(s, 200, "{v}");
+    let items = items_of(&v);
+    assert_eq!(items.len(), 1, "{v}");
+    assert_eq!(items[0]["secret_id"], sec.to_string());
+    assert_eq!(items[0]["usable"], false);
+    assert_eq!(items[0]["reason"], "Its service is not allowed here.");
+    // The reason is words, never the internal code or the endpoint's address.
+    assert!(!v.to_string().contains("provider_disabled"), "{v}");
+    assert!(!v.to_string().contains("api.anthropic.com"), "{v}");
+}
+
+#[tokio::test]
+async fn ai_keys_a_key_already_granted_is_absent() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    org_key(&r, "Given key", "active", Some(a)).await;
+    org_key(&r, "Other key", "active", None).await;
+
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, a).await;
+    assert_eq!(s, 200, "{v}");
+    let items = items_of(&v);
+    assert_eq!(items.len(), 1, "{v}");
+    assert_eq!(items[0]["name"], "Other key");
+}
+
+#[tokio::test]
+async fn ai_keys_an_organization_key_and_a_workspace_key_both_appear() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    let org = org_key(&r, "Org key", "active", None).await;
+    let ws = ws_key(&r, "Workspace key", None).await;
+
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, a).await;
+    assert_eq!(s, 200, "{v}");
+    let items = items_of(&v);
+    assert_eq!(items.len(), 2, "{v}");
+    // The dispatcher's order on the shared endpoint: the workspace key first (C-1168).
+    assert_eq!(items[0]["secret_id"], ws.to_string(), "{v}");
+    assert_eq!(items[0]["scope"], "workspace");
+    assert_eq!(items[1]["secret_id"], org.to_string(), "{v}");
+    assert_eq!(items[1]["scope"], "organization");
+}
+
+#[tokio::test]
+async fn ai_keys_a_member_who_cannot_own_is_refused_and_a_non_hosted_agent_is_not_there() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    org_key(&r, "Org key", "active", None).await;
+
+    // The rig's own session is a plain member of the workspace: the grant route's refusal
+    // (`require_own`, the same check the grants read and write routes use).
+    let (s, v) = get_ai_keys(&r, &r.cookie, a).await;
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(v["error"]["code"], "forbidden", "{v}");
+    assert_eq!(
+        v["error"]["details"]["who_can"]["role"], "workspace_owner",
+        "{v}"
+    );
+    assert!(!v.to_string().contains("Org key"), "{v}");
+
+    // A BYO agent has no AI keys of this kind.
+    let byo = Uuid::now_v7();
+    sqlx::query("INSERT INTO agents (id, org_id, workspace_id, handle, name, kind) VALUES ($1,$2,$3,'byo-k','byo-k','byo')")
+        .bind(byo)
+        .bind(r.org)
+        .bind(r.ws)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    // Refused alike: the kind of the agent is not told to someone who may not grant.
+    let (s2, v2) = get_ai_keys(&r, &r.cookie, byo).await;
+    assert_eq!(s2, s, "{v2}");
+    assert_eq!(v2["error"], v["error"], "{v2}");
+
+    // An owner who may grant is told there is no sandbox.
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, byo).await;
+    assert_eq!(s, 404, "{v}");
+}
+
+#[tokio::test]
+async fn ai_keys_another_organizations_key_never_appears() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    let org2 = r.h.org().await;
+    let ws2 = r.h.workspace(org2).await;
+    let sec = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, workspace_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id,
+            host_pattern, injection, value_source, value_ref, status)
+         VALUES ($1,$2,$3,'Other org key','llm','anthropic','api_key','anthropic','api.anthropic.com','{}','managed','x','active')",
+    )
+    .bind(sec)
+    .bind(org2)
+    .bind(ws2)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, a).await;
+    assert_eq!(s, 200, "{v}");
+    assert!(items_of(&v).is_empty(), "{v}");
+    assert!(!v.to_string().contains("Other org key"), "{v}");
+}
+
+#[tokio::test]
+async fn ai_keys_metadata_only_never_a_value() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    org_key(&r, "Org key", "active", None).await;
+
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, a).await;
+    assert_eq!(s, 200, "{v}");
+    let item = &items_of(&v)[0];
+    let mut keys: Vec<&str> = item
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["name", "reason", "scope", "secret_id", "starter", "usable"],
+        "{v}"
+    );
+    // No value, no endpoint address, no provider id: the key's metadata only.
+    let body = v.to_string();
+    assert!(!body.contains("\"x\""), "{v}");
+    assert!(!body.contains("api.anthropic.com"), "{v}");
+}

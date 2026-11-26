@@ -648,6 +648,20 @@ expect_eq "only grafana-query's description says to read it first" "grafana-quer
   "$(for f in "$SKILLS"/*/SKILL.md; do grep -m1 '^description:' "$f" | grep -qi 'first' && basename "$(dirname "$f")"; done | paste -sd' ')"
 if grep -rnIE 'grafana-api-notes|investigate-a-spike|sweep' "$PKG" >&2; then bad "a removed skill or subcommand is still mentioned in the package"; else ok "no mention of grafana-api-notes, investigate-a-spike or sweep in the package"; fi
 
+# --- the setup walkthrough names Grafana's settings exactly and needs no notification policy -------------------------------
+SETUP="$PKG/docs/setup.md"
+for name in 'Max Alerts' 'Authentication Header Scheme' 'Authentication Header Credentials' 'Disable resolved message' 'Configure notifications' 'truncatedAlerts' 'Contact points' 'HTTP Method'; do
+  if grep -qF "$name" "$SETUP"; then ok "setup.md names Grafana's \"$name\""; else bad "setup.md no longer says \"$name\""; fi
+done
+if grep -qF '**Max Alerts**: **10**' "$SETUP"; then ok "setup.md sets Max Alerts to 10"; else bad "setup.md does not say Max Alerts: 10"; fi
+if tr '\n' ' ' < "$SETUP" | sed 's/> / /g; s/  */ /g' | grep -qF 'You do not need a notification policy'; then ok "setup.md says no notification policy is needed"; else bad "setup.md does not say no notification policy is needed"; fi
+if grep -qiE 'older Grafana|policy whose matcher|repeat interval of at least|make a notification policy|create a notification policy' "$SETUP" "$PKG/plugin.yaml" "$SKILLS"/*/SKILL.md; then
+  bad "the setup or skill text still asks for a notification policy"
+else
+  ok "the setup and skill text ask for no notification policy"
+fi
+if grep -rqiE 'cap how many alerts' "$PKG" || grep -rqE 'Max alerts' "$PKG"; then bad "the package has a vague alert cap or a misspelt Max Alerts"; else ok "no vague alert cap wording in the package"; fi
+
 # --- hygiene -------------------------------------------------------------------------------------------------------------------------
 for s in "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT"; do
   if grep -nE '\bcurl\b|\bwget\b|requests|urllib|http\.client|import socket|eval\(|exec\(|shell=True|os\.system|GRAFANA_|TOKEN|Authorization' "$s"; then
