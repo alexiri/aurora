@@ -176,6 +176,10 @@ writes them again (`skill-5-1256-{dark,light}` ↔ `after/skill-5{,-light}.png`,
   skill-libraries --project=mocked` **116/116**; `pnpm typecheck`, eslint on touched files, `cargo fmt --all
   --check`, `scripts/guards/run-all.sh`, `extract-schema.py --check`: pass. No Rust changed (no clippy), no local
   `pnpm build`, no whole suite (CI).
+- After the merge of master (`47c62f90`, FIX-276: no conflict; `cn()` now keeps `text-label`, and the skill chips
+  keep their own `text-xs`): vitest on 12 files with `cn` and the four drift guards **170/170**; Playwright
+  `skills skill-libraries` **116/116**; typecheck, eslint, fmt, guards and schema pass. Commits: `cd11744a` (the
+  work), `47c62f90` (the merge), and the one that adds these lines.
 
 ### Security notes
 
