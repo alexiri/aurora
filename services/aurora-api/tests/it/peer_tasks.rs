@@ -1948,7 +1948,8 @@ async fn the_approval_wake_rechecks_the_requester_and_the_freeze() {
         "{}",
         closed[0]
     );
-    assert!(d.rig.running_turn(pc).await.is_none(), "no turn starts");
+    let pc2 = d.rig.peer_conversation(task2).await;
+    assert!(d.rig.running_turn(pc2).await.is_none(), "no turn starts");
 }
 
 /// (FIX-253 review, high) A `waiting` task occupies the one-open slot of its ordered pair exactly
@@ -2007,10 +2008,10 @@ async fn a_waiting_task_holds_the_pair_slot_and_the_wake_succeeds() {
     .bind(task)
     .execute(&mut *conn)
     .await;
-    assert!(
-        dup.is_err(),
-        "a second `waiting` row of the pair must violate the unique index"
-    );
+    let err = dup.expect_err("a second `waiting` row of the pair must be refused");
+    let db = err.as_database_error().expect("a database error");
+    assert!(db.is_unique_violation(), "{db}");
+    assert_eq!(db.constraint(), Some("peer_tasks_one_open_uq"), "{db}");
     drop(conn);
 
     // The wake of the waiting task still succeeds: no zombie.
