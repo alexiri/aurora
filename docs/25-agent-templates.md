@@ -428,9 +428,11 @@ check (default daily, minimum every 6 hours):
    content. Aurora stores the avatar re-encoded as a 256×256 PNG, and the
    hash an approval is bound to (`content_sha256`) is that of the **stored**
    content. So for a template **with an avatar** it differs from `pack`'s
-   `content:` line; without one the two are equal. To match a reviewed version
-   to a CI run, compare the commit, or the package's hash: `pack`'s `sha256:`
-   is the version's `archive_sha256`.
+   `content:` line; without one the two are equal. The dashboard's review page
+   shows the commit and neither hash. To match a reviewed version to a CI run,
+   compare the commit, or the package's hash: `pack`'s `sha256:` is the
+   `archive_sha256` of the version in the admin API (which also carries
+   `content_sha256`).
 5. An admin reviews — everything the agent would be told or given, in full —
    and approves or rejects. Only an approved version is offered.
 
