@@ -21,6 +21,18 @@ const folds = () => screen.getAllByTestId("diff-fold");
 const lineRows = () => Array.from(document.querySelectorAll("tr[data-diff]"));
 
 describe("DiffView", () => {
+  // (P5-MEMORY-3) Long lines scroll inside the box by default; `wrap` is the narrow-column choice.
+  it("keeps long lines on one line unless wrap is asked for", () => {
+    const cell = () => screen.getByTestId("diff-view").querySelector('[data-diff="add"] td:last-child')!;
+    const { unmount } = render(<DiffView old="a" next="b" label="d" />);
+    expect(cell().className.split(" ")).toContain("whitespace-pre");
+    expect(cell().className).not.toContain("pre-wrap");
+    unmount();
+    render(<DiffView old="a" next="b" label="d" wrap />);
+    expect(cell().className.split(" ")).toEqual(expect.arrayContaining(["whitespace-pre-wrap", "wrap-anywhere"]));
+    expect(cell().className.split(" ")).not.toContain("whitespace-pre");
+  });
+
   it("labels the fold row with the lines it hides, and each button names its range", () => {
     render(<DiffView old={big().old} next={big().next} label="Diff of Instructions" fileName="instructions.txt" />);
     expect(screen.getByRole("region", { name: "Diff of Instructions" })).toBeTruthy();

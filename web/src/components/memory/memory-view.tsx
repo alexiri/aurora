@@ -58,7 +58,6 @@ export function MemoryView({
   readOnly,
   narrow,
   match,
-  historyOpen,
   onBack,
   onEdit,
   onHistory,
@@ -71,7 +70,6 @@ export function MemoryView({
   readOnly: boolean;
   narrow: boolean;
   match: MemoryMatch | null;
-  historyOpen: boolean;
   onBack: () => void;
   onEdit: () => void;
   onHistory: () => void;
@@ -124,7 +122,7 @@ export function MemoryView({
         </Button>
       </MenuTrigger>
       <MenuContent align="end">
-        {narrow ? null : <MenuItem onSelect={onHistory}>{historyOpen ? "Hide history" : "History"}</MenuItem>}
+        {narrow ? null : <MenuItem onSelect={onHistory}>History</MenuItem>}
         <MenuItem className="text-danger-ink" onSelect={() => setConfirmDelete(true)}>
           Delete
         </MenuItem>
@@ -194,7 +192,7 @@ export function MemoryView({
       {narrow && !readOnly ? (
         <div className="grid grid-cols-2 gap-2">
           {lockButton("w-full")}
-          <Button type="button" variant="outline" size="sm" className="min-h-11 w-full" aria-expanded={historyOpen} onClick={onHistory}>
+          <Button type="button" variant="outline" size="sm" className="min-h-11 w-full" onClick={onHistory}>
             History
           </Button>
         </div>

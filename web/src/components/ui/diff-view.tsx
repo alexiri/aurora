@@ -27,9 +27,10 @@ import {
  * unchanged lines folded into one "N unchanged lines" row with **Show 20 more above / below** and
  * **Show all** buttons, and a **Show the whole file** switch in the header. A changed-line pair
  * highlights the words that differ; a file that was added or removed shows as such; files with no
- * change are not shown as diffs at all. Long lines scroll inside the box, never the page.
+ * change are not shown as diffs at all. Long lines scroll inside the box, never the page; with
+ * `wrap` (a narrow column of prose) they wrap instead, so the box never scrolls sideways.
  */
-export function DiffView({ old, next, label, fileName, status }: { old: string; next: string; label: string; fileName?: string; status?: "added" | "removed" | null }) {
+export function DiffView({ old, next, label, fileName, status, wrap = false }: { old: string; next: string; label: string; fileName?: string; status?: "added" | "removed" | null; wrap?: boolean }) {
   const base = useMemo(() => buildDiff(old, next), [old, next]);
   const [rows, setRows] = useState<DiffRow[]>(base.rows);
   const [whole, setWhole] = useState(false);
@@ -106,11 +107,11 @@ export function DiffView({ old, next, label, fileName, status }: { old: string; 
           <table className="w-full border-collapse font-mono text-xs leading-5 text-ink">
             <tbody>
               {(whole ? expandAll(base.rows) : rows).flatMap((row) => {
-                if (row.type === "line") return [<LineRow key={`l${row.line.new ?? `o${row.line.old}`}`} line={row.line} highlights={highlights} />];
+                if (row.type === "line") return [<LineRow key={`l${row.line.new ?? `o${row.line.old}`}`} line={row.line} highlights={highlights} wrap={wrap} />];
                 return [
-                  ...row.lines.slice(0, row.above).map((line) => <LineRow key={`l${line.new ?? `o${line.old}`}`} line={line} highlights={highlights} />),
+                  ...row.lines.slice(0, row.above).map((line) => <LineRow key={`l${line.new ?? `o${line.old}`}`} line={line} highlights={highlights} wrap={wrap} />),
                   <FoldButtons key={`f${row.id}`} fold={row} rows={rows} setRows={setRows} />,
-                  ...row.lines.slice(row.count - row.below).map((line) => <LineRow key={`l${line.new ?? `o${line.old}`}`} line={line} highlights={highlights} />),
+                  ...row.lines.slice(row.count - row.below).map((line) => <LineRow key={`l${line.new ?? `o${line.old}`}`} line={line} highlights={highlights} wrap={wrap} />),
                 ];
               })}
             </tbody>
@@ -163,13 +164,13 @@ function FoldButtons({ fold, rows, setRows }: { fold: FoldRow; rows: DiffRow[]; 
 }
 
 /** One diff line: its old and new number, its sign, and its text with the changed words marked. */
-function LineRow({ line, highlights }: { line: DiffLine; highlights: Map<DiffLine, WordSpan[]> }) {
+function LineRow({ line, highlights, wrap }: { line: DiffLine; highlights: Map<DiffLine, WordSpan[]>; wrap: boolean }) {
   const spans = highlights.get(line);
   return (
     <tr data-diff={line.kind} className={line.kind === "add" ? "bg-accent-soft text-accent-ink" : line.kind === "del" ? "bg-danger-soft text-danger-ink" : undefined}>
       <td className="w-10 select-none border-r border-line px-1 text-right align-top text-muted tabular-nums">{line.old ?? ""}</td>
       <td className="w-10 select-none border-r border-line px-1 text-right align-top text-muted tabular-nums">{line.new ?? ""}</td>
-      <td className="whitespace-pre px-2 align-top">
+      <td className={wrap ? "whitespace-pre-wrap px-2 align-top wrap-anywhere" : "whitespace-pre px-2 align-top"}>
         {line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  "}
         {spans
           ? spans.map((s, i) => (s.changed ? <mark key={i} className={line.kind === "add" ? "bg-accent-ink/25 text-accent-ink" : "bg-danger-ink/25 text-danger-ink"}>{s.text}</mark> : <span key={i}>{s.text}</span>))

@@ -258,8 +258,9 @@ describe("the reading view (mem-1)", () => {
     const menu = async () => fireEvent.keyDown(await screen.findByRole("button", { name: "More actions" }), { key: "Enter" });
     await menu();
     fireEvent.click(await screen.findByRole("menuitem", { name: "History" }));
-    expect(await screen.findByRole("region", { name: "Revision history" })).toBeInTheDocument();
+    const history = await screen.findByRole("article", { name: "History" });
     expect(window.location.search).toBe("?tab=memory&memory=aurora-migration&history=1");
+    fireEvent.click(within(history).getByRole("button", { name: "Back to the memory" }));
     await menu();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete the memory “Aurora migration project”?" });
@@ -553,7 +554,7 @@ describe("the emergency reader's view", () => {
     const a = await reading("On-call rotation");
     expect(within(a).getByTestId("memory-meta").textContent).toContain("Locked by Bob Builder on ");
     expect(screen.queryByRole("searchbox")).toBeNull();
-    expect(screen.queryByRole("region", { name: "Revision history" })).toBeNull();
+    expect(screen.queryByRole("article", { name: "History" })).toBeNull();
     for (const name of ["Edit", "Lock", "Unlock", "More actions", "New memory"]) expect(screen.queryByRole("button", { name }), name).toBeNull();
   });
 });
