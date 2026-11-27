@@ -145,6 +145,32 @@ pub(crate) fn create_dir_beneath(home: &Path, rel: &Path) -> io::Result<OwnedFd>
     descend(home, rel, true)
 }
 
+/// Removes `rel` below `home` unless it is a directory, from its parent's descriptor: a link
+/// is removed itself, and none is followed on the way. A path that is not there is no error.
+pub(crate) fn remove_file_beneath(home: &Path, rel: &Path) -> io::Result<()> {
+    let (parent, name) = rel
+        .parent()
+        .zip(rel.file_name())
+        .ok_or_else(|| invalid("no file name"))?;
+    let dir = match open_dir_beneath(home, parent) {
+        Ok(dir) => dir,
+        // A folder on the way is missing or is not one: nothing is at `rel`.
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+    match rustix::fs::unlinkat(&dir, name, AtFlags::empty()) {
+        Ok(()) | Err(Errno::NOENT | Errno::ISDIR) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Sets `dir_mode` on `dir` and on every directory below it and, with `file_mode`, the mode it
 /// gives for each regular file's mode. Everything is opened from its parent's descriptor and
 /// changed through its own: a link, or anything else, is left alone. Best effort.

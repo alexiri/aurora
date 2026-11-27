@@ -1052,7 +1052,10 @@ The home (`/workspace`) holds:
   two generations. A skill file the home cannot hold (a file where a folder is
   needed or the reverse, a name too long) is skipped with a warning in the
   sandbox log, like a helper; the rest of the generation is installed and acked.
-  No report tells the API, so the skill is simply incomplete in the sandbox.
+  The previous version of a skipped skill or helper file (also of a staged one
+  that is refused) is removed, so the file is missing, never stale beside the
+  new rest. No report tells the API, so the skill is simply incomplete in the
+  sandbox.
   Any other error on a skill file (a full disk) still fails the generation.
 - (FIX-258) Folder modes under the managed roots, and the file modes of a
   locked tree, are set on descriptors opened from the parent's descriptor

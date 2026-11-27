@@ -1706,6 +1706,86 @@ fn a_skill_that_cannot_be_installed_does_not_fail_the_commit() {
     assert!(root.join("AGENTS.md").exists());
 }
 
+/// (FIX-258) A skill file whose new version is skipped at install (too large) is removed: the
+/// old version must not run beside the new rest of the skill.
+#[test]
+fn a_skill_file_skipped_at_install_leaves_no_old_version() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let (run, skill) = (
+        ".claude/skills/s/scripts/run.sh",
+        ".claude/skills/s/SKILL.md",
+    );
+    apply_all(&mut p, &generation(1, &[(run, "v1"), (skill, "s1")], &[]));
+    p.commit(1).unwrap();
+    let oversized = "x".repeat(8 * 1024 * 1024 + 1);
+    apply_all(
+        &mut p,
+        &generation(2, &[(run, &oversized), (skill, "s2")], &[]),
+    );
+    let (committed, warnings) = warnings_of(|| p.commit(2));
+    committed.unwrap();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(fs::symlink_metadata(root.join(run)).is_err(), "stale file");
+    assert_eq!(fs::read_to_string(root.join(skill)).unwrap(), "s2");
+}
+
+/// (FIX-258) The same for a file skipped at staging (here a file that is also a folder): its
+/// old version goes, and what takes its place installs.
+#[test]
+fn a_skill_file_skipped_at_staging_leaves_no_old_version() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let (run, inner) = (".claude/skills/s/run", ".claude/skills/s/run/x.sh");
+    apply_all(&mut p, &generation(1, &[(run, "v1")], &[]));
+    p.commit(1).unwrap();
+    apply_all(&mut p, &generation(2, &[(inner, "x2"), (run, "v2")], &[]));
+    p.commit(2).unwrap();
+    assert!(!root.join(run).is_file(), "stale file");
+    assert_eq!(fs::read_to_string(root.join(inner)).unwrap(), "x2");
+}
+
+/// (FIX-258) And for a staged file that is refused because something else is at its name.
+#[test]
+fn a_refused_staged_skill_file_leaves_no_old_version() {
+    let d = TempDir::new();
+    let outside = outside_dir();
+    let mut p = projector(d.path());
+    let run = ".claude/skills/s/run.sh";
+    apply_all(&mut p, &generation(1, &[(run, "v1")], &[]));
+    p.commit(1).unwrap();
+    apply_all(&mut p, &generation(2, &[(run, "v2")], &[]));
+    let staged = d.path().join(".aurora/sync/files").join(run);
+    fs::remove_file(&staged).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("victim"), &staged).unwrap();
+    p.commit(2).unwrap();
+    assert!(fs::symlink_metadata(d.path().join(run)).is_err(), "stale");
+    assert_untouched(outside.path());
+}
+
+/// (FIX-258) A skipped helper leaves no old version either.
+#[test]
+fn a_skipped_helper_leaves_no_old_version() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let helper = ".aurora/helpers/run.sh";
+    apply_all(
+        &mut p,
+        &helpers_generation(1, &[(helper, "v1", true)], true),
+    );
+    p.commit(1).unwrap();
+    let oversized = "x".repeat(8 * 1024 * 1024 + 1);
+    apply_all(
+        &mut p,
+        &helpers_generation(2, &[(helper, &oversized, true)], true),
+    );
+    p.commit(2).unwrap();
+    assert!(fs::symlink_metadata(root.join(helper)).is_err(), "stale");
+}
+
 /// A link left in the staging area before the commit is refused: nothing is installed under its
 /// name, its target is left alone, and the rest of the generation is installed.
 #[test]

@@ -114,6 +114,9 @@ pub struct HomeProjector {
     /// (P6-MEMLOCK, C-1149) The memory files staged as locked in the current generation (their
     /// rel paths); reset with the staging area. Only a memory file entry arrives with the flag.
     locked_keys: BTreeSet<PathBuf>,
+    /// (FIX-258) The skill and helper files of the current generation that could not be
+    /// staged; reset with the staging area.
+    skipped: BTreeSet<PathBuf>,
     /// (P6-MEMLOCK, C-1149) The sealed bytes of every installed locked memory, key → file bytes;
     /// held in memory only. The harvest restores them instead of uploading an agent's edit.
     locked_bytes: Arc<HashMap<String, Vec<u8>>>,
@@ -212,6 +215,15 @@ fn cannot_hold(error: &std::io::Error) -> bool {
     )
 }
 
+/// A skill or helper file whose new version is skipped must be seen to be missing, never be
+/// the old one beside the new rest: it leaves `keep` and the home.
+fn discard(root: &Path, keep: &mut BTreeSet<PathBuf>, rel: &Path) {
+    keep.remove(rel);
+    if let Err(error) = nofollow::remove_file_beneath(root, rel) {
+        tracing::warn!(path = %rel.display(), %error, "old version of a skipped file not removed");
+    }
+}
+
 fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.filter_map(Result::ok) {
@@ -291,6 +303,7 @@ impl HomeProjector {
             failed: None,
             current: None,
             locked_keys: BTreeSet::new(),
+            skipped: BTreeSet::new(),
             locked_bytes: Arc::new(HashMap::new()),
         }
     }
@@ -305,6 +318,10 @@ impl HomeProjector {
 
     fn skills_prefix(&self) -> Option<PathBuf> {
         self.cfg.skills_dir.as_deref().and_then(clean_rel)
+    }
+
+    fn is_skill_path(&self, rel: &Path) -> bool {
+        self.skills_prefix().is_some_and(|s| rel.starts_with(s))
     }
 
     /// A managed projection path: under the skills dir, `memory/<name>.md`, an app folder file
@@ -341,6 +358,7 @@ impl HomeProjector {
             self.failed = None;
             // (P6-MEMLOCK) The locked set belongs to the generation being staged.
             self.locked_keys.clear();
+            self.skipped.clear();
         }
         self.current = Some(sync.generation);
         if let Err(e) = self.stage(sync) {
@@ -394,20 +412,24 @@ impl HomeProjector {
                     if memory && e.locked {
                         self.locked_keys.insert(rel.clone());
                     }
-                    if let Err(error) = write_atomic(
+                    match write_atomic(
                         &self.staged_files().join(&rel),
                         body.as_bytes(),
                         staged_mode,
                     ) {
-                        // A skill file the home cannot hold is skipped, like a helper.
-                        if memory || !cannot_hold(&error) {
-                            return Err(error.into());
+                        Ok(()) => {
+                            self.skipped.remove(&rel);
                         }
-                        tracing::warn!(
-                            path = %e.path.escape_debug(),
-                            %error,
-                            "skill file not written; skipped"
-                        );
+                        // A skill file the home cannot hold is skipped, like a helper.
+                        Err(error) if !memory && cannot_hold(&error) => {
+                            tracing::warn!(
+                                path = %e.path.escape_debug(),
+                                %error,
+                                "skill file not written; skipped"
+                            );
+                            self.skipped.insert(rel);
+                        }
+                        Err(error) => return Err(error.into()),
                     }
                 }
             }
@@ -445,16 +467,22 @@ impl HomeProjector {
                             let staged_mode = if e.exec { 0o700 } else { 0o600 };
                             // One helper the home cannot hold (a file that is also a folder)
                             // is skipped: it must not stall the whole sync.
-                            if let Err(error) = write_atomic(
+                            match write_atomic(
                                 &self.staged_files().join(&r),
                                 e.content.as_bytes(),
                                 staged_mode,
                             ) {
-                                tracing::warn!(
-                                    path = %e.path.escape_debug(),
-                                    %error,
-                                    "helper file not written; skipped"
-                                );
+                                Ok(()) => {
+                                    self.skipped.remove(&r);
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        path = %e.path.escape_debug(),
+                                        %error,
+                                        "helper file not written; skipped"
+                                    );
+                                    self.skipped.insert(r);
+                                }
                             }
                         }
                         _ => {
@@ -541,6 +569,10 @@ impl HomeProjector {
         clear_link_chain(&root, Path::new(HELPERS_DIR));
         unlink_tree_symlinks(&helpers_root);
         set_dirs(&root, Path::new(HELPERS_DIR), 0o755);
+        // A file that could not be staged goes now, whatever the manifest says.
+        for rel in &self.skipped {
+            discard(&root, &mut keep, rel);
+        }
         // The skills and the helpers are pruned before the install, so that a name can turn
         // from a file into a folder (or back) between two generations.
         if let Some(s) = &skills_root {
@@ -565,6 +597,9 @@ impl HomeProjector {
                 Ok(f) => f,
                 Err(error) => {
                     tracing::warn!(path = %rel.display(), %error, "staged file refused");
+                    if is_helper_path(&rel) || self.is_skill_path(&rel) {
+                        discard(&root, &mut keep, &rel);
+                    }
                     continue;
                 }
             };
@@ -584,11 +619,11 @@ impl HomeProjector {
             let bytes = match install_staged(&root, file, &src, &dst, mode) {
                 Ok(b) => b,
                 Err(error) => {
-                    let skill = self.skills_prefix().is_some_and(|s| rel.starts_with(s));
-                    if !(is_helper_path(&rel) || skill && cannot_hold(&error)) {
+                    if !(is_helper_path(&rel) || self.is_skill_path(&rel) && cannot_hold(&error)) {
                         return Err(error.into());
                     }
                     tracing::warn!(path = %rel.display(), %error, "file not installed; skipped");
+                    discard(&root, &mut keep, &rel);
                     continue;
                 }
             };
