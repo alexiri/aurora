@@ -479,6 +479,9 @@ async fn idle_events(
         .await?
         .is_some_and(|task| task.messages_used >= task.message_budget);
     let (mut of_anchor, mut of_conversation) = after_turn_counts(tx, cid, turn).await?;
+    // Whether this report holds more than one report may add, and no other limit stopped it
+    // first (that limit writes its own line).
+    let mut left_out = sorted.len() > AFTER_TURN_MAX;
     for e in sorted.into_iter().take(AFTER_TURN_MAX) {
         let d = &e.event.data;
         let (ty, mut p) = match e.event.kind.as_str() {
@@ -526,21 +529,26 @@ async fn idle_events(
         if already_recorded(tx, cid, ty, p[key].as_str().unwrap_or("")).await? {
             continue;
         }
-        if out_of_budget {
-            note_not_recorded(tx, cid, turn, "budget", OUT_OF_BUDGET).await?;
-            break;
-        }
-        if of_conversation >= AFTER_TURN_PER_CONVERSATION {
-            note_not_recorded(tx, cid, turn, "conversation", CAPPED).await?;
-            break;
-        }
-        if of_anchor >= AFTER_TURN_PER_ANCHOR {
-            note_not_recorded(tx, cid, turn, "turn", CAPPED).await?;
+        let stopped = if out_of_budget {
+            Some(("budget", OUT_OF_BUDGET))
+        } else if of_conversation >= AFTER_TURN_PER_CONVERSATION {
+            Some(("conversation", CAPPED))
+        } else if of_anchor >= AFTER_TURN_PER_ANCHOR {
+            Some(("turn", CAPPED))
+        } else {
+            None
+        };
+        if let Some((scope, text)) = stopped {
+            note_not_recorded(tx, cid, turn, scope, text).await?;
+            left_out = false;
             break;
         }
         conv::append_event(tx, cid, Some(turn), ty, &p).await?;
         of_anchor += 1;
         of_conversation += 1;
+    }
+    if left_out {
+        note_not_recorded(tx, cid, turn, "turn", CAPPED).await?;
     }
     Ok(res(r, ReportStatus::Applied, None))
 }

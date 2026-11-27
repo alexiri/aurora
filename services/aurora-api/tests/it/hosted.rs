@@ -886,6 +886,22 @@ async fn idle_events_are_capped_per_conversation() {
     assert_eq!(capped.len(), 1, "{capped:?}");
 }
 
+/// (FIX-253 review 2, item 6) A report with more entries than one report may add says so, with
+/// the same one line the caps use: nothing is left out silently.
+#[tokio::test]
+async fn idle_events_beyond_one_reports_limit_are_said_to_be_unrecorded() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idleflood").await;
+    r.report(&lv, idle_calls(&turn, 0, 100)).await;
+    assert_eq!(after_turn_entries(&r, lv.conv).await.1.len(), 0, "all fit");
+    r.report(&lv, idle_calls(&turn, 100, 101)).await;
+    r.report(&lv, idle_calls(&turn, 300, 101)).await;
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 300);
+    assert_eq!(capped.len(), 1, "{capped:?}");
+    assert_eq!(capped[0]["text"], "More activity was not recorded.");
+}
+
 /// (FIX-253 review, low 8) An idle event without a call or message id is still recorded once:
 /// its place in the watch's numbering is its key, so a redelivery adds nothing and a later
 /// event does.
