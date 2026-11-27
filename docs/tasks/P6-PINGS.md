@@ -1,12 +1,13 @@
 # P6-PINGS: An agent's own accounts on GitLab and Jira wake it when it is tagged — **proposal, spec batch (Opus) later — phase 6**
 
-> **Status: proposal (2026-11-27).** D-493 records the owner's answers. No C-, SEC- or migration
+> **Status: proposal (2026-11-27).** D-493..D-495 record the owner's answers. No C-, SEC- or migration
 > numbers are taken yet: the spec batch takes them from PROGRESS's next-free note.
 >
-> **Owner answers, 2026-11-27 (D-493):** Q-P6-PING-1..5 are answered (table at the end). Q-P6-PING-6..11
-> came up while writing this down. Each has a recommendation, and none blocks the spec batch.
-> **Q-P6-PING-7 answered the same day (D-494):** the token is stored only once and is rotated in the
-> first version (§One token, rotated).
+> **Owner answers, 2026-11-27: every question is answered** (table at the end).
+> - Q-P6-PING-1..5: D-493.
+> - Q-P6-PING-7: D-494. The token is stored only once and is rotated in the first version (§One token,
+>   rotated).
+> - Q-P6-PING-6 and 8..11: D-495, the recommendations accepted as written.
 >
 > This file covers what the two connectors share: the core and dashboard changes. The platform
 > details are in `P6-PINGS-GITLAB.md` and `P6-PINGS-JIRA.md`.
@@ -84,7 +85,7 @@ The owner's answer to Q4 is "anything that tags the agent directly". That means:
   The core processes it like `message.posted`, steps 1–11 of `13 §5.1`, with the actor as the speaker. The
   turn text is one platform-voice line composed by the core, for example: `@ann assigned you issue "Disk
   full on node 12" (https://…)`. Every field in that line is sanitised as a label.
-- **Not in the first version (Q-P6-PING-6): to-dos without a person behind them.** Examples are a failed
+- **Not in the first version (Q-P6-PING-6, D-495): to-dos without a person behind them.** Examples are a failed
   pipeline or a merge conflict on the agent's own merge request. There is no speaker whose access can be
   checked.
 
@@ -119,7 +120,7 @@ without it never sends `item.addressed`.
    access, gets no reply. On a platform with `reactions`, the core adds one 🙊 reaction (neutral name
    `speak_no_evil`) to the message and stops.
 
-   Recommendation, Q-P6-PING-9: a linked organization member without access still gets the usual
+   Q-P6-PING-9 (D-495): a linked organization member without access still gets the usual
    `pending` reach grant, with the owners told in the dashboard and by e-mail and push. Nothing is said on
    the platform. An unlinked author creates nothing.
 5. **Frozen agent** (`13 §5.1` step 2a): unchanged. The one rate-limited platform-voice line is posted.
@@ -148,8 +149,8 @@ without it never sends `item.addressed`.
 - **Posting rules.** Answers, attachments, splitting and the failure line are unchanged (`13 §5.2`).
   Approval cards follow D-192 in these spaces: title, agent, rule, expiry and a dashboard link, with
   no buttons and no `approve <code>` (`commands: false`). Approvers are reached by e-mail and push as today.
-  The spec decides whether narration cards are posted in these spaces. The recommendation is no: a
-  tracker comment is not a chat line, and the steps are on the dashboard.
+  No narration cards are posted in these spaces (Q-P6-PING-10, D-495): a tracker comment is not a chat
+  line, and the steps are on the dashboard.
 - **Approval of the answer itself.** The owner answered Q3: "nothing new is needed". Note what that covers:
   - The posted answer is the conversation's reply, as on Mattermost. It is not an app tool call, so the
     app's approval rules don't hold it back.
@@ -308,7 +309,7 @@ issue must not be able to merge, close, reassign or ping a whole group.
 
 ## Deliverables of the spec batch (when phase 6 starts)
 
-- D-numbers for Q-P6-PING-6 and 8..11 (Q7 is D-494). SEC invariants (§Security). C-numbers for:
+- The answers are D-493..D-495. SEC invariants (§Security). C-numbers for:
   - `item.addressed` and the `addressed` capability;
   - `history.read` `after` and `message.post` `reply_to`;
   - the `open_spaces` capability and the `can_own` attach rule;
@@ -319,32 +320,34 @@ issue must not be able to merge, close, reassign or ping a whole group.
   - the 🙊 refusal reaction;
   - the two connector manifests.
 - `13` (the additions above, §5.1 steps 4–5 and 7–8, §5.7, §5.9, §4.5), `04` (the link method, attach
-  matrix, audit), `03` (`user_identities.username`, presence expiry under §Planned changes, with their
-  migrations), `05` and `API_CONTRACTS`, `14` (attach dialog with the token and "also use for the app",
-  integration setup, the expiry warning), `15` (connector host types), `17`, `18`. Two new platform files,
+  matrix, audit), `03` (`user_identities.username`, the presence's `connection_id` and the token's expiry
+  under §Planned changes, with their migrations), `05` and `API_CONTRACTS`, `08` (the connector as the
+  token's writer, the gateway's re-read), `14` (the attach dialog: a pasted token or an existing token
+  account, and the agent's app access; integration setup; the renewal line and the expiry warning), `15` (connector host types), `17`, `18`. Two new platform files,
   `docs/26-gitlab-connector.md` and `docs/27-jira-connector.md`, like `20`.
 - Proposed briefs:
   - **P6-PING-1** (Rust, core: the contract additions, linking by username, the refusal reaction, the
-    context and reply rules, the attach role, expiry; L);
+    context and reply rules, the attach role, the presence's connection, the rotation write-back and the
+    gateway's re-read, expiry; L);
   - **P6-PING-2** (Rust: the GitLab connector, `P6-PINGS-GITLAB.md`; L);
   - **P6-PING-3** (Rust: the Jira Data Center connector, `P6-PINGS-JIRA.md`; L);
-  - **P6-PING-4** (Next.js: the integration and attach dialogs, "also use for the app", expiry
-    attention; M).
+  - **P6-PING-4** (Next.js: the integration and attach dialogs, the token or an existing account with
+    the app access, the renewal line and the expiry attention; M).
 
   The order is 1 first, then 2 and 4 beside each other, then 3.
 
-## Questions for the owner
+## Questions for the owner (all answered 2026-11-27: D-493, D-494, D-495)
 
-| # | Question | Answer / recommendation |
+| # | Question | Answer |
 |---|---|---|
 | Q-P6-PING-1 | How does a platform author become an Aurora user, given there are no DMs for the sign-in link? | **Answered (D-493(a)):** "SSO usernames match across all apps". Link by SSO username, as an audited opt-in per integration. |
 | Q-P6-PING-2 | What does a stranger get? | **Answered (D-493(b)):** silence, with a 🙊 reaction on the message where the platform has reactions. |
 | Q-P6-PING-3 | Does an answer in a public project need something new (only private projects, or approval)? | **Answered (D-493(c)):** no. It is the person's decision when they connect the agent. Generally only shared agents are connected to public projects, and app approval rules already cover what the agent posts itself. |
 | Q-P6-PING-4 | What wakes the agent? | **Answered (D-493(d)):** anything that tags the agent directly: mentions, assignments, review requests, approver requests, reviews of its merge requests. |
 | Q-P6-PING-5 | Who may attach such a presence? | **Answered (D-493(e)):** `can_own`. |
-| Q-P6-PING-6 | To-dos with no person behind them (a failed pipeline or a conflict on the agent's own merge request): do they wake it? | **Recommended: not in the first version.** No speaker means no access check. The agent can watch its own pipelines with a schedule or a watch. Revisit with a "creator" rule like schedules have. |
+| Q-P6-PING-6 | To-dos with no person behind them (a failed pipeline or a conflict on the agent's own merge request): do they wake it? | **Answered (D-495(a)): not in the first version.** No speaker means no access check. The agent can watch its own pipelines with a schedule or a watch. Revisit with a "creator" rule like schedules have. |
 | Q-P6-PING-7 | One token for the presence and the app connection? | **Answered (D-494):** "Store the token only once and rotate it in the first version." The presence points at a token-kind app connection, and the connector rotates the token and writes it back (§One token, rotated). |
-| Q-P6-PING-8 | Jira Cloud too? | **Recommended: Jira Data Center first** (what CERN runs). Cloud has other auth, account ids instead of usernames, hidden e-mails and ADF text. It would be the same connector type with a variant, in a follow-up. |
-| Q-P6-PING-9 | A linked organization member without access: silent, but still a reach request to the owners? | **Recommended: yes.** Nothing on the platform, a `pending` reach grant and the owners told, as on Mattermost. Unlinked authors create nothing. |
-| Q-P6-PING-10 | Narration cards in these spaces? | **Recommended: no.** The answer only; the steps are on the dashboard. |
-| Q-P6-PING-11 | Jira: a tag in a comment visible only to a group or role. Is the answer restricted the same way? | **Recommended: yes**, the answer copies the tagging comment's visibility, so it never shows more people than the question did (`P6-PINGS-JIRA.md` §History). |
+| Q-P6-PING-8 | Jira Cloud too? | **Answered (D-495(b)): Jira Data Center first** (what CERN runs). Cloud has other auth, account ids instead of usernames, hidden e-mails and ADF text. It would be the same connector type with a variant, in a follow-up. |
+| Q-P6-PING-9 | A linked organization member without access: silent, but still a reach request to the owners? | **Answered (D-495(c)): yes.** Nothing on the platform, a `pending` reach grant and the owners told, as on Mattermost. Unlinked authors create nothing. |
+| Q-P6-PING-10 | Narration cards in these spaces? | **Answered (D-495(d)): no.** The answer only; the steps are on the dashboard. |
+| Q-P6-PING-11 | Jira: a tag in a comment visible only to a group or role. Is the answer restricted the same way? | **Answered (D-495(e)): yes**, the answer copies the tagging comment's visibility, so it never shows more people than the question did (`P6-PINGS-JIRA.md` §History). |

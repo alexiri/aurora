@@ -5,7 +5,7 @@
 > numbers are taken. This file is the Jira-specific part. It becomes `docs/27-jira-connector.md` and
 > brief P6-PING-3 at spec time.
 >
-> **Jira Data Center first** (Q-P6-PING-8, recommended). Jira Cloud differs in auth, user ids
+> **Jira Data Center first** (Q-P6-PING-8, D-495). Jira Cloud differs in auth, user ids
 > (`accountId`, no usernames), e-mail privacy and text format (ADF); it would be a variant later.
 > Jira API details below are as of Data Center 9/10. **The spec batch checks each one against the
 > version CERN runs.** Items marked *(verify)* are the ones least certain.
@@ -124,10 +124,9 @@ request budget and what happens when it is exceeded: back off the interval and t
 
 - The issue's description first, then its comments, oldest first. With `after`, only the comments after
   that one. At most 20.
-- Comments with restricted visibility (a group or role) are read only if the account may see them. The
-  agent's answer is posted **without** a restriction, so the spec batch must decide one case: when the
-  tagging comment was restricted, the answer copies the same visibility *(recommended, so an answer never
-  shows more people than the question did)*.
+- Comments with restricted visibility (a group or role) are read only if the account may see them. When
+  the tagging comment was restricted, **the answer copies the same visibility** (Q-P6-PING-11, D-495), so
+  an answer never shows more people than the question did. Otherwise the answer has no restriction.
 
 ## Posting
 
