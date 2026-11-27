@@ -915,6 +915,13 @@ async fn watch_fired(
     let Some(c) = convs::get(&mut *tx, cid).await? else {
         return Ok(res(r, ReportStatus::Invalid, Some("unknown_conversation")));
     };
+    // (FIX-253, D-490(b); security review, medium 2) The firing is a `waiting` task's wake —
+    // through the one wake helper, before any turn starts: it re-checks the requester's rights
+    // and the freeze, and a refused wake cancels the task with its close report (no turn).
+    let wake = crate::domains::peer_tasks::service::resume_on_wake(tx, cid).await?;
+    if wake.is_cancelled() {
+        return Ok(res(r, ReportStatus::Applied, None));
+    }
     let text = format!("A watch you set fired: {}", sanitize::block(detail, 4096));
     let created = conv::create_turn_tx(
         tx,
@@ -932,9 +939,6 @@ async fn watch_fired(
     )
     .await?;
     let (Created::Turn(t) | Created::Followup(t)) = created;
-    // (FIX-253, D-490(b)) The firing is a `waiting` task's wake: its task is back to `open`
-    // (same grants and policy it had — a wake never extends rights).
-    crate::domains::peer_tasks::service::resume_on_wake(tx, cid).await?;
     hosted::set_watch_turn(tx, wid, t.id).await?;
     Ok(res(r, ReportStatus::Applied, None))
 }

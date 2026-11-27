@@ -1334,23 +1334,117 @@ impl Duo {
     }
 
     /// A one-time schedule created from the task conversation: the receiving agent's own
-    /// wake-up. Returns the schedule id.
+    /// wake-up, recorded as lane 1 records it (the task's requester is the creator, the origin
+    /// is the task conversation). Returns the schedule id.
     async fn arm_schedule(&self, task: Uuid) -> Uuid {
         let pc = self.rig.peer_conversation(task).await;
         let id = Uuid::now_v7();
         sqlx::query(
             "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, enabled,
-                anchor, origin_conversation_id, next_fire_at, run_at, ends_at)
-             VALUES ($1,$2,'Check','look again',NULL,'UTC',true,'creator',$3,
+                anchor, creator_user_id, origin_conversation_id, next_fire_at, run_at, ends_at)
+             VALUES ($1,$2,'Check','look again',NULL,'UTC',true,'creator',$3,$4,
                 now() + interval '15 minutes', now() + interval '15 minutes', NULL)",
         )
         .bind(id)
         .bind(self.b)
+        .bind(self.rig.p.id)
         .bind(pc)
         .execute(self.rig.h.pool())
         .await
         .unwrap();
         id
+    }
+
+    /// The requester loses access to the sending agent's workspace: the fire-time authority
+    /// check (`requester_can_use`) fails at the next wake.
+    async fn remove_requester_access(&self) {
+        sqlx::query("DELETE FROM workspace_access WHERE workspace_id = $1 AND user_id = $2")
+            .bind(self.rig.ws1)
+            .bind(self.rig.p.id)
+            .execute(self.rig.h.pool())
+            .await
+            .unwrap();
+    }
+
+    /// (Un)freeze the receiving agent (an administrator's pause).
+    async fn set_receiver_frozen(&self, frozen: bool) {
+        sqlx::query(
+            "UPDATE agents SET frozen_at = CASE WHEN $2 THEN now() END,
+                frozen_reason = CASE WHEN $2 THEN 'drill' END,
+                frozen_authority = CASE WHEN $2 THEN 'workspace_owner' END
+             WHERE id = $1",
+        )
+        .bind(self.b)
+        .bind(frozen)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+    }
+
+    /// Fire every due schedule through the platform's own arm 9.
+    async fn fire_schedules(&self) {
+        use aurora_api::domains::schedules::fire;
+        sqlx::query("UPDATE schedules SET next_fire_at = now() - interval '1 minute'")
+            .execute(self.rig.h.pool())
+            .await
+            .unwrap();
+        let mut tx = self.rig.h.pool().begin().await.unwrap();
+        fire::arm9(&self.rig.h.state, &mut tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    /// Report the watch fired through the real report handler: `(result, task conversation)`.
+    async fn fire_watch(
+        &self,
+        task: Uuid,
+        w: &WatchReg,
+    ) -> (aurora_protocol::runner::ReportResult, Uuid) {
+        use aurora_api::domains::hosted::reports;
+        let pc = self.rig.peer_conversation(task).await;
+        let facts = aurora_db::repo::hosted::SandboxFacts {
+            sandbox_id: w.sandbox,
+            agent_id: self.b,
+            runner_id: None,
+            state: "running".into(),
+            boot_id: Some(w.boot),
+            channel_replica_id: Some(w.replica),
+            harness_steer: false,
+        };
+        let r = aurora_protocol::runner::Report {
+            report_id: Uuid::now_v7(),
+            sandbox_id: w.sandbox,
+            boot_id: w.boot,
+            body: aurora_protocol::runner::ReportBody::WatchFired(
+                aurora_protocol::runner::WatchFired {
+                    watch_id: w.watch.to_string(),
+                    detail: "the pipeline exited".into(),
+                },
+            ),
+        };
+        let mut tx = self.rig.h.pool().begin().await.unwrap();
+        let out = reports::apply(&self.rig.h.state, &mut tx, w.replica, &facts, &r)
+            .await
+            .unwrap()
+            .expect("the watch report is handled");
+        tx.commit().await.unwrap();
+        (out, pc)
+    }
+
+    /// The running turn of a woken task conversation: the receiving agent's, spoken by no
+    /// person, in a conversation that is nobody's direct chat.
+    async fn assert_wake_turn_is_the_tasks_own(&self, conversation: Uuid) {
+        let turn = self.rig.running_turn(conversation).await.unwrap();
+        let (agent, speaker, direct): (Uuid, Option<Uuid>, Option<Uuid>) = sqlx::query_as(
+            "SELECT t.agent_id, t.speaker_user_id, c.direct_user_id FROM turns t
+             JOIN conversations c ON c.id = t.conversation_id WHERE t.id = $1",
+        )
+        .bind(turn)
+        .fetch_one(self.rig.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(agent, self.b, "the wake turn runs as the task's own agent");
+        assert_eq!(speaker, None, "no person's identity is on the wake turn");
+        assert_eq!(direct, None);
     }
 
     /// The receiving agent's turn ends while the task is open.
@@ -1616,13 +1710,183 @@ async fn the_watch_firing_resumes_the_task_and_returns_it_to_open() {
     assert_eq!(agent_id, d.b);
 }
 
+/// (FIX-253 review, medium 2) The watch wake re-checks the fire-time authority and the freeze:
+/// a frozen receiving agent's watch is never fired (as today, the task stays waiting); a
+/// requester who lost access while the task waited gets the cancelled task with its close
+/// report, and no turn starts.
+#[tokio::test]
+async fn the_watch_wake_rechecks_the_requester_and_the_freeze() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+
+    // The receiving agent is frozen: the watch is kept, never fired, and the task waits.
+    d.set_receiver_frozen(true).await;
+    let (out, pc) = d.fire_watch(task, &w).await;
+    assert_eq!(out.status, aurora_protocol::runner::ReportStatus::Invalid);
+    assert_eq!(out.detail.as_deref(), Some("frozen"), "{out:?}");
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    assert!(d.rig.running_turn(pc).await.is_none());
+
+    // The requester lost access while the task waited: the wake cancels the task with the
+    // close report and no turn starts.
+    d.set_receiver_frozen(false).await;
+    d.remove_requester_access().await;
+    let (out, pc) = d.fire_watch(task, &w).await;
+    assert_eq!(out.status, aurora_protocol::runner::ReportStatus::Applied);
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
+    assert_eq!(closed.len(), 1);
+    assert!(
+        closed[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("could not continue"),
+        "{}",
+        closed[0]
+    );
+    assert!(
+        closed[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("can no longer use"),
+        "{}",
+        closed[0]
+    );
+    assert!(d.rig.running_turn(pc).await.is_none(), "no turn starts");
+}
+
+/// (FIX-253 review, medium 2) The schedule wake re-checks the same: a frozen receiving agent
+/// waits (the one-time fire waits for the paused agent, as today); a requester who lost access
+/// gets the cancelled task with the close report and no turn — and no run starts.
+#[tokio::test]
+async fn the_schedule_wake_rechecks_the_requester_and_the_freeze() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("check back").await["peer_task_id"]);
+    // A peer-created wake-up belongs to the requester, who must be able to use the receiving
+    // agent (lane 1). Here the receiving agent lives in another workspace the requester keeps,
+    // so the schedule's own authority still holds after the access to the *sending* workspace
+    // is gone, and only the wake's re-check can refuse it.
+    d.rig.h.bind_ws(d.rig.ws2, d.rig.p.id, "member").await;
+    sqlx::query("UPDATE agents SET workspace_id = $2 WHERE id = $1")
+        .bind(d.b)
+        .bind(d.rig.ws2)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    d.arm_schedule(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+
+    // The receiving agent is frozen: the one-time fire waits for the paused agent.
+    d.set_receiver_frozen(true).await;
+    d.fire_schedules().await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    let pc = d.rig.peer_conversation(task).await;
+    assert!(
+        d.rig.running_turn(pc).await.is_none(),
+        "no wake turn for a paused agent"
+    );
+
+    // The requester lost access while the task waited: cancelled with the report, no turn.
+    d.set_receiver_frozen(false).await;
+    d.remove_requester_access().await;
+    d.fire_schedules().await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
+    assert_eq!(closed.len(), 1);
+    assert!(
+        closed[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("could not continue"),
+        "{}",
+        closed[0]
+    );
+    assert!(d.rig.running_turn(pc).await.is_none(), "no turn starts");
+}
+
+/// (FIX-253 review, medium 2) The approval-decision wake re-checks the same: a frozen receiving
+/// agent's decision cancels the waiting task (the close line says the agent is paused, the
+/// normal task turn's own refusal); a requester who lost access gets the cancelled task.
+#[tokio::test]
+async fn the_approval_wake_rechecks_the_requester_and_the_freeze() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    d.report_approval(id).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+
+    // The receiving agent is frozen while it waits: the decision cancels the task.
+    d.set_receiver_frozen(true).await;
+    sqlx::query(
+        "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
+            decided_at=now() WHERE id=$1",
+    )
+    .bind(id)
+    .bind(d.rig.p.id)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    d.report_approval(id).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    let pc = d.rig.peer_conversation(task).await;
+    assert!(
+        d.rig.running_turn(pc).await.is_none(),
+        "no wake turn for a paused agent"
+    );
+    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
+    assert_eq!(closed.len(), 1);
+    assert!(
+        closed[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("paused by an administrator"),
+        "{}",
+        closed[0]
+    );
+
+    // The requester lost access while the task waited: the decision cancels the task.
+    d.set_receiver_frozen(false).await;
+    let task2 = Rig::id(&d.send("do it again").await["peer_task_id"]);
+    let id2 = d.approval(task2).await;
+    d.report_approval(id2).await;
+    d.finish_receiving_turn(task2).await;
+    assert_eq!(d.rig.task_status(task2).await, "waiting");
+    d.remove_requester_access().await;
+    sqlx::query(
+        "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
+            decided_at=now() WHERE id=$1",
+    )
+    .bind(id2)
+    .bind(d.rig.p.id)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    d.report_approval(id2).await;
+    assert_eq!(d.rig.task_status(task2).await, "cancelled");
+    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
+    assert_eq!(closed.len(), 2);
+    assert!(
+        closed[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("could not continue"),
+        "{}",
+        closed[1]
+    );
+    assert!(d.rig.running_turn(pc).await.is_none(), "no turn starts");
+}
+
 /// (FIX-253 review, high) A `waiting` task occupies the one-open slot of its ordered pair exactly
 /// like an `open` one: a second A→B task does not open while the first waits (it queues, and the
 /// queued notice says the first is waiting), the unique index itself refuses a second `waiting`
 /// row of the pair, and the first task's wake still succeeds — no zombie waiting task.
 #[tokio::test]
 async fn a_waiting_task_holds_the_pair_slot_and_the_wake_succeeds() {
-    use aurora_api::domains::hosted::reports;
     let d = duo().await;
     let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
     let w = d.arm_watch(task).await;
@@ -1636,10 +1900,7 @@ async fn a_waiting_task_holds_the_pair_slot_and_the_wake_succeeds() {
     let queued = d.rig.notices(pc2, "peer_task_queued").await;
     assert_eq!(queued.len(), 1);
     assert!(
-        queued[0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("waiting"),
+        queued[0]["text"].as_str().unwrap().contains("waiting"),
         "the notice says the first task is waiting: {}",
         queued[0]
     );
@@ -1683,34 +1944,8 @@ async fn a_waiting_task_holds_the_pair_slot_and_the_wake_succeeds() {
     drop(conn);
 
     // The wake of the waiting task still succeeds: no zombie.
-    let pc = d.rig.peer_conversation(task).await;
-    let mut conn = d.rig.h.pool().acquire().await.unwrap();
-    let facts = aurora_db::repo::hosted::SandboxFacts {
-        sandbox_id: w.sandbox,
-        agent_id: d.b,
-        runner_id: None,
-        state: "running".into(),
-        boot_id: Some(w.boot),
-        channel_replica_id: Some(w.replica),
-        harness_steer: false,
-    };
-    let r = aurora_protocol::runner::Report {
-        report_id: Uuid::now_v7(),
-        sandbox_id: w.sandbox,
-        boot_id: w.boot,
-        body: aurora_protocol::runner::ReportBody::WatchFired(
-            aurora_protocol::runner::WatchFired {
-                watch_id: w.watch.to_string(),
-                detail: "the pipeline exited".into(),
-            },
-        ),
-    };
-    let mut tx = d.rig.h.pool().begin().await.unwrap();
-    reports::apply(&d.rig.h.state, &mut tx, w.replica, &facts, &r)
-        .await
-        .unwrap()
-        .expect("the wake's report is handled");
-    tx.commit().await.unwrap();
+    let (out, pc) = d.fire_watch(task, &w).await;
+    assert_eq!(out.status, aurora_protocol::runner::ReportStatus::Applied);
     assert_eq!(d.rig.task_status(task).await, "open");
     assert!(
         d.rig.running_turn(pc).await.is_some(),
@@ -1755,35 +1990,64 @@ async fn the_approval_decision_resumes_the_task_to_open() {
     assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 0);
 }
 
-/// (FIX-253, D-490(b)) A wake never extends rights: the resumed task keeps its own agent and
-/// pair, and the resume of another conversation's task does nothing.
+/// (FIX-253 review, medium 2) A wake never widens rights: the resumed task's turn runs in the
+/// task conversation of the task's own receiving agent (its grants and policy, never the
+/// decider's), the pair is unchanged, and a wake of another conversation's task touches
+/// nothing.
 #[tokio::test]
 async fn the_wake_never_widens_rights() {
     let d = duo().await;
     let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
-    d.arm_watch(task).await;
+    let w = d.arm_watch(task).await;
     d.finish_receiving_turn(task).await;
     let mut conn = d.rig.h.pool().acquire().await.unwrap();
     // Resuming the requester's conversation (a wake of another conversation) touches nothing.
     peers::resume_on_wake(&mut conn, d.conv).await.unwrap();
     assert_eq!(d.rig.task_status(task).await, "waiting");
-    let (from, to, status): (Uuid, Uuid, String) =
-        sqlx::query_as("SELECT from_agent_id, to_agent_id, status FROM peer_tasks WHERE id = $1")
+    drop(conn);
+
+    // The wake: the task's own turn runs in the task conversation, as the receiving agent and
+    // with no person's identity — grants and policy resolve from the turn's agent and speaker,
+    // so it holds the task's own and nobody else's.
+    let (out, pc) = d.fire_watch(task, &w).await;
+    assert_eq!(out.status, aurora_protocol::runner::ReportStatus::Applied);
+    assert_eq!(d.rig.task_status(task).await, "open");
+    d.assert_wake_turn_is_the_tasks_own(pc).await;
+
+    // The approval wake: a person decides, and the decider's identity never reaches the turn.
+    d.finish_receiving_turn(task).await;
+    sqlx::query("UPDATE watches SET status = 'fired' WHERE id = $1")
+        .bind(w.watch)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    let task2 = Rig::id(&d.send("push it").await["peer_task_id"]);
+    assert_eq!(d.rig.task_status(task2).await, "open");
+    let approval = d.approval(task2).await;
+    d.report_approval(approval).await;
+    d.finish_receiving_turn(task2).await;
+    assert_eq!(d.rig.task_status(task2).await, "waiting");
+    sqlx::query(
+        "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
+            decided_at=now() WHERE id=$1",
+    )
+    .bind(approval)
+    .bind(d.rig.q.id)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    d.report_approval(approval).await;
+    assert_eq!(d.rig.task_status(task2).await, "open");
+    d.assert_wake_turn_is_the_tasks_own(d.rig.peer_conversation(task2).await)
+        .await;
+
+    let (from, to): (Uuid, Uuid) =
+        sqlx::query_as("SELECT from_agent_id, to_agent_id FROM peer_tasks WHERE id = $1")
             .bind(task)
-            .fetch_one(&mut *conn)
+            .fetch_one(d.rig.h.pool())
             .await
             .unwrap();
-    assert_eq!((from, to), (d.a, d.b));
-    assert_eq!(status, "waiting");
-    peers::resume_on_wake(&mut conn, d.rig.peer_conversation(task).await)
-        .await
-        .unwrap();
-    let status: String = sqlx::query_scalar("SELECT status FROM peer_tasks WHERE id = $1")
-        .bind(task)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap();
-    assert_eq!(status, "open");
+    assert_eq!((from, to), (d.a, d.b), "the pair is unchanged");
 }
 
 /// (FIX-253, D-490(b)) With no registration the task is cancelled as today, and the FIX-252

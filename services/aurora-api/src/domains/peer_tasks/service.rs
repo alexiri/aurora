@@ -958,13 +958,13 @@ pub async fn approval_notice(
         // The person is already in the thread or gets the card: no follow-up turn.
         post_notice(conn, &task, code, &line, Some(extra)).await
     } else {
-        // (FIX-253, D-490(b)) The decision (or the deadline) is a `waiting` task's wake: the
-        // task is back to `open` and its conversation gets its own turn, so the receiving agent
-        // can continue — same grants and policy it had: a wake never extends rights. A task that
-        // was not waiting (the decision landed mid-turn) gets no wake turn: the gateway unblocks
-        // the tool call the agent is already running.
-        let resumed = repo::resume(conn, task.task_conversation_id).await?;
-        if resumed.is_some()
+        // (FIX-253, D-490(b); security review, medium 2) The decision (or the deadline) is a
+        // `waiting` task's wake: through the one wake helper, which re-checks the requester's
+        // rights and the freeze — a refused wake cancels the task with its close report and no
+        // turn starts. A task that was not waiting (the decision landed mid-turn) gets no wake
+        // turn: the gateway unblocks the tool call the agent is already running.
+        let wake = resume_on_wake(conn, task.task_conversation_id).await?;
+        if wake == Wake::Resumed
             && let Some(pc) = convs::get(&mut *conn, task.task_conversation_id).await?
         {
             let outcome = match row.status.as_str() {
@@ -1123,12 +1123,89 @@ async fn next_wake(
         }))
 }
 
+/// (FIX-253, D-490(b); security review, medium 2) What a wake did to the `waiting` task behind
+/// `conversation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wake {
+    /// The task was `waiting` and is `open` again: the caller starts the wake turn.
+    Resumed,
+    /// No `waiting` task sits behind this conversation (no task at all, or it was not waiting):
+    /// the caller proceeds exactly as without a wake.
+    NotWaiting,
+    /// The task was cancelled at the wake (the rights or freeze re-check failed): no turn starts.
+    Cancelled,
+}
+
+impl Wake {
+    pub const fn is_cancelled(self) -> bool {
+        matches!(self, Self::Cancelled)
+    }
+}
+
 /// (FIX-253, D-490(b)) The wake of a `waiting` task of this conversation (the watch firing, the
-/// schedule firing, the approval decision): the task is back to `open` and the conversation gets
-/// its turn as the task's own. Same grants and policy it had: a wake never extends rights.
-pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Result<(), ApiError> {
+/// schedule firing, the approval decision) — the ONE helper all three wakes go through. The task
+/// is back to `open` and the conversation gets its turn as the task's own. Same grants and policy
+/// it had: a wake never extends rights, so the wake re-checks what the task's own turn checks at
+/// every start (`start_turn`): the requester still holds `can_use` on the *sending* agent's
+/// workspace (fire-time authority, 04), and neither the receiving agent nor its workspace/org is
+/// frozen. A failed check cancels the task with the platform's close report — which is its one
+/// report — and no turn starts.
+pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Result<Wake, ApiError> {
+    let Some(found) = repo::by_task_conversation(&mut *conn, conversation).await? else {
+        return Ok(Wake::NotWaiting);
+    };
+    if found.status != "waiting" {
+        return Ok(Wake::NotWaiting);
+    }
+    // Lock order link -> task, then re-read: a concurrent cancel or expiry must not be followed
+    // by a wake turn.
+    links::get_for_update(&mut *conn, found.link_id).await?;
+    let Some(task) = repo::get_for_update(&mut *conn, found.id).await? else {
+        return Ok(Wake::Cancelled);
+    };
+    if task.status != "waiting" {
+        return Ok(Wake::Cancelled);
+    }
+    let from = agent(conn, task.from_agent_id).await?;
+    if !requester_can_use(conn, task.requester_user_id, from.workspace_id).await? {
+        close_inner(
+            conn,
+            &task,
+            &Close::Cancelled(Some(&format!(
+                "could not continue: the person who asked can no longer use {}",
+                agent_label(&from)
+            ))),
+        )
+        .await?;
+        return Ok(Wake::Cancelled);
+    }
+    if aurora_db::repo::freeze::is_agent_frozen(&mut *conn, task.to_agent_id).await? {
+        close_inner(
+            conn,
+            &task,
+            &Close::Cancelled(Some(
+                "could not continue: the receiving agent is paused by an administrator",
+            )),
+        )
+        .await?;
+        return Ok(Wake::Cancelled);
+    }
+    if convs::get(&mut *conn, task.task_conversation_id)
+        .await?
+        .is_none()
+    {
+        close_inner(
+            conn,
+            &task,
+            &Close::Cancelled(Some(
+                "could not continue: its conversation no longer exists",
+            )),
+        )
+        .await?;
+        return Ok(Wake::Cancelled);
+    }
     repo::resume(conn, conversation).await?;
-    Ok(())
+    Ok(Wake::Resumed)
 }
 
 // ---------------------------------------------------------------- expiry
