@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,7 @@ function NeedsLibraries({ t }: { t: AdminTemplateView }) {
   return (
     <ul aria-label={`Skill libraries ${t.name} needs`} className="space-y-0.5 text-xs">
       {t.needs_libraries.map((l) => (
-        <li key={l.url} className="min-w-0 [overflow-wrap:anywhere]">
+        <li key={JSON.stringify([l.url, l.ref, l.path])} className="min-w-0 [overflow-wrap:anywhere]">
           <span className="font-mono text-xs">
             {`${l.url}${l.ref ? ` · ${l.ref}` : ""}${l.path ? ` · ${l.path}` : ""}${!l.added_here ? " · Not added here" : ""}`}
           </span>
@@ -48,20 +48,33 @@ function NeedsLibraries({ t }: { t: AdminTemplateView }) {
 
 /** What the stored versions say (C-1114): the review link with its count, waiting-for-package, removed upstream. */
 export function TemplateChips({ t }: { t: AdminTemplateView }) {
-  const waitingReview = t.versions.filter((v) => v.status === "pending_approval");
+  // Oldest first.
+  const waitingReview = t.versions.filter((v) => v.status === "pending_approval").sort((a, b) => a.created_at.localeCompare(b.created_at));
   const waitingPackage = t.versions.filter((v) => v.status === "awaiting_package");
   const since = waitingPackage.map((v) => v.created_at).sort()[0];
   return (
     <div className="space-y-1.5">
-      {waitingReview.length > 0 ? (
+      {waitingReview.length === 1 ? (
         <p>
           <Link
-            href={adminRoutes.templateReview(t.template_id, waitingReview[0].version)}
+            href={adminRoutes.templateReview(t.template_id, waitingReview[0]!.version)}
             className="text-link underline"
-            aria-label={`${waitingReview.length} ${waitingReview.length === 1 ? "version" : "versions"} of ${t.name} waiting for review, review ${waitingReview.length === 1 ? "it" : "them"}`}
+            aria-label={`1 version of ${t.name} waiting for review, review it`}
           >
-            Waiting for review ({waitingReview.length})
+            Waiting for review (1)
           </Link>
+        </p>
+      ) : waitingReview.length > 1 ? (
+        <p className="[overflow-wrap:anywhere]" data-testid="waiting-review">
+          {waitingReview.length} waiting:{" "}
+          {waitingReview.map((v, i) => (
+            <Fragment key={v.version}>
+              {i > 0 ? ", " : null}
+              <Link href={adminRoutes.templateReview(t.template_id, v.version)} className="text-link underline" aria-label={`Review version ${v.version} of ${t.name}`}>
+                {v.version}
+              </Link>
+            </Fragment>
+          ))}
         </p>
       ) : null}
       {waitingPackage.length > 0 ? (

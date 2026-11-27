@@ -5,7 +5,7 @@
 > numbers are taken. This file is the Jira-specific part. It becomes `docs/27-jira-connector.md` and
 > brief P6-PING-3 at spec time.
 >
-> **Jira Data Center first** (Q-P6-PING-8, recommended). Jira Cloud differs in auth, user ids
+> **Jira Data Center first** (Q-P6-PING-8, D-495). Jira Cloud differs in auth, user ids
 > (`accountId`, no usernames), e-mail privacy and text format (ADF); it would be a variant later.
 > Jira API details below are as of Data Center 9/10. **The spec batch checks each one against the
 > version CERN runs.** Items marked *(verify)* are the ones least certain.
@@ -49,9 +49,31 @@
   projects it works in.
 - `credentials.validate`: `GET /rest/api/2/myself` gives `name` (the handle and `platform_user_ref`),
   `key` and `displayName`.
+- **Stored once** (D-494). The token is the credential of the Jira Data Center app connection the
+  presence points at: the atlassian package's Jira DC personal-token connect, on the same instance.
 - **Expiry.** A token may have an expiry, set when it is created or required by the admin. Its expiry
   can be read with `GET /rest/pat/latest/tokens` *(verify)*. When none can be read, the presence has no
   expiry warning and relies on `credential_dead`.
+
+## Rotation (D-494)
+
+Jira Data Center manages personal access tokens through `/rest/pat/latest/tokens`: create, list and
+delete. **Whether a token may create its own successor is the open point** *(verify: some versions
+accept only a password or session for these calls)*. When it may, rotation has no lost-token window,
+because the old token stays valid until the new one is stored:
+
+1. **Create.** When the expiry is fewer than `rotate_days_before` days away, the connector calls
+   `POST /rest/pat/latest/tokens { "name": "aurora-<presence id>-<date>", "expirationDuration":
+   <token_lifetime_days> }` with the current token. The answer carries the new token and its id.
+2. **Write back.** `POST /v1/connector/credentials`, target `{ connection_id }`, compare-and-set on
+   `credentials_version`.
+3. **Delete the old token**, only after the write-back was stored: `DELETE /rest/pat/latest/tokens/<old
+   id>`, called with the new token. On a compare-and-set conflict, the connector deletes the **new**
+   token instead.
+
+A token that never expires (allowed when the Jira admin sets no maximum) is not rotated. When the server
+refuses token-authenticated creation, nothing is rotated. The expiry warning (`P6-PINGS.md`) is the
+fallback, and the presence's row says that a person renews the token.
 
 ## Receiving
 
@@ -102,10 +124,9 @@ request budget and what happens when it is exceeded: back off the interval and t
 
 - The issue's description first, then its comments, oldest first. With `after`, only the comments after
   that one. At most 20.
-- Comments with restricted visibility (a group or role) are read only if the account may see them. The
-  agent's answer is posted **without** a restriction, so the spec batch must decide one case: when the
-  tagging comment was restricted, the answer copies the same visibility *(recommended, so an answer never
-  shows more people than the question did)*.
+- Comments with restricted visibility (a group or role) are read only if the account may see them. When
+  the tagging comment was restricted, **the answer copies the same visibility** (Q-P6-PING-11, D-495), so
+  an answer never shows more people than the question did. Otherwise the answer has no restriction.
 
 ## Posting
 

@@ -49,10 +49,37 @@
   - `GET /personal_access_tokens/self` gives `scopes` and `expires_at`.
 
   A token without `api` is refused with a message that names the scope.
-- **Expiry.** Recent GitLab versions require an expiry, at most a year by default. The expiry is stored on
-  the presence, for the warning (`P6-PINGS.md` Q-P6-PING-7).
-- **No self-rotation in the first version.** `POST /personal_access_tokens/self/rotate` exists in recent
-  versions, but the app connection's copy would then break. It is a later step.
+- **Stored once** (D-494). The token is the credential of the GitLab app connection the presence points
+  at: the app's `token` connect method on the same `{instance}`. The token also needs the `self_rotate`
+  scope where the server has it *(verify: the scope's name, and whether `api` already allows
+  self-rotation)*. The connect form's scope hint for agent accounts says so.
+- **Expiry.** Recent GitLab versions require an expiry, at most a year by default (an admin can change
+  that).
+
+## Rotation (D-494)
+
+- Once a day per presence, the connector reads `GET /personal_access_tokens/self`. When `expires_at` is
+  fewer than `rotate_days_before` days away (default 30), it calls:
+
+  ```
+  POST /api/v4/personal_access_tokens/self/rotate   { "expires_at": "<today + token_lifetime_days>" }
+  ```
+
+  The answer carries the new token. GitLab **revokes the old token at once** *(verify the version that
+  added it and the `expires_at` parameter; without the parameter the new token's expiry is GitLab's
+  default, possibly a week, and the connector must then rotate on every cycle)*.
+- The connector **keeps the new token in memory** and writes it back
+  (`POST /v1/connector/credentials`, target `{ connection_id }`, compare-and-set on
+  `credentials_version`). It retries with backoff until the write-back is stored. Meanwhile it
+  uses the new token itself.
+- **A compare-and-set conflict** (a person pasted a token meanwhile): the connector revokes the token it
+  made (`DELETE /api/v4/personal_access_tokens/self`, authenticated with that token) and uses the stored
+  one from its next assignment.
+- **A server too old for self-rotation, or a refusal** (`403`, a missing scope): no rotation. The expiry
+  warning stays, and the presence's row says why the token isn't renewed automatically.
+- **A lost token.** If the host dies between the rotate and the stored write-back, the new token is lost
+  and the old one is already revoked. The next poll answers `401`: the presence and the connection go
+  `credential_dead`, and the owners are told to paste a new token (`P6-PINGS.md`).
 
 ## Receiving: the agent account's to-do list
 

@@ -248,10 +248,13 @@ pub async fn update<'e, E: PgExecutor<'e>>(
     Ok(())
 }
 
-/// Remove the membership and the user's bindings in the org's workspaces.
+/// Remove the membership and the user's bindings in the org's workspaces. Group memberships go
+/// with the membership (foreign key). A **suspended** binding stays (FIX-261, D-501): it grants
+/// nothing without a membership, and deleting it would lift the suspension, so that group or
+/// claim access came back by itself after a re-join. Only a person lifts it, through the API.
 pub async fn remove(conn: &mut PgConnection, org: Uuid, user: Uuid) -> Result<(), DbError> {
     sqlx::query(
-        "DELETE FROM workspace_access WHERE user_id = $2
+        "DELETE FROM workspace_access WHERE user_id = $2 AND status <> 'suspended'
          AND workspace_id IN (SELECT id FROM workspaces WHERE org_id = $1)",
     )
     .bind(org)

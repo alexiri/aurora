@@ -407,6 +407,37 @@ describe("Agent templates: templates list", () => {
     expect(within(r).getByText("1.0.0")).toBeTruthy();
   });
 
+  it("several waiting versions are each linked, oldest first", async () => {
+    renderTemplates([
+      adminTemplate({
+        versions: [
+          { ...pending, version: "1.2.0", created_at: "2026-02-01T00:00:00Z" },
+          pending,
+        ],
+      }),
+    ]);
+    const table = await screen.findByRole("table", { name: "Agent templates of this instance" });
+    const r = row(table, "Schedule manager");
+    const links = within(r).getAllByRole("link");
+    expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
+      ["1.1.0", "/admin/internet-access/templates/schedule-manager/1.1.0"],
+      ["1.2.0", "/admin/internet-access/templates/schedule-manager/1.2.0"],
+    ]);
+    expect(links[0]!.getAttribute("aria-label")).toBe("Review version 1.1.0 of Schedule manager");
+    expect(within(r).getByTestId("waiting-review").textContent).toBe("2 waiting: 1.1.0, 1.2.0");
+  });
+
+  it("two needed libraries with one URL are both listed, without a key collision", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const url = "https://git.example.org/acme/skills.git";
+    renderTemplates([adminTemplate({ needs_libraries: [{ url, ref: "v1", path: "skills", added_here: true }, { url, ref: "v2", path: "skills", added_here: true }] })]);
+    const table = await screen.findByRole("table", { name: "Agent templates of this instance" });
+    const libs = within(row(table, "Schedule manager")).getByRole("list", { name: "Skill libraries Schedule manager needs" });
+    expect(within(libs).getAllByRole("listitem")).toHaveLength(2);
+    expect(errors.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
+    errors.mockRestore();
+  });
+
   it("shows the apps and libraries it needs, with what this instance lacks in words", async () => {
     renderTemplates([
       adminTemplate({

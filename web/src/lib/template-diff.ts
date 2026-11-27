@@ -33,6 +33,8 @@ export interface TemplateChange {
   new?: string;
   /** For parts that are not (only) text: the change in words. */
   detail?: string;
+  /** For a whole skill added or removed (`old`/`new` are its body): its **Use it when** text. */
+  useItWhen?: string;
 }
 
 export interface TemplateDiff {
@@ -62,6 +64,24 @@ function textChange(part: string, group: string, label: string, oldText: string 
   if (oldText === newText) return null;
   const kind: ChangeKind = oldText == null ? "added" : newText == null ? "removed" : "changed";
   return { part, group, label, kind, attention, old: oldText ?? undefined, new: newText ?? undefined };
+}
+
+type DiffFile = { text?: string | null; sha256: string };
+
+/**
+ * One file's change, by presence: a file that is not text is still added, removed or changed (compared by its hash),
+ * and one that stops or starts being text is changed, not removed or added. With a side that is not text there is no
+ * line comparison, so the change carries words and neither text.
+ */
+function fileChange(part: string, group: string, label: string, b: DiffFile | undefined, n: DiffFile | undefined, attention = false): TemplateChange | null {
+  const oldText = b?.text ?? null;
+  const newText = n?.text ?? null;
+  if ((!b || oldText != null) && (!n || newText != null)) return textChange(part, group, label, b ? oldText : null, n ? newText : null, attention);
+  if (b && n && oldText === newText && b.sha256 === n.sha256) return null;
+  const kind: ChangeKind = !b ? "added" : !n ? "removed" : "changed";
+  const what = kind === "added" ? "New in this version." : kind === "removed" ? "Not in this version any more." : "It changed.";
+  const why = b && n && newText != null ? "It was not text before" : "It is not text";
+  return { part, group, label, kind, attention, detail: `${what} ${why}, so there is no line comparison.` };
 }
 
 /** The access one app entry asks for, in words (the review page's wording). */
@@ -227,6 +247,15 @@ function semver(v: string | null | undefined): number[] | null {
   return parts.length > 0 && parts.every((p) => Number.isFinite(p)) ? parts : null;
 }
 
+/** Whether `next` is a later version than `base`: the first component that differs decides (a missing one is 0). */
+function isLater(next: number[], base: number[]): boolean {
+  for (let i = 0; i < Math.max(next.length, base.length); i++) {
+    const d = (next[i] ?? 0) - (base[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return false;
+}
+
 function diffMemories(base: TemplateContentView, next: TemplateContentView, out: TemplateChange[]) {
   const keys = new Map<string, { b?: (typeof base.memories)[number]; n?: (typeof next.memories)[number] }>();
   for (const m of base.memories) keys.set(m.key, { b: m });
@@ -253,7 +282,8 @@ function diffMemories(base: TemplateContentView, next: TemplateContentView, out:
         group: "memories",
         label,
         kind: "changed",
-        attention: false,
+        // Unlocking widens what the agent may change.
+        attention: b.locked && !n.locked,
         ...(b.content !== n.content ? { old: b.content, new: n.content } : {}),
         detail: b.locked !== n.locked ? (n.locked ? "Now locked: the agent can read it but not change it." : "No longer locked.") : undefined,
       };
@@ -295,9 +325,9 @@ export function diffTemplateContent(base: TemplateContentView, next: TemplateCon
     }
     for (const [name, e] of names) {
       if (!e.b) {
-        changes.push({ part: `skill:${name}`, group: "skills", label: `Skill ${name}`, kind: "added", attention: false, new: e.n!.body, detail: "New in this version." });
+        changes.push({ part: `skill:${name}`, group: "skills", label: `Skill ${name}`, kind: "added", attention: false, new: e.n!.body, useItWhen: e.n!.use_it_when, detail: "New in this version." });
       } else if (!e.n) {
-        changes.push({ part: `skill:${name}`, group: "skills", label: `Skill ${name}`, kind: "removed", attention: false, old: e.b.body, detail: "Not in this version any more." });
+        changes.push({ part: `skill:${name}`, group: "skills", label: `Skill ${name}`, kind: "removed", attention: false, old: e.b.body, useItWhen: e.b.use_it_when, detail: "Not in this version any more." });
       } else {
         const body = textChange(`skill:${name}:body`, "skills", `Skill ${name}`, e.b.body, e.n.body);
         if (body) changes.push(body);
@@ -312,7 +342,7 @@ export function diffTemplateContent(base: TemplateContentView, next: TemplateCon
         files.set(f.path, fe);
       }
       for (const [path, fe] of files) {
-        const c = textChange(`skill:${name}:file:${path}`, "skills", `Skill ${name} · ${path}`, fe.b?.text ?? null, fe.n?.text ?? null);
+        const c = fileChange(`skill:${name}:file:${path}`, "skills", `Skill ${name} · ${path}`, fe.b, fe.n);
         if (c) changes.push(c);
       }
     }
@@ -329,7 +359,7 @@ export function diffTemplateContent(base: TemplateContentView, next: TemplateCon
       paths.set(f.path, e);
     }
     for (const [path, e] of paths) {
-      const c = textChange(`helper:${path}`, "helpers", `Helper file ${path}`, e.b?.text ?? null, e.n?.text ?? null, !e.b);
+      const c = fileChange(`helper:${path}`, "helpers", `Helper file ${path}`, e.b, e.n, !e.b);
       if (c) changes.push(c);
     }
   }
@@ -342,7 +372,7 @@ export function diffTemplateContent(base: TemplateContentView, next: TemplateCon
   if (base.min_core !== next.min_core) {
     const b = semver(base.min_core);
     const n = semver(next.min_core);
-    const raised = b == null || n == null ? true : n.some((p, i) => p > (b[i] ?? 0));
+    const raised = b == null || n == null ? true : isLater(n, b);
     changes.push({ part: "min_core", group: "min_core", label: "Minimum Aurora version", kind: "changed", attention: raised, detail: `The oldest Aurora this version works with changes from ${base.min_core ?? "none"} to ${next.min_core ?? "none"}.` });
   }
   if (base.has_avatar !== next.has_avatar) {

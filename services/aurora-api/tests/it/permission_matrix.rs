@@ -982,6 +982,8 @@ const ROWS: &[Row] = &[
         false,
     ),
     // (P5-APIGAP-4, C-1051) suspend/restore; the body restores (a no-op on the active victim).
+    // (FIX-261, D-501) Restoring someone else in a shared workspace stays an administer act; the
+    // narrower self and personal-workspace restores are it/org_role_admin.rs.
     r(
         "PATCH",
         "/v1/workspaces/{ws}/access/{user}",
