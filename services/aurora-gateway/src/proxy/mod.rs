@@ -688,7 +688,9 @@ impl Proxy {
                 // The projection exists because the tool's answer must reach no caller
                 // whole; its error answers carry the same kind of content and never pass
                 // the projection, so the body is withheld and replaced with a short fixed
-                // note that carries the upstream status.
+                // note that carries the upstream status. Only the body: the hook sees the
+                // upstream's answer as for any tool (account health, the request log's
+                // upstream status), and its own guidance, when it has one, is the note.
                 let status = resp.status();
                 let e = ApiError::new(
                     status,
@@ -699,10 +701,13 @@ impl Proxy {
                         status.canonical_reason().unwrap_or("unknown")
                     ),
                 );
-                wire.replaced("tool_error_withheld");
-                if let Some(h) = hook {
-                    h.on_error(&e);
+                if let Some(h) = hook
+                    && let Some(replacement) = h.on_response(status, resp.headers())
+                {
+                    wire.replaced("guidance");
+                    return replacement;
                 }
+                wire.replaced("tool_error_withheld");
                 return guidance::response(&e);
             }
             resp = match project_response(paths, resp).await {

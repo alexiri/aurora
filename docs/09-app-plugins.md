@@ -296,13 +296,12 @@ too). A `kinds` rule checks a top-level key's JSON type when the body carries it
 a key the body does not carry is allowed, and a value of another kind, such as an object where
 a duration belongs, is refused. Fail
 closed: an absent, truncated, non-JSON or non-object body is refused too. Receivers match object
-key names without regard to case and keep the last match, so a key the case-folded form of which
+key names without regard to case, so a key the case-folded form of which
 (the Kelvin sign U+212A and the long s U+017F fold to `k` and `s`) equals a checked or allowed key
 but is not spelled exactly that way is refused wherever the check reads — at the top level,
 inside `only_keys` objects, inside `entry_keys` arrays and inside the objects the member rules
-read — and a duplicated exact key is checked
-as the receiver reads it, by
-its last occurrence. Every part is a refusal, never an allowance; key names are identifiers of at
+read — and a body that repeats a key anywhere is refused (receivers do not agree on what a repeat
+means). Every part is a refusal, never an allowance; key names are identifiers of at
 most 64 characters, the lists are small (`refuse_keys` at most 8, `allow_keys` at most 16,
 `only_keys` and `entry_keys` at most 8 keys of at most 16 allowed, `entry_member` at most 8
 members of at most 16 keys, `entry_at` at most 16 pins, `value` at most 8 keys, member paths at
@@ -329,7 +328,8 @@ response path, for every caller: the body is buffered whole (at most 1 MiB), par
 rewritten, and an answer that is truncated, not JSON or not in the projected shape is withheld
 with `502 tool_response_unprojectable` instead of forwarded. An upstream error on a projected
 tool is withheld the same way — its body never passed the projection — and is replaced with a
-short fixed note carrying the upstream status (`tool_error_withheld`). The agent CLI reduces what it saves
+short fixed note carrying the upstream status (`tool_error_withheld`). Only the body is replaced: the
+account's health and the request log take the upstream status as for any tool. The agent CLI reduces what it saves
 and prints the same way. Absent = the answer is forwarded as it arrived (and no change to the
 package's snapshot hash). Built-in user: `grafana` (1.8.0: `list_contact_points`, whose answer
 keeps only each contact point's name and type, so the endpoint's settings and secrets reach no
