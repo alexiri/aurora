@@ -1402,8 +1402,20 @@ impl Duo {
         task: Uuid,
         w: &WatchReg,
     ) -> (aurora_protocol::runner::ReportResult, Uuid) {
-        use aurora_api::domains::hosted::reports;
         let pc = self.rig.peer_conversation(task).await;
+        let mut tx = self.rig.h.pool().begin().await.unwrap();
+        let out = self.report_watch_fired(&mut tx, w).await;
+        tx.commit().await.unwrap();
+        (out, pc)
+    }
+
+    /// The "watch fired" report, applied in the caller's transaction.
+    async fn report_watch_fired(
+        &self,
+        tx: &mut sqlx::PgConnection,
+        w: &WatchReg,
+    ) -> aurora_protocol::runner::ReportResult {
+        use aurora_api::domains::hosted::reports;
         let facts = aurora_db::repo::hosted::SandboxFacts {
             sandbox_id: w.sandbox,
             agent_id: self.b,
@@ -1424,13 +1436,10 @@ impl Duo {
                 },
             ),
         };
-        let mut tx = self.rig.h.pool().begin().await.unwrap();
-        let out = reports::apply(&self.rig.h.state, &mut tx, w.replica, &facts, &r)
+        reports::apply(&self.rig.h.state, tx, w.replica, &facts, &r)
             .await
             .unwrap()
-            .expect("the watch report is handled");
-        tx.commit().await.unwrap();
-        (out, pc)
+            .expect("the watch report is handled")
     }
 
     /// The running turn of a woken task conversation: the receiving agent's, spoken by no
@@ -2445,6 +2454,110 @@ async fn a_schedule_that_fires_during_the_receiving_turn_keeps_the_task_open() {
     assert_ne!(wake, first);
 
     d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+}
+
+/// The backend id of a transaction's connection.
+async fn backend_pid(conn: &mut sqlx::PgConnection) -> i32 {
+    sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
+/// Returns once backend `pid` is waiting for a lock somebody else holds (asks the server until
+/// it says so; the timeout only keeps a broken test from hanging).
+async fn until_blocked(pool: &sqlx::PgPool, pid: i32) {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let blockers: i32 = sqlx::query_scalar("SELECT cardinality(pg_blocking_pids($1))")
+                .bind(pid)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            if blockers > 0 {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the other side never waited for a lock");
+}
+
+/// What a turn end does after locking its conversation: it takes the task's link, then the task.
+/// `NOWAIT`: a waiter that holds either one already would deadlock with it.
+async fn lock_link_then_task(conn: &mut sqlx::PgConnection, task: Uuid) {
+    sqlx::query(
+        "SELECT 1 FROM agent_links
+          WHERE id = (SELECT link_id FROM peer_tasks WHERE id = $1) FOR UPDATE NOWAIT",
+    )
+    .bind(task)
+    .execute(&mut *conn)
+    .await
+    .expect("the waiter holds no link lock");
+    sqlx::query("SELECT 1 FROM peer_tasks WHERE id = $1 FOR UPDATE NOWAIT")
+        .bind(task)
+        .execute(&mut *conn)
+        .await
+        .expect("the waiter holds no task lock");
+}
+
+/// (FIX-253 review 2, item 1) A turn end holds the task conversation and then takes the link and
+/// the task. A wake, and the re-check of a waiting task, take the conversation first too: while a
+/// turn end holds it they wait without holding the link or the task, and finish after it.
+#[tokio::test]
+async fn a_wake_and_a_recheck_wait_for_the_task_conversation_before_the_link_and_task() {
+    use aurora_db::repo::conversations as convs;
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    let pc = d.rig.peer_conversation(task).await;
+
+    // The watch wake.
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, pc).await.unwrap());
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let wake = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        d.report_watch_fired(&mut tx, &w).await;
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        lock_link_then_task(&mut turn_end, task).await;
+        turn_end.commit().await.unwrap();
+    };
+    tokio::join!(wake, other);
+    assert_eq!(d.rig.task_status(task).await, "open");
+    assert!(d.rig.running_turn(pc).await.is_some(), "the wake turn runs");
+
+    // The re-check of a waiting task whose watch was lost.
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    sqlx::query("UPDATE watches SET status = 'lost' WHERE id = $1")
+        .bind(w.watch)
+        .execute(pool)
+        .await
+        .unwrap();
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, pc).await.unwrap());
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let recheck = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        assert!(peers::recheck_waiting(&mut tx, pc).await.unwrap());
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        lock_link_then_task(&mut turn_end, task).await;
+        turn_end.commit().await.unwrap();
+    };
+    tokio::join!(recheck, other);
     assert_eq!(d.rig.task_status(task).await, "cancelled");
 }
 

@@ -1,6 +1,8 @@
 //! Peer-task lifecycle: send (policy gate), open/queue, mid-task messages, close with exactly
 //! one report, queue promotion and the 60 s expiry sweep. Everything runs in the caller's
-//! transaction; lock order is link -> task -> conversations.
+//! transaction. Lock order: the task conversation (where the caller works in it: a turn end, a
+//! wake, a re-check), then link, then task, then the other conversations (the origin's notice, a
+//! promoted task's new one).
 
 use crate::domains::action_approvals::service as approvals;
 use crate::domains::conversations::service::{self as conv, NewMessage};
@@ -1222,10 +1224,8 @@ pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Resu
     if !matches!(found.status.as_str(), "open" | "waiting") {
         return Ok(Wake::NoLiveTask);
     }
-    // Lock order link -> task, then re-read: a concurrent cancel or expiry must not be followed
-    // by a wake turn.
-    links::get_for_update(&mut *conn, found.link_id).await?;
-    let Some(task) = repo::get_for_update(&mut *conn, found.id).await? else {
+    // Locked, then re-read: a concurrent cancel or expiry must not be followed by a wake turn.
+    let Some(task) = lock_for_task_conversation(conn, &found).await? else {
         return Ok(Wake::Cancelled);
     };
     if !matches!(task.status.as_str(), "open" | "waiting") {
@@ -1268,6 +1268,18 @@ pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Resu
     Ok(Wake::Resumed)
 }
 
+/// The locks of work inside a task conversation, in the order a turn end takes them (it holds the
+/// conversation before its peer-task hook runs): the task conversation, the link, the task. The
+/// other order deadlocks with a turn end. Returns the task as read under its lock.
+async fn lock_for_task_conversation(
+    conn: &mut PgConnection,
+    found: &PeerTaskRow,
+) -> Result<Option<PeerTaskRow>, ApiError> {
+    convs::lock(&mut *conn, found.task_conversation_id).await?;
+    links::get_for_update(&mut *conn, found.link_id).await?;
+    Ok(repo::get_for_update(&mut *conn, found.id).await?)
+}
+
 // ---------------------------------------------------------------- nothing left to wait for
 
 /// (FIX-253 review, low 6) Whether a wake is still to come for the task: a registration, a
@@ -1297,8 +1309,7 @@ pub async fn recheck_waiting(
     if found.status != "waiting" {
         return Ok(false);
     }
-    links::get_for_update(&mut *conn, found.link_id).await?;
-    let Some(task) = repo::get_for_update(&mut *conn, found.id).await? else {
+    let Some(task) = lock_for_task_conversation(conn, &found).await? else {
         return Ok(false);
     };
     if task.status != "waiting" || expects_wake(conn, &task).await? {
