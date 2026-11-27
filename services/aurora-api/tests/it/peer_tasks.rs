@@ -1882,7 +1882,8 @@ async fn the_approval_wake_rechecks_the_requester_and_the_freeze() {
     d.finish_receiving_turn(task).await;
     assert_eq!(d.rig.task_status(task).await, "waiting");
 
-    // The receiving agent is frozen while it waits: the decision cancels the task.
+    // The receiving agent is frozen while it waits: like the other wakes, the decision's wake
+    // is held — the task keeps waiting, through the sweep too.
     d.set_receiver_frozen(true).await;
     sqlx::query(
         "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
@@ -1894,30 +1895,37 @@ async fn the_approval_wake_rechecks_the_requester_and_the_freeze() {
     .await
     .unwrap();
     d.report_approval(id).await;
-    assert_eq!(d.rig.task_status(task).await, "cancelled");
     let pc = d.rig.peer_conversation(task).await;
-    assert!(
-        d.rig.running_turn(pc).await.is_none(),
-        "no wake turn for a paused agent"
-    );
-    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
-    assert_eq!(closed.len(), 1);
-    assert!(
-        closed[0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("paused by an administrator"),
-        "{}",
-        closed[0]
-    );
+    for _ in 0..2 {
+        assert_eq!(d.rig.task_status(task).await, "waiting");
+        assert!(
+            d.rig.running_turn(pc).await.is_none(),
+            "no wake turn for a paused agent"
+        );
+        assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
+        assert_eq!(peers::sweep(d.rig.h.pool()).await.unwrap(), 0);
+    }
 
-    // The requester lost access while the task waited: the decision cancels the task.
+    // Unfrozen: the next sweep delivers the decision and wakes the task, once.
     d.set_receiver_frozen(false).await;
+    for _ in 0..2 {
+        assert_eq!(peers::sweep(d.rig.h.pool()).await.unwrap(), 0);
+    }
+    assert_eq!(d.rig.task_status(task).await, "open");
+    d.assert_wake_turn_is_the_tasks_own(pc).await;
+    let decided = d.rig.notices(d.conv, "peer_approval_decided").await;
+    assert_eq!(decided.len(), 1, "{decided:?}");
+    d.complete(task, "done").await;
+    d.finish_receiving_turn(task).await;
+
+    // The requester lost access while the task waited: the decision cancels the task, also
+    // while the receiver is frozen.
     let task2 = Rig::id(&d.send("do it again").await["peer_task_id"]);
     let id2 = d.approval(task2).await;
     d.report_approval(id2).await;
     d.finish_receiving_turn(task2).await;
     assert_eq!(d.rig.task_status(task2).await, "waiting");
+    d.set_receiver_frozen(true).await;
     d.remove_requester_access().await;
     sqlx::query(
         "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
@@ -1931,14 +1939,14 @@ async fn the_approval_wake_rechecks_the_requester_and_the_freeze() {
     d.report_approval(id2).await;
     assert_eq!(d.rig.task_status(task2).await, "cancelled");
     let closed = d.rig.notices(d.conv, "peer_task_closed").await;
-    assert_eq!(closed.len(), 2);
+    assert_eq!(closed.len(), 1);
     assert!(
-        closed[1]["text"]
+        closed[0]["text"]
             .as_str()
             .unwrap()
             .contains("could not continue"),
         "{}",
-        closed[1]
+        closed[0]
     );
     assert!(d.rig.running_turn(pc).await.is_none(), "no turn starts");
 }

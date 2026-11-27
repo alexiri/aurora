@@ -338,6 +338,27 @@ pub async fn has_undelivered_decision<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-253) Answered (or expired) approvals of `waiting` tasks whose requester has not been
+/// told: their delivery was held (a frozen receiver).
+pub async fn held_decision_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT a.id FROM peer_tasks t
+           JOIN approvals a ON a.conversation_id = t.task_conversation_id
+          WHERE t.status = 'waiting' AND a.status IN ('approved', 'denied', 'expired')
+            AND NOT EXISTS (SELECT 1 FROM transcript_events e
+                 WHERE e.conversation_id = t.origin_conversation_id AND e.type = 'notice'
+                   AND e.payload->>'code' = 'peer_approval_decided'
+                   AND e.payload->>'approval_id' = a.id::text)
+          ORDER BY t.updated_at, a.id LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// (FIX-253, D-490(b)) Move an `open` task to `waiting` (the end of the receiving turn while one
 /// of the wake registrations stands). Fenced: `None` when the task is not `open` any more, so
 /// the caller posts the waiting notice only when this returns `Some`.

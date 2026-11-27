@@ -20,6 +20,8 @@ use uuid::Uuid;
 pub const MESSAGE_MAX_CHARS: usize = 12_000;
 /// Tasks closed per sweep run.
 const SWEEP_BATCH: i64 = 100;
+/// Held decisions looked at per sweep: wide, so those of one long freeze starve no others.
+const HELD_BATCH: i64 = 1_000;
 
 /// Result of a `message_agent` attempt. Refusals are values (not errors) so the caller still
 /// commits whatever the attempt wrote (e.g. a budget-exhaustion close and its report).
@@ -964,8 +966,17 @@ pub async fn approval_notice(
         // rights and the freeze — a refused wake cancels the task with its close report and no
         // turn starts. A task that was not waiting (the decision landed mid-turn) gets no wake
         // turn: the gateway unblocks the tool call the agent is already running.
-        if task.status == "waiting"
-            && resume_on_wake(conn, task.task_conversation_id).await? == Wake::Resumed
+        let wake = if task.status == "waiting" {
+            resume_on_wake(conn, task.task_conversation_id).await?
+        } else {
+            Wake::NoLiveTask
+        };
+        // (FIX-253 audit 2) A frozen receiver holds the whole delivery: no notice is written,
+        // so the decision still counts as a wake to come and the sweep delivers it later.
+        if wake == Wake::Held {
+            return Ok(());
+        }
+        if wake == Wake::Resumed
             && let Some(pc) = convs::get(&mut *conn, task.task_conversation_id).await?
         {
             let outcome = match row.status.as_str() {
@@ -1182,6 +1193,8 @@ pub enum Wake {
     NoLiveTask,
     /// The task was closed at the wake (a re-check or a limit refused it): no turn starts.
     Cancelled,
+    /// The receiver is frozen: the task is left as it is and no turn starts.
+    Held,
 }
 
 impl Wake {
@@ -1196,10 +1209,12 @@ impl Wake {
 /// task's own. Same grants and policy it had: a wake never extends rights, so it re-checks what
 /// the task's own turn checks at every start (`start_turn`): the requester still holds `can_use`
 /// on the *sending* agent's workspace (fire-time authority, 04), and neither the receiving agent
-/// nor its workspace/org is frozen. The wake turn is charged to the message budget like a task
-/// turn, and a task is woken at most `PEER_TASK_WAKES_MAX` times without a report. A failed
-/// check or a reached limit closes the task with the platform's close report — which is its one
-/// report — and no turn starts.
+/// nor its workspace/org is frozen. A frozen receiver holds the wake: the task is left as it is
+/// (the watch and schedule paths already stop there before calling; the approval decision is
+/// delivered by the sweep after the unfreeze). The wake turn is charged to the message budget
+/// like a task turn, and a task is woken at most `PEER_TASK_WAKES_MAX` times without a report.
+/// A failed rights check or a reached limit closes the task with the platform's close report —
+/// which is its one report — and no turn starts.
 pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Result<Wake, ApiError> {
     let Some(found) = repo::by_task_conversation(&mut *conn, conversation).await? else {
         return Ok(Wake::NoLiveTask);
@@ -1223,7 +1238,7 @@ pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Resu
             agent_label(&from)
         ))
     } else if aurora_db::repo::freeze::is_agent_frozen(&mut *conn, task.to_agent_id).await? {
-        Some("could not continue: the receiving agent is paused by an administrator".to_owned())
+        return Ok(Wake::Held);
     } else if convs::get(&mut *conn, task.task_conversation_id)
         .await?
         .is_none()
@@ -1313,6 +1328,15 @@ pub async fn sweep(pool: &PgPool) -> Result<usize, ApiError> {
             .is_some()
         {
             closed += 1;
+        }
+        tx.commit().await.map_err(DbError::from)?;
+    }
+    // (FIX-253 audit 2) Decisions held while the receiver was frozen. `approval_notice` leaves
+    // a still-frozen one untouched.
+    for id in repo::held_decision_ids(pool, HELD_BATCH).await? {
+        let mut tx = pool.begin().await.map_err(DbError::from)?;
+        if let Some(row) = aurora_db::repo::approvals::get(&mut *tx, id).await? {
+            approval_notice(&mut tx, &row).await?;
         }
         tx.commit().await.map_err(DbError::from)?;
     }

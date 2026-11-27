@@ -1011,9 +1011,12 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   each give the task conversation its own turn and return the task to `open`,
   with the same grants and policy it had — a wake never extends rights. Every
   wake that starts a turn (also one that arrives while the task is still
-  `open`) first re-checks that the requester can still use the sending agent
-  and that the receiver is not paused; a failed check cancels the task with a
-  "could not continue" line and starts no turn. A `waiting` task holds the
+  `open`) first re-checks that the requester can still use the sending agent;
+  a failed check cancels the task with a "could not continue" line and starts
+  no turn. While the receiving agent, its workspace or its organization is
+  frozen, every wake is held — the task keeps waiting (a watch stays armed, a
+  one-time schedule waits, an approval decision and its notice are delivered
+  within a minute of the unfreeze). A `waiting` task holds the
   pair's slot like an `open` one: a second task queues behind it, and ending it
   promotes the queued one. A waiting task still ends by `complete_task`,
   Cancel, or its overall expiry/budget (the expiry report reaches the requester
