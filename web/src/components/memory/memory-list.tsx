@@ -123,7 +123,7 @@ export function SearchSummary({ q, count, onClear }: { q: string; count: number;
 }
 
 const rowClass =
-  "block w-full min-w-0 border-l-[3px] border-l-transparent px-3 py-2.5 text-left hover:bg-subtle aria-[current=true]:border-l-accent aria-[current=true]:bg-subtle";
+  "block w-full min-w-0 row-rail border-l-transparent px-3 py-2.5 text-left hover:bg-subtle aria-[current=true]:border-l-accent aria-[current=true]:bg-subtle";
 const listClass = "divide-y divide-line overflow-hidden rounded-card border border-line bg-surface";
 
 function Source({ memory, agentName, me, now }: { memory: Memory; agentName: string; me: string | null | undefined; now: number }) {
