@@ -114,9 +114,40 @@ pub struct Unseen {
     pub org_slug: String,
 }
 
+/// A channel card for the approval whose `message.post` op finished: the people in that
+/// conversation already see the card, so it is a live delivery surface (the card half of the
+/// notify rule, shared by the deciders' and the requester's sweeps).
+fn posted_card(kind: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM channel_cards cc JOIN channel_ops co ON co.id = cc.post_op_id \
+           WHERE cc.subject_kind = '{kind}' AND cc.subject_id = a.id \
+             AND co.status = 'done' AND cc.state IN ('posted', 'settled'))"
+    )
+}
+
+/// (FIX-252 review) The card half of the notify rule for the DECIDERS' queries: a card counts
+/// only when it was posted to the approval's OWN conversation. The FIX-252 origin card is
+/// posted to the requester's thread (a peer task conversation has no thread link of its own,
+/// so every card of such an approval is the origin card) — the approvers are not in that
+/// conversation, and the card there must not keep their mail quiet. The requester's own query
+/// keeps the wider [`posted_card`]: the origin card is exactly that surface for them.
+fn posted_card_at_own(kind: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM channel_cards cc JOIN channel_ops co ON co.id = cc.post_op_id \
+           WHERE cc.subject_kind = '{kind}' AND cc.subject_id = a.id \
+             AND co.status = 'done' AND cc.state IN ('posted', 'settled') \
+             AND NOT EXISTS (SELECT 1 FROM peer_tasks pt2 \
+                               WHERE pt2.task_conversation_id = a.conversation_id))"
+    )
+}
+
 /// Pending approvals older than `delay_secs` that are still decidable, have not been served yet
-/// and have **no live delivery surface**: (a) no channel card whose `message.post` op finished,
-/// and (b) no decider holding a watcher row seen within `ttl_secs`.
+/// and have **no live delivery surface**: (a) no channel card whose `message.post` op finished
+/// at the approval's own conversation ([`posted_card_at_own`]; FIX-252 review — the origin card
+/// is for the requester), and (b) no decider holding a watcher row seen within `ttl_secs`.
+/// (FIX-252 review) "Not served" means no **decider's own** initial claim: the requester's
+/// claim (their own channels) must never suppress an approver's mail, and an approver's claim
+/// never suppresses the requester's (that query checks its own user's row).
 pub async fn unseen(
     pool: &PgPool,
     delay_secs: f64,
@@ -128,13 +159,9 @@ pub async fn unseen(
            AND wt.last_seen_at > now() - make_interval(secs => $2) AND {})",
         may_decide("wt.user_id")
     );
-    let card = |kind: &str| {
-        format!(
-            "EXISTS (SELECT 1 FROM channel_cards cc JOIN channel_ops co ON co.id = cc.post_op_id \
-               WHERE cc.subject_kind = '{kind}' AND cc.subject_id = a.id \
-                 AND co.status = 'done' AND cc.state IN ('posted', 'settled'))"
-        )
-    };
+    // A claim suppresses only when its user may decide the approval (a decider was served);
+    // the requester's claim leaves the approvers' mail alone.
+    let claimed = may_decide("n.user_id");
     let gateway = format!(
         "SELECT a.id, 'gateway'::text AS kind, a.org_id, a.workspace_id, a.agent_id, \
             a.conversation_id, a.batch_id, \
@@ -150,9 +177,10 @@ pub async fn unseen(
          WHERE a.status = 'pending' AND a.deadline > now() \
            AND a.created_at <= now() - make_interval(secs => $1) \
            AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
-                           WHERE n.approval_id = a.id AND n.stage = 'initial') \
+                           WHERE n.approval_id = a.id AND n.stage = 'initial' \
+                              AND {claimed}) \
            AND NOT {} AND NOT {watcher}",
-        card("approval")
+        posted_card_at_own("approval")
     );
     let action = format!(
         "SELECT a.id, 'action'::text AS kind, w.org_id, a.workspace_id, a.agent_id, \
@@ -165,15 +193,80 @@ pub async fn unseen(
          WHERE a.status = 'pending' AND a.expires_at > now() \
            AND a.created_at <= now() - make_interval(secs => $1) \
            AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
-                           WHERE n.approval_id = a.id AND n.stage = 'initial') \
+                           WHERE n.approval_id = a.id AND n.stage = 'initial' \
+                              AND {claimed}) \
            AND NOT {} AND NOT {watcher}",
-        card("action_approval")
+        posted_card_at_own("action_approval")
     );
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT id, kind, org_id, workspace_id, agent_id, conversation_id, batch_id, title, \
                 rule_name, expires_at, \
                 agent_name, workspace_name, workspace_slug, org_name, org_slug \
          FROM ({gateway} UNION ALL {action}) u ORDER BY created_at LIMIT $3"
+    )))
+    .bind(delay_secs)
+    .bind(ttl_secs)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// (FIX-252) A gateway approval raised in a peer task conversation, still `pending` after
+/// `delay_secs`, with the person who asked for the task and their e-mail: the requester hears
+/// about the wait through their own channels once the delay passes — unless a live surface
+/// already shows the card, the deciders' rule: the origin card posted to the thread they asked
+/// in, or a watcher row of their own seen within `ttl_secs` (they are looking at the approvals
+/// page). Only users who have not turned approval e-mails off.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RequesterUnseen {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub workspace_id: Uuid,
+    pub title: String,
+    pub rule_name: Option<String>,
+    pub expires_at: DateTime<Utc>,
+    pub agent_name: String,
+    pub workspace_name: String,
+    pub workspace_slug: String,
+    pub org_slug: String,
+    pub requester_user_id: Uuid,
+    pub requester_email: String,
+}
+
+pub async fn unseen_for_requesters(
+    pool: &PgPool,
+    delay_secs: f64,
+    ttl_secs: f64,
+    limit: i64,
+) -> Result<Vec<RequesterUnseen>, DbError> {
+    let watcher = "EXISTS (SELECT 1 FROM approval_watchers wt WHERE wt.workspace_id = a.workspace_id \
+           AND wt.user_id = pt.requester_user_id \
+           AND wt.last_seen_at > now() - make_interval(secs => $2))";
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT a.id, a.org_id, a.workspace_id, \
+            CASE WHEN COALESCE(a.summary->>'source', 'generic') = 'generic' \
+                 THEN 'send a ' || a.method || ' request to ' || a.host \
+                 ELSE COALESCE(NULLIF(a.summary->>'title', ''), 'send a ' || a.method || ' request to ' || a.host) \
+            END AS title, \
+            a.rule_name, a.deadline AS expires_at, \
+            COALESCE(ag.name, 'An agent') AS agent_name, w.name AS workspace_name, \
+            w.slug AS workspace_slug, o.slug AS org_slug, \
+            pt.requester_user_id, u.email::text AS requester_email \
+         FROM approvals a \
+         JOIN peer_tasks pt ON pt.task_conversation_id = a.conversation_id \
+         JOIN users u ON u.id = pt.requester_user_id \
+         JOIN workspaces w ON w.id = a.workspace_id \
+         JOIN organizations o ON o.id = w.org_id \
+         LEFT JOIN agents ag ON ag.id = a.agent_id \
+         WHERE a.status = 'pending' AND a.deadline > now() \
+           AND a.created_at <= now() - make_interval(secs => $1) \
+           AND u.disabled_at IS NULL AND u.approval_email_enabled \
+           AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
+                           WHERE n.approval_id = a.id AND n.user_id = u.id \
+                             AND n.stage = 'initial') \
+           AND NOT {} AND NOT {watcher} \
+         ORDER BY a.created_at LIMIT $3",
+        posted_card("approval")
     )))
     .bind(delay_secs)
     .bind(ttl_secs)

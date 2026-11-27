@@ -1,6 +1,6 @@
 use super::dto::{
-    Approval, ApprovalEvent, BatchDecided, BatchDecisionBody, DecisionBody, ListQuery, PendingList,
-    PendingQuery,
+    Approval, ApprovalEvent, AskApprovers, BatchDecided, BatchDecisionBody, DecisionBody,
+    ListQuery, PendingList, PendingQuery,
 };
 use super::{bus::BusMsg, service};
 use crate::app::AppState;
@@ -25,6 +25,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(stream))
         .routes(routes!(decide))
         .routes(routes!(decide_batch))
+        .routes(routes!(ask_approver))
 }
 
 /// Approvals of a workspace, newest first.
@@ -172,4 +173,30 @@ async fn decide_batch(
 ) -> Result<Json<BatchDecided>, ApiError> {
     let decided = service::decide_batch(&s, &c, &batch_id, b.agent_id, b.decision).await?;
     Ok(Json(BatchDecided { decided }))
+}
+
+/// (FIX-252) The web origin card's **Ask an approver**: the stored requester of the peer task
+/// the approval was raised in e-mails the people with `can_approve` in the approval's
+/// workspace (the channel card's button does the same). Sessions only, the stored requester
+/// only — nobody else's task is revealed (404); the ask grants nobody a right.
+#[utoipa::path(post, path = "/approvals/{id}/ask-approver", operation_id = "askApprovalApprovers", tag = "approvals",
+    params(("id" = Uuid, Path, description = "Approval id")),
+    responses((status = 200, body = AskApprovers), (status = 404, body = ErrorEnvelope),
+        (status = 409, body = ErrorEnvelope)),
+    security(("session" = [])))]
+async fn ask_approver(
+    c: SessionCaller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<AskApprovers>, ApiError> {
+    let (asked, a) = service::ask_approvers(&s, c.user_id, id).await?;
+    crate::audit::record(
+        &s,
+        crate::audit::AuditEvent::by(&c.0, "approval.ask_approver")
+            .org(a.org_id)
+            .workspace(a.workspace_id)
+            .target("approval", a.id)
+            .metadata(serde_json::json!({"via": "dashboard", "peer_task": true})),
+    );
+    Ok(Json(AskApprovers { asked }))
 }

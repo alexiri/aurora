@@ -3,7 +3,8 @@
 //! connection-, schedule- and webhook-scoped route of the OpenAPI document must be classified
 //! into exactly one of the lists: it accepts `can_administer` (the C-1160 administer list), it
 //! takes a `ReadAuth` — the caller's own access or an active emergency grant (C-1165) — it is
-//! the org owner's break-glass open (C-1164), or it needs the caller's own access
+//! the org owner's break-glass open (C-1164), it is the stored requester's own route (FIX-252:
+//! the row names the one user, sessions only), or it needs the caller's own access
 //! (`can_use`/`can_own`). A route that is in two lists, or in
 //! neither, fails the test, so a new route cannot quietly decide its own rule. The lists are
 //! compared against the document the router generates — nothing is hand-typed from memory.
@@ -102,6 +103,21 @@ const READAUTH: &[(&str, &[&str])] = &[
 /// an own-access route. Its whole principal matrix is the SEC-154 tests (it/emergency_access.rs).
 const ORG_OWNER: &[(&str, &[&str])] = &[("/workspaces/{ws}/emergency-access", &["post"])];
 
+/// `(path, methods)` of the routes whose authority is the **stored requester** of the object:
+/// a session of the one person the row itself names — no workspace right at all, and never
+/// anyone else (FIX-252). The routes sit outside the scoped prefixes on purpose: they decide
+/// from the row's own user id, not from a workspace's access law, so no list above can hold
+/// them without weakening what those lists mean. The requester-only ladders (the requester
+/// succeeds; another person, an org admin and another user's API key are all refused) are
+/// it/peer_tasks.rs `the_cancel_route_serves_the_stored_requester_only` and
+/// it/approval_notify.rs `the_ask_route_serves_the_stored_requester_only`.
+const REQUESTER: &[(&str, &[&str])] = &[
+    ("/peer-tasks/{id}/cancel", &["post"]),
+    // The web origin card's Ask an approver: the stored requester of the peer task the
+    // approval was raised in.
+    ("/approvals/{id}/ask-approver", &["post"]),
+];
+
 /// `(path, methods)` of the routes that need the caller's own access (`can_use` or `can_own`):
 /// everything scoped the administer list does not name (D-477: administering is not using). An
 /// unclassified route fails the test, so a new one cannot quietly decide its own rule.
@@ -157,6 +173,9 @@ const OWN: &[(&str, &[&str])] = &[
     // The GET is a READAUTH route (C-1165); configuring and deleting stay own.
     ("/agents/{agent}", &["patch", "delete"]),
     ("/agents/{agent}/answer-readiness", &["get"]),
+    // (FIX-249, C-1168) The keys the agent does not have yet, metadata only: an own owner's route,
+    // like the grant it feeds.
+    ("/agents/{agent}/ai-keys", &["get"]),
     ("/agents/{agent}/apps/{app}/access", &["get"]),
     ("/agents/{agent}/avatar", &["get", "put", "delete"]),
     ("/agents/{agent}/byo", &["put"]),
@@ -316,9 +335,6 @@ fn every_scoped_route_is_classified() {
     let mut problems = Vec::new();
     let mut classified = 0usize;
     for (path, item) in doc.paths.paths.iter() {
-        if !scoped(path) {
-            continue;
-        }
         for method in ["get", "put", "post", "delete", "patch"] {
             let op = match method {
                 "get" => item.get.as_ref(),
@@ -329,6 +345,11 @@ fn every_scoped_route_is_classified() {
                 _ => None,
             };
             let Some(_) = op else { continue };
+            // The walk's scope plus the requester routes (FIX-252), which sit outside the
+            // scoped prefixes by design and carry their own list.
+            if !scoped(path) && !listed(REQUESTER, path, method) {
+                continue;
+            }
             let mut lists: Vec<&str> = Vec::new();
             if listed(ADMINISTER, path, method) {
                 lists.push("ADMINISTER");
@@ -341,6 +362,9 @@ fn every_scoped_route_is_classified() {
             }
             if listed(OWN, path, method) {
                 lists.push("OWN");
+            }
+            if listed(REQUESTER, path, method) {
+                lists.push("REQUESTER");
             }
             if lists.len() == 1 {
                 classified += 1;
@@ -355,7 +379,8 @@ fn every_scoped_route_is_classified() {
         problems.is_empty(),
         "misclassified route(s) — put each into exactly one of ADMINISTER (accepts \
          `can_administer`), READAUTH (own access or an emergency grant), ORG_OWNER (the \
-         break-glass open) or OWN (needs own access) in tests/it/route_inventory.rs:\n  {}",
+         break-glass open), REQUESTER (the stored requester of the object, sessions only) or \
+         OWN (needs own access) in tests/it/route_inventory.rs:\n  {}",
         problems.join("\n  ")
     );
     // The lists themselves must not drift: every entry still names a documented route.
@@ -364,6 +389,7 @@ fn every_scoped_route_is_classified() {
         .iter()
         .chain(READAUTH.iter())
         .chain(ORG_OWNER.iter())
+        .chain(REQUESTER.iter())
         .chain(OWN.iter())
     {
         for m in methods.iter() {

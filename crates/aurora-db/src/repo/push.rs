@@ -548,6 +548,61 @@ pub async fn waiting(
     .await?)
 }
 
+/// (FIX-252) A gateway approval raised in a peer task conversation, still `pending` after
+/// `delay_secs`, with the person who asked for the task: their devices are pushed about the
+/// wait once the delay passes (the shared `(approval, user, stage)` claim with the deciders'
+/// pushes means a requester who is also a decider is served once). Only users who have a
+/// subscription at all.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct RequesterWaiting {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub expires_at: DateTime<Utc>,
+    pub agent_name: String,
+    pub workspace_name: String,
+    pub workspace_slug: String,
+    pub org_slug: String,
+    pub requester_user_id: Uuid,
+}
+
+/// (FIX-252) A gateway approval raised in a peer task conversation, still `pending` after
+/// `delay_secs`, with the person who asked and a push subscription: the requester's devices are
+/// pushed after the same delay as every approval push — unless they are watching live (the
+/// deciders' rule): a watcher row of their own seen within `watcher_ttl_secs`.
+pub async fn waiting_for_requesters(
+    pool: &PgPool,
+    delay_secs: f64,
+    watcher_ttl_secs: f64,
+    limit: i64,
+) -> Result<Vec<RequesterWaiting>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(
+        "SELECT a.id, a.workspace_id, a.deadline AS expires_at, \
+                COALESCE(ag.name, 'An agent') AS agent_name, w.name AS workspace_name, \
+                w.slug AS workspace_slug, o.slug AS org_slug, pt.requester_user_id \
+         FROM approvals a \
+         JOIN peer_tasks pt ON pt.task_conversation_id = a.conversation_id \
+         JOIN workspaces w ON w.id = a.workspace_id \
+         JOIN organizations o ON o.id = w.org_id \
+         LEFT JOIN agents ag ON ag.id = a.agent_id \
+         WHERE a.status = 'pending' AND a.deadline > now() \
+           AND a.created_at <= now() - make_interval(secs => $1) \
+           AND EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = pt.requester_user_id) \
+           AND NOT EXISTS (SELECT 1 FROM approval_push_claims c \
+                           WHERE c.approval_id = a.id AND c.user_id = pt.requester_user_id \
+                             AND c.stage = 'initial') \
+           AND NOT EXISTS (SELECT 1 FROM approval_watchers wt \
+                           WHERE wt.workspace_id = a.workspace_id \
+                             AND wt.user_id = pt.requester_user_id \
+                             AND wt.last_seen_at > now() - make_interval(secs => $2)) \
+         ORDER BY a.created_at LIMIT $3",
+    ))
+    .bind(delay_secs)
+    .bind(watcher_ttl_secs)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// Parked gateway approvals past half of their waiting time, still `pending`, with no live
 /// watcher (the reminder stage, C-828/C-834).
 pub async fn reminders(

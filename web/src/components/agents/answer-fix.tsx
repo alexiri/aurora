@@ -5,13 +5,16 @@ import Link from "next/link";
 import { AskAdminForm } from "@/components/ask-admin";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { showUndoToast } from "@/components/ui/undo-toast";
-import { useAddCredentialGrants } from "@/lib/api/credential-grants";
+import { useAddCredentialGrants, useGrantSecretToAgent } from "@/lib/api/credential-grants";
+import { useAgentAiKeys, type AgentAiKey } from "@/lib/api/agent-ai-keys";
 import { useAnswerReadiness, type AnswerFix } from "@/lib/api/answer-readiness";
 import { useMyRequests } from "@/lib/api/app-setup-requests";
 import { errorMessage } from "@/lib/api/errors";
 import { orgRoutes } from "@/lib/routes";
+import { cn } from "@/lib/utils";
 
 /**
  * (P5-REFINE-11 item 8, P5-REFINE-12 item 7, D-414, access-3) What fixes an agent that cannot answer, chosen by the API for
@@ -36,19 +39,78 @@ export function orgSlugOf(base: string): string | null {
   return m ? decodeURIComponent(m[1]!) : null;
 }
 
+/** The key's scope in words (FIX-249, C-1168): "Organization key" | "Workspace key". */
+export function scopeWords(k: Pick<AgentAiKey, "scope">): string {
+  return k.scope === "workspace" ? "Workspace key" : "Organization key";
+}
+
+/**
+ * (FIX-249, C-1168) The quiet "Use another key" control beside the one-click give — one shared
+ * component for every place that offers the fix (the header, the empty chat, the starter-key
+ * card). Shown when the agent's organization or workspace holds more than one key the agent does
+ * not have yet: the other usable keys grant in one click with the same toast ("<Agent> can answer
+ * now"), the keys that cannot be used are disabled rows with the reason in plain words (C-1168).
+ */
+export function UseAnotherKey({ agentId, agentName, given, size = "sm" }: { agentId: string; agentName: string; given: string; size?: "sm" | "default" }) {
+  const keys = useAgentAiKeys(agentId);
+  const grant = useGrantSecretToAgent();
+  const items = keys.data?.items ?? [];
+  const others = items.filter((k) => k.usable && k.secret_id !== given);
+  const unusable = items.filter((k) => !k.usable);
+  if (others.length === 0 && unusable.length === 0) return null;
+  return (
+    <span className="flex min-w-0 flex-col items-start gap-1">
+      <Menu>
+        <MenuTrigger asChild>
+          <Button type="button" size={size} variant="ghost" disabled={grant.isPending} className="min-h-11 md:min-h-9">
+            Use another key
+          </Button>
+        </MenuTrigger>
+        <MenuContent align="start" className="min-w-56">
+          {others.map((k) => (
+            <MenuItem
+              key={k.secret_id}
+              className="flex-col items-stretch gap-0.5"
+              onSelect={() => grant.mutate({ secretId: k.secret_id, agentId }, { onSuccess: () => showUndoToast(`${agentName} can answer now`) })}
+            >
+              <span className="break-words font-medium text-ink">{k.name}</span>
+              <span className="text-xs text-muted">{scopeWords(k)}</span>
+            </MenuItem>
+          ))}
+          {others.length > 0 && unusable.length > 0 ? <MenuSeparator /> : null}
+          {unusable.map((k) => (
+            <MenuItem key={k.secret_id} disabled className="flex-col items-stretch gap-0.5">
+              <span className="break-words font-medium text-ink">{k.name}</span>
+              <span className="text-xs text-muted">{k.reason}</span>
+            </MenuItem>
+          ))}
+        </MenuContent>
+      </Menu>
+      {grant.isError ? (
+        <span role="alert" className="text-xs text-danger-ink">
+          {errorMessage(grant.error)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /** "Give Rex the Company key": one click, then "Rex can answer now" (the header turns Ready: the grant refreshes the answer check). */
-export function GiveKeyButton({ agentId, agentName, fix, size = "sm" }: { agentId: string; agentName: string; fix: Extract<AnswerFix, { action: "give_key" }>; size?: "sm" | "default" }) {
+export function GiveKeyButton({ agentId, agentName, fix, size = "sm", buttonClassName }: { agentId: string; agentName: string; fix: Extract<AnswerFix, { action: "give_key" }>; size?: "sm" | "default"; buttonClassName?: string }) {
   const add = useAddCredentialGrants({ kind: "secret", id: fix.key.secret_id });
   return (
     <span className="flex w-full min-w-0 max-w-full flex-col items-start gap-1">
-      <Button
-        type="button"
-        size={size}
-        className="h-auto min-h-11 max-w-full whitespace-normal py-1.5 text-left md:min-h-9"
-        disabled={add.isPending}
-        onClick={() => add.mutate({ agentIds: [agentId] }, { onSuccess: () => showUndoToast(`${agentName} can answer now`) })}>
-        Give {agentName} the {fix.key.name}
-      </Button>
+      <span className="flex w-full min-w-0 max-w-full flex-wrap items-start gap-2">
+        <Button
+          type="button"
+          size={size}
+          className={cn("h-auto min-h-11 max-w-full whitespace-normal py-1.5 text-left md:min-h-9", buttonClassName)}
+          disabled={add.isPending}
+          onClick={() => add.mutate({ agentIds: [agentId] }, { onSuccess: () => showUndoToast(`${agentName} can answer now`) })}>
+          Give {agentName} the {fix.key.name}
+        </Button>
+        <UseAnotherKey agentId={agentId} agentName={agentName} given={fix.key.secret_id} size={size} />
+      </span>
       {/* A phrase, not a block: the header's state line is a paragraph. */}
       {add.isError ? (
         <span role="alert" className="text-xs text-danger-ink">

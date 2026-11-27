@@ -19,6 +19,7 @@ use crate::domains::action_approvals::dto::ActionDecision;
 use crate::domains::agent_links::dto::{LinkPolicy, SetPolicyBody};
 use crate::domains::approvals::dto::Decision as GateDecision;
 use crate::domains::connectors::inbox::{InboxError, InboxHandler};
+use crate::domains::peer_tasks::service as peers;
 use crate::http::auth::{Caller, Principal};
 use aurora_channels::{ActionKind, ActionToken, Content, Decision, TokenError};
 use aurora_core::ApiError;
@@ -29,7 +30,7 @@ use aurora_db::repo::channel_inbox::InboxRow;
 use aurora_db::repo::channel_integrations::IntegrationRow;
 use aurora_db::repo::{
     action_approvals, agent_links, agents, approvals, channel_integrations, channel_presences,
-    dm_defaults, link_requests, reach_grants, space_bindings, turns, user_links, users,
+    dm_defaults, link_requests, peer_tasks, reach_grants, space_bindings, turns, user_links, users,
 };
 use aurora_protocol::connector::ActionInvoked;
 use chrono::{DateTime, Utc};
@@ -353,6 +354,88 @@ impl Click<'_> {
                 };
                 crate::domains::action_approvals::service::decide(s, c, a.id, d).await?;
                 Ok(Done::new("action_approval.decide"))
+            }
+            // (FIX-252) The peer-origin card's Ask an approver: e-mails the people with
+            // `can_approve` in the approval's workspace now (the same mail the notifier sends,
+            // claimed so the sweep does not repeat it). It grants nobody a right; the button is
+            // single-use like every card action, so one card asks once.
+            ActionKind::PeerTaskAskApprover => {
+                let a = approvals::get(&s.pool, claims.subject_id)
+                    .await?
+                    .ok_or_else(gone)?;
+                if a.status != "pending" {
+                    return refuse("not_found", "That request no longer exists.");
+                }
+                let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+                // The ask exists only on a peer-origin card; anything else is not valid.
+                let Some(conv) = a.conversation_id else {
+                    return refuse("invalid_token", "This action is not valid.");
+                };
+                // (FIX-252 review) The ask is the requester's button, like Cancel the task
+                // (the route inventory classifies both requester-only): any other linked
+                // person gets the ephemeral refusal and the single-use button stays usable
+                // (the token is consumed only after this check).
+                let Some(pt) = peer_tasks::by_task_conversation(&mut *tx, conv).await? else {
+                    return refuse("invalid_token", "This action is not valid.");
+                };
+                if pt.requester_user_id != Some(c.user_id) {
+                    return refuse(
+                        "forbidden",
+                        "Only the person who asked for this task can ask for an approver.",
+                    );
+                }
+                drop(tx);
+                self.consume(claims, exp).await?;
+                crate::domains::peer_tasks::service::ask_approvers(s, &a).await?;
+                audit::record(
+                    s,
+                    AuditEvent::by(c, "approval.ask_approver")
+                        .org(a.org_id)
+                        .workspace(a.workspace_id)
+                        .target("approval", a.id)
+                        .metadata(json!({"via": "channel", "peer_task": true})),
+                );
+                Ok(Done::new("approval.ask_approver"))
+            }
+            // (FIX-252) The peer-origin card's Cancel the task: the person who asked for the
+            // task only (the stored requester, checked here); the task closes with its close
+            // line to the origin and its pending approval is abandoned.
+            ActionKind::PeerTaskCancel => {
+                let a = approvals::get(&s.pool, claims.subject_id)
+                    .await?
+                    .ok_or_else(gone)?;
+                if a.status != "pending" {
+                    return refuse("not_found", "That request no longer exists.");
+                }
+                let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+                let Some(conv) = a.conversation_id else {
+                    return refuse("invalid_token", "This action is not valid.");
+                };
+                let Some(pt) = peer_tasks::by_task_conversation(&mut *tx, conv).await? else {
+                    return refuse("invalid_token", "This action is not valid.");
+                };
+                if pt.requester_user_id != Some(c.user_id) {
+                    return refuse(
+                        "forbidden",
+                        "Only the person who asked for this task can cancel it.",
+                    );
+                }
+                self.consume(claims, exp).await?;
+                let closed =
+                    peers::close_with_promotion(&mut tx, &pt, &peers::Close::Cancelled(None))
+                        .await?;
+                tx.commit().await.map_err(DbError::from)?;
+                if let Some(t) = closed {
+                    audit::record(
+                        s,
+                        AuditEvent::by(c, "peer_task.cancel")
+                            .org(a.org_id)
+                            .workspace(a.workspace_id)
+                            .target("peer_task", t.id)
+                            .metadata(json!({"via": "channel"})),
+                    );
+                }
+                Ok(Done::new("peer_approval.cancel"))
             }
             ActionKind::ReachDecide { decision } => {
                 let g = reach_grants::get(&s.pool, claims.subject_id)

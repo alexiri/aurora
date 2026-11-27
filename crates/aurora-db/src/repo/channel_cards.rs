@@ -162,8 +162,9 @@ pub async fn claim_settle<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bo
         > 0)
 }
 
-/// Pending gateway approvals that name a conversation with at least one thread link and have no
-/// card yet.
+/// Pending gateway approvals that name a conversation with at least one thread link (their own,
+/// or — FIX-252 — the origin conversation of the peer task the approval was raised in) and have
+/// no card yet.
 pub async fn approvals_without_card<'e, E: PgExecutor<'e>>(
     exec: E,
     limit: i64,
@@ -171,7 +172,10 @@ pub async fn approvals_without_card<'e, E: PgExecutor<'e>>(
     Ok(sqlx::query_scalar(
         "SELECT a.id FROM approvals a
           WHERE a.status='pending' AND a.conversation_id IS NOT NULL
-            AND EXISTS (SELECT 1 FROM thread_links t WHERE t.conversation_id=a.conversation_id)
+            AND (EXISTS (SELECT 1 FROM thread_links t WHERE t.conversation_id=a.conversation_id)
+              OR EXISTS (SELECT 1 FROM peer_tasks pt
+                          JOIN thread_links t2 ON t2.conversation_id=pt.origin_conversation_id
+                          WHERE pt.task_conversation_id=a.conversation_id))
             AND NOT EXISTS (SELECT 1 FROM channel_cards c
                              WHERE c.subject_kind='approval' AND c.subject_id=a.id)
           ORDER BY a.created_at LIMIT $1",

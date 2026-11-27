@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 import { answerReadinessKey } from "./answer-readiness";
+import { agentAiKeysKey } from "./agent-ai-keys";
 import { api, ApiError } from "./client";
 import { policyKeys } from "./policy";
 import type { components } from "./schema";
@@ -34,6 +35,8 @@ function invalidateGrants(qc: QueryClient, target: GrantTarget, agentIds: string
     void qc.invalidateQueries({ queryKey: grantKeys.readiness(a) });
     // (C-1062) Whether the agent can answer: the header and the empty chat follow a grant at once.
     void qc.invalidateQueries({ queryKey: answerReadinessKey(a) });
+    // (C-1168) The keys the agent could still be given: the granted one leaves the list.
+    void qc.invalidateQueries({ queryKey: agentAiKeysKey(a) });
   }
 }
 
@@ -112,6 +115,19 @@ export function useAddCredentialGrants(target: GrantTarget) {
       };
     },
     onSuccess: (_r, v) => invalidateGrants(qc, target, v.agentIds),
+  });
+}
+
+/**
+ * (FIX-249, C-1168) One grant from the "Use another key" pickers: grants one secret to one agent
+ * and refreshes every view that follows a grant (the answer check, the key lists, the accounts).
+ */
+export function useGrantSecretToAgent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ secretId, agentId }: { secretId: string; agentId: string }) =>
+      unwrap(api.POST("/v1/secrets/{id}/grants", { params: { path: { id: secretId } }, body: { agent_ids: [agentId] } })),
+    onSuccess: (_r, v) => invalidateGrants(qc, { kind: "secret", id: v.secretId }, [v.agentId]),
   });
 }
 

@@ -21,7 +21,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, inputClass } from "@/components/ui/field";
 import { CheckboxField } from "@/components/ui/form";
 import { Fold } from "@/components/ui/fold";
-import { Lines } from "@/components/ui/lines";
+import { DiffView } from "@/components/ui/diff-view";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 
 /**
@@ -214,7 +214,7 @@ function OfferPartView({
       <p data-testid="part-state">{stateWords(part.state, agentName)}</p>
       {ref ? <RefLine skillRef={ref} unavailable={unavailable} /> : null}
       {text?.current != null && text.proposed != null && text.current !== text.proposed ? (
-        <Lines old={text.current} next={text.proposed} label={`Diff of ${heading}, current against the new version`} />
+        <DiffView old={text.current} next={text.proposed} label={`Diff of ${heading}, current against the new version`} fileName={heading} />
       ) : null}
       {text?.current == null && text?.proposed != null ? (
         <pre tabIndex={0} aria-label={`${heading} in the new version`} className="max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 font-mono text-xs text-ink [overflow-wrap:anywhere]">

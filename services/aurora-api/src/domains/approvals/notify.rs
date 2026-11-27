@@ -130,14 +130,18 @@ fn clean(s: &str) -> String {
 
 /// `<external>/o/<org>/w/<ws>/approvals?focus=<id>`: the dashboard approvals page, never a link
 /// that decides anything (deciding needs a signed-in session).
-pub fn dashboard_link(external_url: &str, u: &repo::Unseen) -> String {
+pub fn approvals_link(external_url: &str, org_slug: &str, ws_slug: &str, id: Uuid) -> String {
     format!(
         "{}/o/{}/w/{}/approvals?focus={}",
         external_url.trim_end_matches('/'),
-        u.org_slug,
-        u.workspace_slug,
-        u.id
+        org_slug,
+        ws_slug,
+        id
     )
+}
+
+pub fn dashboard_link(external_url: &str, u: &repo::Unseen) -> String {
+    approvals_link(external_url, &u.org_slug, &u.workspace_slug, u.id)
 }
 
 /// (P5-UX-16, C-983) The sentence of a gateway approval, "<Agent> wants to <action>"; an action
@@ -178,6 +182,28 @@ pub fn approval_mail(external_url: &str, to: &str, u: &repo::Unseen, more: usize
         &format!("Approval needed: {title}"),
         &intro,
         &dashboard_link(external_url, u),
+    )
+}
+
+/// (FIX-252) The requester's own mail: the same one-line facts as the origin card (D-178: the
+/// title, the agent, never a request field), with the approvals page of the workspace that must
+/// decide — deciding needs `can_approve` there, being the requester adds nothing.
+pub fn requester_mail(external_url: &str, to: &str, u: &repo::RequesterUnseen) -> Mail {
+    let agent = clean(&u.agent_name);
+    // Gateway approvals only (the peer-task kind): the same sentence as every approval mail.
+    let title = clean(&format!("{agent} wants to {}", clean(&u.title)));
+    let workspace = clean(&u.workspace_name);
+    Mail::new(
+        to,
+        &format!("Your delegated task is waiting for an approval: {title}"),
+        &format!(
+            "{agent} in the workspace \"{workspace}\" is waiting for an approval to continue the \
+             task you asked for.\n\nWhat: {title}\nExpires: {}\n\nOpen the approvals page to \
+             review it. You need to be signed in, and deciding needs an approver's right in that \
+             workspace.",
+            u.expires_at.format("%Y-%m-%d %H:%M UTC")
+        ),
+        &approvals_link(external_url, &u.org_slug, &u.workspace_slug, u.id),
     )
 }
 
@@ -268,6 +294,23 @@ pub async fn notify_once(s: &AppState) -> Result<usize, ApiError> {
                 sent += 1;
             }
         }
+    }
+    // (FIX-252) The person who asked for a peer task hears about the approval wait through their
+    // own channels, after the same delay and under the deciders' rule (a live surface showing
+    // the card keeps them quiet); the shared claim serves a requester-decider once.
+    for u in &repo::unseen_for_requesters(
+        &s.pool,
+        APPROVAL_NOTIFY_DELAY.as_secs_f64(),
+        APPROVAL_WATCHER_TTL.as_secs_f64(),
+        SWEEP_LIMIT,
+    )
+    .await?
+    {
+        if !repo::claim(&s.pool, u.id, u.requester_user_id, "gateway", "mail").await? {
+            continue; // served as a decider, or another replica won
+        }
+        deliver(s, requester_mail(&ext, &u.requester_email, u)).await;
+        sent += 1;
     }
     Ok(sent)
 }

@@ -119,6 +119,18 @@ session (`harness_session_ref`) inside the shared sandbox.
 Direct conversations die with their user. `origin_conversation_id` points at the
 conversation where results of schedules, webhooks and peer tasks are reported.
 
+(FIX-252, D-489) **An approval a peer task needs is reported to the origin too**,
+as two `notice` events next to the close line: `peer_waiting_for_approval`
+`{ code, text, approval_id, peer_task_id, workspace_id, status: "open" }` when
+the approval is raised in the task's conversation (the card's home at the
+origin), and `peer_approval_decided` `{ code, text, approval_id, peer_task_id,
+workspace_id, outcome: "approved" \| "denied" \| "expired" }` when it is
+answered or expires, with the delegating agent's follow-up turn after it. Both
+go only to the origin conversation and carry only the words — the agent's name
+and a one-line action — never a request field. A later `peer_task_closed`
+notice settles a waiting card the same way (an abandoned approval, e.g. the
+task cancelled, fires no decision notice).
+
 (phase 5, P5-REFINE-7, D-409, C-1073, C-1074) **Titles and folders.**
 - `title_source` says who named a conversation: `auto` (none yet, or the first line of the
   first person message: whitespace collapsed, markup and `@` removed, cut at 60 characters

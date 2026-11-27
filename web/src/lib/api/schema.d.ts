@@ -1790,6 +1790,28 @@ export interface paths {
         patch: operations["updateAgent"];
         trace?: never;
     };
+    "/v1/agents/{agent}/ai-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The AI keys this agent does **not** have yet that exist in its organization or workspace
+         *     (`can_own` on the agent's workspace, the grant route's refusal for everyone else; FIX-249,
+         *     C-1168). The starter key first, then the dispatcher's order; a key the dispatcher cannot use
+         *     is listed with its reason instead of being dropped. Metadata only, at most 50.
+         */
+        get: operations["getAgentAiKeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/answer-readiness": {
         parameters: {
             query?: never;
@@ -3081,6 +3103,28 @@ export interface paths {
         get: operations["streamApprovals"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/approvals/{id}/ask-approver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * (FIX-252) The web origin card's **Ask an approver**: the stored requester of the peer task
+         *     the approval was raised in e-mails the people with `can_approve` in the approval's
+         *     workspace (the channel card's button does the same). Sessions only, the stored requester
+         *     only — nobody else's task is revealed (404); the ask grants nobody a right.
+         */
+        post: operations["askApprovalApprovers"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5722,6 +5766,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/peer-tasks/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * (FIX-252) The person who asked for a peer task cancels it (the origin card's button and the
+         *     web card): sessions only, the stored requester only — nobody else's task is revealed (404).
+         */
+        post: operations["cancelPeerTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/policy/approval-limits": {
         parameters: {
             query?: never;
@@ -7978,6 +8042,30 @@ export interface components {
          * @enum {string}
          */
         AgentAccessLevel: "read" | "ask" | "act" | "custom" | "use";
+        /**
+         * @description (FIX-249, C-1168) One AI key that exists in the agent's organization or workspace and is not
+         *     granted to the agent yet. Metadata only: never the value, never an endpoint address.
+         */
+        AgentAiKey: {
+            name: string;
+            /** @description Why not, in short plain words (the dispatcher's own reason); `null` when usable. */
+            reason?: string | null;
+            /** @description `organization` | `workspace`. */
+            scope: string;
+            /** Format: uuid */
+            secret_id: string;
+            /** @description One of the organization's starter keys. */
+            starter: boolean;
+            /** @description Whether the dispatcher could use this key for the agent now. */
+            usable: boolean;
+        };
+        /**
+         * @description The answer of `GET /v1/agents/{agent}/ai-keys`: the starter key first, then the dispatcher's
+         *     order, at most 50.
+         */
+        AgentAiKeys: {
+            items: components["schemas"]["AgentAiKey"][];
+        };
         /** @description A link seen from one of its two agents. */
         AgentLink: {
             /** Format: date-time */
@@ -8711,6 +8799,14 @@ export interface components {
         ApproveTemplateVersionRequest: {
             /** @description The hash the review showed; it must still be the stored one. */
             content_sha256: string;
+        };
+        /**
+         * @description (FIX-252) The answer of the origin card's **Ask an approver**: how many deciders were
+         *     e-mailed (a second ask mails nobody — the claim keeps the notifier from repeating it).
+         */
+        AskApprovers: {
+            /** Format: int32 */
+            asked: number;
         };
         /** @description (C-1081) The optional body of `POST /workspaces/{ws}/apps/{app}/setup-request`. */
         AskBody: {
@@ -25569,6 +25665,64 @@ export interface operations {
             };
         };
     };
+    getAgentAiKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentAiKeys"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not found, not hosted, or not visible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     getAgentAnswerReadiness: {
         parameters: {
             query?: never;
@@ -31363,6 +31517,62 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    askApprovalApprovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskApprovers"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -42916,6 +43126,70 @@ export interface operations {
                 };
             };
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    cancelPeerTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Peer task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PeerTask"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
