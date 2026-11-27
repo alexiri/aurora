@@ -288,6 +288,32 @@
         "data"
       ],
       "type": "object"
+    },
+    {
+      "description": "(FIX-252) The peer-origin approval card's **Ask an approver**: notifies the people with\n`can_approve` in the approval's workspace. Grants no right.",
+      "properties": {
+        "kind": {
+          "const": "peer_approval.ask_approver",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "(FIX-252) The peer-origin approval card's **Cancel the task**: the person who asked for\nthe task only, checked at click time.",
+      "properties": {
+        "kind": {
+          "const": "peer_approval.cancel_task",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
     }
   ],
   "properties": {
