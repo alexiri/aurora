@@ -67,6 +67,7 @@ pub async fn apply(
         ReportBody::SupervisorReady(_)
             | ReportBody::TurnStarted(_)
             | ReportBody::TurnEvents(_)
+            | ReportBody::TurnIdleEvents(_)
             | ReportBody::TurnProgress(_)
             | ReportBody::TurnResult(_)
             | ReportBody::SteerResult(_)
@@ -102,6 +103,7 @@ pub async fn apply(
         }
         ReportBody::TurnStarted(t) => started(tx, facts, r, t.turn_id).await?,
         ReportBody::TurnEvents(e) => events(s, tx, facts, r, e.turn_id, &e.events).await?,
+        ReportBody::TurnIdleEvents(e) => idle_events(s, tx, facts, r, e.turn_id, &e.events).await?,
         ReportBody::TurnProgress(t) => {
             let own = own_turn(tx, facts, r, t.turn_id).await?;
             match own {
@@ -411,6 +413,133 @@ enum StageOp {
     Clear,
     Retract(String),
     Replace(String, String),
+}
+
+/// (FIX-253, part B) The most `turn.idle.events` entries one report may add: the reader is
+/// bounded (`12`), and this keeps a burst from flooding the transcript.
+const AFTER_TURN_MAX: usize = 100;
+/// (FIX-253, part B) The most text one after-the-turn message keeps.
+const AFTER_TURN_TEXT_MAX: usize = 2000;
+
+/// (FIX-253, part B) What the idle harness child did after the anchor turn ended (`12 §The idle
+/// reader`): the supervisor watched the child and reports its own runs' events. They become the
+/// conversation's durable **after the turn** entries — text and tool calls, masked and capped
+/// like a turn's — attributed to the anchor turn (the web folds them under "Worked after the
+/// turn"). The anchor must be the reporting sandbox's own finished turn: an idle child belongs
+/// to it, and a turn still running is not idle (its own path maps the events).
+async fn idle_events(
+    s: &AppState,
+    tx: &mut PgConnection,
+    facts: &SandboxFacts,
+    r: &Report,
+    turn: Uuid,
+    evs: &[NumberedEvent],
+) -> Result<ReportResult, ApiError> {
+    let t = match turns::get(&mut *tx, turn).await? {
+        Some(t) if t.agent_id == facts.agent_id => t,
+        _ => return Ok(res(r, ReportStatus::Invalid, Some("unknown_turn"))),
+    };
+    if matches!(t.status.as_str(), "dispatched" | "running") {
+        return Ok(res(r, ReportStatus::Invalid, Some("turn_still_running")));
+    }
+    let cid = t.conversation_id;
+    convs::lock(tx, cid).await?;
+    let mut sorted: Vec<&NumberedEvent> = evs.iter().collect();
+    sorted.sort_by_key(|e| e.n);
+    for e in sorted.into_iter().take(AFTER_TURN_MAX) {
+        let d = &e.event.data;
+        match e.event.kind.as_str() {
+            "tool.started" => {
+                let p = json!({"turn_id": turn,
+                    "call_id": clip(str_of(d, "call_id").unwrap_or(""), 128),
+                    "name": clip(str_of(d, "name").unwrap_or(""), 128),
+                    "summary": sanitize::one_line(
+                        &sanitize::reason(str_of(d, "summary").unwrap_or(""), 200), 200)});
+                if already_recorded(
+                    tx,
+                    cid,
+                    "after_turn.tool",
+                    &p["call_id"].as_str().unwrap_or(""),
+                )
+                .await?
+                {
+                    continue;
+                }
+                conv::append_event(tx, cid, Some(turn), "after_turn.tool", &p).await?;
+            }
+            "tool.finished" => {
+                let mut p = json!({"turn_id": turn,
+                    "call_id": clip(str_of(d, "call_id").unwrap_or(""), 128),
+                    "ok": d.get("ok").and_then(Value::as_bool).unwrap_or(false)});
+                if let Some(sm) = str_of(d, "summary") {
+                    p["summary"] = json!(sanitize::one_line(&sanitize::reason(sm, 200), 200));
+                }
+                if already_recorded(
+                    tx,
+                    cid,
+                    "after_turn.tool_end",
+                    &p["call_id"].as_str().unwrap_or(""),
+                )
+                .await?
+                {
+                    continue;
+                }
+                conv::append_event(tx, cid, Some(turn), "after_turn.tool_end", &p).await?;
+            }
+            "text.delta" => {
+                // Masked like a start-failure reason (tokens, `Authorization:`, `KEY=`), and
+                // recorded once per message: the idle run's text arrives whole.
+                let text = sanitize::reason(str_of(d, "delta").unwrap_or(""), AFTER_TURN_TEXT_MAX);
+                if text.is_empty() {
+                    continue;
+                }
+                let mid = clip(str_of(d, "message_id").unwrap_or(""), 128);
+                if already_recorded(tx, cid, "after_turn.text", &mid).await? {
+                    continue;
+                }
+                conv::append_event(
+                    tx,
+                    cid,
+                    Some(turn),
+                    "after_turn.text",
+                    &json!({"turn_id": turn, "message_id": mid, "text": text}),
+                )
+                .await?;
+            }
+            _ => {} // the reader forwards only text and tool calls
+        }
+    }
+    Ok(res(r, ReportStatus::Applied, None))
+}
+
+/// (FIX-253, part B) Whether this after-the-turn item is already on the transcript (a
+/// redelivered report must not duplicate the idle child's work).
+async fn already_recorded(
+    tx: &mut PgConnection,
+    cid: Uuid,
+    ty: &str,
+    key: &str,
+) -> Result<bool, ApiError> {
+    if key.is_empty() {
+        return Ok(false);
+    }
+    let key_col = if ty == "after_turn.text" {
+        "message_id"
+    } else {
+        "call_id"
+    };
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM transcript_events
+         WHERE conversation_id = $1 AND type = $2 AND payload->>$3 = $4",
+    )
+    .bind(cid)
+    .bind(ty)
+    .bind(key_col)
+    .bind(key)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(aurora_db::DbError::from)?
+        > 0)
 }
 
 impl StageOp {

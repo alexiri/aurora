@@ -66,7 +66,14 @@ impl PeerTask {
     }
 }
 
-pub const STATUSES: [&str; 6] = ["queued", "open", "waiting", "completed", "cancelled", "expired"];
+pub const STATUSES: [&str; 6] = [
+    "queued",
+    "open",
+    "waiting",
+    "completed",
+    "cancelled",
+    "expired",
+];
 
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]

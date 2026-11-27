@@ -229,3 +229,33 @@ describe("tool call group summary", () => {
     expect(toolGroupSummary(block.calls)).toMatchObject({ label: "Used 2 tools · 3.0 s", hasDeny: true });
   });
 });
+
+describe("after the turn (FIX-253, part B)", () => {
+  it("folds the idle child's text and tool calls into one block", () => {
+    const r = rows([
+      ev("turn.queued", at(2026, 11, 8, 12, 0), { turn_id: "t1", speaker_label: "Ann", text: "run the suite" }),
+      ev("after_turn.text", at(2026, 11, 8, 12, 1), { turn_id: "t1", message_id: "m1", text: "The run failed; I pushed a fix." }),
+      ev("after_turn.tool", at(2026, 11, 8, 12, 1, 5), { turn_id: "t1", call_id: "c1", name: "Bash", summary: "npm run e2e:full" }),
+      ev("after_turn.tool_end", at(2026, 11, 8, 12, 2), { turn_id: "t1", call_id: "c1", ok: false, summary: "exit 1" }),
+    ]);
+    const g = groups(r);
+    const agent = g.find((x) => x.side === "agent");
+    expect(agent?.blocks.map((b) => b.kind)).toEqual(["after_turn"]);
+    const b = agent!.blocks[0];
+    if (b.kind !== "after_turn") throw new Error("expected an after_turn block");
+    expect(b.turnId).toBe("t1");
+    expect(b.texts).toEqual(["The run failed; I pushed a fix."]);
+    expect(b.calls).toHaveLength(1);
+    expect(b.calls[0]).toMatchObject({ name: "Bash", ok: false, result: "exit 1", decision: "DENY" });
+  });
+
+  it("shares one fold between runs that follow one another, and counts their steps", () => {
+    const r = rows([
+      ev("after_turn.text", at(2026, 11, 8, 12, 1), { turn_id: "t1", message_id: "m1", text: "first run" }),
+      ev("after_turn.text", at(2026, 11, 8, 12, 3), { turn_id: "t1", message_id: "m2", text: "second run" }),
+    ]);
+    const b = groups(r)[0].blocks[0];
+    if (b.kind !== "after_turn") throw new Error("expected an after_turn block");
+    expect(b.texts).toEqual(["first run", "second run"]);
+  });
+});

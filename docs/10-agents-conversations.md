@@ -467,6 +467,15 @@ its last tool call is written as durable `text` events before the `error` event 
   per conversation while it stands (re-reports are deduped), with Stop in the web (`10 §Abort`).
   Stopping records `notice` `{ code: "background_stopped", turn_id, text }`. Other adapters report
   nothing (their child has no such mode, or it is gone).
+- **Worked after the turn (FIX-253, part B).** While the background work lasts, the supervisor
+  watches the idle child (`12 §The idle reader`) and reports what it did as `turn.idle.events`
+  anchored on the finished turn; the API records durable `after_turn.text`
+  `{ turn_id, message_id, text }` and `after_turn.tool`/`after_turn.tool_end`
+  `{ turn_id, call_id, name, summary, ok }` events of that conversation — the child's own text
+  and tool calls, masked like every displayed text, once per message/call, at most 100 entries
+  per report. They are the idle run's only trace: attributed to the agent, anchored on the turn
+  that ended, and folded in the web under **"Worked after the turn"**. Idle platform-tool calls
+  are refused `no_active_turn` (`16 §W5`), so nothing here raises or bypasses an approval.
 - **A promise without a wake (FIX-253, D-490).** When an agent turn ends `done` in a delegated
   task's conversation whose peer task is still open and nothing is set to wake the agent (no armed
   watch on the conversation, no uncompleted schedule anchored to it), the platform records one

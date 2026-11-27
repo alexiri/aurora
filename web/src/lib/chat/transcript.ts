@@ -98,6 +98,8 @@ export const STREAM_EVENT_TYPES = [
   "followup.steer_requested", "followup.steer_failed", "followup.edited", "followup.cancelled", "turn.send_now_failed",
   "approval.pending", "approval.decided", "approval.expired",
   "action_approval.pending", "action_approval.decided", "attachment", "notice", "error", "turn.finished",
+  // (FIX-253, part B) What the idle harness child did after the turn.
+  "after_turn.text", "after_turn.tool", "after_turn.tool_end",
   "event.redacted",
 ] as const;
 

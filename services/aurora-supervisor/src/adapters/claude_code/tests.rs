@@ -502,6 +502,50 @@ async fn background_work_after_the_turn_ends_reaches_nobody() {
     );
 }
 
+/// (FIX-253, D-490) Part B: with the idle reader watching, what the child does after the turn is
+/// recorded, not lost. The supervisor starts the reader while background work remains; the
+/// child's own run becomes events (text, tool calls); a following turn takes the stream back with
+/// nothing lost and nothing duplicated — the stale run never leaks into the new turn.
+#[tokio::test]
+async fn the_idle_reader_records_what_the_child_did_after_the_turn() {
+    let reply = include_str!("fixtures/background_turn.jsonl");
+    let mut mock = Mock::new(Some((INIT_OK, Duration::from_millis(0))), reply);
+    mock.late = include_str!("fixtures/background_after.jsonl")
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let killed = mock.killed.clone();
+    let adapter = ClaudeCodeAdapter::with_launcher(Arc::new(mock));
+    let mut s = adapter.start_session(opts(None)).await.unwrap();
+
+    let _ = collect(s.run_turn(turn("run the e2e suite")).await.unwrap()).await;
+    assert!(!killed.load(Ordering::SeqCst));
+    s.start_idle_reader();
+
+    // The idle child's own run is read while nobody else holds the stream: its text arrives as an
+    // event instead of sitting unread.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let idle = s.take_idle_events();
+    assert!(
+        idle.iter().any(
+            |e| matches!(e, HarnessEvent::TextDelta { delta, .. } if delta.contains("pushed a fix"))
+        ),
+        "{idle:?}"
+    );
+    // Drained: a second drain is empty (no duplication).
+    assert!(s.take_idle_events().is_empty());
+
+    // Hand-over: the next turn gets the stream back promptly and runs clean — the stale run is in
+    // neither the turn's events (already recorded) nor a loss.
+    let events2 = collect(s.run_turn(turn("and now?")).await.unwrap()).await;
+    let flattened = format!("{events2:?}");
+    assert!(
+        !flattened.contains("pushed a fix"),
+        "the recorded idle run leaks into the next turn: {flattened}"
+    );
+    s.release().await.unwrap();
+}
+
 /// (FIX-253, D-490) The same scripted child, but what the supervisor can now do about it: the
 /// `run_in_background` command is tracked while mapping and `background_work()` reports it at
 /// turn end (once — reading consumes the report), and a dead child's background work is gone.

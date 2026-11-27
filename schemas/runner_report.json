@@ -286,6 +286,23 @@
       ],
       "type": "object"
     },
+    "SessionReleased": {
+      "description": "(FIX-253 review) Outcome of a [`SessionRelease`]: `ok = true` means the conversation's harness\nsession is released (its background work with it); `ok = false` means a turn is still running\nand the release waits for it — the request is re-sent after its lease.",
+      "properties": {
+        "conversation_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "conversation_id",
+        "ok"
+      ],
+      "type": "object"
+    },
     "SessionReport": {
       "properties": {
         "conversation_id": {
@@ -524,6 +541,24 @@
     {
       "allOf": [
         {
+          "$ref": "#/$defs/TurnEvents"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "turn.idle.events"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
           "$ref": "#/$defs/TurnRef"
         },
         {
@@ -620,6 +655,24 @@
           "properties": {
             "kind": {
               "const": "session.purged"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
+          "$ref": "#/$defs/SessionReleased"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "session.released"
             }
           },
           "required": [

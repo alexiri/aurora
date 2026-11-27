@@ -954,6 +954,12 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       once sent) and Cancel the task. A later `peer_approval_decided` or
       `peer_task_closed` notice folds the card; the outcome is one line — a
       chip (Approved, Denied, Expired, Cancelled) and the notice's text.
+    - (FIX-253, part B) **Worked after the turn.** What the agent's harness child did on its own
+      after a turn ended (its idle runs, while its background work lasts) folds under the turn
+      as one muted `<details>` row reading **"Worked after the turn"** with the count in words
+      ("Used 1 tool · 1 step"). Opening it shows the child's own text and tool calls; the text
+      and the call summaries were masked when they were recorded. A following turn's rows come
+      after it, never inside it.
     - (FIX-253, D-490(b)) **A waiting delegated task** shows at the origin the
       task was asked in as one muted system line — the `peer_task_waiting`
       notice's text, "<Agent> is waiting for what it is watching to finish."
@@ -1289,6 +1295,7 @@ unified by D-407 (P5-REFINE-1).
 | **Tests** (the page), **Grader** ("Grader key", "Grader model"), **Checked by** | Evals, Judge, Judged, Checked as | questions with expected answers that run against the agent, and the model that grades the open ones | Expert |
 | **Other agents**, "Tasks from other agents" | Peers, Peer tasks | agent links and the tasks agents hand each other | Expert |
 | **Waiting for its wake-up** (a task's status in Other agents) | Waiting for a result, Blocked | a delegated task whose agent registered what will wake it (a watch, a check, an approval; FIX-253, D-490) | Expert |
+| **Worked after the turn** (a fold under a turn) | Activity log, Work log | what the agent's harness child did on its own after the turn ended, while its background work lasted (FIX-253, part B) | Expert |
 | **Apps & access** (the agent's tab, page and menu item) | Access (as a tab name) | the apps, accounts and AI key an agent can use | Use |
 | **Set for you by an Aurora administrator** / **… by your organization's admins** | Limits from above, Set by Administration, Set by your organization | the actor of a limit above, named as WhoCan names it (never a login) | Set up |
 | **Set by the installation** | Set in Helm (as a pill) | a value the operator fixed in the installation; the page's own name is its brief's (P5-REFINE-18) | Expert |

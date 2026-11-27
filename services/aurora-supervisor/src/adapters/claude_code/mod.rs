@@ -54,6 +54,18 @@ const DEFAULT_HOLD: Duration = Duration::from_secs(30);
 /// CLI 2.1.319 emits no init until it has a user message, so waiting the full hold costs every
 /// first turn 30 s; the init that follows the message is still validated in-turn.
 const INIT_GRACE: Duration = Duration::from_secs(2);
+/// (FIX-253, part B) How long the idle reader keeps watching a child after a turn that left
+/// background work: half an hour after the watch began, what the child did by then is what was
+/// recorded — a longer watch is the next turn's business (the supervisor restarts the watch
+/// after every turn that still leaves work).
+const IDLE_WATCH: Duration = Duration::from_secs(30 * 60);
+/// (FIX-253, part B) The idle reader's cadence: how often it re-checks its stop conditions while
+/// no line arrives, and so the worst delay a starting turn can see before the reader yields the
+/// stream (the reader also wakes on the turn's notify, so the usual delay is nil).
+const IDLE_TICK: Duration = Duration::from_millis(100);
+/// (FIX-253, part B) The bound on the events one watch keeps for the next drain. An idle child's
+/// own run is short; the bound only keeps a runaway child from growing the buffer without end.
+const IDLE_BUFFER: usize = 256;
 
 #[derive(Clone)]
 pub struct ClaudeCodeAdapter {
@@ -213,6 +225,13 @@ struct Live {
     steers: stream::Steers,
     /// (FIX-253, D-490) The child's own background commands, as mapped from the turn's tool calls.
     backgrounds: stream::BackgroundSink,
+    /// (FIX-253, part B) The idle reader's events since the last drain.
+    idle_buf: Arc<StdMutex<Vec<HarnessEvent>>>,
+    /// (FIX-253, part B) Wakes the idle reader when a turn starts, so it yields the stream at
+    /// once instead of at the tick.
+    turn_start: Arc<Notify>,
+    /// (FIX-253, part B) Whether the idle reader is watching this child.
+    idle_active: Arc<AtomicBool>,
 }
 
 type KillSlot = Arc<StdMutex<Option<Box<dyn FnOnce() + Send>>>>;
@@ -247,6 +266,73 @@ impl ClaudeSession {
         self.session_ref.lock().ok().and_then(|r| r.clone())
     }
 
+    /// (FIX-253, part B) Watch the idle child: while its background work lasts, read the lines it
+    /// writes after the turn — its own runs' text and tool calls — into the drain buffer. The
+    /// turn's stream and the watch share one receiver behind a mutex, and the watch never holds
+    /// the mutex across a turn: a starting turn takes the lock (it writes the turn's message only
+    /// once it holds it), the reader re-checks the running flag every tick and wakes on the
+    /// turn's notify, so every line is read by exactly one of them and the turn is never blocked
+    /// by more than the tick. The watch ends when the work is gone, the child dies, or
+    /// [`IDLE_WATCH`] runs out.
+    fn start_idle_reader(&mut self) {
+        let Some(live) = &self.live else {
+            return;
+        };
+        if self.running.load(Ordering::SeqCst) || live.dead.load(Ordering::SeqCst) {
+            return;
+        }
+        if live.idle_active.swap(true, Ordering::SeqCst) {
+            return; // already watching
+        }
+        let lines = live.lines.clone();
+        let backgrounds = live.backgrounds.clone();
+        let usage_base = live.usage_base.clone();
+        let steers = live.steers.clone();
+        let buf = live.idle_buf.clone();
+        let turn_start = live.turn_start.clone();
+        let dead = live.dead.clone();
+        let active = live.idle_active.clone();
+        let running = self.running.clone();
+        tokio::spawn(async move {
+            let started = Instant::now();
+            let mut mapper = StreamMapper::with_baseline(usage_base, steers)
+                .with_backgrounds(backgrounds.clone());
+            loop {
+                if running.load(Ordering::SeqCst)
+                    || dead.load(Ordering::SeqCst)
+                    || started.elapsed() >= IDLE_WATCH
+                    || backgrounds.lock().is_ok_and(|b| b.is_empty())
+                {
+                    break;
+                }
+                let mut lines = lines.lock().await;
+                if running.load(Ordering::SeqCst) || dead.load(Ordering::SeqCst) {
+                    break;
+                }
+                let line = tokio::select! {
+                    biased;
+                    () = turn_start.notified() => break,
+                    l = tokio::time::timeout(IDLE_TICK, lines.recv()) => match l {
+                        Ok(Some(l)) => l,
+                        Ok(None) => break, // the child's stream closed
+                        Err(_) => continue, // the tick: re-check the stop conditions
+                    },
+                };
+                // A `result` here is the idle run's own end: it ends nothing of ours — another
+                // run may follow while the background work lasts.
+                let m = mapper.map_line(&line);
+                drop(lines);
+                let mut b = buf.lock().unwrap_or_else(|e| e.into_inner());
+                for e in m.events {
+                    if b.len() < IDLE_BUFFER {
+                        b.push(e);
+                    }
+                }
+            }
+            active.store(false, Ordering::SeqCst);
+        });
+    }
+
     async fn ensure_child(&mut self) -> Result<(), HarnessError> {
         if self
             .live
@@ -266,6 +352,9 @@ impl ClaudeSession {
             usage_base: Arc::default(),
             steers: Arc::default(),
             backgrounds: Arc::default(),
+            idle_buf: Arc::default(),
+            turn_start: Arc::new(Notify::new()),
+            idle_active: Arc::new(AtomicBool::new(false)),
         });
         Ok(())
     }
@@ -423,6 +512,13 @@ impl HarnessSession for ClaudeSession {
                 "a turn is already running",
             ));
         }
+        // (FIX-253, part B) A turn is starting: the idle reader (if any) yields the stream. It
+        // re-checks the flag every tick besides, so even a reader between ticks is never in the
+        // way for more than `IDLE_TICK`, and the turn's message is written only once it holds
+        // the stream: nothing is read twice, nothing is lost.
+        if let Some(live) = &self.live {
+            live.turn_start.notify_waiters();
+        }
         if let Err(e) = self.ensure_child().await {
             self.running.store(false, Ordering::SeqCst);
             return Err(e);
@@ -525,6 +621,28 @@ impl HarnessSession for ClaudeSession {
             l.kill();
         }
         Ok(())
+    }
+
+    /// (FIX-253, part B) Watch the idle child after a turn that left background work. See
+    /// [`ClaudeSession::start_idle_reader`].
+    fn start_idle_reader(&mut self) {
+        ClaudeSession::start_idle_reader(self);
+    }
+
+    /// (FIX-253, part B) What the watched idle child did since the last drain. While a turn runs
+    /// the watch is stopped, so there is nothing new; the supervisor drains between turns.
+    fn take_idle_events(&mut self) -> Vec<HarnessEvent> {
+        let Some(live) = &self.live else {
+            return Vec::new();
+        };
+        if self.running.load(Ordering::SeqCst) {
+            return Vec::new();
+        }
+        live.idle_buf
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+            .collect()
     }
 
     /// (FIX-253, D-490) The live child's own background commands. A dead child's background work

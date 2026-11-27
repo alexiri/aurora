@@ -1411,6 +1411,8 @@ tagged_open! {
         HomeSynced(HomeSynced) = "home.synced",
         TurnStarted(TurnRef) = "turn.started",
         TurnEvents(TurnEvents) = "turn.events",
+        // (FIX-253, part B) `turn.idle.events`: the idle child's work after the anchor turn ended.
+        TurnIdleEvents(TurnEvents) = "turn.idle.events",
         TurnProgress(TurnRef) = "turn.progress",
         TurnResult(TurnResult) = "turn.result",
         SteerResult(SteerResult) = "steer.result",

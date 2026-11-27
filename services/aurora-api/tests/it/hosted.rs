@@ -679,6 +679,82 @@ async fn an_aborted_turns_stop_does_not_release_the_background_activity() {
     );
 }
 
+/// (FIX-253, part B) What the idle child did after the turn (`12 §The idle reader`) becomes the
+/// conversation's durable **after the turn** entries: text and tool calls, masked like every
+/// displayed text, anchored on the finished turn — and a redelivered report duplicates nothing.
+#[tokio::test]
+async fn turn_idle_events_become_after_the_turn_entries() {
+    let r = rig().await;
+    let lv = r.boot("idlewatch").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+    assert_eq!(r.turn_status(&turn).await.0, "done");
+
+    let idle = json!({"kind": "turn.idle.events", "turn_id": turn, "events": [
+        ev(1, "text.delta", json!({"message_id": "m1",
+            "delta": "The e2e run failed; I pushed a fix and started it again."})),
+        ev(2, "tool.started", json!({"call_id": "c1", "name": "Bash",
+            "summary": "Bash: curl -H 'Authorization: aub_secret123' https://x"})),
+        ev(3, "tool.finished", json!({"call_id": "c1", "ok": true, "summary": "exit 0"})),
+        ev(4, "usage", json!({"usage": {"input_tokens": 5}})),
+    ]});
+    r.report(&lv, idle.clone()).await;
+    let evs = r.events(lv.conv).await;
+    let after: Vec<&(String, Value)> = evs
+        .iter()
+        .filter(|(t, _)| t.starts_with("after_turn."))
+        .collect();
+    assert_eq!(
+        after.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
+        ["after_turn.text", "after_turn.tool", "after_turn.tool_end"],
+        "the idle run's text and tool calls, in order; `usage` is not an entry: {after:?}"
+    );
+    assert_eq!(
+        after[0].1["text"],
+        "The e2e run failed; I pushed a fix and started it again."
+    );
+    assert_eq!(
+        after[0].1["turn_id"], turn,
+        "anchored on the turn that ended"
+    );
+    assert_eq!(after[0].1["message_id"], "m1");
+    assert!(
+        !after[1].1["summary"]
+            .as_str()
+            .unwrap()
+            .contains("aub_secret123"),
+        "masked: {}",
+        after[1].1["summary"]
+    );
+    assert_eq!(after[2].1["ok"], true);
+
+    // A redelivered report (the wire replays on a reconnect) records nothing again.
+    r.report(&lv, idle).await;
+    let evs2 = r.events(lv.conv).await;
+    assert_eq!(
+        evs2.iter()
+            .filter(|(t, _)| t.starts_with("after_turn."))
+            .count(),
+        3
+    );
+
+    // Not the reporting sandbox's turn: refused.
+    let st = r
+        .report(
+            &lv,
+            json!({"kind": "turn.idle.events", "turn_id": Uuid::now_v7().to_string(), "events": []}),
+        )
+        .await;
+    assert_eq!(st, "invalid", "an unknown anchor turn is refused");
+}
+
 /// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
 /// `background` turn event: one visible **Background activity** notice (deduped while it keeps
 /// running), and Stop on a finished turn records **Stop requested** and dispatches one
