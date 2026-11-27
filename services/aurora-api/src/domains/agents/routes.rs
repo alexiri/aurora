@@ -334,7 +334,8 @@ async fn list_agents(
     let administer_only = read.is_none();
     // (FIX-251, D-488(a)) The Update available mark, before the rows are consumed: which
     // agents' templates offer a semver-newer version than the agent's stored one.
-    let behind = crate::domains::agent_templates::updates::behind_map(&state.pool, &page.items).await?;
+    let behind =
+        crate::domains::agent_templates::updates::behind_map(&state.pool, &page.items).await?;
     let mut items: Vec<Agent> = page
         .items
         .into_iter()
@@ -407,11 +408,14 @@ async fn with_byo(state: &AppState, row: agents::AgentRow) -> Result<Agent, ApiE
         None
     };
     // (FIX-251, D-488(a)) The Update available mark, the same rule the workspace list applies.
-    let behind = crate::domains::agent_templates::updates::behind_map(&state.pool, std::slice::from_ref(&row))
-        .await?
-        .get(&row.id)
-        .copied()
-        .unwrap_or(false);
+    let behind = crate::domains::agent_templates::updates::behind_map(
+        &state.pool,
+        std::slice::from_ref(&row),
+    )
+    .await?
+    .get(&row.id)
+    .copied()
+    .unwrap_or(false);
     let mut a = Agent::from(row);
     a.byo = byo;
     a.needs_update = behind;

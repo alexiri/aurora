@@ -200,7 +200,9 @@ pub(crate) async fn behind_map(
     // The rows come newest stored first; the semver-newest wins whatever the storage order.
     for (template_id, version) in &strings {
         let key = aurora_registry::manifest::parse_semver(version).unwrap_or_default();
-        let best = newest.entry(template_id.clone()).or_insert(version.as_str());
+        let best = newest
+            .entry(template_id.clone())
+            .or_insert(version.as_str());
         if key > aurora_registry::manifest::parse_semver(best).unwrap_or_default() {
             *best = version.as_str();
         }

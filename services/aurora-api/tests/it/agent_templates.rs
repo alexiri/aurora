@@ -7618,9 +7618,8 @@ async fn the_agents_list_marks_the_ones_behind() {
 
     w.approve("t", "1.0.0").await;
 
-    let (s, v) = w
-        .h
-        .call(
+    let (s, v) =
+        w.h.call(
             &cookie,
             Method::GET,
             &format!("/v1/workspaces/{ws}/agents"),
@@ -7631,7 +7630,9 @@ async fn the_agents_list_marks_the_ones_behind() {
     assert!(needs_update_of(&v, behind), "{v}");
     assert!(!needs_update_of(&v, current), "{v}");
     assert!(!needs_update_of(&v, plain), "{v}");
-    let (s, v) = w.h.call(&cookie, Method::GET, &format!("/v1/agents/{behind}"), None).await;
+    let (s, v) =
+        w.h.call(&cookie, Method::GET, &format!("/v1/agents/{behind}"), None)
+            .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["needs_update"], json!(true), "{v}");
 
@@ -7644,9 +7645,8 @@ async fn the_agents_list_marks_the_ones_behind() {
         .unwrap();
     w.check(sid).await;
     w.approve("t", "1.1.0").await;
-    let (s, v) = w
-        .h
-        .call(
+    let (s, v) =
+        w.h.call(
             &cookie,
             Method::GET,
             &format!("/v1/workspaces/{ws}/agents"),
@@ -7666,9 +7666,8 @@ async fn the_agents_list_marks_the_ones_behind() {
         )
         .await;
     assert_eq!(s, 200, "{v}");
-    let (s, v) = w
-        .h
-        .call(
+    let (s, v) =
+        w.h.call(
             &cookie,
             Method::GET,
             &format!("/v1/workspaces/{ws}/agents"),
