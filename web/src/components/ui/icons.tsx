@@ -66,7 +66,8 @@ export const DownloadIcon = make(<><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></>)
 export const FileIcon = make(<><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></>);
 export const EyeIcon = make(<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></>);
 export const MoreIcon = make(<><path d="M5 12h.01M12 12h.01M19 12h.01"/></>);
-export const CopyIcon = make(<><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></>);
+export const PencilIcon = make(<><path d="M4 20h4L19 9a2.8 2.8 0 00-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></>);
+export const CopyIcon =make(<><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/></>);
 export const ArrowLeftIcon = make(<><path d="M19 12H5M11 6l-6 6 6 6"/></>);
 export const SearchIcon = make(<><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></>);
 export const KeyboardIcon = make(<><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></>);

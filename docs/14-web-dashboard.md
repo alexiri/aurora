@@ -194,7 +194,9 @@ to do its own way. A page uses these; a new page never invents its own. (Mock-up
   "19 Nov, 23:50" (with the year when it is not this year), in the person's locale and time zone
   (`GET /v1/me` `timezone`, else the browser's). `<When>` renders `<time>` with the exact time as its
   title and re-renders every 30 seconds through one timer for the page. Date inputs are `DateField`: the
-  browser locale's order, ISO on the wire.
+  browser locale's order, ISO on the wire. A line that says where something came from counts calendar days with
+  `formatAge` ("today", "yesterday", "2 days ago", "3 weeks ago") and names a day inside a sentence with
+  `formatShortDay` ("25 Nov") (P5-MEMORY-2).
 - **Tables on small screens.** `ResponsiveTable` (or `DataTable stackBelow={900}` with `Td cell="title"`,
   `cell="actions"`, `label=`) is a table from 900 px up and one card per row below it: the title line with
   its actions at the right edge, then "label value" lines. Nothing hides behind an inner scrollbar. One DOM,
@@ -481,9 +483,31 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     "Remove filter <key> <value>".
   - **HighlightedText** [P5-CHAT-4 part B]: renders a plain string and a list of
     `[start, end)` UTF-16 ranges as text with `<mark>` (`accent-soft` fill,
-    `accent-ink` text, 600, radius 3 px). Ranges out of bounds, overlapping or
-    unsorted are dropped, never thrown; the string is never parsed as HTML or
-    Markdown.
+    `accent-ink` text, 600, radius 3 px; `tone="solid"` is an `accent` fill with
+    `on-accent` text, for rows that are tinted when selected). Ranges out of bounds,
+    overlapping or unsorted are dropped, never thrown; the string is never parsed as
+    HTML or Markdown.
+  - **MarkdownEditor** (`ui/markdown-editor.tsx`) [P5-MEMORY-2; the skill editor
+    uses it too]: a labelled box with the tabs **Write** and **Preview** (a tablist
+    with arrow keys), the hint "Markdown works: # headings, - lists, - [ ]
+    checklists, tables" beside them, a monospace textarea at least 25 rem tall that
+    grows with its text (no inner scrollbar), and `Markdown` for the preview
+    ("Nothing to preview yet." when empty). The box's border shows focus; the error
+    is linked to the textarea.
+  - **ListDetail**, **SubScreenHeader**, **HeaderActions** (`ui/list-detail.tsx`)
+    [P5-MEMORY-2]: a list with the chosen item beside it (18 rem and the rest).
+    Below 1100 px (`NARROW_SCREEN`: the rail and a settings sub-nav leave no room
+    for two columns) they are two screens: the list, or the item under a
+    `SubScreenHeader` ("‹ <list>" and the item's actions), and the surrounding
+    settings heading and sub-nav are hidden on the item's screen. `HeaderActions`
+    puts a page's main action beside the settings heading (inline without one).
+  - **CopyChip** (`ui/copy-value.tsx`) [P5-MEMORY-2]: a short identifier as an
+    inline monospace chip with a copy button named "Copy <label>".
+  - **Markdown marks** [P5-MEMORY-2]: `Markdown marks={terms}` wraps each
+    occurrence in `<mark data-match>` after sanitizing and sets off the first
+    matching line (`md-match-line`, preferring a line over a heading). `reading`
+    inside an `md-reading` wrapper is the long-reading size with drawn checklist
+    boxes and ticked items struck through.
   - **Icons** (`ui/icons.tsx`, same 24 grid, 1.75 stroke): `ReplyIcon`,
     `ArrowDownIcon` [P5-CHAT-2]; `BoldIcon`, `ItalicIcon`, `StrikethroughIcon`,
     `HeadingIcon`, `CodeIcon`, `CodeBlockIcon`, `QuoteIcon`, `ListIcon`,
@@ -1923,8 +1947,8 @@ every other topic is owners/admins and is not listed for a member.)
     channel. A `409 bot_not_in_space` shows its hint; `link_required` links to `/account/channels`.
     The empty state is "Attach this agent to Mattermost" with the integration picker, or, when the
     org has none, who can create one (a link for org admins).
-  - **Memory** — list, editor with revisions, restore, redact, search; banner
-    "Memories in this workspace are written in <Language>".
+  - **Memory** — list, reading view, editor, revisions with restore and redact, search (§Memory below,
+    P5-MEMORY-2).
   - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
     (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450(f)) **Add from library…** (next to New skill, shown
     when the organization **or the instance** has an active library): a picker of libraries in two
@@ -2812,15 +2836,47 @@ opens with "Advanced is for admins and power users. Most people never need it." 
 model · Everyday model · Fastest model**, each defaulting to "Same as the default"; the harness is "Agent program".
 One save bar; "Saved" for two seconds.
 
-**Memory.** One box: "What should <Agent> remember?", an optional Title, Save, Cancel. The key is made by Aurora
-(`lib/memory-key.ts`): from the title, else the first six words; kebab-case ASCII, at most 64 characters, `note`
-when nothing is left, unique by a numeric suffix, one retry on a 409. Lists show the title (else the first line,
-60 characters) and a preview, never the key; the key is in Technical details at Expert (`memory.key`).
-(P6-MEMLOCK, C-1150) A locked memory shows the lock icon and a **Locked** badge after its title. The editor has a
-switch **Locked** above Save with the help "<Agent> can read this memory but can't change or delete it. You can still
-edit it."; it saves on its own (`setMemoryLocked`), independently of Save, with the toast "Locked" or "Unlocked", and
-under it "Locked by <name> on <date>" ("Locked on <date>" without the locker). The new-memory form has a checkbox
-**Lock it**, unticked by default, with the same help. A lock is not a revision: the history is unchanged.
+**Memory** (P5-MEMORY-2, D-496, D-497; mockups `docs/design/skills-memory/after/mem-1..3, mem-6`;
+`components/memory`). A list and, beside it, the chosen memory (`ListDetail`); **New memory** sits at the right of the
+page heading ("New" on a phone). There is no language banner (the language is set in the workspace's Settings ›
+General) and no "Select a memory" column: the first memory of the sorted list is open on arrival. With no memory at all
+the page is one empty state.
+- **List:** the search field; the chips **All n · By you n · By <Agent> n · Locked n** ("By you" is what the signed-in
+  person added, also through their own API key); **Sorted by** Recently changed (default) or Name. A row is the title
+  (else the first line of the text, 60 characters), the description or *No description*, the source line, a lock icon
+  when locked and a dot while it has unsaved changes. Source lines (from `added_by` and `created_at`): "Added by you ·
+  2 days ago", "Added by <Person> · …", "Added through <key name> · …" (another person's API key), "Learned by <Agent>
+  in “<conversation>” · today", "From the template <name> · …", "Added · …" (unknown). A conversation without a
+  reference or a title is "in a conversation"; a conversation is never linked or guessed. How long ago is `formatAge`.
+- **Reading view:** title, description, the **Key** chip (`CopyChip`); **Edit**, **Lock** / **Unlock** (toast) and
+  **…** (History, Delete with a confirmation); the text rendered with `Markdown` (checklists as ticked boxes); the meta
+  line "Added by <name> on <date> · Changed once|twice|n times · <Agent> last used it in “<conversation>” <when>" or
+  "<Agent> hasn't used it yet", then "Locked by <name> on <date>" when locked. The key is nowhere in the list, and
+  there is no Technical details fold.
+- **Edit and new** are one form in the same column: **Title**; on an existing memory the Key chip with "<Agent> finds
+  the memory by this name. It can't be changed."; on a new one a **Key** field filled from the title (else the first
+  words) with "Made from the title" until the person edits it, checked as the server checks it, and "<Agent> finds the
+  memory by this name. Change it now if you like: lowercase words joined by dashes. It can't be changed after saving."
+  A made key that exists moves to the next suffix once; a typed one says "A memory with this key already exists" on
+  the field. **Description** (placeholder "One line: when should <Agent> use this?", hint "<Agent> sees the title and
+  this line first and opens the memory only when it fits."); **What should <Agent> remember?** in `MarkdownEditor`;
+  "476 of 100,000 characters" with a thin meter; the **Locked** switch ("<Agent> can read this memory but can't change
+  or delete it. You can still edit it."), which on an existing memory saves on its own (`setMemoryLocked`, C-1150; a
+  lock is not a revision) with "Locked by …" under it, and on a new one goes with the create; the `SaveBar` ("Unsaved
+  changes", for a new memory "New memory · not saved yet"; an unchanged existing memory has **Done** instead). Leaving
+  with unsaved changes (another memory, New memory, the way back, the settings pages, the browser) asks **Leave without
+  saving?**, as the Files editor does.
+- **Search** (debounced 250 ms): "1 memory matches “q”" / "n memories match “q”" / "No memories match “q”" with
+  **Clear**; rows show the server's plain-text snippet and title marked from `highlights` and `title_highlights`
+  (`HighlightedText`, never HTML). The first result is open with "Match 1 of n" (and "in the text, from the top:
+  “<first line> …”"), its words marked and the first matching line set off and scrolled into view. Clear brings back
+  the list and the memory that was open. With no result no memory is shown.
+- **Deep link** (C-1177): `?tab=memory&memory=<key>` opens that memory (`&history=1` its history); choosing a row
+  writes it with `replace`; leaving the page drops both.
+- **Narrow screens** (below 1100 px, M-9): the list is one screen; a row opens the memory on its own screen: "‹ Memory",
+  **Edit** and **…** (Delete) at the top, **Lock** and **History** at the bottom; the settings heading and sub-nav step
+  aside there. Edit opens the form full width.
+- **Emergency reader:** the list and the reading view only: no search, no actions, no history, no form.
 
 **Skills.** Name, "Use it when…" (the API's one-line `description`), Instructions (the `body`), "On for <Agent>",
 Save and Delete. The folder name is made by Aurora (`lib/skill-name.ts`: kebab-case, at most 64 characters, `aurora-`

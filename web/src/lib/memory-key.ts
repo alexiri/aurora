@@ -3,7 +3,7 @@
  * ASCII slug of at most 64 characters (`MEMORY_KEY_RE`), taken from the title when there is one, else from the first
  * words of the text, and made unique against the agent's keys by a numeric suffix ("bobs-tea", "bobs-tea-2").
  */
-import { MEMORY_KEY_MAX } from "@/lib/api/memory";
+import { MEMORY_KEY_MAX, MEMORY_KEY_RE } from "@/lib/api/memory";
 
 /** How many words of the text name a memory that has no title. */
 const FIRST_WORDS = 6;
@@ -69,15 +69,20 @@ export function memoryName(m: { title?: string | null; content?: string | null; 
   return cut((m.index_line ?? "").trim() || "Untitled", 60);
 }
 
-/** A one-line preview for a list: the description, else the text after the first line when a title leads, else the text. */
-export function memoryPreview(m: { title?: string | null; description?: string | null; content?: string | null }): string {
-  const d = m.description?.trim();
-  if (d) return cut(d.split("\n")[0]!, 90);
-  const lines = (m.content ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
-  const line = m.title?.trim() ? lines[0] : (lines[1] ?? "");
-  return cut((line ?? "").replace(/^#+\s*/, ""), 90);
+/** Keys the server keeps for itself. */
+const RESERVED_KEYS = ["index", "search"];
+
+/**
+ * What is wrong with a key the person typed, else null: the server's rule (lowercase letters and digits joined by single
+ * dashes, at most 64 characters, not a reserved word), said before the request. The server stays authoritative.
+ */
+export function keyProblem(key: string): string | null {
+  if (!key) return "Give the memory a key.";
+  if (key.length > MEMORY_KEY_MAX || !MEMORY_KEY_RE.test(key)) return `Use lowercase words joined by dashes, at most ${MEMORY_KEY_MAX} characters.`;
+  if (RESERVED_KEYS.includes(key)) return `“${key}” is reserved. Choose another key.`;
+  return null;
 }
 
-function cut(s: string, max: number): string {
+export function cut(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1).trimEnd()}…`;
 }

@@ -160,5 +160,89 @@ Sonnet `nextjs-developer`: a multi-part page rebuild with a new shared primitive
 
 ## Completion report
 
-Commits; screenshots at 1256 px (dark, light) and 390 px beside the mockup paths; every remaining difference with its
-reason; test files changed and why; commands and results; production specs to run nightly.
+Built 2026-11-27 on `alexiri/p5-skm-web2` over `10d24f64` (one commit, "P5-MEMORY-2: …"). Not pushed. Web only: no
+API change, response shapes from `schema.d.ts`, no migration.
+
+### What changed
+
+- `components/memory`: `memory-tab.tsx` (page state, search, deep link, leave gate), new `memory-list.tsx`,
+  `memory-view.tsx`, `memory-editor.tsx`, `memory-words.ts` (source and meta lines), `revision-history.tsx` (moved
+  unchanged; still exported from `memory-tab` for P5-MEMORY-3 to replace); `size-meter.tsx` gains `quiet`.
+- Shared set: new `ui/markdown-editor.tsx` (**for P5-SKILLS-3**), `ui/list-detail.tsx`, `ui/markdown-marks.ts`;
+  `Markdown` gains `marks` and `reading`; `CopyChip`; `HighlightedText tone="solid"`; `PencilIcon`;
+  `formatAge`/`formatShortDay`; reading and match styles in `globals.css`.
+- Outside the brief's file list, small: `agents/settings-shell.tsx` (a slot for **New memory** beside the heading, and
+  hiding the heading and sub-nav on a phone sub-screen), `agents/agent-page.tsx` (no language prop; leaving Memory
+  drops `memory`/`history`).
+- The banner and the `memory.key` altitude row are gone. Settings › General already uses `memoryLanguageName()`.
+
+### Readings of the brief to check
+
+1. **"By you" and "Added by you"** include a memory added through the signed-in person's **own** API key (the review's
+   seed adds everything that way and mem-1 says "Added by you · 2 days ago", "By you 11"; P5-MEMORY-1's data table says
+   the same). "Added through <key name>" is another person's key.
+2. Not drawn, worded here: "Added · …" (unknown), "Imported · …", "Added through an API key" (no key name, no person),
+   "No memories match “q”", "No memories here." (an empty chip), "Nothing to preview yet.".
+3. **Match i of n** counts the results ("1 memory matches" → "Match 1 of 1"), not the occurrences in the text.
+4. The Locked switch of an existing memory still saves on its own (C-1150, unchanged); Save sends title, description and
+   text only.
+5. "Leaving asks as other settings pages do": it uses the Files editor's **Leave without saving?** gate (row, New, back,
+   settings sub-nav, section tabs) plus the browser's own warning. As with Files, a link outside the agent page (the
+   rail) does not ask.
+
+### Comparison with the mockups
+
+Looked at `after/mem-1`, `-2`, `-3`, `-6` (dark and light) before coding and again against screenshots of the built page
+at 1256, 1280 and 390 px in both themes (mocked data shaped like `seed.py`, not a seeded cluster). The screenshots are
+not committed; `MEMORY_SHOTS=<dir> scripts/dev/test.sh <lane> web playwright e2e/memory.spec.ts --project=mocked`
+writes them again (`mem-1-1256-{dark,light}` ↔ `after/mem-1{,-light}.png`, `mem-2-edit-…` and `mem-2-new-…` ↔ `mem-2`,
+`mem-3-…` ↔ `mem-3`, `mem-6-{list,memory,edit}-390-…` ↔ `mem-6`).
+
+| Difference kept | Reason |
+|---|---|
+| Rail, agent header ("Needs you"), Tests / Other agents in the sub-nav, "Showing more controls" | The real shell (README §How to read, 2; D-496(c)). On a phone the agent header stays above both screens, and the list screen keeps "‹ Chat" and the sub-nav |
+| **New memory** and **Save** are ink, not teal | The shared primary `Button` (`14` §Visual design) |
+| The save bar floats at the bottom of the window, with no amber dot; it can lie over the page in a full-page screenshot | The shared `SaveBar` (scope 4; README 5). Room is left under the form so the last control can be scrolled clear of it |
+| An unchanged memory in edit mode has **Done** | A state the mockup does not draw: the shared bar is hidden until a change, so something must leave the form |
+| Chips are larger and wrap to two rows at 390 px (mockup: one clipped row) | The shared `ChoiceChips`; `14`: nothing hides in an inner scrollbar |
+| The key chip shows in the reading view, at 1256 and 390 px | Scope 3 |
+| The title in the reading view wraps to three lines at 1256 px (mockup: two) | The real rail and sub-nav leave the column about 400 px (D-496(c)) |
+| Search: the matched word is also marked in result titles | Scope 7 (`title_highlights`) |
+| Search: the heading above the first matching line stays visible (and is marked); the mockup's view starts at the line | The whole memory is shown and the page scrolls to the line only when it is out of view; no inner scrollbar. A matching text line is preferred over a heading for the highlighted line |
+| Sub-screens below **1100 px**, not only below `md` (768) | Between 768 and 1099 px the rail and sub-nav leave 230–560 px: two columns do not fit, and stacking them is M-9 again |
+| "Nov 25" in the screenshots | The browser's locale decides ("25 Nov" in en-GB; `14` §Dates) |
+| A locked memory's meta line ends "Locked by <name> on <date>"; on a phone and for an emergency reader a **Locked** badge sits by the key | P6-MEMLOCK's information, otherwise lost where there is no Unlock button; the mockups draw no locked memory open |
+| New-memory form: the hint is under the tabs | Same column width as editing; mem-2's lower form is drawn wider |
+
+### Tests
+
+- New: `tests/memory-page.test.tsx` (38), `tests/markdown-editor.test.tsx` (4), `e2e/memory.spec.ts` (14: 1256 and
+  1280 px list/read/edit/save, search "rotation", new memory; 390 px two screens; both themes; axe serious+critical and
+  no sideways scroll), `e2e/support/memory.ts` (the shared memory routes).
+- Removed with its feature: `tests/memory-one-box.test.tsx` (the one-box editor, "Lock it", the expert key,
+  `memoryPreview`). Its still-true cases (key rules, 409 retry, size limit, lock switch and "Locked by", `locked` only
+  when asked) are in `memory-page.test.tsx`.
+- Changed: `e2e/agent-tabs.spec.ts` "locked memories" (lock icon in the list, **Lock** in the reading view, then the
+  switch in **Edit**; uses the shared routes).
+- Read, no change needed: `agent-empty-states`, `memory-skills`, `agent-page-header`, `dashboard-links`; no production
+  or real-stack spec visits the Memory page, so **no production spec to run nightly** for this brief.
+
+### Commands and results
+
+- Fail first: the two new vitest files on `10d24f64`'s code (a temporary detached worktree): **35 failed, 3 passed**
+  (38 in `memory-page`; the three are key rules that did not change), and `markdown-editor.test.tsx` could not import.
+  The new Playwright spec was not run on the old code.
+- `test.sh web vitest`, every file that renders or reads a changed component: **39 files, 1150/1150**; after the last
+  `Markdown` change (conformance cases gfm279/280 caught a first version that changed every task list), 17 files
+  **908/908**. The whole suite was not run (the dispatch's minimal gate; CI runs it).
+- `test.sh web playwright e2e/memory.spec.ts --project=mocked` **14/14** on the final tree;
+  `e2e/agent-tabs.spec.ts` **13/13** (run before that last change, which only touches the reading view).
+- `pnpm typecheck` and eslint on the touched files: clean. `cargo fmt --all --check` 0, `scripts/guards/run-all.sh`
+  passed, `extract-schema.py --check` up to date. `pnpm build` not run (minimal gate).
+
+### Security notes
+
+No SEC row. A conversation is named only from the API's `ConversationRef` and its title; null or untitled reads "in a
+conversation"; nothing on the page links to a conversation (tested). Snippets and search marks are text: `HighlightedText`
+for rows, and a Markdown step that only splits text nodes after sanitizing; no HTML is built from server strings. The
+emergency reader's view calls neither search nor history.
