@@ -644,7 +644,9 @@ async fn send_now(
     request_body = ReminderRequest,
     responses((status = 200, body = ReminderSet), (status = 403, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope),
-        (status = 409, description = "reminder_not_offered", body = ErrorEnvelope)),
+        (status = 409, description = "reminder_not_offered, conversation_archived, schedule_limit_reached, task_wakeup_cap",
+            body = ErrorEnvelope),
+        (status = 423, description = "frozen", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn remind_conversation(
     c: Caller,

@@ -13826,7 +13826,7 @@ export interface components {
                 origin_conversation_id?: string | null;
                 report?: string | null;
                 requester?: components["schemas"]["PeerTaskRequester"] | null;
-                /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+                /** @description `queued` | `open` | `waiting` | `completed` | `cancelled` | `expired` */
                 status: string;
                 /** Format: uuid */
                 task_conversation_id: string;
@@ -14637,7 +14637,7 @@ export interface components {
             origin_conversation_id?: string | null;
             report?: string | null;
             requester?: components["schemas"]["PeerTaskRequester"] | null;
-            /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+            /** @description `queued` | `open` | `waiting` | `completed` | `cancelled` | `expired` */
             status: string;
             /** Format: uuid */
             task_conversation_id: string;
@@ -29234,7 +29234,7 @@ export interface operations {
     listPeerTasks: {
         parameters: {
             query?: {
-                /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+                /** @description `queued` | `open` | `waiting` | `completed` | `cancelled` | `expired` */
                 status?: string;
                 limit?: number;
                 cursor?: string;
@@ -34861,8 +34861,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description reminder_not_offered */
+            /** @description reminder_not_offered, conversation_archived, schedule_limit_reached, task_wakeup_cap */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description frozen */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -44122,6 +44131,15 @@ export interface operations {
             };
             /** @description schedule_completed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description schedule_has_end, wakeup_after_end */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

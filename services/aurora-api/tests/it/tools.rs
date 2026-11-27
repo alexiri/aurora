@@ -586,6 +586,51 @@ async fn only_a_peer_turn_of_an_open_task_schedules_for_the_requester() {
     assert_eq!(n, 0);
 }
 
+/// (FIX-264) A wake-up later than its delegated task's end would never run: `schedule_create`
+/// refuses it with a sentence the agent understands, and creates nothing.
+#[tokio::test]
+async fn a_wake_up_after_the_tasks_end_is_refused() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req5@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+    let (conv, turn) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    sqlx::query(
+        "UPDATE peer_tasks SET expires_at = now() + interval '1 day'
+          WHERE task_conversation_id = $1",
+    )
+    .bind(conv)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let run_at = (chrono::Utc::now() + chrono::Duration::days(3))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    let (s, v) = r
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "late", "prompt": "p", "run_at": run_at, "timezone": "UTC"}),
+        ))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    let text = v.to_string();
+    assert!(
+        text.contains("The task ends at ")
+            && text.contains("a wake-up after that would never run."),
+        "{v}"
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "nothing was created");
+}
+
 /// (FIX-253 review) From a delegated task's peer turn only a one-time wake-up (`run_at`) is
 /// possible: a recurring schedule would outlive the task, running as the requester. And a task
 /// conversation is capped at 3 open one-time schedules (finished ones don't count).
@@ -988,7 +1033,7 @@ async fn peer_task_conv(
     sqlx::query(
         "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
             origin_conversation_id, task_conversation_id, status, message_budget, expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,5, now() + interval '1 hour')",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,5, now() + interval '400 days')",
     )
     .bind(task)
     .bind(link)

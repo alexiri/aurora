@@ -964,3 +964,74 @@ async fn retention_removes_done_schedules_after_thirty_days() {
         0
     );
 }
+
+async fn end_at(r: &Rig, id: &str, offset: Duration) {
+    sqlx::query("UPDATE schedules SET ends_at = $2 WHERE id = $1::uuid")
+        .bind(id)
+        .bind(Utc::now() + offset)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+}
+
+/// (FIX-264) `ends_at` is a hard end for a repeating schedule too: past it, a due `cron` never
+/// fires and the schedule is disabled.
+#[tokio::test]
+async fn a_repeating_schedule_past_its_end_never_fires_and_is_disabled() {
+    let r = rig().await;
+    let agent = r.agent("ends-cron", true).await;
+    let (s, v) = create(
+        &r,
+        agent,
+        json!({"name": "n", "prompt": "p", "cron": "0 9 * * *"}),
+    )
+    .await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    end_at(&r, &id, Duration::minutes(-1)).await;
+    due(&r, &id).await;
+    r.work().await;
+    assert_eq!(
+        runs(&r, &id).await,
+        vec![("skipped_task_closed".to_owned(), None)]
+    );
+    let (_, armed, enabled, why, _) = state(&r, &id).await;
+    assert_eq!(
+        (armed, enabled, why.as_deref()),
+        (false, false, Some("task_ended"))
+    );
+}
+
+/// (FIX-264) A schedule with an end cannot be made repeating (422 at `/cron`), nor moved to a
+/// time after the end.
+#[tokio::test]
+async fn a_schedule_with_an_end_takes_no_cron_and_no_later_time() {
+    let r = rig().await;
+    let agent = r.agent("ends-patch", true).await;
+    let local = format!("{}T09:00", tomorrow(ZURICH));
+    let (s, v) = create(
+        &r,
+        agent,
+        json!({"name": "n", "prompt": "p", "run_at": local, "timezone": "Europe/Zurich"}),
+    )
+    .await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    end_at(&r, &id, Duration::days(3)).await;
+
+    let (s, v) = patch(&r, &id, json!({"cron": "0 9 * * *"})).await;
+    assert_eq!((s, field(&v).0.as_str()), (422, "/cron"), "{v}");
+    let later = (Utc::now() + Duration::days(5))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    let (s, v) = patch(&r, &id, json!({"run_at": later})).await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "wakeup_after_end", "{v}");
+    let (_, v) = r
+        .user_call(Method::GET, &format!("/v1/schedules/{id}"), None)
+        .await;
+    assert_eq!(
+        (v["cron"].is_null(), v["run_at"].as_str()),
+        (true, Some(local.as_str()))
+    );
+}

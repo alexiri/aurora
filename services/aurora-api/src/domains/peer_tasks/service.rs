@@ -1,8 +1,22 @@
 //! Peer-task lifecycle: send (policy gate), open/queue, mid-task messages, close with exactly
 //! one report, queue promotion and the 60 s expiry sweep. Everything runs in the caller's
-//! transaction. Lock order: the task conversation (where the caller works in it: a turn end, a
-//! wake, a re-check), then link, then task, then the other conversations (the origin's notice, a
-//! promoted task's new one).
+//! transaction.
+//!
+//! **Lock order, for every path: task conversation → link → task → other conversations** (the
+//! origin's notice and follow-up turn, a promoted task's new conversation). A path takes what it
+//! needs in this order and never goes back to an earlier lock it does not already hold.
+//!
+//! - Conversation, link, task ([`lock_for_task_conversation`]): a wake, the re-check of a
+//!   waiting task, the requester's cancel route; a message sent from the task conversation
+//!   (`send_message` locks the conversation before the task's link). The delivery of an approval
+//!   decision locks the conversation first and wakes through the same helper.
+//! - A turn end holds the conversation already. A close takes link, then task. Going `waiting`
+//!   updates the task row alone and takes no link after it.
+//! - Link, then task, without the task conversation ([`close_with_promotion`]), for paths that
+//!   never lock or write it: `complete_task`, `cancel_peer_task`, the channel card's cancel,
+//!   unlinking and the expiry sweep. They must not take it after the link: that is the reverse
+//!   of a turn end.
+//! - Opening a task (`open_task`) holds the link and creates the task and its conversation.
 
 use crate::domains::action_approvals::service as approvals;
 use crate::domains::conversations::service::{self as conv, NewMessage};
@@ -145,6 +159,20 @@ pub async fn send_message(
     } else {
         "ask"
     };
+    let speaker_person = r
+        .turn
+        .filter(|t| t.speaker_kind == "person")
+        .and_then(|t| t.speaker_user_id);
+    // (FIX-264) A message inside a task, sent from its conversation to the requesting agent:
+    // that conversation is locked before the task's link. Only then: for any other pair, a task
+    // opened from this conversation closes link first and then writes its notice here.
+    if speaker_person.is_none()
+        && repo::by_task_conversation(&mut *conn, r.conversation.id)
+            .await?
+            .is_some_and(|t| t.to_agent_id == r.sender.id && t.from_agent_id == target.id)
+    {
+        convs::lock(&mut *conn, r.conversation.id).await?;
+    }
     let (link, _) = links::get_or_create(&mut *conn, r.sender.id, target.id, initial).await?;
     // Per-pair serialization point.
     let link = links::get_for_update(&mut *conn, link.id)
@@ -155,10 +183,6 @@ pub async fn send_message(
     if mine == "blocked" || theirs == "blocked" {
         return Ok(refuse("Messaging between these agents is blocked."));
     }
-    let speaker_person = r
-        .turn
-        .filter(|t| t.speaker_kind == "person")
-        .and_then(|t| t.speaker_user_id);
     let Some(requester) = speaker_person else {
         // Not a person: only a message inside an open task is allowed (07).
         if mine != "allow" || theirs != "allow" {
@@ -456,7 +480,8 @@ async fn message_in_task(
              you. Inside an open peer task you may reply to the requesting agent.",
         ));
     };
-    let Some(task) = repo::get_for_update(&mut *conn, found.id).await? else {
+    // The task conversation and the link are held since `send_message`; this adds the task.
+    let Some(task) = lock_for_task_conversation(conn, &found).await? else {
         return Ok(refuse("The task no longer exists."));
     };
     if task.status != "open" {
@@ -769,17 +794,22 @@ pub enum RequesterCancel {
     NotYours,
 }
 
-/// (FIX-252) The person who asked cancels their task from the origin card or the web route:
-/// only the stored `requester_user_id`, and only while the task is open.
+/// (FIX-252) The person who asked cancels their task from the web route: only the stored
+/// `requester_user_id`, and only while the task is open.
 pub async fn cancel_by_requester(
     conn: &mut PgConnection,
     user: Uuid,
     id: Uuid,
 ) -> Result<RequesterCancel, ApiError> {
-    let Some(task) = repo::get_for_update(&mut *conn, id)
+    // (FIX-264) Read without a lock for the requester check (the stored requester never changes
+    // to another person), then lock in the module's order.
+    let Some(found) = repo::get(&mut *conn, id)
         .await?
         .filter(|t| t.requester_user_id == Some(user))
     else {
+        return Ok(RequesterCancel::NotYours);
+    };
+    let Some(task) = lock_for_task_conversation(conn, &found).await? else {
         return Ok(RequesterCancel::NotYours);
     };
     match close_with_promotion(conn, &task, &Close::Cancelled(None)).await? {

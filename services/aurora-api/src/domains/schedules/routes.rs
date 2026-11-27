@@ -260,7 +260,8 @@ async fn get_schedule(
     request_body = UpdateScheduleRequest,
     responses((status = 200, body = Schedule), (status = 400, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope),
-        (status = 409, description = "schedule_completed", body = ErrorEnvelope)),
+        (status = 409, description = "schedule_completed", body = ErrorEnvelope),
+        (status = 422, description = "schedule_has_end, wakeup_after_end", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn update_schedule(
     c: Caller,

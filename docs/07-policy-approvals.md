@@ -990,6 +990,8 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   The requester also hears through their own channels — the same e-mail and
   push a decider gets, after the same delay, and skipped when a live surface
   already shows the card (the origin conversation watched, or the card posted).
+  (FIX-264) The e-mail goes only to a requester who can still use the sending
+  agent's workspace.
   A task with a pending approval is not closed by the end of the receiving
   turn; it keeps the task out of cancellation until the approval is decided,
   expires or the requester cancels the task.
