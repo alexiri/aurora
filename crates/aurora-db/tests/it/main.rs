@@ -20,6 +20,7 @@ mod schema_6_11;
 mod schema_matches_spec;
 mod skill_library_git_url_migration;
 mod skill_library_instance_migration;
+mod skill_library_source_migration;
 mod skill_titles_uses_migration;
 mod usage_ledger_migration;
 mod usage_per_model_migration;

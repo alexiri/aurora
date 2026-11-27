@@ -613,9 +613,6 @@ fn other_library_folder(path: &str, root: &[TreeEntry]) -> bool {
         let Some(skill_dir) = e.path.strip_suffix("/SKILL.md") else {
             continue;
         };
-        if aurora_core::meta_paths::has_github_segment(skill_dir) {
-            continue;
-        }
         let folder = skill_dir.rsplit_once('/').map_or("", |(f, _)| f);
         *skills.entry(folder).or_default() += 1;
     }

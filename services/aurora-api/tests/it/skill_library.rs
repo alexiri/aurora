@@ -2857,8 +2857,8 @@ async fn parallel_cold_browses_share_one_read() {
     assert_eq!(w.git.count("/info/refs"), 1, "one discovery");
     assert_eq!(
         w.git.fetches(),
-        2,
-        "one tree fetch and one blob fetch for all the SKILL.md files"
+        3,
+        "one tree fetch, one blob fetch for all the SKILL.md files and one for the other files"
     );
 }
 

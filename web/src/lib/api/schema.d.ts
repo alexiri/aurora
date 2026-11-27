@@ -11954,6 +11954,7 @@ export interface components {
             name: string;
             path: string;
             reason?: string | null;
+            reason_code?: components["schemas"]["SkillInvalidReason"] | null;
             /** @description Characters of body and files (binary as base64 length): the budget unit. */
             size: number;
             valid: boolean;
@@ -11969,11 +11970,13 @@ export interface components {
             path: string;
             /** @description Why an invalid skill cannot be added (sanitized fixed texts). */
             reason?: string | null;
+            reason_code?: components["schemas"]["SkillInvalidReason"] | null;
             /**
              * Format: int64
-             * @description Characters of body and files (an estimate before the files are read).
+             * @description Characters of body and files (binary as base64 length), what an add counts; null only
+             *     for a skill that could not be judged (`unknown_size`).
              */
-            size: number;
+            size: number | null;
             valid: boolean;
         };
         /** @description Where a library skill is already added (the same `{ id, tier }` shape as the skills' `TierRef`). */
@@ -12002,6 +12005,7 @@ export interface components {
             over_budget: boolean;
             /** @description Why an `invalid` proposal cannot be applied (repository text: untrusted). */
             reason?: string | null;
+            reason_code?: components["schemas"]["SkillInvalidReason"] | null;
         };
         LimitPreview: {
             lowered: components["schemas"]["LoweredAgentView"][];
@@ -14359,6 +14363,11 @@ export interface components {
             items: {
                 /** Format: date-time */
                 created_at?: string | null;
+                /**
+                 * @description The name of the repository's default branch, for a library that sets no branch (null with
+                 *     a `ref`, before the first read that learned it, and for members).
+                 */
+                default_branch?: string | null;
                 /** Format: uuid */
                 id: string;
                 label: string;
@@ -17067,6 +17076,12 @@ export interface components {
             /** @description Characters for text, base64 length for binary content. */
             size: number;
         };
+        /**
+         * @description Why a skill of a repository cannot be added, as a stable code (the free-text `reason` beside
+         *     it is for logs and older clients).
+         * @enum {string}
+         */
+        SkillInvalidReason: "too_large" | "body_too_large" | "file_too_large" | "too_many_files" | "unsupported_path" | "unsupported_entry" | "skill_md" | "bad_name" | "unknown_size";
         SkillLastUse: {
             /** Format: date-time */
             at: string;
@@ -17080,6 +17095,11 @@ export interface components {
         SkillLibrary: {
             /** Format: date-time */
             created_at?: string | null;
+            /**
+             * @description The name of the repository's default branch, for a library that sets no branch (null with
+             *     a `ref`, before the first read that learned it, and for members).
+             */
+            default_branch?: string | null;
             /** Format: uuid */
             id: string;
             label: string;

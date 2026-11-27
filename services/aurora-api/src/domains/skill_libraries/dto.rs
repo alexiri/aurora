@@ -240,6 +240,7 @@ pub struct LibrarySkillItem {
     pub reason_code: Option<SkillInvalidReason>,
     /// Characters of body and files (binary as base64 length), what an add counts; null only
     /// for a skill that could not be judged (`unknown_size`).
+    #[schema(required)]
     pub size: Option<u64>,
     pub files: usize,
     /// Where this library's version of the skill is already added.

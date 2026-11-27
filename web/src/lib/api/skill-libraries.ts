@@ -8,30 +8,18 @@ import { unwrap } from "./unwrap";
 
 type Schemas = components["schemas"];
 
-// FIX-278's contract, kept here until `schema.d.ts` has it: regenerate the schema and drop these local additions.
 /** Why a library skill is invalid, or couldn't be judged; the words are in `lib/labels.ts`. */
-export type SkillInvalidReason =
-  | "too_large"
-  | "body_too_large"
-  | "file_too_large"
-  | "too_many_files"
-  | "unsupported_path"
-  | "unsupported_entry"
-  | "skill_md"
-  | "bad_name"
-  | "unknown_size";
-type WithReasonCode = { reason_code?: SkillInvalidReason | null };
-
+export type SkillInvalidReason = Schemas["SkillInvalidReason"];
 /** `default_branch` is the branch a library with no `ref` follows; null when the server doesn't know it yet. */
-export type SkillLibrary = Schemas["SkillLibrary"] & { default_branch?: string | null };
+export type SkillLibrary = Schemas["SkillLibrary"];
 export type CreateSkillLibraryRequest = Schemas["CreateSkillLibraryRequest"];
 export type PatchSkillLibraryRequest = Schemas["PatchSkillLibraryRequest"];
 /** `size` is null only for a skill the server couldn't judge within its fetch caps. */
-export type LibrarySkillItem = Omit<Schemas["LibrarySkillItem"], "size"> & WithReasonCode & { size: number | null };
-export type LibraryCatalogue = Omit<Schemas["LibraryCatalogue"], "items"> & { items: LibrarySkillItem[] };
-export type LibrarySkillContent = Schemas["LibrarySkillContent"] & WithReasonCode;
-export type LibraryUpdate = Schemas["LibraryUpdateView"] & WithReasonCode;
-export type SkillLibraryInfo = Omit<Schemas["SkillLibraryInfo"], "update"> & { update?: LibraryUpdate | null };
+export type LibrarySkillItem = Schemas["LibrarySkillItem"];
+export type LibraryCatalogue = Schemas["LibraryCatalogue"];
+export type LibrarySkillContent = Schemas["LibrarySkillContent"];
+export type LibraryUpdate = Schemas["LibraryUpdateView"];
+export type SkillLibraryInfo = Schemas["SkillLibraryInfo"];
 export type LibraryDiff = Schemas["LibraryDiff"];
 
 /** The tiers that keep skills, each with its own library budget (the server says how large, C-1176). */
