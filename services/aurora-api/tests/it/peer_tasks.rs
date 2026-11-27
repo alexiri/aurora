@@ -2591,6 +2591,62 @@ async fn a_turn_end_never_waits_for_the_waiting_count_locks() {
     other.rollback().await.unwrap();
 }
 
+/// (FIX-253 review 2, item 3) Two deliveries of one decision at once (the bus listener and the
+/// sweep): one wake turn, one charge, one notice; the second is a no-op.
+#[tokio::test]
+async fn two_deliveries_of_one_decision_wake_the_task_once() {
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    d.report_approval(id).await;
+    d.finish_receiving_turn(task).await;
+    sqlx::query(
+        "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
+            decided_at=now() WHERE id=$1",
+    )
+    .bind(id)
+    .bind(d.rig.p.id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let row = aurora_db::repo::approvals::get(pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut first = pool.begin().await.unwrap();
+    peers::approval_notice(&mut first, &row).await.unwrap();
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let second = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        peers::approval_notice(&mut tx, &row).await.unwrap();
+        tx.commit().await.unwrap();
+    };
+    let release = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        first.commit().await.unwrap();
+    };
+    tokio::join!(second, release);
+
+    assert_eq!(d.rig.task_status(task).await, "open");
+    assert_eq!(d.budget_used(task).await, 2, "charged once");
+    assert_eq!(
+        d.rig.notices(d.conv, "peer_approval_decided").await.len(),
+        1
+    );
+    let pc = d.rig.peer_conversation(task).await;
+    let wakes: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM turns WHERE conversation_id = $1 AND speaker_kind = 'system'",
+    )
+    .bind(pc)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(wakes, 1, "one wake turn");
+}
+
 /// (FIX-253, D-490(b)) With no registration the task is cancelled as today, and the FIX-252
 /// pending approval is the third waiting cause (no extra notice beyond FIX-252's own).
 #[tokio::test]

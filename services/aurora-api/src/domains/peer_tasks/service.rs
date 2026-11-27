@@ -892,6 +892,13 @@ pub async fn approval_notice(
     let Some(cid) = row.conversation_id else {
         return Ok(());
     };
+    if repo::by_task_conversation(&mut *conn, cid).await?.is_none() {
+        return Ok(());
+    }
+    // One delivery at a time: the bus listener and the sweep may both bring the same decision.
+    // The task and the notice's existence are read under the task conversation's lock (first in
+    // the lock order), so the later delivery sees what the earlier one did and does nothing.
+    convs::lock(&mut *conn, cid).await?;
     let Some(task) = repo::by_task_conversation(&mut *conn, cid).await? else {
         return Ok(());
     };
@@ -969,7 +976,7 @@ pub async fn approval_notice(
         // turn starts. A task that was not waiting (the decision landed mid-turn) gets no wake
         // turn: the gateway unblocks the tool call the agent is already running.
         let wake = if task.status == "waiting" {
-            resume_on_wake(conn, task.task_conversation_id).await?
+            wake_task(conn, task.task_conversation_id, &["waiting"]).await?
         } else {
             Wake::NoLiveTask
         };
@@ -1219,17 +1226,27 @@ impl Wake {
 /// A failed rights check or a reached limit closes the task with the platform's close report —
 /// which is its one report — and no turn starts.
 pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Result<Wake, ApiError> {
+    wake_task(conn, conversation, &["open", "waiting"]).await
+}
+
+/// [`resume_on_wake`] for a task in one of the `wakeable` states. An approval decision wakes a
+/// `waiting` task only: an `open` one is running (or already woken by this decision).
+async fn wake_task(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+    wakeable: &[&str],
+) -> Result<Wake, ApiError> {
     let Some(found) = repo::by_task_conversation(&mut *conn, conversation).await? else {
         return Ok(Wake::NoLiveTask);
     };
-    if !matches!(found.status.as_str(), "open" | "waiting") {
+    if !wakeable.contains(&found.status.as_str()) {
         return Ok(Wake::NoLiveTask);
     }
     // Locked, then re-read: a concurrent cancel or expiry must not be followed by a wake turn.
     let Some(task) = lock_for_task_conversation(conn, &found).await? else {
         return Ok(Wake::Cancelled);
     };
-    if !matches!(task.status.as_str(), "open" | "waiting") {
+    if !wakeable.contains(&task.status.as_str()) {
         return Ok(Wake::Cancelled);
     }
     let from = agent(conn, task.from_agent_id).await?;
