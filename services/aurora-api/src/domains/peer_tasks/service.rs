@@ -1024,6 +1024,15 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
     if task.status != "open" {
         return Ok(());
     }
+    // (FIX-253 audit 1) A turn is already queued in the task conversation — a wake that fired
+    // while this turn ran, promoted when it finished: the task is still being worked on, and
+    // that turn's end decides.
+    if turns::active_turn(&mut *conn, t.conversation_id)
+        .await?
+        .is_some()
+    {
+        return Ok(());
+    }
     let has_pending_approval =
         aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, t.conversation_id)
             .await?;
@@ -1250,16 +1259,14 @@ pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Resu
 /// pending approval, or an answered approval whose wake has not been delivered yet.
 async fn expects_wake(conn: &mut PgConnection, task: &PeerTaskRow) -> Result<bool, ApiError> {
     let conversation = task.task_conversation_id;
-    Ok(
-        aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, conversation).await?
-            || wake_registered(conn, conversation).await?
-            || repo::has_undelivered_decision(
-                &mut *conn,
-                conversation,
-                task.origin_conversation_id,
-            )
-            .await?,
-    )
+    Ok(turns::active_turn(&mut *conn, conversation)
+        .await?
+        .is_some()
+        || aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, conversation)
+            .await?
+        || wake_registered(conn, conversation).await?
+        || repo::has_undelivered_decision(&mut *conn, conversation, task.origin_conversation_id)
+            .await?)
 }
 
 /// (FIX-253 review, low 6) Re-evaluate the `waiting` task behind `conversation` after a wake-up

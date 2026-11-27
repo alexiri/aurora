@@ -1023,6 +1023,8 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   report; at most `PEER_TASK_WAITING_PER_REQUESTER_MAX` tasks of one requester
   and `PEER_TASK_WAITING_PER_RECEIVER_MAX` tasks of one receiving agent wait at
   once. A task that would exceed a bound is closed with a line saying which.
+  A wake that fires while the receiving turn is still running queues its turn:
+  the task stays `open` and that turn's end decides.
   **Nothing left to wait for.** When the last wake-up of a waiting task ends
   without firing (the schedule is deleted or switched off; the watch is lost
   with its sandbox) and no approval is outstanding, the task is cancelled with

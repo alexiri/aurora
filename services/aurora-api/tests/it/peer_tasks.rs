@@ -2396,6 +2396,49 @@ async fn a_persons_schedule_in_the_task_conversation_does_not_keep_the_task_wait
     assert_eq!(d.rig.task_status(task).await, "waiting");
 }
 
+/// (FIX-253 audit 1) A watch that fires while the receiving turn is still running queues its
+/// wake turn: the end of the receiving turn leaves the task open and the wake turn runs, though
+/// no registration is left by then.
+#[tokio::test]
+async fn a_watch_that_fires_during_the_receiving_turn_keeps_the_task_open() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    let w = d.arm_watch(task).await;
+    let (out, pc) = d.fire_watch(task, &w).await;
+    assert_eq!(out.status, aurora_protocol::runner::ReportStatus::Applied);
+    let first = d.rig.running_turn(pc).await.unwrap();
+
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "open");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
+    let wake = d.rig.running_turn(pc).await.expect("the wake turn runs");
+    assert_ne!(wake, first);
+
+    // The wake turn ends with nothing left: now the task closes as usual.
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+}
+
+/// (FIX-253 audit 1) The same for a one-time schedule that fires during the receiving turn.
+#[tokio::test]
+async fn a_schedule_that_fires_during_the_receiving_turn_keeps_the_task_open() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("check back").await["peer_task_id"]);
+    d.arm_schedule(task).await;
+    let pc = d.rig.peer_conversation(task).await;
+    let first = d.rig.running_turn(pc).await.unwrap();
+    d.fire_schedules().await;
+
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "open");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
+    let wake = d.rig.running_turn(pc).await.expect("the wake turn runs");
+    assert_ne!(wake, first);
+
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+}
+
 /// (FIX-253, D-490(b)) With no registration the task is cancelled as today, and the FIX-252
 /// pending approval is the third waiting cause (no extra notice beyond FIX-252's own).
 #[tokio::test]
