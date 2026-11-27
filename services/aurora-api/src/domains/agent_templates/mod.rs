@@ -10,6 +10,7 @@ pub mod create;
 pub mod dto;
 pub mod fetch;
 pub mod git;
+pub(crate) mod merge;
 pub mod org;
 pub mod poll;
 pub(crate) mod routes;
