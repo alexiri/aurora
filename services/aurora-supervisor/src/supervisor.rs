@@ -565,50 +565,63 @@ impl Supervisor {
     /// goes on with it.
     async fn release_session(&mut self, conversation_id: Uuid) {
         let deadline = Instant::now() + self.cfg.release_deadline;
-        self.release_session_by(conversation_id, deadline).await;
+        let releases = self.begin_release(conversation_id).await;
+        self.finish_release(conversation_id, releases, deadline)
+            .await;
     }
 
-    /// [`Self::release_session`] that waits no longer than `deadline`, for every session of
-    /// the conversation together.
-    async fn release_session_by(&mut self, conversation_id: Uuid, deadline: Instant) {
+    /// Starts every release the conversation needs, so that they all run at once; `None`
+    /// while one of its turns runs (a running turn is never interrupted).
+    async fn begin_release(&mut self, conversation_id: Uuid) -> Option<Vec<Releasing>> {
         // A failed release that is still running counts as such once it has finished.
         self.has_unreleased(conversation_id).await;
-        let ok = if self
+        if self
             .turns
             .values()
             .any(|t| t.conversation_id == conversation_id)
         {
-            false
-        } else {
-            let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut self.unreleased)
-                .into_iter()
-                .partition(|(c, _)| *c == conversation_id);
-            self.unreleased = others;
-            // They all run at once: the deadline is not shared out between them.
-            let mut releases: Vec<Releasing> = mine
-                .into_iter()
-                .map(|(_, u)| match u {
-                    Unreleased::Running(r) => r,
-                    Unreleased::Failed(s) => start_release(s),
-                })
-                .collect();
-            // (FIX-253 fixes2) `ok` only when every release really ran and succeeded. No
-            // session: nothing of it to release.
-            if let Some(e) = self.sessions.remove(&conversation_id) {
-                releases.push(start_release(e.session));
-            }
-            let ok = self.settle(conversation_id, releases, deadline).await;
-            if ok {
-                // (FIX-253, part B) The watch dies with the session.
-                if let Ok(mut m) = self.idle_turns.lock() {
-                    m.remove(&conversation_id);
-                }
-                if let Ok(mut m) = self.reported_background.lock() {
-                    m.remove(&conversation_id);
-                }
-            }
-            ok
+            return None;
+        }
+        let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut self.unreleased)
+            .into_iter()
+            .partition(|(c, _)| *c == conversation_id);
+        self.unreleased = others;
+        let mut releases: Vec<Releasing> = mine
+            .into_iter()
+            .map(|(_, u)| match u {
+                Unreleased::Running(r) => r,
+                Unreleased::Failed(s) => start_release(s),
+            })
+            .collect();
+        if let Some(e) = self.sessions.remove(&conversation_id) {
+            releases.push(start_release(e.session));
+        }
+        Some(releases)
+    }
+
+    /// Waits for what [`Self::begin_release`] started, until `deadline`, and reports the
+    /// outcome (`None`: not released, a turn runs).
+    async fn finish_release(
+        &mut self,
+        conversation_id: Uuid,
+        releases: Option<Vec<Releasing>>,
+        deadline: Instant,
+    ) {
+        // (FIX-253 fixes2) `ok` only when every release really ran and succeeded. No
+        // session: nothing of it to release.
+        let ok = match releases {
+            None => false,
+            Some(releases) => self.settle(conversation_id, releases, deadline).await,
         };
+        if ok {
+            // (FIX-253, part B) The watch dies with the session.
+            if let Ok(mut m) = self.idle_turns.lock() {
+                m.remove(&conversation_id);
+            }
+            if let Ok(mut m) = self.reported_background.lock() {
+                m.remove(&conversation_id);
+            }
+        }
         self.send(SupervisorToRunner::SessionReleased(SessionReleased {
             conversation_id,
             ok,
@@ -621,10 +634,15 @@ impl Supervisor {
     /// message; a session with a turn running keeps its own until then.
     async fn release_idle_sessions(&mut self) {
         let ids: Vec<Uuid> = self.sessions.keys().copied().collect();
-        // One deadline for them all.
+        // One deadline for them all, so all are started before any is waited for: a slow one
+        // uses up the wait, never the time the others have to finish.
         let deadline = Instant::now() + self.cfg.release_deadline;
+        let mut started = Vec::new();
         for id in ids {
-            self.release_session_by(id, deadline).await;
+            started.push((id, self.begin_release(id).await));
+        }
+        for (id, releases) in started {
+            self.finish_release(id, releases, deadline).await;
         }
     }
 

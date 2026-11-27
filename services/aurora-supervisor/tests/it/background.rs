@@ -410,10 +410,11 @@ async fn released_is_reported_only_after_the_processes_are_gone() {
 
 const STUCK_CONV: &str = "00000000-0000-0000-0000-0000000000ca";
 
-/// The fake harness, but a session of [`STUCK_CONV`] never finishes its release.
-struct Stuck;
+/// The fake harness, but a session of [`STUCK_CONV`] never finishes its release, and every
+/// other one takes this long.
+struct Stuck(Duration);
 
-struct StuckSession(Box<dyn HarnessSession>, bool);
+struct StuckSession(Box<dyn HarnessSession>, bool, Duration);
 
 #[async_trait]
 impl HarnessAdapter for Stuck {
@@ -429,7 +430,7 @@ impl HarnessAdapter for Stuck {
     ) -> Result<Box<dyn HarnessSession>, HarnessError> {
         let stuck = opts.conversation_id.to_string() == STUCK_CONV;
         let s = FakeHarness.start_session(opts).await?;
-        Ok(Box::new(StuckSession(s, stuck)))
+        Ok(Box::new(StuckSession(s, stuck, self.0)))
     }
     async fn purge_session(&self, dir: &Path, session_ref: &str) -> Result<(), HarnessError> {
         FakeHarness.purge_session(dir, session_ref).await
@@ -457,6 +458,7 @@ impl HarnessSession for StuckSession {
         if self.1 {
             std::future::pending::<()>().await;
         }
+        tokio::time::sleep(self.2).await;
         self.0.release().await
     }
 }
@@ -503,12 +505,71 @@ impl Rig {
     }
 }
 
+impl Rig {
+    /// A whole generation whose tool list holds only `tool`; the frames that came before its
+    /// `home.synced`.
+    async fn sync_tool(&mut self, generation: u64, tool: &str) -> Vec<Value> {
+        let parts = [
+            ("tools", json!([{"name": tool}])),
+            ("manifest", json!([])),
+            ("final", json!([])),
+        ];
+        for (i, (kind, entries)) in parts.into_iter().enumerate() {
+            self.send(
+                "home.sync",
+                json!({"generation": generation, "part_index": i, "part_count": 3,
+                       "part": {"kind": kind, "entries": entries}}),
+            )
+            .await;
+        }
+        let mut before = Vec::new();
+        loop {
+            let m = timeout(T, self.from_sup.recv())
+                .await
+                .expect("no home.synced frame")
+                .unwrap();
+            if m.kind() == "home.synced" {
+                return before;
+            }
+            before.push(serde_json::to_value(&m).unwrap());
+        }
+    }
+}
+
+/// (FIX-258) A changed tool list releases the idle sessions together: one that takes long does
+/// not make the next one count as not released.
+#[tokio::test]
+async fn a_slow_idle_release_does_not_fail_the_next_one() {
+    // Together within the one deadline of 4 s; one after the other they are not.
+    let slow = Duration::from_millis(2500);
+    let mut r = rig_with(TempDir::new().keep(), Arc::new(Stuck(slow))).await;
+    r.sync_tool(2, "first").await;
+    let conversations = [CONV, "00000000-0000-0000-0000-0000000000cb"];
+    for conversation in conversations {
+        let turn = Uuid::now_v7();
+        r.deliver(conversation, turn, 1, "hello").await;
+        r.within(T, "turn", &[("turn.result", "turn_id", json!(turn))])
+            .await;
+    }
+    let released: Vec<Value> = r
+        .sync_tool(3, "second")
+        .await
+        .into_iter()
+        .filter(|v| v["kind"] == "session.released")
+        .collect();
+    assert_eq!(released.len(), conversations.len(), "{released:?}");
+    assert!(
+        released.iter().all(|v| v["body"]["ok"] == true),
+        "{released:?}"
+    );
+}
+
 /// (SEC-165) Releases that do not finish hold the supervisor's loop no longer than one
 /// deadline, however many a conversation has: it reports that they did not stop, and another
 /// conversation's abort is handled meanwhile.
 #[tokio::test]
 async fn stuck_releases_do_not_stall_the_other_conversations() {
-    let mut r = rig_with(TempDir::new().keep(), Arc::new(Stuck)).await;
+    let mut r = rig_with(TempDir::new().keep(), Arc::new(Stuck(Duration::ZERO))).await;
     // Longer than the one deadline, far shorter than for ever.
     let limit = Duration::from_secs(10);
     let busy = Uuid::now_v7();

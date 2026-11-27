@@ -1581,6 +1581,131 @@ fn a_helper_can_change_between_a_file_and_a_folder() {
     }
 }
 
+/// Generation 1 installs the skill file `paths[0]`, generation 2 `paths[1]`: both generations
+/// install, and so do their memory and instructions.
+fn skill_changes_shape(paths: [&str; 2]) {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    for (g, path) in (1..).zip(paths) {
+        let note = format!("note {g}");
+        apply_all(
+            &mut p,
+            &generation(
+                g,
+                &[(path, "body"), (".claude/skills/s/SKILL.md", "s")],
+                &[("likes", &note)],
+            ),
+        );
+        p.commit(g)
+            .unwrap_or_else(|e| panic!("generation {g}: {e}"));
+        assert_eq!(fs::read_to_string(root.join(path)).unwrap(), "body");
+        let memory = fs::read_to_string(root.join("memory/likes.md")).unwrap();
+        assert!(memory.starts_with(&note), "{memory}");
+        let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        assert!(agents.contains(&format!("brief gen {g}")), "{agents}");
+        assert_eq!(mode(&root.join(".claude/skills/s/scripts")), 0o555);
+    }
+}
+
+/// (FIX-258) A skill file may turn into a folder between two generations.
+#[test]
+fn a_skill_file_can_become_a_folder() {
+    skill_changes_shape([
+        ".claude/skills/s/scripts/run",
+        ".claude/skills/s/scripts/run/x.sh",
+    ]);
+}
+
+/// (FIX-258) And a folder may turn back into a file.
+#[test]
+fn a_skill_folder_can_become_a_file() {
+    skill_changes_shape([
+        ".claude/skills/s/scripts/run/x.sh",
+        ".claude/skills/s/scripts/run",
+    ]);
+}
+
+/// (FIX-258) A skill file the home cannot hold (a file that is also a folder) is skipped with a
+/// warning: the rest of the generation is installed.
+#[test]
+fn a_skill_that_cannot_be_written_does_not_stall_the_sync() {
+    for pair in [
+        [".claude/skills/s/run", ".claude/skills/s/run/x.sh"],
+        [".claude/skills/s/run/x.sh", ".claude/skills/s/run"],
+    ] {
+        let d = TempDir::new();
+        let root = d.path();
+        let mut p = projector(root);
+        let parts = generation(
+            1,
+            &[
+                (pair[0], "first"),
+                (pair[1], "second"),
+                (".claude/skills/s/SKILL.md", "s"),
+            ],
+            &[("likes", "tea")],
+        );
+        let (outcome, warnings) = warnings_of(|| {
+            let mut last = None;
+            for s in &parts {
+                last = Some(p.apply_part(s));
+            }
+            last.unwrap()
+        });
+        assert!(
+            matches!(outcome, Ok(PartOutcome::ReadyToCommit(1))),
+            "{pair:?}: {outcome:?}"
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        p.commit(1).unwrap();
+        assert_eq!(fs::read_to_string(root.join(pair[0])).unwrap(), "first");
+        assert_eq!(
+            fs::read_to_string(root.join(".claude/skills/s/SKILL.md")).unwrap(),
+            "s"
+        );
+        assert!(root.join("memory/likes.md").exists());
+        assert!(root.join("AGENTS.md").exists());
+    }
+}
+
+/// (FIX-258) The same at install time: a staged skill file whose place cannot be made is
+/// skipped, and the generation commits.
+#[test]
+fn a_skill_that_cannot_be_installed_does_not_fail_the_commit() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    apply_all(
+        &mut p,
+        &generation(
+            1,
+            &[
+                (".claude/skills/s/run/x.sh", "x"),
+                (".claude/skills/s/SKILL.md", "s"),
+            ],
+            &[("likes", "tea")],
+        ),
+    );
+    // A FIFO the prune does not remove, where a folder has to be made.
+    fs::create_dir_all(root.join(".claude/skills/s")).unwrap();
+    mknodat(
+        CWD,
+        root.join(".claude/skills/s/run"),
+        FileType::Fifo,
+        Mode::from_raw_mode(0o600),
+        0,
+    )
+    .unwrap();
+    p.commit(1).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/skills/s/SKILL.md")).unwrap(),
+        "s"
+    );
+    assert!(root.join("memory/likes.md").exists());
+    assert!(root.join("AGENTS.md").exists());
+}
+
 /// A link left in the staging area before the commit is refused: nothing is installed under its
 /// name, its target is left alone, and the rest of the generation is installed.
 #[test]
