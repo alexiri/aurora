@@ -605,9 +605,8 @@ pub async fn update(
     let revalidate = req.reference.is_some() || req.path.is_some();
     let token_touched = !matches!(token_change, TokenChange::Keep);
     // Seal a new token first; a failed write deletes it again and the old token stays.
-    let new_token_ref = match &token_change {
-        TokenChange::Keep => row.token_ref.clone(),
-        TokenChange::Remove => None,
+    let sealed = match &token_change {
+        TokenChange::Keep | TokenChange::Remove => None,
         TokenChange::Set(t) => Some(seal_token(state, id, t).await?),
     };
     // A change of ref, path or token re-reads the repository first (C-1107). The read uses the
@@ -624,8 +623,7 @@ pub async fn update(
         };
         let read = git::read_source(state, &row.url, reference.as_deref(), &path, tok).await;
         if read.is_err()
-            && matches!(token_change, TokenChange::Set(_))
-            && let Some(r) = &new_token_ref
+            && let Some(r) = &sealed
         {
             discard_token(state, id, r).await;
         }
@@ -635,6 +633,16 @@ pub async fn update(
     };
     let result = async {
         let mut tx = audit::begin(state).await?;
+        // The row read above is not locked: another patch or a removal may have changed the
+        // token since. What is kept, replaced and discarded comes from this locked read.
+        let row = repo::lock_source(&mut tx, id)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Template source not found."))?;
+        let new_token_ref = match &token_change {
+            TokenChange::Keep => row.token_ref.clone(),
+            TokenChange::Remove => None,
+            TokenChange::Set(_) => sealed.clone(),
+        };
         if let Some(iv) = &req.update_interval {
             repo::update_interval(&mut tx, id, iv, next_in_secs(iv, id)).await?;
         }
@@ -682,18 +690,17 @@ pub async fn update(
         .target("agent_template_source", id)
         .metadata(meta);
         audit::commit_critical(tx, &ev).await?;
-        Ok::<_, ApiError>(())
+        Ok::<_, ApiError>(row.token_ref)
     }
     .await;
     if result.is_err()
-        && matches!(token_change, TokenChange::Set(_))
-        && let Some(r) = &new_token_ref
+        && let Some(r) = &sealed
     {
         discard_token(state, id, r).await;
     }
-    result?;
+    let replaced = result?;
     // The replaced or removed old token is discarded best effort after the write.
-    if token_touched && let Some(old) = &row.token_ref {
+    if token_touched && let Some(old) = &replaced {
         discard_token(state, id, old).await;
     }
     repo::get_source(&state.pool, id)
@@ -705,11 +712,12 @@ pub async fn update(
 /// the organizations' switches stay (they are keyed by the template id). Agents made from the
 /// templates do not change: they are copies.
 pub async fn remove(state: &AppState, actor: &AuditActor, id: Uuid) -> Result<(), ApiError> {
-    let row = repo::get_source(&state.pool, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Template source not found."))?;
     let count = repo::templates_of(&state.pool, id).await?.len();
     let mut tx = audit::begin(state).await?;
+    // Locked, so the token discarded below is the one the deleted row held.
+    let row = repo::lock_source(&mut tx, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Template source not found."))?;
     repo::delete_source(&mut tx, id).await?;
     let ev = AuditEvent::new(
         actor.clone(),

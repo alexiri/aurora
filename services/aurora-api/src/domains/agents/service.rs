@@ -22,9 +22,20 @@ pub(crate) fn name_ok(n: &str) -> Result<String, ApiError> {
     aurora_core::names::clean(n, 80).map_err(|e| bad("/name", &e.to_string()))
 }
 
+/// (C-1066) A hosted agent is created only while hosted agents are on.
+pub(crate) fn hosted_enabled(state: &AppState) -> Result<(), ApiError> {
+    if state.ops().hosted.enabled {
+        return Ok(());
+    }
+    Err(ApiError::unprocessable(
+        "hosted_disabled",
+        "Hosted agents are disabled on this instance.",
+    ))
+}
+
 /// (P4-HAR, D-122) A harness must be one `hosted.enabled_harnesses` allows (`fake` only with
 /// `hosted.allow_fake_harness`); the API is the only place it is chosen.
-fn harness_ok(state: &AppState, h: &str) -> Result<(), ApiError> {
+pub(crate) fn harness_ok(state: &AppState, h: &str) -> Result<(), ApiError> {
     if crate::domains::hosted::model::allowed_harnesses(state)
         .iter()
         .any(|a| a == h)
@@ -292,11 +303,8 @@ pub async fn create(
         None if state.ops().hosted.enabled => "hosted",
         None => "byo",
     };
-    if kind == "hosted" && !state.ops().hosted.enabled {
-        return Err(ApiError::unprocessable(
-            "hosted_disabled",
-            "Hosted agents are disabled on this instance.",
-        ));
+    if kind == "hosted" {
+        hosted_enabled(state)?;
     }
     if kind == "byo" {
         // (phase 2, RFE-025) creation is governed by the effective BYO posture.
