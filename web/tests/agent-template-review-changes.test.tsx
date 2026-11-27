@@ -306,6 +306,17 @@ describe("the merge states of the review (FIX-251)", () => {
     expect(diff).toHaveTextContent("+ Line two changed.");
   });
 
+  it("says in words why a part has no merge, from the offer's note", () => {
+    serve();
+    const note = "This file is too large to merge automatically: taking the new version replaces this part wholesale.";
+    mountDialogWith({
+      ...mergedOffer,
+      parts: [{ kind: "helpers", key: "", state: "edited_here", current: "old", proposed: "new", skill_ref: null, merge: null, merge_note: note }],
+    });
+    expect(within(part(0)).getByTestId("merge-note")).toHaveTextContent(note);
+    expect((within(part(0)).getByLabelText("Take this change") as HTMLInputElement).checked).toBe(false);
+  });
+
   it("applies a clean merge with the merge's hash echoed, and no resolutions", async () => {
     const bodies: unknown[] = [];
     serve({

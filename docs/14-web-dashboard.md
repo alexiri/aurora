@@ -2761,7 +2761,9 @@ added with **Give access** links to the Access tab's journey. The offer lists on
 and skills from libraries: the newer version's memories, schedules and webhooks are used only when an agent is created
 and are never offered to an existing agent (what it already has stays as it is), and the dialog says so ("Memories are
 never changed by an update."). (FIX-251, D-488(b)) A part the person edited is no longer all-or-nothing: where the
-starting text is stored it is offered as a three-way merge. A **merged** part is ticked by default and shown diffed
+starting text is stored it is offered as a three-way merge. A part with no merge says why in the server's words (the
+starting text is not stored, or "This file is too large to merge automatically…") and keeps the all-or-nothing choice,
+unticked. A **merged** part is ticked by default and shown diffed
 against what the agent has now — the person's edit stays, the new version's change is applied around it. A **conflict**
 part is unticked and lists each conflict hunk with both sides diffed and a choice per hunk — **Keep mine**, **Take the
 new one**, or **Edit your own text** (a size-capped editor with a live diff against the agent's text); Apply waits

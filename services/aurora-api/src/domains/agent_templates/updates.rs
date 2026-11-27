@@ -23,7 +23,9 @@ use crate::domains::agent_templates::create;
 use crate::domains::agent_templates::dto::{
     self, AgentTemplateRefView, AgentTemplateStatus, ApplyTemplateRequest, OfferPart,
 };
-use crate::domains::agent_templates::merge::{self, MergeError, RESOLUTION_TEXT_MAX, ResolveError};
+use crate::domains::agent_templates::merge::{
+    self, Budget, MergeError, RESOLUTION_TEXT_MAX, ResolveError,
+};
 use crate::domains::agent_templates::workspace::{RefJson, Resolver, skill_ref_plans};
 use crate::domains::agents;
 use crate::domains::skills::dto::FromLibrary;
@@ -278,6 +280,10 @@ fn listed(
 const MERGE_NOTE: &str = "The text this agent started from is not stored any more, so your \
      changes cannot be merged: taking the new version replaces this part wholesale.";
 
+/// Why a part's merge was capped (FIX-251): the offer says so in words.
+const MERGE_TOO_LARGE_NOTE: &str = "This file is too large to merge automatically: taking the new version replaces \
+     this part wholesale.";
+
 /// One text unit of a part: which text it is (`text` for instructions, `description` and
 /// `body` for a skill, `file:<path>` for a skill or helper file), and the three texts the
 /// merge works on. `None` is a file that does not exist at that layer. A file whose bytes
@@ -354,7 +360,7 @@ struct PlannedPart {
 /// same edit on both sides once, a clean three-way merge as it is, and everything else a
 /// conflict the person resolves hunk by hunk. A file one side no longer has — or one whose
 /// bytes are not text — is one whole-unit choice, never a line merge.
-fn plan_unit(u: &UnitTexts) -> UnitPlan {
+fn plan_unit(u: &UnitTexts, budget: &Budget) -> Result<UnitPlan, MergeError> {
     let byte_unit = u.ours_bytes.is_some() || u.theirs_bytes.is_some();
     // The winning side's content: a text unit's text, a byte unit's bytes.
     let content = |t: &Option<String>, b: &Option<Vec<u8>>| {
@@ -376,17 +382,17 @@ fn plan_unit(u: &UnitTexts) -> UnitPlan {
     if u.ours == u.theirs {
         // The agent already has the new version's content (or both removed the file).
         let (text, bytes) = content(&u.ours, &u.ours_bytes);
-        return decided(text, bytes, u.ours_executable);
+        return Ok(decided(text, bytes, u.ours_executable));
     }
     if u.base == u.ours {
         // The agent never touched this unit: the new version's content.
         let (text, bytes) = content(&u.theirs, &u.theirs_bytes);
-        return decided(text, bytes, u.executable);
+        return Ok(decided(text, bytes, u.executable));
     }
     if u.base == u.theirs {
         // The new version did not touch this unit: the person's edit stays.
         let (text, bytes) = content(&u.ours, &u.ours_bytes);
-        return decided(text, bytes, u.ours_executable);
+        return Ok(decided(text, bytes, u.ours_executable));
     }
     if byte_unit || u.theirs.is_none() || u.ours.is_none() {
         // Nothing to line-merge: Keep mine or Take the new one replaces the unit wholesale
@@ -398,7 +404,7 @@ fn plan_unit(u: &UnitTexts) -> UnitPlan {
                 t.clone()
             }
         };
-        return UnitPlan {
+        return Ok(UnitPlan {
             unit: u.unit.clone(),
             text: None,
             bytes: None,
@@ -411,33 +417,14 @@ fn plan_unit(u: &UnitTexts) -> UnitPlan {
             }),
             executable: u.executable,
             ours_executable: u.ours_executable,
-        };
+        });
     }
     let b = u.base.clone().unwrap_or_default();
     let o = u.ours.clone().unwrap_or_default();
     let t = u.theirs.clone().unwrap_or_default();
-    // The part limits are far under the merge's input cap, so a refusal cannot happen; if it
-    // ever did, the whole-unit choice keeps the part honest and finite.
-    let m = match merge::merge(&b, &o, &t) {
-        Ok(m) => m,
-        Err(MergeError::TooLarge) => {
-            return UnitPlan {
-                unit: u.unit.clone(),
-                text: None,
-                bytes: None,
-                merge: None,
-                whole: Some(WholeChoice {
-                    ours: u.ours.clone(),
-                    theirs: u.theirs.clone(),
-                    ours_bytes: None,
-                    theirs_bytes: None,
-                }),
-                executable: u.executable,
-                ours_executable: u.ours_executable,
-            };
-        }
-    };
-    match m.text() {
+    // A merge over the line, edit or step caps (FIX-251) is refused; the caller falls back.
+    let m = merge::merge(&b, &o, &t, budget)?;
+    Ok(match m.text() {
         Some(text) => decided(Some(text), None, u.executable),
         None => UnitPlan {
             unit: u.unit.clone(),
@@ -448,7 +435,7 @@ fn plan_unit(u: &UnitTexts) -> UnitPlan {
             executable: u.executable,
             ours_executable: u.ours_executable,
         },
-    }
+    })
 }
 
 /// The merge's hash over the three texts of every unit: what the review showed, echoed by the
@@ -473,12 +460,14 @@ fn merge_sha256(units: &[UnitTexts]) -> String {
     dto::sha256_hex(&buf)
 }
 
-/// The offer's view of one part's merge, and the plan behind it.
+/// The offer's view of one part's merge, and the plan behind it. CPU work: called through
+/// [`plan_off_runtime`] (FIX-251), with the request's shared pool of merge steps.
 fn plan_part(
     units: Vec<UnitTexts>,
     own_files: Vec<aurora_template::TemplateFile>,
-    compose: impl Fn(&[UnitPlan], &[aurora_template::TemplateFile]) -> String,
+    compose: fn(&[UnitPlan], &[aurora_template::TemplateFile]) -> String,
     base_present: bool,
+    budget: Budget,
 ) -> PlannedPart {
     if !base_present {
         return PlannedPart {
@@ -488,7 +477,21 @@ fn plan_part(
             plan: None,
         };
     }
-    let plans: Vec<UnitPlan> = units.iter().map(plan_unit).collect();
+    // One unit over the merge's caps (FIX-251) makes the whole part today's all-or-nothing
+    // choice, and the remaining units are not merged.
+    let plans: Result<Vec<UnitPlan>, MergeError> =
+        units.iter().map(|u| plan_unit(u, &budget)).collect();
+    let plans = match plans {
+        Ok(plans) => plans,
+        Err(MergeError::TooLarge) => {
+            return PlannedPart {
+                state: "edited_here",
+                view: None,
+                note: Some(MERGE_TOO_LARGE_NOTE.to_owned()),
+                plan: None,
+            };
+        }
+    };
     let mut conflicts: Vec<dto::MergeConflict> = Vec::new();
     for u in &plans {
         if let Some(w) = &u.whole {
@@ -526,6 +529,21 @@ fn plan_part(
             own_files,
         }),
     }
+}
+
+/// [`plan_part`] off the async runtime (FIX-251): a merge never stalls the worker, and the
+/// part's merges spend from the request's shared step budget.
+async fn plan_off_runtime(
+    units: Vec<UnitTexts>,
+    own_files: Vec<aurora_template::TemplateFile>,
+    compose: fn(&[UnitPlan], &[aurora_template::TemplateFile]) -> String,
+    base_present: bool,
+    budget: &Budget,
+) -> Result<PlannedPart, ApiError> {
+    let budget = budget.clone();
+    tokio::task::spawn_blocking(move || plan_part(units, own_files, compose, base_present, budget))
+        .await
+        .map_err(|e| ApiError::internal(format!("the merge task failed: {e}")))
 }
 
 /// The content of a planned unit: its text when it is text, its bytes when it is a file
@@ -1014,6 +1032,10 @@ async fn build_diff_on(
     }
     let live_helpers = helpers_repo::list(&mut *conn, agent.id).await?;
 
+    // One pool of merge steps for the whole request (FIX-251): every part's merge spends
+    // from it, wherever it runs.
+    let budget = merge::Budget::new(merge::MERGE_STEPS_MAX);
+
     let mut parts_out: Vec<OfferPart> = Vec::new();
     let mut states: BTreeMap<(String, String), &'static str> = BTreeMap::new();
     let mut plans: BTreeMap<(String, String), PartPlan> = BTreeMap::new();
@@ -1040,12 +1062,14 @@ async fn build_diff_on(
                 ours_bytes: None,
                 theirs_bytes: None,
             }];
-            let planned = plan_part(
+            let planned = plan_off_runtime(
                 units,
                 Vec::new(),
                 compose_instructions,
                 merge_base.is_some(),
-            );
+                &budget,
+            )
+            .await?;
             st = planned.state;
             merge = planned.view;
             merge_note = planned.note;
@@ -1149,7 +1173,9 @@ async fn build_diff_on(
                             .map(Vec::as_slice)
                             .unwrap_or_default();
                         let (units, own_files) = skill_units(base, row, row_files, theirs);
-                        let planned = plan_part(units, own_files, compose_skill, true);
+                        let planned =
+                            plan_off_runtime(units, own_files, compose_skill, true, &budget)
+                                .await?;
                         st = planned.state;
                         merge = planned.view;
                         merge_note = planned.note;
@@ -1267,7 +1293,8 @@ async fn build_diff_on(
                 Some(base) => {
                     let (units, own_files) =
                         helper_units(&base.helpers, &live_helpers, &merge_theirs.helpers);
-                    let planned = plan_part(units, own_files, compose_helpers, true);
+                    let planned =
+                        plan_off_runtime(units, own_files, compose_helpers, true, &budget).await?;
                     st = planned.state;
                     merge = planned.view;
                     merge_note = planned.note;
@@ -1640,16 +1667,22 @@ fn resolve_parts(
 ) -> Result<BTreeMap<(String, String), ResolvedPart>, ApiError> {
     let mut out: BTreeMap<(String, String), ResolvedPart> = BTreeMap::new();
     for (k, st) in taken {
+        let Some(p) = req_parts.iter().find(|p| p.kind == k.0 && p.key == k.1) else {
+            return Err(ApiError::internal("the request's merge part is missing"));
+        };
         if !matches!(*st, "merged" | "conflict") {
+            // A reviewed merge that is no longer one (the part grew past the merge's caps
+            // while the review was open, FIX-251) is the stale review: never the wholesale
+            // overwrite in its place.
+            if p.merge_sha256.is_some() || !p.resolutions.is_empty() {
+                return Err(version_changed());
+            }
             continue;
         }
         let plan = diff
             .plans
             .get(k)
             .ok_or_else(|| ApiError::internal("the merge plan of a listed part is missing"))?;
-        let Some(p) = req_parts.iter().find(|p| p.kind == k.0 && p.key == k.1) else {
-            return Err(ApiError::internal("the request's merge part is missing"));
-        };
         // The review's merge is the server's own: a hash the offer did not show is the plain
         // 409 (C-1112's stale review), never a silent re-merge.
         if p.merge_sha256.as_deref() != Some(plan.view.merge_sha256.as_str()) {

@@ -281,6 +281,8 @@ function OfferPartView({
         {unavailable ? null : <CheckboxField id={`take-part-${index}`} label="Take this change" checked={taken} onChange={onTaken} />}
       </div>
       <p data-testid="part-state">{stateWords(part.state, agentName)}</p>
+      {/* (FIX-251) Why a part the person edited has no merge, in the server's words. */}
+      {part.merge_note ? <p data-testid="merge-note">{part.merge_note}</p> : null}
       {ref ? <RefLine skillRef={ref} unavailable={unavailable} /> : null}
       {/* (FIX-251) A clean merge: the merged text diffed against what the agent has now. */}
       {merge?.state === "merged" && merge.result != null && text?.current != null && text.current !== merge.result ? (

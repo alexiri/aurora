@@ -3633,6 +3633,100 @@ async fn an_edited_part_merges_and_applies_without_resolutions() {
     assert_eq!(after, memories);
 }
 
+/// Replace the agent's `report.sh` with `content`, past the routes (as an own edit).
+async fn upd_set_report(u: &Upd, content: &str) {
+    let done = sqlx::query(
+        "UPDATE agent_helper_files SET content = $2, size = $3
+         WHERE agent_id = $1 AND path = 'report.sh'",
+    )
+    .bind(u.agent)
+    .bind(content.as_bytes())
+    .bind(content.len() as i32)
+    .execute(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(done.rows_affected(), 1);
+}
+
+/// 20_001 short lines: under the helper file's 256 KiB, over the merge's line cap.
+fn too_many_lines() -> String {
+    (0..20_001).map(|i| format!("{i}\n")).collect()
+}
+
+/// A helper file over the merge's line cap (FIX-251): the part falls back to today's
+/// all-or-nothing choice (`edited_here`, no merge) and says the reason in words. Nothing
+/// quadratic runs to get there — the caps are proven in merge.rs's own tests.
+#[tokio::test]
+async fn a_too_large_helper_file_is_offered_wholesale_with_the_reason() {
+    let u = upd_world().await;
+    upd_set_report(&u, &too_many_lines()).await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(part_state(&v, "helpers", ""), Some("edited_here"), "{v}");
+    let part = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "helpers")
+        .unwrap();
+    assert!(part["merge"].is_null(), "{part}");
+    assert!(
+        part["merge_note"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("This file is too large to merge automatically"),
+        "{part}"
+    );
+}
+
+/// A part reviewed as a merge that has since grown past the merge's caps is a stale review:
+/// the apply never overwrites it wholesale in the merge's place (FIX-251).
+#[tokio::test]
+async fn a_merge_review_that_outgrew_the_caps_is_refused() {
+    let u = upd_world().await;
+    upd_set_report(&u, "an own edit\n").await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let merge = part_merge(&v, "helpers", "").clone();
+    assert!(merge["merge_sha256"].is_string(), "{v}");
+    let resolutions: Vec<Value> = merge["conflicts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| json!({"unit": c["unit"], "choice": "keep_mine"}))
+        .collect();
+
+    let grown = too_many_lines();
+    upd_set_report(&u, &grown).await;
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": "helpers",
+                    "key": "",
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": resolutions,
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "template_version_changed", "{v}");
+    let kept: Vec<u8> = sqlx::query_scalar(
+        "SELECT content FROM agent_helper_files WHERE agent_id = $1 AND path = 'report.sh'",
+    )
+    .bind(u.agent)
+    .fetch_one(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(kept, grown.into_bytes(), "the person's file is untouched");
+}
+
 /// A conflicting hunk resolved with Keep mine: the person's text stays, and the apply writes
 /// exactly what the resolution composed (FIX-251).
 #[tokio::test]
