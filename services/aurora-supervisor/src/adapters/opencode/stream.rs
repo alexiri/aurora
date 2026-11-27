@@ -431,7 +431,7 @@ mod tests {
     fn a_tool_call_is_started_and_finished_together_and_platform_tools_are_renamed() {
         let (ev, _) = run(&[TOOL, MCP]);
         assert!(
-            matches!(&ev[0], HarnessEvent::ToolStarted { call_id, name, summary }
+            matches!(&ev[0], HarnessEvent::ToolStarted { call_id, name, summary, skill: None }
             if call_id == "toolu_1" && name == "bash" && summary == "bash: echo hi")
         );
         assert!(
