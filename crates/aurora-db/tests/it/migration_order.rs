@@ -4,7 +4,7 @@
 //! numbers were reserved before those landed; `…000202` onwards reference `ssh_keys`, so the six
 //! go together). sqlx's migrator must run every unapplied migration whatever its position,
 //! never refuse it as "out of order".
-use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 
 const LATE: [i64; 6] = [
@@ -16,8 +16,9 @@ const LATE: [i64; 6] = [
     20_261_201_000_205,
 ];
 
-#[sqlx::test(migrations = false)]
-async fn older_numbered_migrations_apply_on_an_upgraded_database(pool: PgPool) {
+#[tokio::test]
+async fn older_numbered_migrations_apply_on_an_upgraded_database() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     // The database as it was before these two migrations existed: everything else, applied.
     let without: Vec<_> = aurora_db::MIGRATOR
         .iter()

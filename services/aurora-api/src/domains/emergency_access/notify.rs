@@ -150,12 +150,10 @@ pub async fn notify_open(
     if people.is_empty() {
         return Ok(());
     }
-    let link = format!(
-        "{}/o/{}/w/{}",
-        state.config.external_url.trim_end_matches('/'),
-        org_slug,
-        ws_slug
-    );
+    // The push carries the dashboard path (the service worker accepts nothing else); the e-mail
+    // prefixes the external URL.
+    let path = format!("/o/{org_slug}/w/{ws_slug}");
+    let link = format!("{}{path}", state.config.external_url.trim_end_matches('/'));
     let subject = format!("Emergency read access to {}", name(ws_name));
     for p in &people {
         let text = body(
@@ -174,7 +172,7 @@ pub async fn notify_open(
         if let Err(e) = state.mailer.send(mail).await {
             tracing::error!(error = %e, "emergency-access e-mail send failed");
         }
-        crate::domains::push::deliver::notify_emergency_access(state, p.user_id, &subject, &link)
+        crate::domains::push::deliver::notify_emergency_access(state, p.user_id, &subject, &path)
             .await;
     }
     Ok(())

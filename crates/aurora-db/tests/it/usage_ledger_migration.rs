@@ -5,6 +5,7 @@
 //! up to the run, is idempotent, catches up, and moves its watermark only when a run succeeds.
 use aurora_db::PgPool;
 use aurora_db::repo::usage::{record_turn, rollup_runtime, runtime_as_of};
+use aurora_testkit::TestDb;
 use chrono::{DateTime, Utc};
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
@@ -96,8 +97,9 @@ async fn ledger(pool: &PgPool) -> Vec<Row> {
     .unwrap()
 }
 
-#[sqlx::test(migrations = false)]
-async fn the_backfill_equals_what_the_live_rule_writes(pool: PgPool) {
+#[tokio::test]
+async fn the_backfill_equals_what_the_live_rule_writes() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version != VERSION)
@@ -311,8 +313,9 @@ async fn awake(pool: &PgPool, agent: Uuid) -> Vec<(String, i64)> {
     .unwrap()
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn the_rollup_splits_days_counts_open_intervals_and_is_idempotent(pool: PgPool) {
+#[tokio::test]
+async fn the_rollup_splits_days_counts_open_intervals_and_is_idempotent() {
+    let (_db, pool) = TestDb::with_pool().await;
     let (o, w, a) = fixture(&pool).await;
     // across UTC midnight: 2 h on the 10th, 2.5 h on the 11th
     interval(
@@ -359,8 +362,9 @@ async fn the_rollup_splits_days_counts_open_intervals_and_is_idempotent(pool: Pg
     assert_eq!(awake(&pool, a).await, want);
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn a_run_after_a_missed_day_catches_up_and_a_failed_run_keeps_the_watermark(pool: PgPool) {
+#[tokio::test]
+async fn a_run_after_a_missed_day_catches_up_and_a_failed_run_keeps_the_watermark() {
+    let (_db, pool) = TestDb::with_pool().await;
     let (o, w, a) = fixture(&pool).await;
     let mut c = pool.acquire().await.unwrap();
     interval(

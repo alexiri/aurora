@@ -55,7 +55,7 @@ impl Action {
     /// What the change means for the people the notice goes to.
     fn meaning(self, org: bool) -> &'static str {
         match (self, org) {
-            (Self::Deleted, false) => "Its agents, conversations and credentials are gone.",
+            (Self::Deleted, false) => "Its agents, conversations and accounts are gone.",
             (Self::Deleted, true) => "The organization and all of its workspaces are gone.",
             (Self::Frozen, false) => "No one can run its agents until it is unfrozen.",
             (Self::Frozen, true) => {
@@ -177,7 +177,10 @@ pub struct Notice {
     org_scope: bool,
     scope_name: String,
     who: String,
-    link: String,
+    /// The dashboard path the notice opens; `None` for a deleted organization (nothing left to
+    /// open). The e-mail prefixes the external URL; the push carries the path itself, which is
+    /// all the service worker accepts.
+    path: Option<String>,
     recipients: Vec<Recipient>,
 }
 
@@ -214,23 +217,18 @@ pub async fn prepare_workspace(
             Vec::new()
         }
     };
-    // A deleted scope has no page to open; anything else opens it.
-    let link = if action == Action::Deleted {
-        state.config.external_url.trim_end_matches('/').to_owned()
+    // A deleted workspace has no page left, so its notice opens the organization.
+    let path = if action == Action::Deleted {
+        format!("/o/{org_slug}")
     } else {
-        format!(
-            "{}/o/{}/w/{}",
-            state.config.external_url.trim_end_matches('/'),
-            org_slug,
-            ws_slug
-        )
+        format!("/o/{org_slug}/w/{ws_slug}")
     };
     Some(Notice {
         action,
         org_scope: false,
         scope_name: ws_name,
         who,
-        link,
+        path: Some(path),
         recipients,
     })
 }
@@ -264,21 +262,13 @@ pub async fn prepare_org(
             Vec::new()
         }
     };
-    let link = if action == Action::Deleted {
-        state.config.external_url.trim_end_matches('/').to_owned()
-    } else {
-        format!(
-            "{}/o/{}",
-            state.config.external_url.trim_end_matches('/'),
-            org_slug
-        )
-    };
+    let path = (action != Action::Deleted).then(|| format!("/o/{org_slug}"));
     Some(Notice {
         action,
         org_scope: true,
         scope_name: org_name,
         who,
-        link,
+        path,
         recipients,
     })
 }
@@ -316,17 +306,24 @@ impl Notice {
                 now_in(p.timezone.as_deref()),
                 self.action.meaning(self.org_scope),
             );
-            let mail = Mail::new(
-                &p.email,
-                &subject,
-                &format!("{text}\n\nSign in to Aurora for details."),
-                &self.link,
-            );
+            let mail = match &self.path {
+                Some(path) => Mail::new(
+                    &p.email,
+                    &subject,
+                    &format!("{text}\n\nSign in to Aurora for details."),
+                    &format!("{}{path}", state.config.external_url.trim_end_matches('/')),
+                ),
+                None => Mail::without_link(&p.email, &subject, &text),
+            };
             if let Err(e) = state.mailer.send(mail).await {
                 tracing::error!(error = %e, "lifecycle notice e-mail send failed");
             }
             crate::domains::push::deliver::notify_lifecycle(
-                state, push_kind, p.user_id, &text, &self.link,
+                state,
+                push_kind,
+                p.user_id,
+                &text,
+                self.path.as_deref().unwrap_or("/"),
             )
             .await;
         }
@@ -403,7 +400,8 @@ pub async fn default_store_changed(state: &AppState, actor: &AuditActor, from: &
     for (user_id, email, timezone) in &recipients {
         let text = format!(
             "{} changed the instance's default secret store at {}. Managed values now go to {} \
-             instead of {}.",
+             instead of {}. Values already stored have not been moved; moving them is a separate \
+             migration.",
             who,
             now_in(timezone.as_deref()),
             store_name(to),
@@ -423,7 +421,7 @@ pub async fn default_store_changed(state: &AppState, actor: &AuditActor, from: &
             Kind::DefaultStore,
             *user_id,
             &text,
-            state.config.external_url.trim_end_matches('/'),
+            "/",
         )
         .await;
     }

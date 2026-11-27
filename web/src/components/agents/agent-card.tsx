@@ -57,9 +57,15 @@ export function AgentCard({
           </AttentionChip>
         ) : null}
       </div>
-      {chip || byoOff || token ? (
+      {chip || byoOff || token || a.needs_update ? (
         <div className="flex flex-wrap items-center gap-2">
           {chip ? <Badge tone={chip.tone}>{chip.text}</Badge> : null}
+          {/* (FIX-251, D-488(a)) The agent's template offers a newer version. */}
+          {a.needs_update ? (
+            <Badge tone="accent" data-testid="agent-needs-update">
+              Update available
+            </Badge>
+          ) : null}
           {byoOff ? (
             <Badge tone="danger" title="Its tokens are refused until the setting is loosened; nothing was deleted.">
               BYO disabled by {a.byo?.posture_level}

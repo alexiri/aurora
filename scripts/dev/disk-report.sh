@@ -5,7 +5,7 @@
 # sccache stats, podman images/containers/volumes grouped by name prefix, and kind clusters.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 
 echo "== free space"
 df -h "$ROOT" | sed -n '1,2p'

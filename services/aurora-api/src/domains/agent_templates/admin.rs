@@ -360,6 +360,9 @@ pub async fn approve(
         .target("agent_template", t.id)
         .metadata(json!({"template": t.template_id, "version": v.version}));
     audit::commit_critical(tx, &ev).await?;
+    // (FIX-251, D-488(a)) The people who can apply an update are told, after the commit; a
+    // failing notice never fails or undoes the approval.
+    super::notify::version_offered(state, &t.template_id, actor.id).await;
     let (_, v) = target(state, template_id, version).await?;
     detail(state, &t, &v).await
 }
@@ -405,6 +408,11 @@ pub async fn set_offered(
         .target("agent_template", t.id)
         .metadata(json!({"template": t.template_id, "offered": req.offered}));
     audit::commit_critical(tx, &ev).await?;
+    // (FIX-251, D-488(a)) Offering the template again tells the people of the offered version,
+    // once per workspace and version; a failing notice never fails the change.
+    if req.offered {
+        super::notify::version_offered(state, &t.template_id, actor.id).await;
+    }
     let installed = installed_app_ids(state).await?;
     let libs = aurora_db::repo::skill_libraries::all_addresses(&state.pool).await?;
     let r = repo::all_templates_with_source(&state.pool)

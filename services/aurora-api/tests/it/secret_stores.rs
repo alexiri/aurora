@@ -1222,6 +1222,10 @@ async fn the_default_store_change_tells_the_org_owners_and_only_them() {
         "who (the actor never named), from which store to which: {m:?}"
     );
     assert!(
+        m.body.contains("Values already stored have not been moved"),
+        "existing values are not moved by the change: {m:?}"
+    );
+    assert!(
         !m.body.contains('@'),
         "no e-mail address in the body: {m:?}"
     );

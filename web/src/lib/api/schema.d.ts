@@ -8009,6 +8009,13 @@ export interface components {
              *     edit messages; default `false`.
              */
             narration_cards: boolean;
+            /**
+             * @description (FIX-251, D-488(a)) The agent's template offers a semver-newer version than the agent's
+             *     stored one — the **Update available** mark. Computed on the workspace agents list and
+             *     the routes that read one agent fresh (`with_byo`); `false` where it is not computed
+             *     (a fresh create, a default agent), and for an agent without a template.
+             */
+            needs_update: boolean;
             /** Format: uuid */
             org_id: string;
             /** @description `ask` | `allow` | `off`. */
@@ -8596,10 +8603,27 @@ export interface components {
             code: string;
             detail: string;
         };
-        /** @description (C-1112) One part to take. */
+        /**
+         * @description (C-1112) One part to take. A part whose offer carries a merge (FIX-251) also echoes the
+         *     merge's hash the review showed and, for a `conflict` part, one resolution per conflict
+         *     hunk in the offer's order.
+         */
         ApplyPart: {
             key: string;
             kind: string;
+            /** @description The part's `merge.merge_sha256` from the offer (`merged` and `conflict` parts). */
+            merge_sha256?: string | null;
+            /** @description One resolution per conflict hunk of this part, in the offer's order. */
+            resolutions?: components["schemas"]["ApplyResolution"][];
+        };
+        /** @description (FIX-251) The person's choice for one conflict hunk. */
+        ApplyResolution: {
+            /** @description `keep_mine` | `take_theirs` | `text`. */
+            choice: string;
+            /** @description The person's own edit of the hunk (`choice` = `text`), size-limited. */
+            text?: string | null;
+            /** @description The hunk's unit, as the offer's `conflicts[].unit`. */
+            unit: string;
         };
         /** @description (C-1112) One library skill reference of an apply (the create's shape). */
         ApplySkillRef: {
@@ -8959,7 +8983,7 @@ export interface components {
          * @description (FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.
          * @enum {string}
          */
-        AttentionKind: "connector_approval" | "package_approval" | "agent_template_version" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "approval" | "access_request" | "broken_account" | "agent_cannot_answer" | "my_request";
+        AttentionKind: "connector_approval" | "package_approval" | "agent_template_version" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "approval" | "access_request" | "broken_account" | "agent_cannot_answer" | "my_request" | "template_update";
         /**
          * @description (C-1080) The level an item belongs to.
          * @enum {string}
@@ -12251,6 +12275,19 @@ export interface components {
         MemorySearchResponse: {
             items: components["schemas"]["MemorySearchHit"][];
         };
+        /** @description (FIX-251) One conflict hunk of a part's merge. */
+        MergeConflict: {
+            /** @description The agent's current text of the hunk (Keep mine). */
+            ours: string;
+            /** @description The new version's text of the hunk (Take the new one). */
+            theirs: string;
+            /**
+             * @description Which text of the part the hunk is in: `description` or `body` (a skill's), or
+             *     `file:<path>` (a skill file, a helper file). Instructions have no unit prefix: the
+             *     part's whole text is one unit, named `text`.
+             */
+            unit: string;
+        };
         /** @description Exactly one of `turn` / `followup` is non-null (C-25). */
         MessageAccepted: {
             followup?: components["schemas"]["Followup"] | null;
@@ -12520,9 +12557,21 @@ export interface components {
             key: string;
             /** @description `instructions` | `skill` | `helpers` | `library_skill`. */
             kind: string;
+            merge?: components["schemas"]["PartMerge"] | null;
+            /**
+             * @description Why the part has no merge: the agent's starting text is not stored (the version
+             *     content is gone, or the part is not in it), so the offer fell back to the
+             *     all-or-nothing `edited_here`.
+             */
+            merge_note?: string | null;
             proposed?: string | null;
             skill_ref?: components["schemas"]["SkillRefPlan"] | null;
-            /** @description `unchanged_here` | `edited_here` | `removed_here` | `new` | `removed_upstream`. */
+            /**
+             * @description `unchanged_here` | `edited_here` | `merged` | `conflict` | `removed_here` | `new` |
+             *     `removed_upstream`. `merged` and `conflict` (FIX-251, D-488(b)) replace
+             *     `edited_here` wherever the agent's starting text is stored: the part is offered as a
+             *     three-way merge of that base, the agent's current text and the new version's text.
+             */
             state: string;
         };
         OidcProviderInfo: {
@@ -13140,6 +13189,13 @@ export interface components {
                  *     edit messages; default `false`.
                  */
                 narration_cards: boolean;
+                /**
+                 * @description (FIX-251, D-488(a)) The agent's template offers a semver-newer version than the agent's
+                 *     stored one — the **Update available** mark. Computed on the workspace agents list and
+                 *     the routes that read one agent fresh (`with_byo`); `false` where it is not computed
+                 *     (a fresh create, a default agent), and for an agent without a template.
+                 */
+                needs_update: boolean;
                 /** Format: uuid */
                 org_id: string;
                 /** @description `ask` | `allow` | `off`. */
@@ -14333,6 +14389,33 @@ export interface components {
                 workspace: components["schemas"]["OverrideWorkspace"];
             }[];
             next_cursor?: string | null;
+        };
+        /**
+         * @description (FIX-251, D-488(b)) The three-way merge of one part: what the merge decided on its own and
+         *     which hunks the person must resolve. The merge is computed from the agent's recorded
+         *     starting text (the stored version content), the agent's current text and the new version's
+         *     text rendered for this agent — all server-side; the apply recomputes it and takes nothing
+         *     else.
+         */
+        PartMerge: {
+            /**
+             * @description The conflict hunks in order (a `conflict` part): one resolution per hunk, in this
+             *     order, goes back with the apply.
+             */
+            conflicts?: components["schemas"]["MergeConflict"][];
+            /**
+             * @description The merge's hash as the review showed it: the apply echoes it and the server refuses
+             *     a stale review with `template_version_changed`.
+             */
+            merge_sha256: string;
+            /** @description The merged part text of a clean merge. */
+            result?: string | null;
+            /**
+             * @description `merged`: a clean merge; `result` is the merged part text, shown diffed against
+             *     `current`, applied as it is. `conflict`: at least one hunk needs the person's choice;
+             *     nothing is applied to the part until every hunk is resolved.
+             */
+            state: string;
         };
         /** @description (phase 5, P5-APIGAP-4, C-1051) `PATCH /workspaces/{ws}/access/{user}`: suspend or restore. */
         PatchAccessRequest: {

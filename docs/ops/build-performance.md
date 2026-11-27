@@ -1,5 +1,10 @@
 # Build performance and disk hygiene (OPS-016)
 
+> **Running tests on the shared development machine (FIX-255, D-491):** only through `scripts/dev/test.sh`
+> ([docs/18 §Running tests](../18-testing.md#running-tests-on-a-development-machine-fix-255-d-491)); other heavy
+> commands through `scripts/dev/heavy.sh <lane>`. The `cargo test` / `cargo nextest` commands below are records of
+> past measurements, not instructions; to repeat one, ask the owner for an idle machine.
+
 Scope: faster `cargo build` / `cargo test` for the developer loop and the parallel worker lanes, and no
 build artefacts left behind when a lane ends. Decisions are I-34…I-39 in `90-decisions.md`.
 
@@ -294,7 +299,7 @@ A domain crate below `aurora-api` therefore first needs an `aurora-api-kernel` c
   an edit→test cycle); edits that change an API shape (DTO + handler) get no faster, possibly slightly slower. Plan below.
 - **Cheaper levers, by measured yield:**
   1. Supervisor dependency dev-only — done, 44.6 → 20.7 s for supervisor edits.
-  2. Inner loop `cargo test -p aurora-api --test it [filter]` instead of `cargo test -p aurora-api`: skips lib-test,
+  2. Inner loop with `--test it [filter]` (`scripts/dev/test.sh <lane> rust -p aurora-api --test it [filter]`) instead of the whole package: skips lib-test,
      32.1 s vs 42.5–44.0 s median under load (≈ no gain on an idle host, where lib-test runs in parallel). The lane gate
      already uses `--test it`; the 67 lib unit tests (24 modules) can run once before the final commit.
   3. The `it` crate (10–17 s after every api edit, 6.1 s of it macro expansion, on the critical path): splitting it into
@@ -349,7 +354,8 @@ A domain crate below `aurora-api` therefore first needs an `aurora-api-kernel` c
 ### Text for the Orca worker spec template (the coordinator owns it)
 
 > **Disk hygiene.** Build only the crates your brief names, in this worktree's own `target/`; do not set
-> `CARGO_TARGET_DIR`. Run commands in the foreground with a timeout. Name any podman container, network or
+> `CARGO_TARGET_DIR`. Run commands in the foreground with a timeout. Run tests only with `scripts/dev/test.sh`
+> (never start your own database) and other heavy commands through `scripts/dev/heavy.sh`. Name any podman container, network or
 > volume you create with the prefix `<worktree-basename>-` (or label it `aurora.lane=<worktree-basename>`).
 > After `worker_done` do nothing: the coordinator cleans up.
 >

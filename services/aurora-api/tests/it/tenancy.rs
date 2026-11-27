@@ -1126,7 +1126,7 @@ async fn deletes_tell_the_owners_and_only_them() {
     assert!(m.body.contains(" deleted the workspace "), "{m:?}");
     assert!(
         m.body
-            .contains("Its agents, conversations and credentials are gone."),
+            .contains("Its agents, conversations and accounts are gone."),
         "{m:?}"
     );
     assert!(
@@ -1140,6 +1140,15 @@ async fn deletes_tell_the_owners_and_only_them() {
         .fetch_one(h.pool())
         .await
         .unwrap();
+    // A deleted workspace links to its organization.
+    assert_eq!(
+        m.link,
+        format!(
+            "{}/o/{slug}",
+            h.state.config.external_url.trim_end_matches('/')
+        ),
+        "{m:?}"
+    );
     let (s, _) = call(
         &h,
         &ot,
@@ -1166,4 +1175,7 @@ async fn deletes_tell_the_owners_and_only_them() {
         "{m:?}"
     );
     assert!(!m.body.contains('@'), "{m:?}");
+    // A deleted organization has no page left: no link at all.
+    assert_eq!(m.link, "", "{m:?}");
+    assert!(!m.body.contains("http"), "{m:?}");
 }

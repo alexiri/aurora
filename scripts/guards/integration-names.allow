@@ -54,3 +54,8 @@
 # tests), `.github` in the predicate, its callers and their comments, and the plugin packer, which
 # skips such paths when collecting skill files. No integration behaviour.
 ^(crates/aurora-core/src/meta_paths|crates/aurora-registry/src/package|crates/aurora-template/src/archive|crates/aurora-template/src/validate|(crates|services)/aurora-cli/src/template|services/aurora-cli/src/plugin/pack|services/aurora-api/src/domains/agent_templates/check|services/aurora-api/src/domains/skill_libraries/content|services/aurora-api/src/domains/skill_libraries/git/mod)\.rs$:[._]github
+
+# (FIX-251) The template-update merge engine's comments describe Myers' O(ND) line diff and its
+# linear-space refinement; "linear" there is the complexity term (the 1986 paper's algorithm
+# shape), never the chat app. The file speaks to no integration.
+^services/aurora-api/src/domains/agent_templates/merge\.rs$:linear

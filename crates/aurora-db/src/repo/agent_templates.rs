@@ -869,6 +869,30 @@ pub async fn approved_versions_share<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-251, D-488(a)) The approved version strings of the given templates (the templates'
+/// business id as `agents.template_id` stores it, and the version), newest stored first: one
+/// small read the agents list marks every agent whose template offers a semver-newer version
+/// than the agent's stored one with (the offered version is the semver-newest approved one,
+/// C-1108 — the caller picks it, not the row order).
+pub async fn approved_version_strings<'e, E: PgExecutor<'e>>(
+    exec: E,
+    template_ids: &[String],
+) -> Result<Vec<(String, String)>, DbError> {
+    if template_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(
+        "SELECT t.template_id, v.version \
+         FROM agent_template_versions v \
+         JOIN agent_templates t ON t.id = v.agent_template_id \
+         WHERE t.offered AND v.status = 'approved' AND t.template_id = ANY($1) \
+         ORDER BY v.created_at DESC, v.id DESC",
+    )
+    .bind(template_ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Approve a version (C-1108): only from `pending_approval` and only when `content_sha256`
 /// is still the stored one. `Ok(false)` means the row did not match (the caller has already
 /// read it and answers 409 `template_content_changed`).
@@ -1041,4 +1065,106 @@ pub async fn delete_part(
         .execute(&mut *conn)
         .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// (FIX-251, D-488(a)) The update notices: one per workspace and version, the row is the dedup.
+// ---------------------------------------------------------------------------------------------
+
+/// One update notice a workspace's people were told (FIX-251, D-488(a)).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UpdateNoticeRow {
+    pub workspace_id: Uuid,
+    /// The `<id>` of `template.yaml` (no FK, like the provenance).
+    pub template_id: String,
+    /// The template's display name (joined at read time).
+    pub template_name: String,
+    pub version: String,
+    pub created_at: DateTime<Utc>,
+    /// The workspace's display name (joined at read time).
+    pub workspace_name: String,
+    /// How many of the workspace's agents made from the template are behind this version
+    /// (computed at read time, never stored).
+    pub behind: i64,
+}
+
+/// Record that `version` of `template_id` was announced to `workspace_id`'s people. `true` when
+/// this run inserted the row (the caller tells the people); `false` when it was already told —
+/// the one-notice-per-workspace-and-version dedup (D-488(a)).
+pub async fn record_update_notice<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_id: Uuid,
+    template_id: &str,
+    version: &str,
+) -> Result<bool, DbError> {
+    let r = sqlx::query(
+        "INSERT INTO agent_template_update_notices (workspace_id, template_id, version) \
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+    )
+    .bind(workspace_id)
+    .bind(template_id)
+    .bind(version)
+    .execute(exec)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// The templates one workspace was ever told an update of: what the caller works out the
+/// offered versions for before [`update_notices_for_workspace`].
+pub async fn update_notice_template_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_id: Uuid,
+) -> Result<Vec<String>, DbError> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT template_id FROM agent_template_update_notices WHERE workspace_id = $1",
+    )
+    .bind(workspace_id)
+    .fetch_all(exec)
+    .await
+    .map_err(DbError::from)
+}
+
+/// The update notices of one workspace whose offer still stands and that still concern at least
+/// one of its agents (D-488(a)): the template is offered, the notice is for its offered
+/// version, the organization has not turned the template off, and at least one agent made from
+/// the template is behind. Which version is offered is a semver rule SQL does not have, so the
+/// caller passes it: `offered` is `(template_id, version)`, one pair per offered template.
+/// Oldest first (the notice's `created_at` is when it was first told).
+pub async fn update_notices_for_workspace<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_id: Uuid,
+    offered: &[(String, String)],
+    limit: i64,
+) -> Result<Vec<UpdateNoticeRow>, DbError> {
+    let (ids, versions): (Vec<&str>, Vec<&str>) = offered
+        .iter()
+        .map(|(id, v)| (id.as_str(), v.as_str()))
+        .unzip();
+    sqlx::query_as(
+        "SELECT n.workspace_id, n.template_id, t.name AS template_name, n.version, n.created_at, \
+                w.name AS workspace_name, \
+                (SELECT count(*) FROM agents a \
+                  WHERE a.workspace_id = n.workspace_id AND a.template_id = n.template_id \
+                    AND (a.template_version IS NULL OR a.template_version <> n.version)) AS behind \
+         FROM agent_template_update_notices n \
+         JOIN unnest($2::text[], $3::text[]) AS o(template_id, version) \
+              ON o.template_id = n.template_id AND o.version = n.version \
+         JOIN agent_templates t ON t.template_id = n.template_id AND t.offered \
+         JOIN workspaces w ON w.id = n.workspace_id \
+         WHERE n.workspace_id = $1 \
+           AND NOT EXISTS (SELECT 1 FROM org_disabled_agent_templates d \
+                            WHERE d.org_id = (SELECT org_id FROM workspaces WHERE id = n.workspace_id) \
+                              AND d.template_id = n.template_id) \
+           AND EXISTS (SELECT 1 FROM agents a \
+                        WHERE a.workspace_id = n.workspace_id AND a.template_id = n.template_id \
+                          AND (a.template_version IS NULL OR a.template_version <> n.version)) \
+         ORDER BY n.created_at, n.template_id, n.version LIMIT $4",
+    )
+    .bind(workspace_id)
+    .bind(ids)
+    .bind(versions)
+    .bind(limit)
+    .fetch_all(exec)
+    .await
+    .map_err(DbError::from)
 }

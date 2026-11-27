@@ -7,6 +7,7 @@ use aurora_db::authz::{
 };
 use aurora_db::repo::groups;
 use aurora_db::{DbError, PgPool};
+use aurora_testkit::TestDb;
 use uuid::Uuid;
 
 struct Fx {
@@ -108,8 +109,9 @@ async fn role(pool: &PgPool, u: Uuid, ws: Uuid) -> Option<WorkspaceRole> {
         .map(|a| a.effective_ws_role)
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn no_binding_no_access_even_for_an_org_owner(pool: PgPool) {
+#[tokio::test]
+async fn no_binding_no_access_even_for_an_org_owner() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let owner = member(&pool, f.org, "owner").await;
     let plain = member(&pool, f.org, "member").await;
@@ -147,8 +149,9 @@ async fn no_binding_no_access_even_for_an_org_owner(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn effective_role_matrix_is_the_strongest_never_a_sum(pool: PgPool) {
+#[tokio::test]
+async fn effective_role_matrix_is_the_strongest_never_a_sum() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     let g1 = group(&pool, f.org, "one", None).await;
@@ -198,8 +201,9 @@ async fn effective_role_matrix_is_the_strongest_never_a_sum(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn org_role_mapping_admin_reaches_no_workspace(pool: PgPool) {
+#[tokio::test]
+async fn org_role_mapping_admin_reaches_no_workspace() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let ws2 = workspace(&pool, f.org).await;
     let u = member(&pool, f.org, "member").await;
@@ -253,8 +257,9 @@ async fn org_role_mapping_admin_reaches_no_workspace(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn suspended_member_derives_nothing_from_any_group(pool: PgPool) {
+#[tokio::test]
+async fn suspended_member_derives_nothing_from_any_group() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     let g = group(&pool, f.org, "g", Some("admin")).await;
@@ -279,8 +284,9 @@ async fn suspended_member_derives_nothing_from_any_group(pool: PgPool) {
 /// D-175 (FIX-082): a `pending` membership (SCIM prepared it, the person has not signed in) is
 /// listed in groups but derives nothing from any of them, holds no direct binding's access, and
 /// is not an `active` member for any law; activation makes the group-derived access effective.
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn pending_member_derives_nothing_until_activated(pool: PgPool) {
+#[tokio::test]
+async fn pending_member_derives_nothing_until_activated() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     sqlx::query("UPDATE org_members SET status = 'pending' WHERE user_id = $1")
@@ -324,8 +330,9 @@ async fn pending_member_derives_nothing_until_activated(pool: PgPool) {
     assert!(can_own(&pool, u, f.ws).await.unwrap());
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn a_group_never_makes_a_non_member_a_member(pool: PgPool) {
+#[tokio::test]
+async fn a_group_never_makes_a_non_member_a_member() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let other = org(&pool).await;
     let stranger = member(&pool, other, "member").await;
@@ -345,8 +352,9 @@ async fn a_group_never_makes_a_non_member_a_member(pool: PgPool) {
     assert_eq!(groups::member_count(&pool, g).await.unwrap(), 0);
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn leaving_the_org_empties_every_membership(pool: PgPool) {
+#[tokio::test]
+async fn leaving_the_org_empties_every_membership() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     let g1 = group(&pool, f.org, "a", None).await;
@@ -364,8 +372,9 @@ async fn leaving_the_org_empties_every_membership(pool: PgPool) {
 
 /// (FIX-261, D-501) Leaving deletes active bindings, never a suspended one: the row grants
 /// nothing, and after a re-join it still keeps group access off until a person lifts it.
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn leaving_the_org_keeps_a_suspension(pool: PgPool) {
+#[tokio::test]
+async fn leaving_the_org_keeps_a_suspension() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let other_ws = workspace(&pool, f.org).await;
     let u = member(&pool, f.org, "member").await;
@@ -406,8 +415,9 @@ async fn leaving_the_org_keeps_a_suspension(pool: PgPool) {
     assert!(!can_use(&pool, u, f.ws).await.unwrap());
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn same_org_composite_foreign_keys(pool: PgPool) {
+#[tokio::test]
+async fn same_org_composite_foreign_keys() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let other = org(&pool).await;
     let other_ws = workspace(&pool, other).await;
@@ -438,8 +448,9 @@ async fn same_org_composite_foreign_keys(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn approve_see_conversation_and_fire_time_for_group_only_access(pool: PgPool) {
+#[tokio::test]
+async fn approve_see_conversation_and_fire_time_for_group_only_access() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let owner = member(&pool, f.org, "owner").await;
     let approver = member(&pool, f.org, "member").await;
@@ -501,8 +512,9 @@ async fn approve_see_conversation_and_fire_time_for_group_only_access(pool: PgPo
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn sources_explain_the_result(pool: PgPool) {
+#[tokio::test]
+async fn sources_explain_the_result() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     bind(&pool, f.ws, u, "member").await;
@@ -530,8 +542,9 @@ async fn sources_explain_the_result(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn idp_sync_sets_exactly_the_claim_and_never_creates_a_membership(pool: PgPool) {
+#[tokio::test]
+async fn idp_sync_sets_exactly_the_claim_and_never_creates_a_membership() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let other = org(&pool).await;
     let u = member(&pool, f.org, "member").await;
@@ -606,8 +619,9 @@ async fn idp_sync_sets_exactly_the_claim_and_never_creates_a_membership(pool: Pg
     assert!(!groups::is_member(&pool, a, u).await.unwrap());
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn manual_rows_are_untouched_by_the_idp_sync(pool: PgPool) {
+#[tokio::test]
+async fn manual_rows_are_untouched_by_the_idp_sync() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     let manual = group(&pool, f.org, "manual", None).await;
@@ -643,8 +657,9 @@ async fn count_rows(pool: &PgPool, u: Uuid) -> i64 {
         .unwrap()
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn idp_sync_stops_at_the_per_user_cap_and_is_stable(pool: PgPool) {
+#[tokio::test]
+async fn idp_sync_stops_at_the_per_user_cap_and_is_stable() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     let mut gs = Vec::new();
@@ -675,8 +690,9 @@ async fn idp_sync_stops_at_the_per_user_cap_and_is_stable(pool: PgPool) {
     assert_eq!(count_rows(&pool, u).await, 100);
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn idp_sync_leaves_the_rows_of_a_suspended_membership_alone(pool: PgPool) {
+#[tokio::test]
+async fn idp_sync_leaves_the_rows_of_a_suspended_membership_alone() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     let a = idp_group_sql(&pool, f.org, 0).await;
@@ -705,8 +721,9 @@ async fn idp_sync_leaves_the_rows_of_a_suspended_membership_alone(pool: PgPool) 
     assert!(groups::is_member(&pool, a, u).await.unwrap());
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn uses_any_workspace_counts_group_granted_access(pool: PgPool) {
+#[tokio::test]
+async fn uses_any_workspace_counts_group_granted_access() {
+    let (_db, pool) = TestDb::with_pool().await;
     let f = fx(&pool).await;
     let u = member(&pool, f.org, "member").await;
     assert!(!authz::uses_any_workspace(&pool, u, f.org).await.unwrap());
@@ -751,8 +768,9 @@ async fn uses_any_workspace_counts_group_granted_access(pool: PgPool) {
 /// emergency grant is invisible to the gateway — the reader gets no agent/credential rights
 /// there (the grant is a C-1165 read-only exception on the control plane only). For contrast,
 /// the same user is an emergency reader and still holds no own access.
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn the_gateway_can_use_law_never_counts_an_emergency_grant(pool: PgPool) {
+#[tokio::test]
+async fn the_gateway_can_use_law_never_counts_an_emergency_grant() {
+    let (_db, pool) = TestDb::with_pool().await;
     let o = org(&pool).await;
     let ws = workspace(&pool, o).await;
     let opener = member(&pool, o, "owner").await;

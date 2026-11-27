@@ -27,7 +27,7 @@ def clean(v):
 
 
 def die(msg, code=2):
-    print(f"grafana-query: {clean(msg)}", file=sys.stderr)
+    print(f"grafana-alert: {clean(msg)}", file=sys.stderr)
     sys.exit(code)
 
 
@@ -38,7 +38,7 @@ def tmp_dir():
 
 
 def mktemp(suffix):
-    fd, path = tempfile.mkstemp(prefix="grafana-query-", suffix=suffix, dir=tmp_dir())
+    fd, path = tempfile.mkstemp(prefix="grafana-alert-", suffix=suffix, dir=tmp_dir())
     os.close(fd)
     return os.path.abspath(path)
 

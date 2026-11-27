@@ -3,6 +3,7 @@
 //! no longer exists (the orphan sweep deleted them), keeps the pointer whose blob is there, leaves
 //! `updated_at` alone, adds the sweep's index, and is idempotent.
 use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
 
@@ -30,8 +31,9 @@ async fn avatar(
     .unwrap()
 }
 
-#[sqlx::test(migrations = false)]
-async fn only_pointers_to_missing_blobs_are_cleared(pool: PgPool) {
+#[tokio::test]
+async fn only_pointers_to_missing_blobs_are_cleared() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version < VERSION)
