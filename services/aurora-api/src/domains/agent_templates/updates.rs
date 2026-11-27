@@ -983,7 +983,13 @@ async fn build_diff_on(
     render_inputs: BTreeMap<String, String>,
 ) -> Result<Diff, ApiError> {
     let stored = stored_inputs(agent);
-    let checked = aurora_template::CheckedInputs::from_values(render_inputs);
+    // The new version's texts take its inputs' defaults (D-500), also for an input the agent
+    // has no value for; the base keeps what the agent started from.
+    let new_inputs = &ctx.new_content.meta.inputs;
+    let checked = aurora_template::CheckedInputs::from_values(aurora_template::with_defaults(
+        new_inputs,
+        render_inputs,
+    ));
     let rendered = aurora_template::render(&ctx.new_content, &checked, &agent.name, person);
     // The merge's own renders (FIX-251), both with the **stored** inputs: the base is the
     // text the agent started from, and theirs is what the review showed. The merge's hash
@@ -994,8 +1000,11 @@ async fn build_diff_on(
         .old_content
         .as_ref()
         .map(|old| aurora_template::render(old, &stored_checked, &agent.name, person));
+    let theirs_checked = aurora_template::CheckedInputs::from_values(
+        aurora_template::with_defaults(new_inputs, stored.clone()),
+    );
     let merge_theirs =
-        aurora_template::render(&ctx.new_content, &stored_checked, &agent.name, person);
+        aurora_template::render(&ctx.new_content, &theirs_checked, &agent.name, person);
 
     let recorded: BTreeMap<(String, String), String> = trepo::parts_of(&mut *conn, agent.id)
         .await?
@@ -1857,7 +1866,8 @@ fn ref_unprocessable(code: &str, msg: &str, index: usize) -> ApiError {
 }
 
 /// The apply's input values (C-1112): the request supplies `inputs_needed`; a stored value is
-/// kept only when it still passes the input's (possibly changed) rules on its own.
+/// kept only when it still passes the input's (possibly changed) rules on its own. An input
+/// left without a value takes its `default` (D-500).
 fn merged_inputs(
     ctx: &OfferCtx,
     stored: &BTreeMap<String, String>,
@@ -1876,7 +1886,7 @@ fn merged_inputs(
             }
         }
     }
-    out
+    aurora_template::with_defaults(&ctx.new_content.meta.inputs, out)
 }
 
 /// The stored provenance of a version: the merged values over the version's declared inputs

@@ -311,6 +311,24 @@ describe("Agent templates: Add repository", () => {
     expect(await within(dlg).findByText("Use the https address; it starts with https://.")).toBeTruthy();
   });
 
+  it("an address refused only on Add repository is shown in step 2, where the address field is not", async () => {
+    const dlg = await open({
+      "POST /v1/admin/agent-template-sources/preview": () => json(200, preview),
+      "POST /v1/admin/agent-template-sources": () =>
+        json(422, { error: { code: "template_url_invalid", message: "bad address", details: { reason: "not_https" } } }),
+    });
+    type("Repository address", "https://github.com/acme/agent-templates");
+    fireEvent.click(within(dlg).getByRole("button", { name: "Check" }));
+    await within(dlg).findByTestId("template-source-found");
+    fireEvent.click(within(dlg).getByRole("button", { name: "Add repository" }));
+    const alert = await within(dlg).findByRole("alert");
+    expect(alert.textContent).toContain("Use the https address; it starts with https://.");
+    expect(alert.textContent).toContain("Go back to change the address.");
+    // Back goes to the address field.
+    fireEvent.click(within(dlg).getByRole("button", { name: "Back" }));
+    expect(screen.getByLabelText("Repository address")).toBeTruthy();
+  });
+
   it("an unreachable repository says why above the fields", async () => {
     const dlg = await open({
       "POST /v1/admin/agent-template-sources/preview": () =>

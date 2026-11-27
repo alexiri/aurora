@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+
 import { Field, inputClass } from "@/components/ui/field";
 
 import { type TemplateInput } from "./words";
@@ -28,6 +30,13 @@ export function AboutStep({
   onValue: (id: string, v: string) => void;
   errors?: Record<string, string>;
 }) {
+  // (D-500) A field with a default starts filled with it, so the person sees what will be used and that is what is
+  // sent. Only a value never set is filled: one the person cleared stays cleared.
+  useEffect(() => {
+    for (const input of inputs) {
+      if (input.default && values[input.id] === undefined) onValue(input.id, input.default);
+    }
+  }, [inputs, values, onValue]);
   return (
     <div className="space-y-4">
       <Field id="template-agent-name" label="Name" error={errors.name}>

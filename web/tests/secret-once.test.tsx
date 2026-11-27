@@ -51,6 +51,19 @@ describe("SecretOnce", () => {
     expect(screen.getByRole("button", { name: "Copy again" })).toBeInTheDocument();
   });
 
+  it("starts the copy state over when the secret changes under the same dialog (FIX-272)", async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<SecretOnce secret="first-secret" title="Copy your key" onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await flush();
+    rerender(<SecretOnce secret="second-secret" title="Copy your key" onClose={onClose} />);
+    // The second value was never copied: the button says Copy, and closing asks first.
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    expect(screen.getByText("You haven't copied it. Close anyway?")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("announces every copy in the screen-reader line, worded differently each time", async () => {
     vi.useFakeTimers();
     render(<Host onClose={() => {}} />);

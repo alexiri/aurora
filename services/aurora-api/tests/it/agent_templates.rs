@@ -4642,6 +4642,97 @@ async fn resolutions_that_do_not_match_the_hunks_are_refused() {
     assert_eq!(v["error"]["code"], "template_version_changed", "{v}");
 }
 
+/// A one-input-per-line `template.yaml` with `inputs` and its instructions, for the default tests.
+fn default_files(
+    dir: &str,
+    version: &str,
+    inputs: &str,
+    instructions: &str,
+) -> Vec<(String, Vec<u8>)> {
+    vec![
+        (
+            format!("{dir}/template.yaml"),
+            format!(
+                "format: 1\nid: {dir}\nversion: {version}\nname: D\nsummary: Defaults.\n\
+                 inputs:\n{inputs}"
+            )
+            .into_bytes(),
+        ),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            instructions.as_bytes().to_vec(),
+        ),
+        (
+            format!("{dir}/README.md"),
+            format!("# {dir}\nDefaults.\n").into_bytes(),
+        ),
+    ]
+}
+
+const ZONE_DEFAULT: &str = "  - id: zone\n    label: Zone\n    default: eu\n";
+
+#[tokio::test]
+async fn a_create_without_a_value_uses_the_inputs_default() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    let fs = default_files("d", "1.0.0", ZONE_DEFAULT, "Watch {input.zone}.\n");
+    seed_fs(&w, "acme/tpl", "d", "1.0.0", &fs).await;
+    let created = w
+        .create_agent(ws, &owner, "d", "1.0.0", json!({"inputs": {}}))
+        .await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(brief_of(&w, agent).await, "Watch eu.\n");
+    assert_eq!(inputs_of(&w, agent).await, json!({"zone": "eu"}));
+}
+
+#[tokio::test]
+async fn an_update_that_adds_an_input_with_a_default_renders_the_default() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    let one = default_files("d", "1.0.0", ZONE_DEFAULT, "Watch {input.zone}.\n");
+    let id = seed_fs(&w, "acme/tpl", "d", "1.0.0", &one).await;
+    let created = w.create_agent(ws, &owner, "d", "1.0.0", json!({})).await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+    let two = default_files(
+        "d",
+        "2.0.0",
+        &format!("{ZONE_DEFAULT}  - id: site\n    label: Site\n    default: cern\n"),
+        "Watch {input.zone} at {input.site}.\n",
+    );
+    advance_fs(&w, id, "acme/tpl", "d", "2.0.0", &two, &[]).await;
+
+    let (_, v) = w.tpl_status(&owner, agent).await;
+    // The default covers the new required input, so nothing is asked and nothing shows as a
+    // placeholder.
+    assert_eq!(v["update"]["inputs_needed"], json!([]), "{v}");
+    let instructions = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "instructions")
+        .unwrap();
+    assert_eq!(instructions["proposed"], "Watch eu at cern.\n", "{v}");
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "instructions", "key": ""}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(brief_of(&w, agent).await, "Watch eu at cern.\n");
+    assert_eq!(
+        inputs_of(&w, agent).await,
+        json!({"zone": "eu", "site": "cern"})
+    );
+}
+
 #[tokio::test]
 async fn a_needed_input_blocks_the_apply_until_given() {
     let u = upd_world().await;

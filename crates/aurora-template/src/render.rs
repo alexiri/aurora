@@ -85,7 +85,35 @@ impl CheckedInputs {
     }
 }
 
-/// `check_inputs`: every rule at once, all problems back (C-1104).
+/// The value an input stands for: what was given, or its `default` when nothing (or the empty
+/// string) was.
+fn effective_value<'a>(input: &'a InputDecl, given: Option<&'a str>) -> Option<&'a str> {
+    match given {
+        None | Some("") => input.default.as_deref().or(given),
+        Some(_) => given,
+    }
+}
+
+/// `values` with the `default` of every input that was given none, for rendering and storing
+/// values without checking them (an update offer renders the stored ones as they are).
+#[must_use]
+pub fn with_defaults(
+    inputs: &[InputDecl],
+    mut values: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    for input in inputs {
+        let given = values.get(&input.id).map(String::as_str);
+        if let Some(v) = effective_value(input, given)
+            && Some(v) != given
+        {
+            values.insert(input.id.clone(), v.to_owned());
+        }
+    }
+    values
+}
+
+/// `check_inputs`: every rule at once, all problems back (C-1104). An input with a `default`
+/// takes it when the value is absent or empty, before any rule runs.
 pub fn check_inputs(
     inputs: &[InputDecl],
     values: &BTreeMap<String, String>,
@@ -102,7 +130,7 @@ pub fn check_inputs(
         }
     }
     for input in inputs {
-        let given = values.get(&input.id).map(String::as_str);
+        let given = effective_value(input, values.get(&input.id).map(String::as_str));
         let value = match given {
             None | Some("") if input.required => {
                 problems.push(InputProblem {
@@ -421,6 +449,32 @@ mod tests {
         values.insert("optional".to_owned(), "x".repeat(101));
         let err = check_inputs(&inputs, &values).unwrap_err();
         assert_eq!(err[0].code, InputProblemCode::TooLong);
+    }
+
+    #[test]
+    fn a_default_is_used_when_the_person_gives_none() {
+        let inputs = vec![
+            InputDecl {
+                default: Some("OPS".into()),
+                ..decl("project", true)
+            },
+            InputDecl {
+                default: Some("eu".into()),
+                ..decl("zone", false)
+            },
+            decl("plain", false),
+        ];
+        // Absent and empty both take the default, before the required rule runs.
+        for given in [vec![], vec![("project", ""), ("zone", "")]] {
+            let ok = checked(&inputs, &given);
+            assert_eq!(ok.get("project"), Some("OPS"), "{given:?}");
+            assert_eq!(ok.get("zone"), Some("eu"), "{given:?}");
+            // An optional input without a default stays the empty string.
+            assert_eq!(ok.get("plain"), Some(""), "{given:?}");
+        }
+        // A given value wins over the default.
+        let ok = checked(&inputs, &[("project", "NET")]);
+        assert_eq!(ok.get("project"), Some("NET"));
     }
 
     #[test]
