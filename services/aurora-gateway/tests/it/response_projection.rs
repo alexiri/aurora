@@ -7,8 +7,13 @@
 //! A child module of `apps` (it reuses that file's pipeline harness).
 use super::*;
 
+/// The projected tools of `unprojectable` (apps.rs), one per path.
+const WITHHELD: [&str; 6] = [
+    "cpsbig", "cps302", "cps204", "cpsempty", "cpsmixed", "cpsgzip",
+];
+
 fn projection_tools() -> Value {
-    json!({"read": {"items": [
+    let mut tools = json!({"read": {"items": [
         {"id": "cps", "name": "c", "host": "127.0.0.1", "path": "/cps", "methods": ["GET"],
          "project": ["$.name", "$.type"]},
         // The same answer on a tool that declares no projection: unchanged (the projection is
@@ -20,7 +25,14 @@ fn projection_tools() -> Value {
         // A projected tool whose upstream answers with an error.
         {"id": "cpserr", "name": "e", "host": "127.0.0.1", "path": "/cpserr", "methods": ["GET"],
          "project": ["$.name", "$.type"]}
-    ]}})
+    ]}});
+    if let Some(items) = tools["read"]["items"].as_array_mut() {
+        items.extend(WITHHELD.iter().map(|id| {
+            json!({"id": id, "name": id, "host": "127.0.0.1", "path": format!("/{id}"),
+                   "methods": ["GET"], "project": ["$.name", "$.type"]})
+        }));
+    }
+    tools
 }
 
 async fn start_projection() -> Env {
@@ -36,10 +48,12 @@ async fn start_projection() -> Env {
         let c = conn(w, "demo", "c1", None);
         let mut r = Rows::default();
         r.ws.default_action = "block".into();
+        let mut tools = vec!["cps", "raw", "cpsbad", "cpserr"];
+        tools.extend(WITHHELD);
         r.ws.derived.push((
             Uuid::now_v7(),
             json!({"name":"d1","enabled":true,"identities":[],"action":"allow",
-                   "targets":[{"type":"connection","id":c.id,"tools":["cps","raw","cpsbad","cpserr"]}]}),
+                   "targets":[{"type":"connection","id":c.id,"tools":tools}]}),
         ));
         r.conns.push(c);
         r
@@ -98,6 +112,48 @@ async fn an_upstream_error_on_a_projected_tool_withholds_its_body() {
     assert!(!r.body.contains("credential"), "{}", r.body);
     assert!(!r.body.contains("settings"), "{}", r.body);
     assert!(!r.body.contains("not found"), "{}", r.body);
+}
+
+/// The answer to `path` is the gateway's own `status` / `code` refusal and carries nothing
+/// of what the upstream sent.
+async fn assert_withheld(env: &Env, path: &str, status: u16, code: &str) {
+    let r = get(env, path, "").await;
+    assert_eq!(r.status, status, "{path}: {}", r.body);
+    assert_eq!(r.code(), code, "{path}: {}", r.body);
+    assert!(!r.body.contains("hooks.example.org"), "{path}: {}", r.body);
+    assert!(!r.body.contains("settings"), "{path}: {}", r.body);
+    assert!(!r.head.contains("hooks.example.org"), "{path}: {}", r.head);
+}
+
+#[tokio::test]
+async fn an_answer_over_the_projection_limit_is_withheld() {
+    let env = start_projection().await;
+    assert_withheld(&env, "/cpsbig", 502, "tool_response_unprojectable").await;
+}
+
+#[tokio::test]
+async fn a_redirect_on_a_projected_tool_is_withheld() {
+    let env = start_projection().await;
+    assert_withheld(&env, "/cps302", 302, "tool_error_withheld").await;
+}
+
+#[tokio::test]
+async fn an_empty_success_on_a_projected_tool_is_withheld() {
+    let env = start_projection().await;
+    assert_withheld(&env, "/cps204", 502, "tool_response_unprojectable").await;
+    assert_withheld(&env, "/cpsempty", 502, "tool_response_unprojectable").await;
+}
+
+#[tokio::test]
+async fn an_array_with_an_item_that_is_no_object_is_withheld() {
+    let env = start_projection().await;
+    assert_withheld(&env, "/cpsmixed", 502, "tool_response_unprojectable").await;
+}
+
+#[tokio::test]
+async fn a_compressed_answer_on_a_projected_tool_is_withheld() {
+    let env = start_projection().await;
+    assert_withheld(&env, "/cpsgzip", 502, "tool_response_unprojectable").await;
 }
 
 // A request whose URL carries a connection value (the host injects it as a query parameter)

@@ -17,6 +17,15 @@ struct Fx {
 
 /// A real organization, workspace and connection, the gateway writing through its own role.
 async fn start_health(min_interval: Duration) -> Fx {
+    start_health_on(
+        min_interval,
+        one_app(json!([{"bearer": "{credentials.tok}"}])),
+    )
+    .await
+}
+
+/// [`start_health`] over a given snapshot of the `demo` app.
+async fn start_health_on(min_interval: Duration, snap: Value) -> Fx {
     let mut db = aurora_testkit::TestDb::new().await;
     let role_url = db.gateway_role_url().await.unwrap();
     let pool = aurora_db::PgPool::connect(&role_url).await.unwrap();
@@ -53,7 +62,7 @@ async fn start_health(min_interval: Duration) -> Fx {
     let conn_id = c.id;
     let (env, ..) = start_in(
         w,
-        one_app(json!([{"bearer": "{credentials.tok}"}])),
+        snap,
         &[("c1", r#"{"tok":"T"}"#)],
         granted(c),
         None,
@@ -185,6 +194,42 @@ async fn a_401_records_a_failure_a_later_success_records_use_and_the_status_neve
         rec.untouched,
         "the gateway never writes last_test_* or last_check_*"
     );
+}
+
+/// A tool with a response projection has its error body replaced, and nothing else changes:
+/// the upstream's 401 is recorded on the account and in the request log like any tool's.
+#[tokio::test]
+async fn a_projected_tools_401_records_the_failure_and_logs_the_upstream_status() {
+    let tools = json!({"read": {"items": [
+        {"id": "cps", "name": "c", "host": "127.0.0.1", "path": "/x/401", "methods": ["GET"],
+         "project": ["$.name"]}
+    ]}});
+    let snap = snapshot(
+        vec![app_json("demo", tools, false)],
+        vec![host_json(
+            "demo",
+            None,
+            json!({"inject": [{"bearer": "{credentials.tok}"}]}),
+        )],
+    );
+    let fx = start_health_on(Duration::ZERO, snap).await;
+    let r = get(&fx.env, "/x/401", "").await;
+    assert_eq!(r.status, 401, "{}", r.body);
+    assert_eq!(r.code(), "tool_error_withheld", "{}", r.body);
+    assert!(!r.body.contains("Bearer"), "{}", r.body);
+
+    fx.env.log.flush().await;
+    let rows = fx.env.rows.lock().unwrap().clone();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].tool_id.as_deref(), Some("cps"));
+    assert_eq!(
+        (rows[0].status, rows[0].upstream_status),
+        (401, Some(401)),
+        "{rows:?}"
+    );
+    assert_eq!(rows[0].decision, "allow", "{rows:?}");
+
+    fx.wait_error("rejected").await;
 }
 
 /// A generic secret (a website's token) injected by host: its own row records the health, through the same role.

@@ -269,6 +269,9 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
         *r.status_mut() = http::StatusCode::NOT_FOUND;
         return Ok(r);
     }
+    if let Some(r) = unprojectable(parts.uri.path()) {
+        return Ok(r);
+    }
     // (FIX-104) The gateway withholds a response that echoes a value it put in the URL; a test
     // that wants to see the whole request asks for it hex-encoded (`x-echo-hex`).
     if parts.headers.contains_key("x-echo-hex") {
@@ -294,6 +297,52 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
         );
     }
     Ok(r)
+}
+
+/// Answers a projected tool must never forward (`response_projection.rs`). Each of the
+/// first four parses to something the projection would accept, so only the gateway's own
+/// check for that case keeps it back.
+fn unprojectable(path: &str) -> Option<Response<Full<Bytes>>> {
+    let (status, headers, body): (u16, &[(&str, &str)], Vec<u8>) = match path {
+        // A valid answer padded past the buffer limit: the cut-off prefix still parses.
+        "/cpsbig" => {
+            let mut b = CONTACT_POINTS.as_bytes().to_vec();
+            b.resize(1024 * 1024 + 4096, b' ');
+            (200, &[], b)
+        }
+        "/cps302" => (
+            302,
+            &[("location", "https://hooks.example.org/x")],
+            CONTACT_POINTS.as_bytes().to_vec(),
+        ),
+        "/cps204" => (204, &[], Vec::new()),
+        "/cpsempty" => (200, &[], Vec::new()),
+        "/cpsmixed" => (
+            200,
+            &[],
+            br#"[{"name":"hook","type":"hook"},"https://hooks.example.org/x"]"#.to_vec(),
+        ),
+        // A gzip member header and bytes the gateway does not decode.
+        "/cpsgzip" => (
+            200,
+            &[("content-encoding", "gzip")],
+            [
+                &[0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 3][..],
+                b"hooks.example.org",
+            ]
+            .concat(),
+        ),
+        _ => return None,
+    };
+    let mut r = Response::new(Full::new(Bytes::from(body)));
+    *r.status_mut() = http::StatusCode::from_u16(status).unwrap();
+    for (k, v) in headers {
+        r.headers_mut().insert(
+            http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+            v.parse().unwrap(),
+        );
+    }
+    Some(r)
 }
 
 fn app_json(id: &str, tools: Value, optional_tok: bool) -> Value {

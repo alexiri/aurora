@@ -69,8 +69,7 @@ Reading is allowed by default:
 
 Every request must match one of these tools or one of the held ones below, whatever permission the
 agent has, full access included. Every other request is blocked, and the token is never sent with it:
-other proxy paths (the Prometheus admin and status APIs, other data source types) and the rest of
-Grafana's API.
+other proxy paths (such as the Prometheus admin and status APIs) and the rest of Grafana's API.
 
 These are separate permissions and are held for approval:
 
