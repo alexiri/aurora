@@ -131,6 +131,21 @@ describe("organization Libraries tab", () => {
     expect(facts(card(list, "Unused, no offer count")).slice(2)).toEqual(["None used yet"]);
   });
 
+  it("names the branch a library with none set follows, and shortens a branch that is a commit id (FIX-279)", async () => {
+    withLibs([
+      library({ id: "l1", label: "Default", ref: null, default_branch: "main", pending_updates: 0 }),
+      library({ id: "l2", label: "Pinned to a commit", ref: SHA_A, default_branch: null, pending_updates: 0 }),
+      library({ id: "l3", label: "Unknown", ref: null, default_branch: null, pending_updates: 0 }),
+      library({ id: "l4", label: "Hex-like branch", ref: SHA_A.slice(0, 12), default_branch: null, pending_updates: 0 }),
+    ]);
+    wrap(<LibrariesTab />);
+    const list = await screen.findByRole("list", { name: "Your organization's libraries" });
+    expect(facts(card(list, "Default"))[0]).toBe("Branch main");
+    expect(facts(card(list, "Pinned to a commit"))[0]).toBe("Branch 0123456");
+    expect(facts(card(list, "Unknown"))[0]).toBe("Default branch");
+    expect(facts(card(list, "Hex-like branch"))[0]).toBe("Branch 0123456789ab");
+  });
+
   it("shows one state chip per card; an update links to the review on the Skills tab", async () => {
     withLibs([
       library({ id: "a", label: "A", pending_updates: 0 }),

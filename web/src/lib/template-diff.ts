@@ -33,7 +33,7 @@ export interface TemplateChange {
   new?: string;
   /** For parts that are not (only) text: the change in words. */
   detail?: string;
-  /** For a whole skill added or removed (`old`/`new` are its body): its **Use it when** text. */
+  /** For a whole skill added or removed (`old`/`new` are its body): its **When to use it** text. */
   useItWhen?: string;
 }
 
@@ -343,7 +343,7 @@ export function diffTemplateContent(base: TemplateContentView, next: TemplateCon
       } else {
         const body = textChange(`skill:${name}:body`, "skills", `Skill ${name}`, e.b.body, e.n.body);
         if (body) changes.push(body);
-        const use = textChange(`skill:${name}:use_it_when`, "skills", `Skill ${name} · Use it when`, e.b.use_it_when, e.n.use_it_when);
+        const use = textChange(`skill:${name}:use_it_when`, "skills", `Skill ${name} · When to use it`, e.b.use_it_when, e.n.use_it_when);
         if (use) changes.push(use);
       }
       const files = new Map<string, { b?: (typeof base.skills)[number]["files"][number]; n?: (typeof next.skills)[number]["files"][number] }>();

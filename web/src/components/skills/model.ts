@@ -91,6 +91,25 @@ export function isOutsideText(skill: SkillBody): boolean {
   return skill.tier === "app" || !!skill.source;
 }
 
+/** What the viewer may do with a skill on this page. */
+export function skillRights(page: SkillPage, row: SkillRow) {
+  // Whether this page is where the skill is kept, and the viewer may write there.
+  const here =
+    page.kind === "agent" ? row.tier === "agent" && !page.readOnly : row.tier === pageTier(page) && (page.kind === "organization" || page.canOwn);
+  const library = isLibrary(row.skill);
+  const canDecide = row.tier === "app" ? false : page.kind === "agent" ? page.canDecide[row.tier] : here;
+  return { here, library, canDecide, edit: here && !library };
+}
+
+/**
+ * Whether an update of this row's skill waits for this person: the one rule for the row's "Update available", the
+ * panel's Review update and the page's notice, so the three always agree.
+ */
+export function updateToReview(page: SkillPage, row: SkillRow): boolean {
+  const rights = skillRights(page, row);
+  return rights.library && rights.canDecide && !!row.skill.source?.update_pending && !!row.skill.id;
+}
+
 export function libraryLabel(skill: SkillBody): string {
   return skill.source?.label ?? skill.source?.repo ?? "a library";
 }

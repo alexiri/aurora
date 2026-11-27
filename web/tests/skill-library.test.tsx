@@ -218,15 +218,34 @@ describe("update review", () => {
   });
 
   it("an update the repository broke can only be rejected; a removed skill says what approving does", async () => {
-    mockFetch(base(() => json(200, review({ kind: "invalid", diff: null, reason: "a symlink is not allowed (link)" }))));
+    mockFetch(base(() => json(200, review({ kind: "invalid", diff: null, reason: "a symlink is not allowed (link)", reason_code: "unsupported_entry" }))));
     const dlg = await open();
-    expect(within(dlg).getByText(/a symlink is not allowed \(link\)/)).toBeTruthy();
+    expect(
+      within(dlg).getByText(
+        "The new version in the repository cannot be used. It holds a link, a submodule or another kind of file a skill can’t hold. It can only be rejected; the pinned copy keeps working.",
+      ),
+    ).toBeTruthy();
+    expect(dlg.textContent).not.toContain("a symlink is not allowed");
     expect((within(dlg).getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
     expect((within(dlg).getByRole("button", { name: "Reject" }) as HTMLButtonElement).disabled).toBe(false);
     cleanup();
     mockFetch(base(() => json(200, review({ kind: "removed" }))));
     const dlg2 = await open();
     expect(within(dlg2).getByText(/Approving removes it from this organization/)).toBeTruthy();
+  });
+
+  it("an invalid update with a code this page does not know says only that it cannot be used (FIX-279)", async () => {
+    mockFetch(base(() => json(200, review({ kind: "invalid", diff: null, reason: "something new (x)", reason_code: "made_up" }))));
+    const dlg = await open();
+    expect(within(dlg).getByText("The new version in the repository cannot be used. It can only be rejected; the pinned copy keeps working.")).toBeTruthy();
+  });
+
+  it("wraps long lines in the review's diffs (FIX-279)", async () => {
+    mockFetch(base(() => json(200, review())));
+    const dlg = await open();
+    for (const label of ["Description diff", "SKILL.md diff", "Diff of check.md"]) {
+      expect(within(dlg).getByLabelText(label).querySelector(".whitespace-pre-wrap")).not.toBeNull();
+    }
   });
 
   it("over budget disables approve with the numbers; a superseded update offers a reload", async () => {
@@ -254,7 +273,7 @@ describe("Add from library", () => {
     items: [
       { path: "code-review", name: "code-review", description: HOSTILE, valid: true, reason: null, size: 500, files: 2, added: [{ tier: "org", id: "s9" }] },
       { path: "release-notes", name: "release-notes", description: "Write release notes", valid: true, reason: null, size: 900, files: 1, added: [] },
-      { path: "Bad_Name", name: "Bad_Name", description: null, valid: false, reason: "the directory name is not a valid skill name", size: 10, files: 1, added: [] },
+      { path: "Bad_Name", name: "Bad_Name", description: null, valid: false, reason: "the directory name is not a valid skill name", reason_code: "bad_name", size: 10, files: 1, added: [] },
     ],
   };
   const content = {
@@ -300,7 +319,7 @@ describe("Add from library", () => {
     // the invalid one is not in the list: it is folded, with why
     expect(within(list).queryByRole("button", { name: /^Bad_Name/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /1 can’t be added/ }));
-    expect(within(screen.getByRole("list", { name: "Skills that can’t be added" })).getByText("the directory name is not a valid skill name")).toBeTruthy();
+    expect(within(screen.getByRole("list", { name: "Skills that can’t be added" })).getByText("Its folder name can’t be used as a skill name.")).toBeTruthy();
     // hostile description text is data
     expect(list.querySelector("img")).toBeNull();
     expect(within(list).getByText(/<img src=x onerror=alert\(1\)>/)).toBeTruthy();

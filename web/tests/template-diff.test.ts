@@ -90,7 +90,7 @@ describe("diffTemplateContent", () => {
     expect(byPart["skill:triage"]).toMatchObject({ label: "Skill triage", kind: "removed", old: "triage body\n" });
     expect(byPart["skill:release-notes"]).toMatchObject({ label: "Skill release-notes", kind: "added", new: "release-notes body\n", detail: "New in this version." });
     expect(byPart["skill:code-review:body"]).toMatchObject({ kind: "changed", old: "code-review body\n", new: "Review carefully.\n" });
-    expect(byPart["skill:code-review:use_it_when"]).toMatchObject({ label: "Skill code-review · Use it when", kind: "changed" });
+    expect(byPart["skill:code-review:use_it_when"]).toMatchObject({ label: "Skill code-review · When to use it", kind: "changed" });
     expect(byPart["skill:code-review:file:checklist.md"]).toMatchObject({ label: "Skill code-review · checklist.md", kind: "changed", old: "- tests\n", new: "- tests run\n" });
     expect(byPart["skill:code-review:file:notes.md"]).toMatchObject({ kind: "added", new: "notes\n" });
     expect(d.summary).toBe("6 changes: 3 skills");

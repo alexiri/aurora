@@ -61,7 +61,7 @@ const catalogue = {
   items: [
     { path: "code-review", name: "code-review", description: HOSTILE, valid: true, reason: null, size: 480, files: 2, added: [{ tier: "org", id: id(710) }] },
     { path: "release-notes", name: "release-notes", description: "Write release notes from merged pull requests", valid: true, reason: null, size: 900, files: 1, added: [] },
-    { path: "Bad_Name", name: "Bad_Name", description: null, valid: false, reason: "the directory name is not a valid skill name", size: 100, files: 1, added: [] },
+    { path: "Bad_Name", name: "Bad_Name", description: null, valid: false, reason: "the directory name is not a valid skill name", reason_code: "bad_name", size: 100, files: 1, added: [] },
   ],
 };
 

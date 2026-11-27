@@ -12,22 +12,20 @@ import { errorMessage } from "@/lib/api/errors";
 import {
   shortSha,
   useApproveLibraryUpdate,
-  usePendingLibraryUpdates,
   useRejectLibraryUpdate,
   useSkillLibraryInfo,
   type BudgetTier,
   type LibraryDiff,
 } from "@/lib/api/skill-libraries";
-import { TIER_LABEL, type Skill, type SkillScope } from "@/lib/api/skills";
+import { TIER_LABEL, type Skill } from "@/lib/api/skills";
+import { skillInvalidWords } from "@/lib/labels";
 
 import { DiffView as FileDiffView } from "@/components/ui/diff-view";
 
 // Everything from a repository is untrusted text: here it is only ever rendered as React text nodes.
 
-/** "N updates are waiting": the pending proposals this scope's authority may decide. */
-export function PendingUpdatesNotice({ scope, enabled }: { scope: SkillScope; enabled: boolean }) {
-  const pending = usePendingLibraryUpdates(scope, enabled);
-  const n = pending.data?.items.length ?? 0;
+/** "N updates are waiting": how many of the page's skills have an update this person can review. */
+export function PendingUpdatesNotice({ count: n }: { count: number }) {
   if (n === 0) return null;
   return (
     <Notice tone="pending" role="status">
@@ -50,11 +48,11 @@ export function DiffView({ diff }: { diff: LibraryDiff }) {
     <div className="space-y-4">
       <section aria-label="Description change" className="space-y-1">
         <h4 className="text-sm font-semibold text-ink">Description{diff.description.changed ? "" : " (unchanged)"}</h4>
-        <FileDiffView old={diff.description.old} next={diff.description.new} label="Description diff" fileName="description" />
+        <FileDiffView old={diff.description.old} next={diff.description.new} label="Description diff" fileName="description" wrap />
       </section>
       <section aria-label="SKILL.md change" className="space-y-1">
         <h4 className="text-sm font-semibold text-ink">SKILL.md{diff.body.changed ? "" : " (unchanged)"}</h4>
-        <FileDiffView old={diff.body.old} next={diff.body.new} label="SKILL.md diff" fileName="SKILL.md" />
+        <FileDiffView old={diff.body.old} next={diff.body.new} label="SKILL.md diff" fileName="SKILL.md" wrap />
       </section>
       {diff.files.map((f) => (
         <section key={f.path} aria-label={`File ${f.path}`} className="space-y-1">
@@ -68,7 +66,7 @@ export function DiffView({ diff }: { diff: LibraryDiff }) {
           {f.binary ? (
             <p className="text-xs text-muted">Binary file: compared by content, not shown.</p>
           ) : f.change === "unchanged" ? null : (
-            <FileDiffView old={f.old ?? ""} next={f.new ?? ""} label={`Diff of ${f.path}`} fileName={f.path} status={f.change === "added" ? "added" : f.change === "removed" ? "removed" : null} />
+            <FileDiffView old={f.old ?? ""} next={f.new ?? ""} label={`Diff of ${f.path}`} fileName={f.path} status={f.change === "added" ? "added" : f.change === "removed" ? "removed" : null} wrap />
           )}
         </section>
       ))}
@@ -130,7 +128,8 @@ export function UpdateReviewDialog({
             ) : null}
             {update.kind === "invalid" ? (
               <Notice tone="danger" role="status">
-                The new version in the repository cannot be used{update.reason ? `: ${update.reason}` : ""}. It can only be rejected; the pinned copy keeps working.
+                {/* A known code adds its sentence; the server's text is not shown. */}
+                {["The new version in the repository cannot be used.", skillInvalidWords(update.reason_code, ""), "It can only be rejected; the pinned copy keeps working."].filter(Boolean).join(" ")}
               </Notice>
             ) : null}
             {update.over_budget ? (

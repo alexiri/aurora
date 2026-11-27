@@ -34,6 +34,27 @@ export const LIBRARY_STATUS = {
   over_budget: { label: "Over budget" },
 } satisfies LabelTable;
 
+/**
+ * (C-2, FIX-279) Why a library skill can't be added, or an update of one can't be used (`reason_code`). The server's own
+ * text is never shown or read: it is rule text with paths in it. The numbers are the limits of a skill.
+ */
+export const SKILL_INVALID_REASON = {
+  too_large: { label: "This skill is larger than 32,000 characters, the most a skill may hold." },
+  body_too_large: { label: "Its instructions are longer than 24,000 characters, the most a skill’s instructions may be." },
+  file_too_large: { label: "One of its files is larger than 65,536 bytes, the most one file may be." },
+  too_many_files: { label: "It has more than 50 files, the most a skill may hold." },
+  unsupported_path: { label: "Some of its file names use characters Aurora can’t store, or sit too many folders deep." },
+  unsupported_entry: { label: "It holds a link, a submodule or another kind of file a skill can’t hold." },
+  skill_md: { label: "Its SKILL.md is missing, misnamed or not written the way a skill needs." },
+  bad_name: { label: "Its folder name can’t be used as a skill name." },
+  unknown_size: { label: "Aurora couldn’t read all of it to check its size, so it can’t be added." },
+} satisfies LabelTable;
+
+/** The sentence for a `reason_code`; `fallback` for none, or for one this page doesn't know. */
+export function skillInvalidWords(code: string | null | undefined, fallback = "This skill can’t be added."): string {
+  return code && Object.hasOwn(SKILL_INVALID_REASON, code) ? SKILL_INVALID_REASON[code as keyof typeof SKILL_INVALID_REASON].label : fallback;
+}
+
 /** (C-1114) An agent template source's last read (`AgentTemplateSource.status`); the reason sits beside "Can't be read". */
 export const TEMPLATE_SOURCE_STATUS = {
   ok: { label: "Ok" },
