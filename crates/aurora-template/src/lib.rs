@@ -39,7 +39,7 @@ pub use model::{
 pub use problem::{ProblemCode, TemplateProblem};
 pub use render::{
     CheckedInputs, InputProblem, InputProblemCode, RenderedAutomation, RenderedMemory,
-    RenderedSkill, RenderedTemplate, check_inputs, render,
+    RenderedSkill, RenderedTemplate, check_inputs, render, with_defaults,
 };
 pub use skill_rules::{
     FILES_PER_SKILL_MAX, PATH_MAX_DEPTH, PATH_MAX_LEN, check_name, is_text, path_ok,

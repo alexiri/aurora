@@ -1,5 +1,6 @@
 "use client";
 
+import { useIsMutating } from "@tanstack/react-query";
 import Link from "next/link";
 
 import { AskAdminForm } from "@/components/ask-admin";
@@ -39,6 +40,16 @@ export function orgSlugOf(base: string): string | null {
   return m ? decodeURIComponent(m[1]!) : null;
 }
 
+/**
+ * One key for every "give this agent a key" mutation, so the one-click button and the **Use another key** menu (in every
+ * place that shows them) wait for each other: two clicks must not grant two keys.
+ */
+const keyGrantMutationKey = (agentId: string) => ["ai-key-grant", agentId] as const;
+
+function useKeyGrantPending(agentId: string): boolean {
+  return useIsMutating({ mutationKey: keyGrantMutationKey(agentId) }) > 0;
+}
+
 /** The key's scope in words (FIX-249, C-1168): "Organization key" | "Workspace key". */
 export function scopeWords(k: Pick<AgentAiKey, "scope">): string {
   return k.scope === "workspace" ? "Workspace key" : "Organization key";
@@ -53,7 +64,8 @@ export function scopeWords(k: Pick<AgentAiKey, "scope">): string {
  */
 export function UseAnotherKey({ agentId, agentName, given, size = "sm" }: { agentId: string; agentName: string; given: string; size?: "sm" | "default" }) {
   const keys = useAgentAiKeys(agentId);
-  const grant = useGrantSecretToAgent();
+  const grant = useGrantSecretToAgent(keyGrantMutationKey(agentId));
+  const pending = useKeyGrantPending(agentId);
   const items = keys.data?.items ?? [];
   const others = items.filter((k) => k.usable && k.secret_id !== given);
   const unusable = items.filter((k) => !k.usable);
@@ -62,7 +74,7 @@ export function UseAnotherKey({ agentId, agentName, given, size = "sm" }: { agen
     <span className="flex min-w-0 flex-col items-start gap-1">
       <Menu>
         <MenuTrigger asChild>
-          <Button type="button" size={size} variant="ghost" disabled={grant.isPending} className="min-h-11 md:min-h-9">
+          <Button type="button" size={size} variant="ghost" disabled={pending} className="min-h-11 md:min-h-9">
             Use another key
           </Button>
         </MenuTrigger>
@@ -97,7 +109,8 @@ export function UseAnotherKey({ agentId, agentName, given, size = "sm" }: { agen
 
 /** "Give Rex the Company key": one click, then "Rex can answer now" (the header turns Ready: the grant refreshes the answer check). */
 export function GiveKeyButton({ agentId, agentName, fix, size = "sm", buttonClassName }: { agentId: string; agentName: string; fix: Extract<AnswerFix, { action: "give_key" }>; size?: "sm" | "default"; buttonClassName?: string }) {
-  const add = useAddCredentialGrants({ kind: "secret", id: fix.key.secret_id });
+  const add = useAddCredentialGrants({ kind: "secret", id: fix.key.secret_id }, keyGrantMutationKey(agentId));
+  const pending = useKeyGrantPending(agentId);
   return (
     <span className="flex w-full min-w-0 max-w-full flex-col items-start gap-1">
       <span className="flex w-full min-w-0 max-w-full flex-wrap items-start gap-2">
@@ -105,7 +118,7 @@ export function GiveKeyButton({ agentId, agentName, fix, size = "sm", buttonClas
           type="button"
           size={size}
           className={cn("h-auto min-h-11 max-w-full whitespace-normal py-1.5 text-left md:min-h-9", buttonClassName)}
-          disabled={add.isPending}
+          disabled={pending}
           onClick={() => add.mutate({ agentIds: [agentId] }, { onSuccess: () => showUndoToast(`${agentName} can answer now`) })}>
           Give {agentName} the {fix.key.name}
         </Button>

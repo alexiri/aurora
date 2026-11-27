@@ -4334,7 +4334,12 @@ async fn resolutions_that_do_not_match_the_hunks_are_refused() {
 }
 
 /// A one-input-per-line `template.yaml` with `inputs` and its instructions, for the default tests.
-fn default_files(dir: &str, version: &str, inputs: &str, instructions: &str) -> Vec<(String, Vec<u8>)> {
+fn default_files(
+    dir: &str,
+    version: &str,
+    inputs: &str,
+    instructions: &str,
+) -> Vec<(String, Vec<u8>)> {
     vec![
         (
             format!("{dir}/template.yaml"),

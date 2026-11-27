@@ -17,9 +17,8 @@ const agent = {
   id: "a1",
   name: "Daneel",
   handle: "daneel",
-  workspace_id: "w1",
   template: null,
-} as { id: string; name: string; handle: string; workspace_id: string; template: { template_id: string; name: string; version: string } | null };
+} as { id: string; name: string; handle: string; template: { template_id: string; name: string; version: string } | null };
 
 const withTemplate = { ...agent, template: { template_id: "schedule-manager", name: "Schedule manager", version: "1.0.0" } };
 

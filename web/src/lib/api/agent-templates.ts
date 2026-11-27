@@ -1,9 +1,12 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "./client";
+import { scheduleKeys } from "./schedules";
 import type { components } from "./schema";
+import { skillKeys } from "./skills";
+import { webhookKeys } from "./webhooks";
 import { unwrap } from "./unwrap";
 
 export type AgentTemplateSource = components["schemas"]["AgentTemplateSource"];
@@ -305,6 +308,11 @@ export function useAgentTemplate(agentId: string | undefined) {
   });
 }
 
+/** The agent is read from its workspace's agent list (`queryKeys.agents`), so every workspace's list is read again. */
+function invalidateAgentLists(qc: QueryClient) {
+  void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "workspaces" && q.queryKey[2] === "agents" });
+}
+
 /** Apply (or skip) an offered version (C-1112): only the listed parts change; the answer is the new status. */
 export function useApplyAgentTemplate(agentId: string) {
   const qc = useQueryClient();
@@ -313,7 +321,13 @@ export function useApplyAgentTemplate(agentId: string) {
       unwrap(api.POST("/v1/agents/{agent}/template/apply", { params: { path: { agent: agentId } }, body })),
     onSuccess: (data) => {
       qc.setQueryData(agentTemplateKeys.status(agentId), data);
+      // An apply rewrites the agent's instructions (on the agent), its skills and its automations.
       void qc.invalidateQueries({ queryKey: agentTemplateKeys.helpers(agentId) });
+      invalidateAgentLists(qc);
+      // The prefix also covers the effective skills.
+      void qc.invalidateQueries({ queryKey: skillKeys.agent(agentId) });
+      void qc.invalidateQueries({ queryKey: scheduleKeys.list(agentId) });
+      void qc.invalidateQueries({ queryKey: webhookKeys.list(agentId) });
     },
   });
 }
@@ -323,7 +337,11 @@ export function useDetachAgentTemplate(agentId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => unwrap(api.DELETE("/v1/agents/{agent}/template", { params: { path: { agent: agentId } } })),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: agentTemplateKeys.status(agentId) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: agentTemplateKeys.status(agentId) });
+      // The agent carries its template's name and version.
+      invalidateAgentLists(qc);
+    },
   });
 }
 

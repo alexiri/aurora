@@ -111,7 +111,6 @@ export function ReviewChangesDialog({
         title="Review changes"
         description={`Version ${offer.version} of ${templateName}. ${agentName} keeps working as it is until you apply it.`}
         size="lg"
-        fixedHeight="600px"
         footer={
           <div className="flex flex-wrap items-center justify-end gap-2">
             <Button type="button" variant="outline" disabled={apply.isPending} onClick={() => apply.mutate({ version: offer.version, content_sha256: offer.content_sha256, parts: [] })}>

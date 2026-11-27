@@ -85,7 +85,35 @@ impl CheckedInputs {
     }
 }
 
-/// `check_inputs`: every rule at once, all problems back (C-1104).
+/// The value an input stands for: what was given, or its `default` when nothing (or the empty
+/// string) was.
+fn effective_value<'a>(input: &'a InputDecl, given: Option<&'a str>) -> Option<&'a str> {
+    match given {
+        None | Some("") => input.default.as_deref().or(given),
+        Some(_) => given,
+    }
+}
+
+/// `values` with the `default` of every input that was given none, for rendering and storing
+/// values without checking them (an update offer renders the stored ones as they are).
+#[must_use]
+pub fn with_defaults(
+    inputs: &[InputDecl],
+    mut values: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    for input in inputs {
+        let given = values.get(&input.id).map(String::as_str);
+        if let Some(v) = effective_value(input, given)
+            && Some(v) != given
+        {
+            values.insert(input.id.clone(), v.to_owned());
+        }
+    }
+    values
+}
+
+/// `check_inputs`: every rule at once, all problems back (C-1104). An input with a `default`
+/// takes it when the value is absent or empty, before any rule runs.
 pub fn check_inputs(
     inputs: &[InputDecl],
     values: &BTreeMap<String, String>,
@@ -102,7 +130,7 @@ pub fn check_inputs(
         }
     }
     for input in inputs {
-        let given = values.get(&input.id).map(String::as_str);
+        let given = effective_value(input, values.get(&input.id).map(String::as_str));
         let value = match given {
             None | Some("") if input.required => {
                 problems.push(InputProblem {

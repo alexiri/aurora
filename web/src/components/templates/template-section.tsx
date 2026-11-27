@@ -26,7 +26,9 @@ export function AgentTemplateSection({ agent, agentBase }: { agent: Pick<Agent, 
   const status = useAgentTemplate(agent.id);
   const helpers = useAgentHelpers(agent.id);
   const qc = useQueryClient();
-  const template = status.data?.template ?? agent.template ?? null;
+  // Once the status is read it decides, also when it says there is no template any more: the agent given here may
+  // be older than a detach.
+  const template = status.data ? (status.data.template ?? null) : (agent.template ?? null);
   const helperFiles = helpers.data?.items ?? [];
   // Only for agents with a template or with helper files (C-1117). The agent's own `template`
   // shows the section at once; the helper list decides when the agent has helpers but no template.
