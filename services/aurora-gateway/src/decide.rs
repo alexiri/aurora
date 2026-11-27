@@ -1089,6 +1089,16 @@ impl PolicyHandler {
     }
 }
 
+/// The refusal of a projected tool on a lane that cannot apply its response projection: the
+/// request is not carried out.
+fn lane_projection_refusal() -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "tool_projection_unsupported",
+        "This tool shows only some fields of its answer, and the gateway cannot apply that to this kind of app, so the request was not sent. Do not retry it; tell the user the app's package needs to be fixed.",
+    )
+}
+
 /// (FIX-084) The state a released hold hands to the second pass of [`PolicyHandler::handle_with`].
 #[derive(Clone, Copy)]
 struct Released {
@@ -1440,6 +1450,14 @@ impl PolicyHandler {
                 "This tool sends no query parameters: repeat the request without the query string.",
             );
             return Outcome::Respond(self.refuse(ctx, &err, "tool_query_refused"));
+        }
+        // (FIX-259) The LDAP lane applies no response projection: a projected tool of an LDAP
+        // app (a package stored before the linter refused it) is refused here, before any rule,
+        // approval or search, rather than answered whole. The secret-link lane does the same.
+        if app_match.as_ref().is_some_and(|m| m.app.ldap.is_some())
+            && tool.is_some_and(|t| t.project.is_some())
+        {
+            return Outcome::Respond(self.refuse(ctx, &lane_projection_refusal(), "blocked"));
         }
         // (P5-MODELS-2, C-880) The model the request asks for, read the way the allow-list check reads it
         // (same body prefix); logged for every request with an injected key on a governed LLM endpoint.
@@ -2928,6 +2946,13 @@ impl DbSession {
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
+        // The database lane relays the server's rows and applies no response projection (see the
+        // LDAP check in `handle_with`): the statement is refused before any rule or approval.
+        if tool.is_some_and(|t| t.project.is_some()) {
+            let err = lane_projection_refusal();
+            h.refuse(ctx, &err, "blocked");
+            return DbVerdict::Deny(err);
+        }
         let facts = RequestFacts {
             host: self.host.clone(),
             port: 443,

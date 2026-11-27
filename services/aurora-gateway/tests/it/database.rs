@@ -793,6 +793,47 @@ async fn ddl_admin_and_always_refused_never_reach_the_server() {
     assert_eq!(first_col(&pg.query("select 1").await), ["1"]);
 }
 
+// A package stored before the linter refused it: the database lane relays the server's rows and
+// applies no response projection, so a statement of a projected tool is refused and never runs.
+// That holds for a statement that would need approval too: nobody is asked.
+#[tokio::test]
+async fn a_statement_of_a_projected_tool_is_refused_and_never_reaches_the_server() {
+    let env = start().await;
+    let mut snap = snapshot();
+    snap["apps"][0]["tools"]["read"]["items"][0]["project"] = json!(["$.name"]);
+    snap["apps"][0]["tools"]["write"]["items"][0]["project"] = json!(["$.name"]);
+    env.snapshots.install(parse("h2", snap).unwrap());
+    let mut pg = Pg::ok(&env).await;
+    for sql in ["select 'whole-answer'", "insert into dbl_t values (1, 'x')"] {
+        let r = tokio::time::timeout(Duration::from_secs(10), pg.query(sql))
+            .await
+            .unwrap_or_else(|_| panic!("{sql} was held, not refused"));
+        let e = error(&r).unwrap_or_else(|| panic!("{sql} was not refused: {r:?}"));
+        assert_eq!(e.0, "42501", "{sql}: {e:?}");
+        assert!(
+            e.1.contains("shows only some fields of its answer"),
+            "{sql}: {e:?}"
+        );
+        assert!(first_col(&r).is_empty(), "{sql}: {r:?}");
+        assert_eq!(status(&r), b'I');
+    }
+    assert_eq!(rows_in(&env).await, 0);
+    let approvals: i64 = sqlx::query_scalar("SELECT count(*) FROM approvals WHERE workspace_id=$1")
+        .bind(env.w.ws)
+        .fetch_one(env.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(approvals, 0);
+    env.log.flush().await;
+    let rows = env.captured.0.lock().unwrap().clone();
+    let refused: Vec<_> = rows
+        .iter()
+        .filter(|r| r.error_code.as_deref() == Some("tool_projection_unsupported"))
+        .map(|r| (r.path.as_str(), r.status))
+        .collect();
+    assert_eq!(refused, [("/read", 403), ("/write", 403)], "{rows:?}");
+}
+
 #[tokio::test]
 async fn refusal_inside_a_transaction_aborts_it_like_a_server_error() {
     let env = start().await;

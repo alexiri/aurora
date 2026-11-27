@@ -99,6 +99,32 @@ fn only_get_of_the_root_path_is_a_tool() {
     }
 }
 
+// The secret-link lane applies no response projection, in either mode, so a tool may not
+// declare one.
+#[test]
+fn a_projection_on_a_secret_link_tool_is_refused() {
+    let read = TOOL.replace(
+        "methods: [GET] }",
+        "methods: [GET], project: [\"$.name\"] }",
+    );
+    let y = manifest(CREDS, SECTION, "", &read);
+    assert_eq!(
+        codes(&y),
+        BTreeSet::from(["tool_project_lane"]),
+        "{:#?}",
+        run(&y)
+    );
+    let send = "{ id: send, name: Send, host: \"*.link.aurora.internal\", path: /, methods: [POST], project: [\"$.ok\"] }";
+    let y = manifest(
+        CREDS,
+        "    secret_link: { credential: url, mode: send }",
+        "",
+        send,
+    )
+    .replace("      read:\n", "      write:\n");
+    assert!(codes(&y).contains("tool_project_lane"), "{:#?}", run(&y));
+}
+
 #[test]
 fn the_prefix_is_bounded() {
     let long = format!(
