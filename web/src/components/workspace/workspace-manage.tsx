@@ -22,7 +22,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { useAgents, useMe, useOrg, useResolve, useWorkspace, type Agent } from "@/lib/api/queries";
 import { usePutAccess } from "@/lib/api/account";
-import { emergencyOpenText } from "@/lib/emergency";
+import { emergencyOpenText, isEmergencyReader } from "@/lib/emergency";
 import { orgRoutes, wsRoutes } from "@/lib/routes";
 import { personName } from "@/lib/workspace-name";
 
@@ -138,7 +138,7 @@ export function WorkspaceManage() {
         breadcrumb={[{ label: "Overview", href: orgRoutes(org).home() }]}
         actions={personal ? <Badge tone="neutral">Personal</Badge> : undefined}
       />
-      {w.my_role == null ? <ManageNotice personal={personal} personFirstName={personFirstName} orgOwner={orgOwner} emergency={w.emergency_reader ? { until: w.emergency_reader_expires_at ?? null, agentsPath: wsRoutes(org, ws).agents() } : null} /> : null}
+      {w.my_role == null ? <ManageNotice personal={personal} personFirstName={personFirstName} orgOwner={orgOwner} emergency={isEmergencyReader(w) ? { until: w.emergency_reader_expires_at ?? null, agentsPath: wsRoutes(org, ws).agents() } : null} /> : null}
 
       <Section id="manage-people" title="People" description="Who can use this workspace.">
         <div className="space-y-4">
@@ -149,7 +149,7 @@ export function WorkspaceManage() {
           {/* (FIX-236, review LOW-11, D-470) Only where opening can succeed: an org owner who
               is one of the workspace's owners (409 already_has_access) or already holds a grant
               (409 emergency_access_active) gets no entry. */}
-          {orgOwner && w.my_role !== "owner" && !w.emergency_reader ? (
+          {orgOwner && w.my_role !== "owner" && !isEmergencyReader(w) ? (
             <OpenEmergencyAccess wsId={w.id} wsName={w.name} />
           ) : null}
           <AccessTab wsId={w.id} orgId={w.org_id} canOwn={canAdminister} personal={personal} />

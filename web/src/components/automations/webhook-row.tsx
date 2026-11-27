@@ -79,7 +79,10 @@ export function WebhookRow({
   canOwn,
   onReveal,
   select,
+  readOnly = false,
 }: {
+  /** (FIX-277) The row and its deliveries, with nothing that changes the webhook. */
+  readOnly?: boolean;
   select?: { checked: boolean; onChange: (on: boolean) => void };
   agentId: string;
   agentName: string;
@@ -145,6 +148,11 @@ export function WebhookRow({
         </>
       }
       actions={
+        readOnly ? (
+          <Button size="sm" variant="outline" aria-expanded={showDeliveries} onClick={() => setShowDeliveries((v) => !v)}>
+            Deliveries
+          </Button>
+        ) : (
         <>
           <Button size="sm" variant="outline" aria-expanded={showHowTo} onClick={() => setShowHowTo((v) => !v)}>
             How to call it
@@ -174,6 +182,7 @@ export function WebhookRow({
             </MenuItem>
           </RowMenu>
         </>
+        )
       }
     >
       {showHowTo ? (

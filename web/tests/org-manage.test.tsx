@@ -13,7 +13,12 @@ import { json, type Handler } from "./support/api";
 // says `my_role: null` with `administers: true` redirects an administrator there.
 
 const replace = vi.fn();
+let path = "/o/acme/w/lab";
+beforeEach(() => {
+  path = "/o/acme/w/lab";
+});
 vi.mock("next/navigation", () => ({
+  usePathname: () => path,
   useParams: () => ({ org: "acme", ws: "lab" }),
   useRouter: () => ({ push: vi.fn(), replace }),
 }));
@@ -108,6 +113,26 @@ describe("the old-address redirect (FIX-235)", () => {
     wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/o/acme/workspaces/lab"));
     expect(screen.queryByText("page body")).toBeNull();
+  });
+
+  // (FIX-277) A page the grant doesn't cover never mounts for a reader: nothing there can act or ask.
+  it("a reader on a page the grant doesn't cover sees that, and the page never mounts", async () => {
+    path = "/o/acme/w/lab/settings";
+    serve(routesFor({ emergency_reader: true }));
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
+    const notice = await screen.findByTestId("emergency-not-covered");
+    expect(notice).toHaveTextContent("Emergency read access doesn’t cover this page.");
+    expect(within(notice).getByRole("link", { name: "Read the workspace’s agents" })).toHaveAttribute("href", "/o/acme/w/lab/agents");
+    expect(screen.queryByText("page body")).toBeNull();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("a member reads that same page as ever", async () => {
+    path = "/o/acme/w/lab/settings";
+    serve(routesFor({ my_role: "member", administers: false }));
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
+    await screen.findByText("page body");
+    expect(screen.queryByTestId("emergency-not-covered")).toBeNull();
   });
 
   it("own access and a plain member render the page", async () => {

@@ -98,17 +98,19 @@ export function useDeleteUserLink(integration: string) {
   return useInvalidatingMutation((id: string) => unwrap(api.DELETE("/v1/user-links/{id}", { params: { path: { id } } })), channelKeys.userLinks(integration));
 }
 
-export function usePresences(agent: string) {
+export function usePresences(agent: string, enabled = true) {
   return useQuery({
     queryKey: channelKeys.presences(agent),
+    enabled,
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/presences", { params: { path: { agent } } })),
     retry: retryUnlessClientError,
   });
 }
 
-export function usePresenceOptions(agent: string) {
+export function usePresenceOptions(agent: string, enabled = true) {
   return useQuery({
     queryKey: channelKeys.presenceOptions(agent),
+    enabled,
     queryFn: () => unwrap(api.GET("/v1/agents/{agent}/presence-options", { params: { path: { agent } } })),
     retry: retryUnlessClientError,
   });

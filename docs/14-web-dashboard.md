@@ -3772,6 +3772,20 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   Memory (read-only view), Automations and Skills (lists and reads), People (no Add people). The side navigation
   stays on the read-only topics; Terminal, Files, Computer, previews, Apps & access and approvals are not offered.
   Availability badges show the emergency state; Status and AnswerFix are hidden.
+- **Nothing the grant doesn't cover is asked for** (FIX-277). One predicate, `isEmergencyReader` (`lib/emergency.ts`),
+  and no page of a reader's sends a request the server would refuse:
+  - **Overview:** the agents (no **New agent**, **Chat** or summaries) and the recent activity. No Needs you, Getting
+    started or account names; the description is "The workspace's agents and what they did recently."
+  - **An agent's header:** no state line, attention chip or Update available mark.
+  - **Chat:** no direct chat is created; the reader picks a conversation. A held approval shows what the conversation
+    says; a failed start has no **Retry now**.
+  - **Instructions:** the model list and readiness aren't loaded.
+  - **Automations:** schedules with **Runs** and webhooks with **Deliveries**. No **New automation**, row actions, bulk
+    selection or Chats (the old Channels address shows the whole list).
+  - **Any other page** under `/o/<org>/w/<ws>` (Settings, Apps & accounts, Internet access, Approvals, Welcome, a new
+    agent from a template, the terminal, and any page added later) doesn't mount. It says "Emergency read access
+    doesn't cover this page." with **Read the workspace's agents** (`emergency-not-covered`). The covered set is
+    `emergencyCovers`, from the same topic list as the navigation.
 - **The reader's banner** (`emergency-reader-banner`), on every page: "Emergency read access until <time>. Everything
   you open is recorded, and this workspace's people have been told." with **"End now"** (`emergency-end-now`). Ending
   is idempotent; the banner goes when the workspace refetches.

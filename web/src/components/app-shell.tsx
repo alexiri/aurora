@@ -25,6 +25,7 @@ import { AttentionBadge } from "./admin/attention-badge";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { EmergencyBanners } from "./emergency/emergency-banners";
+import { EMERGENCY_TOPICS, isEmergencyReader } from "@/lib/emergency";
 import { CommandPalette, openPalette, openShortcutSheet } from "./palette/command-palette";
 import { ScopeSwitcher } from "./nav/scope-switcher";
 import { ShortcutsHost } from "./shortcuts/shortcuts-host";
@@ -266,9 +267,6 @@ function CountPill({ n, testId }: { n: number; testId: string }) {
   );
 }
 
-/** (FIX-236, C-1164) The topics emergency read access may open: the read set, no Settings, no Approvals. */
-const EMERGENCY_TOPICS = ["overview", "agents", "skills", "activity", "people"] as const;
-
 export function WorkspaceNav({
   base,
   wsId,
@@ -287,7 +285,7 @@ export function WorkspaceNav({
   // (FIX-236, C-1165) Emergency read access: the rail is the fixed read-only set — the topics the
   // mode is allowed to open (C-1164) — because the role is null and no membership decides the rest.
   const topics =
-    w?.emergency_reader === true
+    isEmergencyReader(w)
       ? EMERGENCY_TOPICS
       : visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") }, altitude);
   return (

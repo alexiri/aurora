@@ -139,7 +139,8 @@ export function ChatThread({
   useEffect(() => () => onTurn?.({ active: false, line: null }), [onTurn]);
   const agentName = agent?.name ?? "the agent";
   // (D-414) The agent has no AI key at all: no composer, and the empty chat says "<Agent> has no AI model yet".
-  const { noKey: noModel } = useAnswerFix(agentId);
+  // (FIX-277) Not asked for a reader: the grant doesn't cover it, and they have no composer to disable.
+  const { noKey: noModel } = useAnswerFix(agentId, !emergency);
   const readOnly = ownerView !== null || emergency;
   const isDirect = ownDirect || !!direct || readOnly || conversation?.kind === "direct";
   const empty = !loading && !error && state.events.length === 0 && Object.keys(state.deltas).length === 0;

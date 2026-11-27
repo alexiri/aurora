@@ -15,6 +15,7 @@ import { useAgentNeedsCounts } from "@/lib/api/agent-needs";
 import { useApprovalsStream } from "@/lib/api/approvals";
 import { useAgents, useResolve, useWorkspace } from "@/lib/api/queries";
 import { queryKeys } from "@/lib/api/queries";
+import { isEmergencyReader } from "@/lib/emergency";
 import { wsRoutes } from "@/lib/routes";
 import { whoCanFromContacts } from "@/lib/who-can";
 import { useQueryClient } from "@tanstack/react-query";
@@ -85,7 +86,7 @@ export function AgentsView() {
   if (!wsId) return <ErrorState error={{ code: "not_found" }} />;
   // (FIX-277, C-1165) Emergency read access: the list, with nothing to start or change, and no card summaries —
   // they read the workspace's accounts, which the grant doesn't cover.
-  const emergency = workspace.data?.emergency_reader === true;
+  const emergency = isEmergencyReader(workspace.data);
   return (
     <AltitudeScope>
     <div className="space-y-4">

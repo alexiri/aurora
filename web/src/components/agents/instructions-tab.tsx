@@ -49,7 +49,8 @@ export function InstructionsTab({
   const [brief, setBrief] = useState(agent.brief);
   const [effort, setEffort] = useState(agent.effort ?? "");
   const [proactive, setProactive] = useState(agent.proactive_messaging);
-  const models = useModels(agent.id, agent.kind === "hosted");
+  // (FIX-277) The model list and its readiness aren't asked for when nothing can be chosen (the grant covers neither).
+  const models = useModels(agent.id, agent.kind === "hosted" && !readOnly);
   const initialModel = agent.model_endpoint_id && agent.model_id ? `${agent.model_endpoint_id}\u0000${agent.model_id}` : "";
   const [model, setModel] = useState(initialModel);
   const [clientErr, setClientErr] = useState("");
@@ -69,7 +70,7 @@ export function InstructionsTab({
 
   // (phase 5, P5-MODELS-3, D-302, D-303, C-876) Roles belong to the default model's endpoint: the one chosen here, or
   // the one the next turn would use (readiness, owners only).
-  const readiness = useModelReadiness(agent.id, agent.kind === "hosted");
+  const readiness = useModelReadiness(agent.id, agent.kind === "hosted" && !readOnly);
   const defaultView = readiness.data?.default ?? null;
   const endpointId = model ? model.split("\u0000")[0]! : (defaultView?.endpoint_id ?? agent.model_endpoint_id ?? null);
   const storedRoles = agent.model_roles ?? null;

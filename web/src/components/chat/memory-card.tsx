@@ -15,6 +15,7 @@ import { memKeys, useCreateMemory, useDeleteMemory, useRestoreMemory, type Memor
 import { useWorkspace } from "@/lib/api/queries";
 import { unwrap } from "@/lib/api/unwrap";
 import { setMemoryDraft } from "@/lib/chat/memory-draft";
+import { isEmergencyReader } from "@/lib/emergency";
 import type { TranscriptState } from "@/lib/chat/transcript";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +52,7 @@ interface Props {
  */
 function useMemoryAccess(wsId: string) {
   const ws = useWorkspace(wsId).data;
-  const emergency = ws?.emergency_reader === true;
+  const emergency = isEmergencyReader(ws);
   const own = Boolean(ws?.my_role);
   return { mayRead: own || emergency, mayEdit: own && !emergency };
 }

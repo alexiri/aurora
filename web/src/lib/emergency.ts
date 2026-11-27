@@ -27,6 +27,28 @@ export const EMERGENCY_END = {
   access_lost: { label: "Access lost" },
 } satisfies LabelTable;
 
+/**
+ * (FIX-277) The one question every page asks of a workspace answer: does the viewer read it through their own emergency
+ * grant? Then it draws nothing that acts and asks for nothing the grant doesn't cover (C-1165).
+ */
+export function isEmergencyReader(workspace: { emergency_reader?: boolean } | null | undefined): boolean {
+  return workspace?.emergency_reader === true;
+}
+
+/** The workspace topics emergency read access opens (C-1164): the rail's set, and the pages that exist for a reader. */
+export const EMERGENCY_TOPICS = ["overview", "agents", "skills", "activity", "people"] as const;
+
+/**
+ * Whether a page under `/o/<org>/w/<ws>` is one a reader may open; `rest` is the address after the workspace. Of the
+ * agents' pages, creating one from a template and the terminal are not.
+ */
+export function emergencyCovers(rest: string): boolean {
+  const [topic = "", second, third] = rest.split("/").filter(Boolean);
+  if (topic === "") return true;
+  if (topic === "agents") return second !== "new" && third === undefined;
+  return (EMERGENCY_TOPICS as readonly string[]).includes(topic) && second === undefined;
+}
+
 /** The reader's banner (brief 2): on every page while the reader holds the grant. */
 export function emergencyReaderBannerText(expiresAt: string): string {
   return `Emergency read access until ${formatTime(expiresAt)}. Everything you open is recorded, and this workspace's people have been told.`;

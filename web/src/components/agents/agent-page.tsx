@@ -18,6 +18,7 @@ import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useCanApprove } from "@/lib/api/approvals";
 import { useAgents, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useTabParam } from "@/lib/use-tab-param";
+import { isEmergencyReader } from "@/lib/emergency";
 
 import { AccessTab } from "./access-tab";
 import { ChatTab } from "./chat-tab";
@@ -118,7 +119,7 @@ export function AgentPage() {
   const byo = agent.kind === "byo";
   const chip = agentChip(agent);
   // (FIX-236, C-1165) Emergency read access: the pages narrow to what may be read, and nothing acts.
-  const emergency = workspace.data?.emergency_reader === true;
+  const emergency = isEmergencyReader(workspace.data);
   const availability = { byo, previews: previewsEnabled, terminal: terminalEnabled, ssh: sshEnabled, owner: workspace.data?.my_role === "owner", emergency };
   const tab = resolvePage(requestedTab, availability);
   // The viewer's altitude leaves pages out of the navigation; the open page stays listed (a direct `?tab=` still opens).
@@ -191,7 +192,9 @@ export function AgentPage() {
                 </Altitude>
                 {/* The kind and Default badges live in the rail's About part; a BYO agent has no rail. */}
                 {byo && chip ? <Badge tone={chip.tone}>{chip.text}</Badge> : null}
-                {byo || !wsId ? null : (
+                {/* (FIX-277) A reader gets no state line, attention chip or update mark: the first two read the agent's
+                    computer, readiness and accounts, which the grant doesn't cover, and the third leads to Manage. */}
+                {byo || !wsId || emergency ? null : (
                   <AgentState
                     agentId={agent.id}
                     wsId={wsId}
@@ -200,9 +203,9 @@ export function AgentPage() {
                     hosted
                   />
                 )}
-                {wsId ? <AgentAttentionChip workspaceId={wsId} agentId={agent.id} accessHref={`${base}/agents/${agent.handle}?tab=access`} /> : null}
+                {wsId && !emergency ? <AgentAttentionChip workspaceId={wsId} agentId={agent.id} accessHref={`${base}/agents/${agent.handle}?tab=access`} /> : null}
                 {/* (FIX-251, D-488(a)) The Update available mark, the mark to the review on Settings › Manage. */}
-                {!byo && agent.needs_update ? (
+                {!byo && !emergency && agent.needs_update ? (
                   <Link
                     href={`${base}/agents/${agent.handle}?tab=manage`}
                     className="inline-flex shrink-0 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
@@ -344,6 +347,7 @@ export function AgentPage() {
               workspaceName={workspace.data.name}
               narrationCards={agent.narration_cards}
               initialFilter={(requestedTab && LEGACY_AUTOMATION_TAB[requestedTab]) || "all"}
+              readOnly={emergency}
             />
           ) : null}
           {tab === "automations" && !byo && workspace.isPending ? <Loading /> : null}

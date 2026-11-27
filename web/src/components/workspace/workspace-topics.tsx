@@ -14,6 +14,7 @@ import { DangerTab } from "@/components/settings/danger-tab";
 import { GeneralTab } from "@/components/settings/general-tab";
 import { KeysTab } from "@/components/settings/keys-tab";
 import { EmergencyHistory } from "@/components/emergency/emergency-history";
+import { isEmergencyReader } from "@/lib/emergency";
 import { ErrorState, Loading } from "@/components/states";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { PageHeader } from "@/components/ui/page-header";
@@ -81,7 +82,7 @@ export function WorkspaceInternetAccessPage() {
 function PeopleBody({ w, org, ws, addOpen }: { w: Workspace; org: string; ws: string; addOpen: boolean }) {
   const list = useWorkspaces(w.org_id);
   const personal = !!w.personal_of || !!list.data?.items.find((x) => x.id === w.id)?.personal_of;
-  const emergency = w.emergency_reader === true;
+  const emergency = isEmergencyReader(w);
   // (P5-POLISH-11, D6) **Add people** is on the header's line; emergency read access changes nothing here, so it stands down.
   return (
     <div className="space-y-4">
@@ -114,7 +115,7 @@ export function WorkspacePeoplePage() {
   return (
     <WorkspaceGate>
       {(w, org, ws) =>
-        w.my_role === "owner" || w.emergency_reader === true ? (
+        w.my_role === "owner" || isEmergencyReader(w) ? (
           <PeopleBody w={w} org={org} ws={ws} addOpen={addOpen} />
         ) : (
           <ErrorState error={forbiddenError(whoCanFromContacts("workspace_owner", w.contacts, "view_this"))} />

@@ -1,6 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { AGENT_ROUTE, ANN_DIRECT, MINE, mockChat } from "./support/chat-mock";
+import { mockEmergencyReader, readerWorkspace } from "./support/emergency-reader";
 import { mockMemories } from "./support/memory";
 import { agent, id, mockApi, now, ws } from "./support/mock-api";
 import { openThemed, overflow, titled } from "./support/open";
@@ -125,13 +126,8 @@ test.describe("the owner's journey (FIX-236, D-478)", () => {
 // (FIX-277) The real API answers an emergency reader with `administers: true`: the dashboard must not send them to the
 // manage page, and what it shows them stays read-only.
 test.describe("an emergency reader reaches the workspace's agents (FIX-277)", () => {
-  async function readerMock(page: Page) {
-    const open = grant(true);
-    await mockApi(page);
-    await mockMemories(page);
-    await page.route("**/v1/workspaces/" + ws.id, (route: Route) => route.fulfill({ ...json(readerWs(open)) }));
-    return open;
-  }
+  // The reader's API with its refusals (support/emergency-reader.ts), as every reader test gets it.
+  const readerMock = (page: Page) => mockEmergencyReader(page, () => mockMemories(page));
 
   // The cached answer still says "no grant" right after opening: leaving for the workspace on it would send the new
   // reader back to the manage page, however long the fresh answer takes.
@@ -175,12 +171,12 @@ test.describe("an emergency reader reaches the workspace's agents (FIX-277)", ()
 
   // Until the workspace answers, the page can't know the viewer only reads: it must not draw the writable view first.
   test("a cold link to History draws nothing writable and asks for no versions while the workspace is still loading", async ({ page }) => {
-    const open = await readerMock(page);
+    await readerMock(page);
     let release = () => {};
     const held = new Promise<void>((r) => (release = r));
     await page.route("**/v1/workspaces/" + ws.id, async (route: Route) => {
       await held;
-      await route.fulfill({ ...json(readerWs(open)) });
+      await route.fulfill({ ...json(readerWorkspace()) });
     });
     const versions: string[] = [];
     page.on("request", (r) => {
@@ -213,11 +209,8 @@ test.describe("an emergency reader reaches the workspace's agents (FIX-277)", ()
   // The organization's lists lead a returning reader to the manage page: it is their way back in.
   test("the manage page links into the workspace, and the agents list there is read-only", async ({ page }) => {
     await readerMock(page);
-    // As the real API answers a reader: an agent behind its template, and no accounts (the grant doesn't cover them).
+    // An agent behind its template: the list would offer the update review.
     await page.route("**/v1/workspaces/" + ws.id + "/agents", (route: Route) => route.fulfill({ ...json({ items: [{ ...agent, needs_update: true }] }) }));
-    await page.route(/\/v1\/workspaces\/[^/]+\/accounts(\?.*)?$/, (route: Route) =>
-      route.fulfill({ ...json({ error: { code: "workspace_access_required", message: "You don't have access to this workspace." } }, 403) }),
-    );
     await openThemed(page, "/o/acme/workspaces/main", "light");
     const link = page.getByTestId("manage-notice").getByRole("link", { name: "Read the workspace’s agents" });
     await link.click();
