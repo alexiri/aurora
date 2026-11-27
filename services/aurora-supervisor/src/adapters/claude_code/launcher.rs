@@ -111,10 +111,10 @@ async fn kill_group_and_descendants(
         if Some(s.pid) == group.as_ref().map(|g| g.as_raw_pid()) {
             continue; // the group kill already reached the leader
         }
-        if same_process(s) {
-            if let Some(p) = rustix::process::Pid::from_raw(s.pid) {
-                let _ = rustix::process::kill_process(p, rustix::process::Signal::KILL);
-            }
+        if same_process(s)
+            && let Some(p) = rustix::process::Pid::from_raw(s.pid)
+        {
+            let _ = rustix::process::kill_process(p, rustix::process::Signal::KILL);
         }
     }
 }
@@ -218,7 +218,7 @@ fn leader_exited(pid: Option<rustix::process::Pid>) -> bool {
     match std::fs::read_to_string(format!("/proc/{}/stat", p.as_raw_pid())) {
         Ok(stat) => stat
             .rsplit_once(')')
-            .map_or(true, |(_, fields)| fields.starts_with(" Z")),
+            .is_none_or(|(_, fields)| fields.starts_with(" Z")),
         Err(_) => true, // gone: only this task reaps the child, so nothing is left to signal
     }
 }
