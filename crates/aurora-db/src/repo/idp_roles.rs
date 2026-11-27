@@ -169,7 +169,7 @@ pub async fn ws_row<'e, E: PgExecutor<'e>>(
     user: Uuid,
 ) -> Result<Option<RoleRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT role, 'active'::text AS status, idp_role, idp_source, base_role
+        "SELECT role, status, idp_role, idp_source, base_role
          FROM workspace_access WHERE workspace_id = $1 AND user_id = $2 FOR UPDATE",
     )
     .bind(ws)

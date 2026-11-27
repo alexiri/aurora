@@ -383,7 +383,9 @@ auth:
    ones are added. Claim-derived ones whose value is gone are removed. Removing an org
    role drops the user to the strongest role they still hold from another source. If
    they have no other source, the membership is removed: it was the claim that admitted
-   them.
+   them. The sync never removes or lowers a **suspended** workspace binding (FIX-261,
+   D-501): when its claim lapses or weakens it stays as it is, still suspended, and only
+   a person lifts it (*Suspension in one workspace*).
 2. Each assignment remembers its source (`idp:<provider>:<value>`). Roles given by hand
    (invitation, dashboard, JIT, SCIM, `bootstrap-admin`, `auth.instance_admins`) are
    **never** changed or removed by the sync, and the strongest source wins (as for
@@ -575,7 +577,10 @@ speaker turns in the workspace end `aborted` (`user_suspended`), gateways drop t
 identities (`user` scope) and their open streams re-authorize; terminal, SSH, Files and
 preview sessions end at their next access re-check. It keeps the binding and role, their
 sessions (other workspaces and orgs are unaffected), API keys (refused, not revoked),
-and everything they own. Restoring sets the row `active` again. Audit:
+and everything they own. Restoring sets the row `active` again. Only a person lifts a
+suspension, through the restore or remove routes and their rules (D-501): the sign-in claim
+sync leaves the row alone, and removing the person from the organization keeps it, so it
+still applies if they join again. Audit:
 `workspace_access.suspend|restore` (critical). The single SQL definition is the
 `effective_workspace_access` view; the gateway role's `can_use` restates it, and a
 source-scan guard (`aurora-db` `membership_queries`) lists every other raw reader of the
@@ -1069,7 +1074,7 @@ invalidation (`org` and `user` scopes, `aurora_auth_revoked` kinds `access` and 
 
 | Effect | Suspend | Remove |
 |--------|---------|--------|
-| Org membership | `suspended` (role kept; "non-member for every check", *Roles*) | row deleted; workspace bindings and group memberships go with it |
+| Org membership | `suspended` (role kept; "non-member for every check", *Roles*) | row deleted; workspace bindings and group memberships go with it, except **suspended** workspace bindings, which stay and grant nothing (FIX-261, D-501: a re-join must not lift a suspension; every removal of a membership does the same) |
 | Sessions | revoked **only if the user has no other active membership** in any org (they would be signed into nothing); otherwise kept: the org's data is already 404 | same |
 | API keys (`auk_`, `auo_`) of this org owned by the user | **revoked** (`revoked_at`; not merely dormant: a reactivation never revives a key that may have leaked); keys of other orgs untouched | same |
 | Running work | turns spoken by the user in this org and `joining` follow-ups: queued ones `aborted`, live ones get `turn.abort` and end `aborted` with `error_code = user_deprovisioned`; their speaker binding is gone from the next gateway request | same |

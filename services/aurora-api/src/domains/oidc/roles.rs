@@ -398,6 +398,18 @@ pub async fn sync(
         let Some(row) = db::ws_row(&mut *tx, r.workspace_id, user.id).await? else {
             continue;
         };
+        // (FIX-261, D-501) Removing a suspended binding would lift the suspension and
+        // lowering it is not the sync's to do: it stays as it is, claim-managed, until a
+        // person restores it through the API (once active, the next sign-in applies this).
+        if row.status == "suspended" {
+            tracing::info!(
+                org = %r.org_id,
+                ws = %r.workspace_id,
+                provider = %p.id,
+                "a claim lapsed on a suspended binding; left as it is"
+            );
+            continue;
+        }
         let value = r.idp_source[prefix.len()..].to_owned();
         match row.base_role.clone() {
             None => {
@@ -691,6 +703,10 @@ async fn apply_ws(
                 Some(b) if ws_rank(b) > ws_rank(role) => b.clone(),
                 _ => role.to_owned(),
             };
+            // (FIX-261, D-501) The sync never lowers a suspended binding.
+            if row.status == "suspended" && ws_rank(&eff) < ws_rank(&row.role) {
+                return Ok(());
+            }
             let changed = eff != row.role || row.idp_source.as_deref() != Some(&src);
             let new = RoleRow {
                 role: eff.clone(),

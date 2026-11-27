@@ -732,7 +732,7 @@ async fn restoring_someone_else_in_a_shared_workspace_is_unchanged() {
 impl OwnerCase {
     /// A group holding `user`, bound `member` to `ws` by Bob. The membership comes first, so
     /// joining is not itself a grant.
-    async fn group_bound(&self, ws: Uuid, user: Uuid) {
+    async fn group_bound(&self, ws: Uuid, user: Uuid) -> Uuid {
         let (s, v) = self
             .call(
                 &self.admin_cookie,
@@ -761,6 +761,7 @@ impl OwnerCase {
             )
             .await;
         assert_eq!(s, 200, "{v}");
+        g
     }
 
     async fn remove(&self, who: &str, ws: Uuid, user: Uuid) -> (u16, Value) {
@@ -908,6 +909,78 @@ async fn other_removals_are_unchanged() {
         );
     }
     assert_eq!(f.h.mail.sent().len(), before);
+}
+
+/// Removing a person from the organization and adding them back does not lift a suspension:
+/// the group memberships go with the membership, the suspended binding stays, so joining the
+/// bound group again gives nothing until a person restores it.
+#[tokio::test]
+async fn leaving_and_rejoining_the_org_keeps_a_suspension() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let other = f.h.workspace_owned_by(f.org, f.bob).await;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    let g = f.group_bound(ws, carol).await;
+    f.h.bind_ws(ws, carol, "member").await;
+    f.h.bind_ws(other, carol, "member").await;
+    f.suspend(&f.bob_cookie, ws, carol).await;
+
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::DELETE,
+            &format!("/v1/orgs/{}/members/{carol}", f.org),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let groups: i64 = sqlx::query_scalar("SELECT count(*) FROM group_members WHERE user_id = $1")
+        .bind(carol)
+        .fetch_one(f.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(groups, 0, "leaving the org leaves every group");
+    let bindings: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT workspace_id, status FROM workspace_access WHERE user_id = $1")
+            .bind(carol)
+            .fetch_all(f.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        bindings,
+        vec![(ws, "suspended".to_owned())],
+        "only the suspension stays: {bindings:?}"
+    );
+    // While away the row is not listed as a person of the workspace.
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/access"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(!v.to_string().contains(&carol.to_string()), "{v}");
+
+    // Added back, and back into the group: still suspended there.
+    f.h.member(f.org, carol, "member", "active").await;
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::PUT,
+            &format!("/v1/groups/{g}/members/{carol}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(!f.can_use(ws, carol).await, "access must not come back");
+
+    // Restoring it is the explicit grant.
+    let (s, v) = f.restore(&f.bob_cookie, ws, carol).await;
+    assert_eq!(s, 200, "{v}");
+    assert!(f.can_use(ws, carol).await);
 }
 
 struct FailMailer;
