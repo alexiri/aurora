@@ -10,7 +10,7 @@ const TONE = { ALLOW: "accent", HELD: "neutral", DENY: "danger", TOOL: "neutral"
 
 /**
  * A turn's consecutive tool calls folded into one row: "Used N tools · total duration". Open while the turn
- * runs and collapsed once it ends. A group holding a denied or failed call shows the DENY chip in its summary.
+ * runs and collapsed once it ends. The summary says Deny when a policy denied a call and Failed when a call failed.
  */
 export function ToolCallGroup({ calls, running }: { calls: ToolCall[]; running: boolean }) {
   const sum = toolGroupSummary(calls);
@@ -30,13 +30,14 @@ export function ToolCallGroup({ calls, running }: { calls: ToolCall[]; running: 
         <WrenchIcon aria-hidden="true" className="shrink-0" />
         <span className="min-w-0 flex-1 truncate">{sum.label}</span>
         {sum.hasDeny ? <Badge tone="danger">Deny</Badge> : null}
+        {sum.hasFailed ? <Badge tone="danger">Failed</Badge> : null}
         <ChevronDownIcon aria-hidden="true" className="shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none" />
       </summary>
       <ul className="divide-y divide-line border-t border-line">
         {calls.map((c) => (
           <li key={c.callId} className="flex min-w-0 items-start gap-2 px-3 py-2">
-            <Badge tone={TONE[c.decision]} className="mt-0.5 shrink-0">
-              {c.decision === "TOOL" && c.ok === false ? "Failed" : c.decision}
+            <Badge tone={c.ok === false ? "danger" : TONE[c.decision]} className="mt-0.5 shrink-0">
+              {c.ok === false && c.decision !== "DENY" ? "Failed" : c.decision}
             </Badge>
             <span className="min-w-0 flex-1 break-words font-mono text-xs text-ink-2">
               <span className="font-medium text-ink">{c.name}</span> {c.summary}

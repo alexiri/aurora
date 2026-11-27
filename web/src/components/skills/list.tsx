@@ -174,7 +174,7 @@ export function SkillCompactList({ page, rows, selected, busyKey, onSelect, onTo
         <li
           key={row.key}
           data-testid={`skill-row-${row.skill.name}`}
-          className={cn("relative flex items-center gap-3 border-l-[3px] border-l-transparent py-2.5 pl-3 pr-3 hover:bg-subtle", selected === row.key && "border-l-accent bg-subtle")}
+          className={cn("row-rail relative flex items-center gap-3 border-l-transparent py-2.5 pl-3 pr-3 hover:bg-subtle", selected === row.key && "border-l-accent bg-subtle")}
         >
           <div className="min-w-0 flex-1">
             <button type="button" aria-current={selected === row.key ? "true" : undefined} className="block max-w-full text-left after:absolute after:inset-0" onClick={() => onSelect(row.key)}>

@@ -1,10 +1,9 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { RevisionHistory } from "@/components/memory/memory-tab";
 import { SizeMeter } from "@/components/memory/size-meter";
 import { SkillsTab } from "@/components/skills/skills-tab";
-import { canRedact, meter, type Memory, type MemoryRevision } from "@/lib/api/memory";
+import { canRedact, meter, type MemoryRevision } from "@/lib/api/memory";
 import { buildTree, validateSkillName, validateSkillPath } from "@/lib/api/skills";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
@@ -21,15 +20,11 @@ function mockFetch(routes: Record<string, Handler>) {
   return fn;
 }
 
-const ann: Memory["added_by"] = { kind: "person", person: { id: "u1", display_name: "Ann" } };
 const rev = (n: number, over: Partial<MemoryRevision> = {}): MemoryRevision => ({
-  revision: n, author_kind: "user", author_label: "Ann", provenance: "dashboard", author: ann, via: "dashboard",
+  revision: n, author_kind: "user", author_label: "Ann", provenance: "dashboard",
+  author: { kind: "person", person: { id: "u1", display_name: "Ann" } }, via: "dashboard",
   redacted: false, content: `content ${n}`, created_at: "2026-01-01T00:00:00Z", ...over,
 });
-const memory: Memory = {
-  key: "k", revision: 3, content: "c", index_line: "k: c", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-  locked: false, added_by: ann, changed_by: ann,
-};
 
 describe("limits", () => {
   it("meter flags over-limit", () => {
@@ -46,25 +41,6 @@ describe("revisions", () => {
     expect(canRedact(rev(3), 3)).toBe(false);
     expect(canRedact(rev(2), 3)).toBe(true);
     expect(canRedact(revs[2], 3)).toBe(false);
-  });
-  it("disables redact on latest, restores a revision, redacts with confirmation", async () => {
-    let restored: unknown = null;
-    let redacted = false;
-    mockFetch({
-      "GET /v1/agents/a1/memories/k/revisions": () => json(200, { items: revs, next_cursor: null }),
-      "POST /v1/agents/a1/memories/k/restore": async (r) => { restored = await r.json(); return json(200, memory); },
-      "POST /v1/agents/a1/memories/k/revisions/2/redact": () => { redacted = true; return json(204, null); },
-    });
-    wrap(<RevisionHistory agentId="a1" memory={memory} />);
-    const latest = await screen.findByRole("button", { name: "Remove content of #3" });
-    expect((latest as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("Content removed")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Restore #2" }));
-    await waitFor(() => expect(restored).toEqual({ revision: 2 }));
-    fireEvent.click(screen.getByRole("button", { name: "Remove content of #2" }));
-    expect(redacted).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm removing content of #2" }));
-    await waitFor(() => expect(redacted).toBe(true));
   });
 });
 

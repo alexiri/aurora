@@ -31,6 +31,7 @@
 pub mod config;
 pub mod launcher;
 pub mod stream;
+mod sweep;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -45,7 +46,7 @@ use crate::harness::{
     BackgroundWork, HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEvent,
     HarnessEventStream, HarnessSession, SessionOptions, SteerAck, SteerInput, TurnInput,
 };
-use launcher::{ChildIo, Launcher, ProcessLauncher};
+use launcher::{ChildIo, ChildProcs, Launcher, ProcessLauncher};
 use stream::StreamMapper;
 
 pub const PINNED_VERSION: &str = "2.1.319";
@@ -65,6 +66,9 @@ const IDLE_WATCH: Duration = Duration::from_secs(30 * 60);
 /// no line arrives, and so the worst delay a starting turn can see before the reader yields the
 /// stream (the reader also wakes on the turn's notify, so the usual delay is nil).
 const IDLE_TICK: Duration = Duration::from_millis(100);
+/// (FIX-265) With no background work left and no run open, how long the child must have been
+/// silent before the watch ends: a command's end is followed by the child's own run about it.
+const IDLE_SETTLE: Duration = Duration::from_secs(10);
 /// (FIX-253, part B) The bound on the events one watch keeps for the next drain. An idle child's
 /// own run is short; the bound only keeps a runaway child from growing the buffer without end.
 const IDLE_BUFFER: usize = 256;
@@ -142,6 +146,7 @@ impl HarnessAdapter for ClaudeCodeAdapter {
             live: None,
             running: Arc::new(AtomicBool::new(false)),
             abort: None,
+            unended: Vec::new(),
         };
         s.ensure_child().await?;
         Ok(Box::new(s))
@@ -219,6 +224,8 @@ struct Live {
     stdin: mpsc::Sender<String>,
     lines: Arc<Mutex<mpsc::Receiver<String>>>,
     kill: KillSlot,
+    /// (FIX-265) The child and everything it started.
+    procs: Arc<dyn ChildProcs>,
     ready: Arc<AtomicBool>,
     dead: Arc<AtomicBool>,
     /// The CLI's per-model usage report is cumulative for this child (P5-MODELS-2).
@@ -261,6 +268,8 @@ pub struct ClaudeSession {
     live: Option<Live>,
     running: Arc<AtomicBool>,
     abort: Option<Arc<Notify>>,
+    /// (FIX-265) Replaced children of which something may still run: a release ends them too.
+    unended: Vec<Arc<dyn ChildProcs>>,
 }
 
 impl ClaudeSession {
@@ -274,8 +283,9 @@ impl ClaudeSession {
     /// the mutex across a turn: a starting turn takes the lock (it writes the turn's message only
     /// once it holds it), the reader re-checks the running flag every tick and wakes on the
     /// turn's notify, so every line is read by exactly one of them and the turn is never blocked
-    /// by more than the tick. The watch ends when the work is gone, the child dies, or
-    /// [`IDLE_WATCH`] runs out.
+    /// by more than the tick. The watch ends when the work is gone and the child has said what
+    /// it had to say about it ([`IDLE_SETTLE`]), when the child dies, or when [`IDLE_WATCH`]
+    /// runs out.
     fn start_idle_reader(&mut self) {
         let Some(live) = &self.live else {
             return;
@@ -299,11 +309,20 @@ impl ClaudeSession {
             let started = Instant::now();
             let mut mapper = StreamMapper::with_baseline(usage_base, steers)
                 .with_backgrounds(backgrounds.clone());
+            let left = |b: &stream::BackgroundSink| {
+                b.lock()
+                    .map(|b| (b.running.is_empty(), b.ended))
+                    .unwrap_or((true, 0))
+            };
+            // A run of the child is open, or one is due about a command that just ended.
+            let mut run_open = false;
+            let mut ended = left(&backgrounds).1;
+            let mut heard = Instant::now();
             loop {
                 if running.load(Ordering::SeqCst)
                     || dead.load(Ordering::SeqCst)
                     || started.elapsed() >= IDLE_WATCH
-                    || backgrounds.lock().is_ok_and(|b| b.is_empty())
+                    || (!run_open && left(&backgrounds).0 && heard.elapsed() >= IDLE_SETTLE)
                 {
                     break;
                 }
@@ -324,6 +343,19 @@ impl ClaudeSession {
                 // run may follow while the background work lasts.
                 let m = mapper.map_line(&line);
                 drop(lines);
+                heard = Instant::now();
+                let now_ended = left(&backgrounds).1;
+                if now_ended != ended
+                    || m.events
+                        .iter()
+                        .any(|e| !matches!(e, HarnessEvent::SessionRef { .. }))
+                {
+                    run_open = true;
+                }
+                ended = now_ended;
+                if m.terminal.is_some() {
+                    run_open = false;
+                }
                 let mut b = buf.lock().unwrap_or_else(|e| e.into_inner());
                 for e in m.events {
                     // The per-message usage reports of the stream would count a run twice.
@@ -349,12 +381,23 @@ impl ClaudeSession {
         {
             return Ok(());
         }
+        if let Some(mut old) = self.live.take() {
+            old.kill();
+            self.unended.push(old.procs);
+        }
+        self.unended.retain(|p| !p.ended());
         let spec = config::launch_spec(&self.opts, self.current_ref().as_deref())?;
-        let ChildIo { stdin, lines, kill } = self.launcher.launch(spec).await?;
+        let ChildIo {
+            stdin,
+            lines,
+            kill,
+            procs,
+        } = self.launcher.launch(spec).await?;
         self.live = Some(Live {
             stdin,
             lines: Arc::new(Mutex::new(lines)),
             kill: Arc::new(StdMutex::new(Some(kill))),
+            procs,
             ready: Arc::default(),
             dead: Arc::default(),
             usage_base: Arc::default(),
@@ -619,16 +662,34 @@ impl HarnessSession for ClaudeSession {
         Ok(())
     }
 
-    async fn release(mut self: Box<Self>) -> Result<(), HarnessError> {
+    /// (FIX-265) `Ok` only once the child, every replaced one and everything they started is
+    /// gone. After an error the session keeps what is left, so a release can be tried again.
+    async fn release(&mut self) -> Result<(), HarnessError> {
         if let Some(a) = &self.abort
             && self.running.load(Ordering::SeqCst)
         {
             a.notify_one();
         }
-        if let Some(l) = &mut self.live {
-            l.kill();
+        if let Some(l) = &self.live {
+            l.dead.store(true, Ordering::SeqCst);
         }
-        Ok(())
+        // All at once, so that one child that will not end does not hold up the others.
+        let live = self.live.as_ref().map(|l| l.procs.clone());
+        let ends = live.iter().chain(&self.unended).map(|p| p.end());
+        let mut results = futures::future::join_all(ends).await.into_iter();
+        let mut failed = live
+            .as_ref()
+            .and_then(|_| results.next())
+            .and_then(Result::err);
+        let mut left = Vec::new();
+        for (p, result) in std::mem::take(&mut self.unended).into_iter().zip(results) {
+            if let Err(e) = result {
+                left.push(p);
+                failed = Some(e);
+            }
+        }
+        self.unended = left;
+        failed.map_or(Ok(()), Err)
     }
 
     /// (FIX-253, part B) Watch the idle child after a turn that left background work. See
@@ -653,27 +714,43 @@ impl HarnessSession for ClaudeSession {
             .collect()
     }
 
-    /// (FIX-253, D-490) The live child's own background commands. A dead child's background work
-    /// died with it, so a dead (or released) child reports none.
+    fn idle_watching(&self) -> bool {
+        self.live
+            .as_ref()
+            .is_some_and(|l| l.idle_active.load(Ordering::SeqCst))
+    }
+
+    fn wants_idle_watch(&self) -> bool {
+        self.live.as_ref().is_some_and(|l| {
+            !l.dead.load(Ordering::SeqCst) && l.backgrounds.lock().is_ok_and(|b| b.any)
+        })
+    }
+
+    fn still_ending(&self) -> bool {
+        self.unended.iter().any(|p| !p.ended())
+            || self.live.as_ref().is_some_and(|l| {
+                !l.procs.ended() && (l.dead.load(Ordering::SeqCst) || l.procs.ending())
+            })
+    }
+
+    /// (FIX-253, D-490) The child's own background commands that have not ended. A child of
+    /// which nothing is left running has none; one that is being ended keeps its list until
+    /// that is so.
     fn background_work(&self) -> Vec<BackgroundWork> {
         let Some(live) = &self.live else {
             return Vec::new();
         };
-        if live.dead.load(Ordering::SeqCst) {
+        if live.procs.ended() {
             return Vec::new();
         }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
         live.backgrounds
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .running
             .iter()
-            .filter(|(_, started_at)| *started_at <= now)
-            .map(|(command, started_at)| BackgroundWork {
-                command: command.clone(),
-                started_at: *started_at,
+            .map(|c| BackgroundWork {
+                command: c.command.clone(),
+                started_at: c.started_at,
             })
             .collect()
     }

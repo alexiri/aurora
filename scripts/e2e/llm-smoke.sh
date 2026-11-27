@@ -26,6 +26,14 @@ if jq -e '.key == "conformance" and (.content | length) > 0' <<<"$args" >/dev/nu
   ok "streaming tool_use with input $args"
 else bad "tool_use stream (args='$args'): $out"; fi
 
+# Without the memory tool in the request (the platform tools on demand, the default) the same scenario goes through
+# the `aurora-agent` command in a shell instead: the harness has no `mcp__aurora__memory_save` then.
+out=$(post scn-memory-tool ',"tools":[{"name":"Bash","description":"run","input_schema":{"type":"object","properties":{"command":{"type":"string"}}}}]' true)
+args=$(grep '^data:' <<<"$out" | sed 's/^data: *//' | jq -rs '[.[] | select(.delta.type? == "input_json_delta") | .delta.partial_json] | join("")')
+if jq -e '.command | startswith("aurora-agent call aurora memory_save key=conformance ")' <<<"$args" >/dev/null 2>&1 && grep -q '"name":"Bash"' <<<"$out" && ! grep -q mcp__aurora__memory_save <<<"$out"; then
+  ok "streaming tool_use through aurora-agent"
+else bad "on-demand tool_use stream (args='$args'): $out"; fi
+
 HIST=',"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":[{"type":"tool_use","id":"toolu_scn_memory_1","name":"mcp__aurora__memory_save","input":{"key":"conformance","content":"Saved by the conformance run."}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_scn_memory_1","content":"saved"}]}]'
 out=$(curl -sS -m 30 -w '\n%{http_code}' -X POST "$BASE/v1/messages" -H "x-api-key: $KEY" -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' \
   -d "{\"model\":\"scn-memory-tool\",\"max_tokens\":64,\"stream\":true$TOOLS$HIST}")

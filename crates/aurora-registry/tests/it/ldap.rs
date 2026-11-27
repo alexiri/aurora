@@ -70,6 +70,18 @@ fn the_synthetic_host_is_the_only_reserved_exception() {
     assert!(codes(&missing).contains("ldap_host_missing"));
 }
 
+// The LDAP lane applies no response projection, so a tool may not declare one.
+#[test]
+fn a_projection_on_an_ldap_tool_is_refused() {
+    let y = manifest(LDAP, HOSTS, "").replace(
+        "methods: [POST] }",
+        "methods: [POST], project: [\"$.entries\"] }",
+    );
+    let v = run(&y);
+    assert_eq!(codes(&y), BTreeSet::from(["tool_project_lane"]), "{v:#?}");
+    assert_eq!(v[0].path, "/apps/0/tools/read/items/0/project", "{v:#?}");
+}
+
 #[test]
 fn server_shapes_are_refused() {
     for server in [

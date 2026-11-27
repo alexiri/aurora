@@ -22,6 +22,7 @@ import { ActionApprovalNote, ApprovalCard } from "./approval-card";
 import { AttachmentCard } from "./attachments";
 import { AutomationMessage, automationDisplay } from "./automation-message";
 import { excerptOf, useChatActions } from "./chat-actions";
+import { MemoryCard } from "./memory-card";
 import { QuoteStrip, quoteOf } from "./quote-strip";
 import { ErrorBlock, RetryStart, isRetryableCode } from "./status-rows";
 import { ToolCallGroup } from "./tool-call-group";
@@ -295,8 +296,7 @@ function BlockView({
   base,
   convId,
   side,
-  agentId,
-  frozen,
+  agent,
   author,
 }: {
   author: string;
@@ -306,11 +306,14 @@ function BlockView({
   base: string;
   convId: string;
   side: "person" | "agent";
-  /** The agent of the chat, when known (the Chat tab passes it): enables **Retry now** (C-615). */
-  agentId?: string;
-  /** A frozen agent has no **Retry now** (C-615). */
-  frozen?: boolean;
+  /**
+   * The agent of the chat, when known (the Chat tab passes it): enables **Retry now** (C-615; not for a frozen agent)
+   * and the memory card's actions.
+   */
+  agent?: AgentIdent;
 }) {
+  const agentId = agent?.id;
+  const frozen = agent?.frozen;
   switch (block.kind) {
     case "bubble":
       return <Bubble ev={block.ev} state={state} convId={convId} side={side} author={author} />;
@@ -318,6 +321,8 @@ function BlockView({
       return <ToolCallGroup calls={block.calls} running={block.running} />;
     case "after_turn":
       return <AfterTurnFold texts={block.texts} calls={block.calls} />;
+    case "memory":
+      return <MemoryCard ev={block.ev} state={state} wsId={wsId} base={base} agent={agent} />;
     case "approval":
       return block.ev.type === "approval.pending" ? (
         <ApprovalCard ev={block.ev} state={state} wsId={wsId} />
@@ -466,8 +471,7 @@ export function MessageGroup({
       base={base}
       convId={convId}
       side={row.side}
-      agentId={agent?.id}
-      frozen={agent?.frozen}
+      agent={agent}
       author={name}
     />
   ));

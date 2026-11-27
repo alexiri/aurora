@@ -220,6 +220,10 @@ impl PolicyHandler {
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
+        // This lane applies no response projection (see the LDAP check in `handle_with`).
+        if tool.is_some_and(|t| t.project.is_some()) {
+            return Outcome::Respond(self.refuse(ctx, &lane_projection_refusal(), "blocked"));
+        }
         let facts = RequestFacts {
             host: host.clone(),
             port: 443,

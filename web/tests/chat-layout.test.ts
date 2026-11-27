@@ -211,9 +211,24 @@ describe("tool call group summary", () => {
     expect(toolGroupSummary([call({ ok: null, durationMs: null })]).label).toBe("Used 1 tool");
   });
 
-  it("flags DENY when a call was denied or failed", () => {
-    expect(toolGroupSummary([call(), call({ decision: "DENY" })]).hasDeny).toBe(true);
-    expect(toolGroupSummary([call(), call({ ok: false })]).hasDeny).toBe(true);
+  it("says Deny only for a policy DENY; a call that failed is Failed", () => {
+    expect(toolGroupSummary([call(), call({ decision: "DENY" })])).toMatchObject({ hasDeny: true, hasFailed: false });
+    expect(toolGroupSummary([call(), call({ ok: false })])).toMatchObject({ hasDeny: false, hasFailed: true });
+    expect(toolGroupSummary([call({ ok: false, decision: "ALLOW" })])).toMatchObject({ hasDeny: false, hasFailed: true });
+    // A denied call is not also counted as failed; both badges show when a group holds both.
+    expect(toolGroupSummary([call({ ok: false, decision: "DENY" })])).toMatchObject({ hasDeny: true, hasFailed: false });
+    expect(toolGroupSummary([call({ ok: false }), call({ ok: false, decision: "DENY" })])).toMatchObject({ hasDeny: true, hasFailed: true });
+  });
+
+  it("does not read a failed call with an unknown decision word as a policy deny", () => {
+    const r = rows([
+      ev("tool.started", at(2026, 11, 8, 12, 0, 0), { turn_id: "t1", call_id: "c1", name: "x", summary: "", decision: "error" }),
+      ev("tool.finished", at(2026, 11, 8, 12, 0, 1), { turn_id: "t1", call_id: "c1", ok: false, summary: "boom" }),
+      ev("after_turn.tool", at(2026, 11, 8, 12, 0, 2), { turn_id: "t1", call_id: "c2", name: "Bash", summary: "ls" }),
+      ev("after_turn.tool_end", at(2026, 11, 8, 12, 0, 3), { turn_id: "t1", call_id: "c2", ok: false, summary: "exit 1" }),
+    ]);
+    const calls = groups(r)[0].blocks.flatMap((b) => (b.kind === "tools" || b.kind === "after_turn" ? b.calls : []));
+    expect(calls.map((c) => c.decision)).toEqual(["TOOL", "TOOL"]);
   });
 
   it("builds durations and results from tool.started and tool.finished", () => {
@@ -226,7 +241,38 @@ describe("tool call group summary", () => {
     const block = groups(r)[0].blocks[0];
     if (block.kind !== "tools") throw new Error("expected a tools block");
     expect(block.calls.map((c) => c.durationMs)).toEqual([2000, 1000]);
-    expect(toolGroupSummary(block.calls)).toMatchObject({ label: "Used 2 tools · 3.0 s", hasDeny: true });
+    expect(toolGroupSummary(block.calls)).toMatchObject({ label: "Used 2 tools · 3.0 s", hasDeny: false, hasFailed: true });
+  });
+});
+
+describe("memory events (mem-5, C-1172)", () => {
+  const T = (s: number) => at(2026, 11, 8, 12, 0, s);
+  const started = (s: number, call: string, turn = "t1") => ev("tool.started", T(s), { turn_id: turn, call_id: call, name: "mcp__aurora__memory_save", summary: "(2 args)" });
+  const saved = (s: number, key = "grafana") => ev("memory.saved", T(s), { turn_id: "t1", key, title: "Grafana", preview: "p", revision: 1, created: true, previous_revision: null });
+  const refused = (s: number) => ev("memory.refused", T(s), { turn_id: "t1", key: "jira", title: "Jira", preview: "p", code: "memory_locked", message: "locked" });
+  const kinds = (r: Row[]) => groups(r).flatMap((g) => g.blocks.map((b) => (b.kind === "bubble" ? "text" : b.kind === "tools" ? `tools:${b.calls.length}` : b.kind)));
+
+  it("puts the card after the tool group of its turn, and keeps the group as the record of the call", () => {
+    expect(kinds(rows([started(0, "c1"), saved(1), ev("text", T(2), { turn_id: "t1", message_id: "m", text: "Saved." })]))).toEqual(["tools:1", "memory", "text"]);
+    expect(kinds(rows([started(0, "c1"), refused(1)]))).toEqual(["tools:1", "memory"]);
+  });
+
+  it("keeps the cards after the group when the agent calls again right after a save", () => {
+    expect(kinds(rows([started(0, "c1"), saved(1), started(2, "c2"), refused(3)]))).toEqual(["tools:2", "memory", "memory"]);
+  });
+
+  it("puts the tool group before a card whose event overtook the tool report", () => {
+    expect(kinds(rows([ev("text", T(0), { turn_id: "t1", message_id: "m", text: "Saving." }), saved(1), started(2, "c1")]))).toEqual(["text", "tools:1", "memory"]);
+  });
+
+  it("does not merge the calls of another turn across a card", () => {
+    expect(kinds(rows([started(0, "c1"), saved(1), started(2, "c2", "t2")]))).toEqual(["tools:1", "memory", "tools:1"]);
+  });
+
+  it("renders a redacted memory event as the removed row, never a card", () => {
+    const r = rows([ev("memory.saved", T(0), { turn_id: "t1", redacted: true })]);
+    expect(r.some((x) => x.kind === "redacted")).toBe(true);
+    expect(groups(r)).toHaveLength(0);
   });
 });
 
@@ -246,7 +292,7 @@ describe("after the turn (FIX-253, part B)", () => {
     expect(b.turnId).toBe("t1");
     expect(b.texts).toEqual(["The run failed; I pushed a fix."]);
     expect(b.calls).toHaveLength(1);
-    expect(b.calls[0]).toMatchObject({ name: "Bash", ok: false, result: "exit 1", decision: "DENY" });
+    expect(b.calls[0]).toMatchObject({ name: "Bash", ok: false, result: "exit 1", decision: "TOOL" });
   });
 
   it("shares one fold between runs that follow one another, and counts their steps", () => {

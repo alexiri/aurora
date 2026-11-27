@@ -243,9 +243,20 @@ fn ldap_snapshot(port: u16) -> Value {
 }
 
 async fn lane(script: Script, trust_directory: bool) -> (Env, Arc<Mutex<Seen>>) {
+    lane_with(script, trust_directory, |_| {}).await
+}
+
+/// [`lane`] whose compiled snapshot `edit` changes first.
+async fn lane_with(
+    script: Script,
+    trust_directory: bool,
+    edit: impl FnOnce(&mut Value),
+) -> (Env, Arc<Mutex<Seen>>) {
     let (port, ca_pem, seen) = directory(script).await;
+    let mut snap = ldap_snapshot(port);
+    edit(&mut snap);
     let (env, ..) = start_with_ca(
-        ldap_snapshot(port),
+        snap,
         &[("c1", "{}")],
         |w| {
             let mut c = conn(w, "phonebook", "c1", None);
@@ -637,6 +648,25 @@ async fn a_host_of_no_installed_app_says_no_app() {
     let d = refusal_details(&r);
     assert_eq!(d["reason"], "no_app", "{}", r.body);
     assert!(d.get("access_url").is_none() && d.get("connect_url").is_none());
+    assert_eq!(seen.lock().unwrap().connections, 0);
+}
+
+// A package stored before the linter refused it: this lane applies no response projection, so a
+// projected tool is refused and the directory is never asked.
+#[tokio::test]
+async fn a_projected_tool_is_refused_and_the_directory_is_never_asked() {
+    let (env, seen) = lane_with(Script::Entries(vec![person("jdoe")], 0), true, |s| {
+        s["apps"][0]["tools"]["read"]["items"][0]["project"] = json!(["$.truncated"]);
+    })
+    .await;
+    let r = post(&env, "POST", "/search", r#"{"filter":"(uid=jdoe)"}"#).await;
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (403, "tool_projection_unsupported"),
+        "{}",
+        r.body
+    );
+    assert!(!r.body.contains("jdoe"), "{}", r.body);
     assert_eq!(seen.lock().unwrap().connections, 0);
 }
 

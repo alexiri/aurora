@@ -270,7 +270,7 @@ impl HarnessSession for RecordingSession {
     async fn abort(&mut self) -> Result<(), HarnessError> {
         self.0.abort().await
     }
-    async fn release(self: Box<Self>) -> Result<(), HarnessError> {
+    async fn release(&mut self) -> Result<(), HarnessError> {
         self.0.release().await
     }
 }

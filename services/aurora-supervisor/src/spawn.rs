@@ -10,7 +10,10 @@
 //! Enforcement against bypass: `clippy.toml` (this crate) lists `Command::new` as a disallowed
 //! method, and the `no_direct_spawn` test below greps the sources.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
+use std::ops::{Deref, DerefMut};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 /// (FIX-138) The one `PATH` of the image: the agent's own tools (`npm -g`, `/workspace/.local`),
 /// the harness wrappers (`/opt/aurora/bin`), then the system. Same in the image's `ENV PATH`,
@@ -124,6 +127,93 @@ where
     let mut c = tokio::process::Command::new(program);
     c.env_clear().envs(child_env(extra));
     c
+}
+
+/// The pids of the children a handle of this process owns, each with how many handles hold it
+/// (a pid is reused once its child was waited for, maybe before that handle is dropped).
+fn owned() -> MutexGuard<'static, HashMap<u32, usize>> {
+    static OWNED: OnceLock<Mutex<HashMap<u32, usize>>> = OnceLock::new();
+    OWNED
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+/// A child of this process and the mark that it has an owner: while this lives, the orphan
+/// reaper ([`crate::process::spawn_reaper`]) leaves the pid alone, so that the exit status
+/// reaches the owner and the pid stays the child's until the owner waits for it.
+#[derive(Debug)]
+pub struct OwnedChild {
+    // (Declared first: the handle is dropped before the mark.)
+    child: tokio::process::Child,
+    _mark: Mark,
+}
+
+#[derive(Debug)]
+struct Mark(Option<u32>);
+
+impl Drop for Mark {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0 {
+            let mut g = owned();
+            if let Some(n) = g.get_mut(&pid) {
+                *n -= 1;
+                if *n == 0 {
+                    g.remove(&pid);
+                }
+            }
+        }
+    }
+}
+
+impl Deref for OwnedChild {
+    type Target = tokio::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl DerefMut for OwnedChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+
+impl OwnedChild {
+    /// [`tokio::process::Child::wait_with_output`].
+    pub async fn wait_with_output(self) -> std::io::Result<std::process::Output> {
+        let Self { child, _mark } = self;
+        child.wait_with_output().await
+    }
+}
+
+/// The only way a tokio child is started: spawned and marked as owned in one step, so that the
+/// reaper never sees it unmarked.
+#[allow(clippy::disallowed_methods)]
+pub fn spawn(cmd: &mut tokio::process::Command) -> std::io::Result<OwnedChild> {
+    let mut g = owned();
+    let child = cmd.spawn()?;
+    let pid = child.id();
+    if let Some(pid) = pid {
+        *g.entry(pid).or_insert(0) += 1;
+    }
+    drop(g);
+    Ok(OwnedChild {
+        child,
+        _mark: Mark(pid),
+    })
+}
+
+/// Reaps the zombie child `pid` if no handle owns it (the orphan reaper's only wait).
+pub(crate) fn reap_unowned(pid: i32) {
+    // Held across the wait: no child can be spawned with this pid in between.
+    let g = owned();
+    if u32::try_from(pid).is_ok_and(|p| g.contains_key(&p)) {
+        return;
+    }
+    if let Some(p) = rustix::process::Pid::from_raw(pid) {
+        let _ = rustix::process::waitpid(Some(p), rustix::process::WaitOptions::NOHANG);
+    }
 }
 
 /// Replaces this process with `program` under a fully scrubbed environment (FIX-054): the

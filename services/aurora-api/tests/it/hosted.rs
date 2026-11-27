@@ -974,6 +974,109 @@ async fn idle_usage_is_added_to_the_usage_ledger_once() {
     assert_eq!(ledger(&r, lv.agent).await, (2, 300, 30), "spent is spent");
 }
 
+/// (FIX-257) Each idle run is counted by its own event, not by a high-water number: a report that
+/// arrives after a later one is still counted, and a repeat of either one is not.
+#[tokio::test]
+async fn idle_usage_delivered_later_first_is_counted_once_each() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idleorder").await;
+    let report =
+        |n: u64| json!({"kind": "turn.idle.events", "turn_id": turn, "events": [idle_usage(n)]});
+    r.report(&lv, report(7)).await;
+    r.report(&lv, report(3)).await;
+    assert_eq!(ledger(&r, lv.agent).await, (1, 200, 20), "both counted");
+    r.report(&lv, report(7)).await;
+    r.report(&lv, report(3)).await;
+    assert_eq!(ledger(&r, lv.agent).await, (1, 200, 20), "no repeat");
+}
+
+/// How many background-list rows the idle watch of the test conversation added.
+async fn idle_list_rows(r: &Rig) -> usize {
+    background_notices(r)
+        .await
+        .iter()
+        .filter(|(_, p)| p.get("event").is_some())
+        .count()
+}
+
+/// (FIX-257) The idle watch's background lists are bounded per anchor turn: a child that toggles
+/// short commands adds at most the cap's rows, then the one line the other caps use.
+#[tokio::test]
+async fn idle_background_lists_are_capped_per_anchor_turn() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlebgcap").await;
+    let events: Vec<Value> = (1..=80u64)
+        .map(|n| {
+            if n % 2 == 1 {
+                bg_event(n, &["sleep 1"])
+            } else {
+                bg_event(n, &[])
+            }
+        })
+        .collect();
+    let report = json!({"kind": "turn.idle.events", "turn_id": turn, "events": events});
+    r.report(&lv, report.clone()).await;
+    r.report(&lv, report).await;
+    assert_eq!(idle_list_rows(&r).await, 50);
+    let (_, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(capped.len(), 1, "{capped:?}");
+    assert_eq!(capped[0]["text"], "More activity was not recorded.");
+
+    // The after-the-turn entries have their own room, and add no second line.
+    r.report(&lv, idle_calls(&turn, 0, 101)).await;
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 100);
+    assert_eq!(capped.len(), 1, "{capped:?}");
+}
+
+/// (FIX-257) At the cap, the end of the list that stands is still recorded (nothing claims to run
+/// after it ended); no further list is.
+#[tokio::test]
+async fn idle_background_cap_still_records_the_end_of_the_standing_list() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlebgend").await;
+    let mut events: Vec<Value> = (1..=60u64)
+        .map(|n| bg_event(n, &[format!("job {n}").as_str()]))
+        .collect();
+    events.push(bg_event(61, &[]));
+    events.push(bg_event(62, &["job 62"]));
+    events.push(bg_event(63, &[]));
+    r.report(
+        &lv,
+        json!({"kind": "turn.idle.events", "turn_id": turn, "events": events}),
+    )
+    .await;
+    let lines = background_lines(&r).await;
+    assert_eq!(lines.len(), 51, "{lines:?}");
+    assert_eq!(lines[49], line("background_activity", &turn, &["job 50"]));
+    assert_eq!(lines[50], line("background_stopped", &turn, &[]));
+    assert_eq!(after_turn_entries(&r, lv.conv).await.1.len(), 1);
+}
+
+/// (FIX-257) The duplicate check of an idle list is served by an index on the event's name.
+#[tokio::test]
+async fn the_idle_list_duplicate_check_uses_an_index() {
+    let r = rig().await;
+    let mut tx = r.h.pool().begin().await.unwrap();
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let plan: Vec<String> = sqlx::query_scalar(
+        "EXPLAIN SELECT EXISTS (SELECT 1 FROM transcript_events
+           WHERE conversation_id = '00000000-0000-0000-0000-000000000000'
+             AND type = 'notice' AND payload->>'event' = 'x')",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert!(
+        plan.iter()
+            .any(|l| l.contains("transcript_events_notice_event_idx")),
+        "{plan:#?}"
+    );
+}
+
 /// (FIX-253 review, medium 5) In a peer task's conversation whose message budget is used up,
 /// nothing more is recorded and one line says so; the idle run's tokens are still counted.
 #[tokio::test]
@@ -1219,6 +1322,207 @@ async fn a_deferred_background_stop_stays_requested_until_acknowledged() {
     .await;
     let evs = background_notices(&r).await;
     assert_eq!(evs.last().unwrap().0, "background_stopped", "{evs:?}");
+}
+
+/// A `background` event listing `commands` (the supervisor's report of what still runs).
+fn bg_event(n: u64, commands: &[&str]) -> Value {
+    let items: Vec<Value> = commands
+        .iter()
+        .map(|c| json!({"command": c, "started_at": 1700000000u64}))
+        .collect();
+    ev(n, "background", json!({"items": items}))
+}
+
+/// `(code, turn, commands)` of every background notice, in order.
+async fn background_lines(r: &Rig) -> Vec<(String, String, Vec<String>)> {
+    background_notices(r)
+        .await
+        .into_iter()
+        .map(|(code, p)| {
+            let commands = p["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|i| i["command"].as_str().unwrap().to_owned())
+                .collect();
+            (code, p["turn_id"].as_str().unwrap().to_owned(), commands)
+        })
+        .collect()
+}
+
+fn line(code: &str, turn: &str, commands: &[&str]) -> (String, String, Vec<String>) {
+    (
+        code.to_owned(),
+        turn.to_owned(),
+        commands.iter().map(|c| (*c).to_owned()).collect(),
+    )
+}
+
+/// (FIX-265) The list shows what still runs: a newer report replaces the **Background
+/// activity** entry (also after the turn, from the idle child's watch), the same list adds
+/// nothing, an empty one records that the activity stopped — and Stop belongs to the newest
+/// entry only.
+#[tokio::test]
+async fn a_newer_background_report_replaces_the_entry_and_an_empty_one_ends_it() {
+    let r = rig().await;
+    let lv = r.boot("bgshrink").await;
+    let first = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": first}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": first, "events": [bg_event(1, &["cmd-a"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": first, "status": "done"}),
+    )
+    .await;
+
+    // The next turn: the first command ended, another one runs.
+    r.say(lv.conv, "again").await;
+    let second = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": second}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": second,
+            "events": [bg_event(1, &["cmd-b"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": second,
+            "events": [bg_event(2, &["cmd-b"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": second, "status": "done"}),
+    )
+    .await;
+    assert_eq!(
+        background_lines(&r).await,
+        [
+            line("background_activity", &first, &["cmd-a"]),
+            line("background_activity", &second, &["cmd-b"]),
+        ]
+    );
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{first}/abort"), None)
+        .await;
+    assert_eq!(s, 409, "a replaced entry has no Stop: {v}");
+
+    // The idle child's watch reports the change too.
+    let st = r
+        .report(
+            &lv,
+            json!({"kind": "turn.idle.events", "turn_id": second,
+                "events": [bg_event(1, &["cmd-b", "cmd-c"])]}),
+        )
+        .await;
+    assert_eq!(st, "applied");
+    r.report(
+        &lv,
+        json!({"kind": "turn.idle.events", "turn_id": second, "events": [bg_event(2, &[])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.idle.events", "turn_id": second, "events": [bg_event(3, &[])]}),
+    )
+    .await;
+    let lines = background_lines(&r).await;
+    assert_eq!(
+        lines[2..],
+        [
+            line("background_activity", &second, &["cmd-b", "cmd-c"]),
+            line("background_stopped", &second, &[]),
+        ]
+    );
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{second}/abort"), None)
+        .await;
+    assert_eq!(s, 409, "nothing runs, nothing to stop: {v}");
+}
+
+/// (FIX-265) While a Stop is in flight no report replaces or ends the entry — only the
+/// supervisor's acknowledgement says "stopped". And a session the supervisor released by itself
+/// (a new tool list) ends the entry too: its background work is gone.
+#[tokio::test]
+async fn only_the_acknowledgement_ends_a_requested_stop() {
+    let r = rig().await;
+    let lv = r.boot("bgack").await;
+    let turn = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [bg_event(1, &["cmd-a"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    for (n, commands) in [(1, &[][..]), (2, &["cmd-z"][..])] {
+        r.report(
+            &lv,
+            json!({"kind": "turn.idle.events", "turn_id": turn,
+                "events": [bg_event(n, commands)]}),
+        )
+        .await;
+    }
+    let codes = || async {
+        background_notices(&r)
+            .await
+            .into_iter()
+            .map(|n| n.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        codes().await,
+        ["background_activity", "background_stop_requested"]
+    );
+    let released =
+        |ok: bool| json!({"kind": "session.released", "conversation_id": lv.conv, "ok": ok});
+    assert_eq!(r.report(&lv, released(true)).await, "applied");
+    assert_eq!(
+        codes().await,
+        [
+            "background_activity",
+            "background_stop_requested",
+            "background_stopped"
+        ]
+    );
+
+    // Released with nobody's Stop: a failure says nothing, success ends the entry.
+    r.say(lv.conv, "again").await;
+    let second = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": second}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": second, "events": [bg_event(1, &["cmd-b"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": second, "status": "done"}),
+    )
+    .await;
+    r.report(&lv, released(false)).await;
+    assert_eq!(codes().await.len(), 4);
+    assert_eq!(r.report(&lv, released(true)).await, "applied");
+    assert_eq!(codes().await.last().unwrap(), "background_stopped");
+    assert_eq!(codes().await.len(), 5);
+    assert_eq!(r.report(&lv, released(true)).await, "duplicate");
 }
 
 /// (P5-REFINE-7, C-1075) Stop keeps what was written (`partial: true`) and leaves the

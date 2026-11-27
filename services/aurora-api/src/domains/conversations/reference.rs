@@ -13,6 +13,7 @@ use aurora_db::authz::ReadAuth;
 use aurora_db::repo::conversations as convs;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -47,14 +48,14 @@ pub async fn conversation_refs(
     let mut access: HashMap<Uuid, Option<ReadAuth>> = HashMap::new();
     for row in convs::get_many(&s.pool, &ids).await? {
         let ws = row.workspace_id;
-        if !access.contains_key(&ws) {
+        if let Entry::Vacant(slot) = access.entry(ws) {
             let read = match c.workspace_read(s, ws).await {
                 Ok(r) => Some(r),
                 // No access to the workspace (or a key confined elsewhere): no name.
                 Err(e) if e.status().is_client_error() => None,
                 Err(e) => return Err(e),
             };
-            access.insert(ws, read);
+            slot.insert(read);
         }
         let Some(Some(read)) = access.get(&ws) else {
             continue;

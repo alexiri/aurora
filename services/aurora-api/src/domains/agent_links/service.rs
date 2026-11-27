@@ -361,6 +361,8 @@ pub async fn delete(s: &AppState, c: &Caller, id: Uuid) -> Result<(), ApiError> 
     let sd = sides(s, c, &link).await?;
     let audit_side = if sd.a_auth.is_some() { &sd.a } else { &sd.b };
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    // (FIX-257) The task conversations the closes below write into come before the link.
+    peers::lock_link_origins(&mut tx, id).await?;
     let cur = repo::get_for_update(&mut tx, id)
         .await?
         .ok_or_else(link_404)?;

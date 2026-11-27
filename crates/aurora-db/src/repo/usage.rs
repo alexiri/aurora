@@ -83,7 +83,8 @@ pub async fn record_turn(conn: &mut PgConnection, turn: Uuid) -> Result<(), DbEr
 /// (FIX-253) Add what the idle harness child spent after `turn` ended to the ledger, once per
 /// numbered usage event: tokens only (no turn, no seconds), on today's day, under the same keys
 /// as [`record_turn`]. `usage` is already reduced by the trust rule. Returns whether it was
-/// counted now (`false`: a redelivery).
+/// counted now (`false`: a redelivery). (FIX-257) Each event is remembered, so the order the
+/// reports arrive in does not matter. The caller's transaction holds the mark and the ledger row.
 pub async fn record_idle(
     conn: &mut PgConnection,
     turn: Uuid,
@@ -91,7 +92,9 @@ pub async fn record_idle(
     usage: &serde_json::Value,
 ) -> Result<bool, DbError> {
     let fresh = sqlx::query(
-        "UPDATE turns SET idle_usage_n = $2 WHERE id = $1 AND role = 'turn' AND idle_usage_n < $2",
+        "INSERT INTO idle_usage_events (turn_id, n)
+         SELECT id, $2 FROM turns WHERE id = $1 AND role = 'turn'
+         ON CONFLICT (turn_id, n) DO NOTHING",
     )
     .bind(turn)
     .bind(n)

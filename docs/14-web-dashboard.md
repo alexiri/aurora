@@ -670,7 +670,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     notice shows as **"You stopped this answer"**, muted between two rules, under the partial text.
     (FIX-253, D-490) The **Background activity** notice (`background_activity`) shows what the harness child keeps doing after the
     turn ended ("Background activity, still running: `…`") with a **Stop** button (the same abort right, `10 §Abort`); the durable
-    `background_stopped` notice mutes the entry row away and stays as **"Background activity stopped."** The reminder notice
+    `background_stopped` notice mutes the entry row away and stays as **"Background activity stopped."** (or **"…
+    finished."** when the work ended by itself); a newer `background_activity` notice mutes the older row too (FIX-265), so only
+    what still runs is shown. The reminder notice
     (`no_wakeup`, "<Agent> said it would continue, but nothing is set to wake it.") shows as a muted system line with a
     **Remind it in 15 minutes** button (FIX-253, D-490): one press sets one one-time reminder for the agent in this
     conversation, 15 minutes ahead, attributed to the person who pressed (the same right as sending a message there); the
@@ -955,8 +957,39 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       neutral `TOOL` for non-gateway tools), the mono method, host and path
       (or the tool name and argument), and the duration or result size,
       right-aligned in tabular numerals.
-    - A group that contains a denied or failed call shows the `DENY` chip in
-      its summary line.
+    - The summary line says **Deny** only when a policy denied a call (a
+      `DENY` decision) and **Failed** when a call failed for any other reason
+      (both when a group has both). A failed call's row reads `Failed`,
+      whatever it had been allowed to do; only a denied one reads `DENY`.
+  - **Memory cards** (P5-MEMORY-4, mem-5, C-1172, `memory-card.tsx`). The
+    `memory.saved` and `memory.refused` events are cards in the agent's turn,
+    under the tool group (which stays, as the record of the call); at most
+    570 px wide, the actions wrapping under the text when there is no room.
+    The words come from the event; nothing is read from tool names or results.
+    - **Saved** (a neutral card with a bookmark tile): "<Agent> remembered", the
+      title, one line of the content (wrapping on a phone), **View** and
+      **Undo**. **View** opens `?tab=memory&memory=<key>` for people who may
+      read the agent's memories (own access to the workspace, or emergency read
+      access). **Undo** is for people who may edit the agent (own access): a
+      created memory is deleted, a changed one restored to
+      `previous_revision`; the card then reads "Undone · **Redo**" and a toast
+      confirms. A restore brings a changed memory back; deleting a memory takes
+      its revisions along, so Redo of a created one writes it again (it then
+      reads as added by that person). The memory is read again at the click,
+      and when it is no longer what the card saved (a later revision, another
+      memory under the key, or none) the button reads **Changed since**,
+      disabled, with the reason under the text: a newer edit is never
+      overwritten.
+    - **Refused** (an amber card): "<Agent> tried to remember this but
+      couldn't", the event's `message` followed by "What it wanted to add:" and
+      the preview; **Save it yourself** (people who may edit the agent) and
+      **Dismiss**. Save it yourself opens the Memory page: for a locked memory,
+      that memory in edit mode with the text appended; otherwise the new-memory
+      form with the title, the text and the key (when it is free). Either way
+      nothing is saved until the person saves, and the draft is handed over in
+      memory only (never in the address or browser storage). **Dismiss** folds
+      the card to one line (with **Show**) for this viewer until the page is
+      loaded again.
   - **Inline approval.** The card sits in the agent column, under the message
     that caused it:
     - It is a `pending` panel: `#FFF8EA` with a `pending-soft` border (dark:
@@ -1257,7 +1290,7 @@ here, add it here and document it.
 | Card | `Card` | A bordered `surface` panel (borders replace shadows in dark). |
 | List | `ItemList` + `ListRow` | Divided rows with an actions slot; rows wrap on narrow screens. For few, rich rows (agents, members, keys). |
 | Data table | `DataTable`, `Th`, `Td` | For columns of comparable data. The wrapper scrolls inside itself at 390 px, so the page never scrolls horizontally. Always give `caption`. |
-| Diff | `DiffView` (in `web/src/components/ui/diff-view.tsx`) | (phase 6, FIX-250) The one GitLab-style line diff — the template review's, the person's Review changes dialog's and the skill library update review's. Every change with old and new line numbers and three lines of context; longer runs of unchanged lines fold into one "N unchanged lines" row with **Show 20 more above / below** and **Show all** (expanding in steps, like GitLab); a **Show the whole file** switch in the file header; a changed-line pair highlights the words that differ (in a block of removed then added lines they pair up in order); a file that was added or removed says so (one with no text: "The file is empty."); files with no change show as "Unchanged." only, never as a diff. (FIX-271) A file too large to compare says "This file is too large to compare line by line; the whole old and new text are below." with both texts in closed folds. Long lines scroll inside the box (a named region), never the page; the fold rows are labelled buttons naming the line range. No other component renders a line diff. |
+| Diff | `DiffView` (in `web/src/components/ui/diff-view.tsx`) | (phase 6, FIX-250) The one GitLab-style line diff — the template review's, the person's Review changes dialog's and the skill library update review's. Every change with old and new line numbers and three lines of context; longer runs of unchanged lines fold into one "N unchanged lines" row with **Show 20 more above / below** and **Show all** (expanding in steps, like GitLab); a **Show the whole file** switch in the file header; a changed-line pair highlights the words that differ (in a block of removed then added lines they pair up in order); a file that was added or removed says so (one with no text: "The file is empty."); files with no change show as "Unchanged." only, never as a diff. (FIX-271) A file too large to compare says "This file is too large to compare line by line; the whole old and new text are below." with both texts in closed folds. Long lines scroll inside the box (a named region), never the page; the fold rows are labelled buttons naming the line range. (P5-MEMORY-3) The optional `wrap` prop, off by default, is for prose in a narrow column (a memory's History): long lines wrap, so the box never scrolls sideways and the fold row's buttons stay inside it. No other component renders a line diff. |
 | Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
 | Checkbox | `CheckboxField` | A checkbox with its label and optional hint; use it for boolean settings instead of a bare `<input type="checkbox">`. |
 | Setting | `SettingField` | (phase 5, SET-1) One instance setting (`§Instance administration`, Settings): label, hint, the control (built from `Field`, `CheckboxField` or a list editor) and a source `Badge` — "Helm", "Dashboard" or "Default". **Locked** (source Helm): the effective value as read-only text, the note "Configured in Helm (`<helm key>`)" and no control. **Dashboard**: a ghost **Reset to default** action naming the default. Its `id` is the key, so `#<key>` links scroll to it. |
@@ -1269,7 +1302,7 @@ here, add it here and document it.
 | Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. (Phase 5, FIX-149, D-272) **Every dialog has a close icon**: `DialogContent` renders a × button (`aria-label="Close"`, `XIcon`, at least a 44 px target on touch) at the right of its title row. The title row stays visible while the body scrolls. Escape and a click on the scrim still dismiss. A view is shown on top of a page only as a `Dialog`, never as a page opened in another browser window (`window.open` is reserved for an OAuth provider's sign-in, C-842, and the terminal's owner-requested **Open in new window**, FIX-138; guard test). |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
 | Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
-| Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
+| Buttons | `Button` (`primary`, `outline`, `approve`, `pending`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. `pending` is the one action of an amber card. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
 | Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. (Phase 5, P5-CHAT: `QuoteStrip`, `ReplyBar`, `JumpToLatest`, the formatting row and drafts under `components/chat/composer/`, and `components/chat/search/`, built from the phase-5 primitives listed under **Components**.) |
 | Composer tools | `Toolbar` + `ToolbarButton`, `Tooltip` + `Kbd`, `SuggestionList`, `EmojiPicker`, `DropZone` | (phase 5, P5-CHAT) Any row of icon actions is a `Toolbar`; any shortcut is shown with `Kbd` in a `Tooltip`; any typed-ahead choice under a field is a `SuggestionList`; a file drop target is a `DropZone`. |
@@ -2877,6 +2910,24 @@ the page is one empty state.
   **Edit** and **…** (Delete) at the top, **Lock** and **History** at the bottom; the settings heading and sub-nav step
   aside there. Edit opens the form full width.
 - **Emergency reader:** the list and the reading view only: no search, no actions, no history, no form.
+
+**Memory › History** (P5-MEMORY-3, D-497(d), C-1170; mockup mem-4; `memory-history.tsx`). **…** › History (on a narrow
+screen the **History** button) replaces the reading view, with "‹ Back to the memory" (on a narrow screen it is its own
+screen); `&history=1` deep-links to it. "History", then "<memory> · n versions" (the versions kept, at most 50).
+- **Versions**, newest first, the selected one highlighted (the newest on opening): an initial, **<name>** and what
+  they did ("created it" for version 1, "restored version n", else "changed it"), the time (`When`), **Current** on the
+  newest, and where: "through an API key", "in “<conversation>”" (or "in a conversation"), "from the template <name>
+  <version>", "its text was removed". The name is the person (also behind a key or a template), else the agent, the
+  key or the template; never an e-mail address, and nothing is linked.
+- **What changed:** "Compared with the version before (<name>, <when>)" ("The first version" for version 1, compared
+  with nothing), the shared `DiffView` of the two texts, and "+n added · −n removed in this version". When either side
+  was removed: "This version's text was removed". When the oldest kept version is not version 1 it has nothing to be
+  compared with, and says so.
+- **Restore this version** (not on the current one, nor on a removed one) does not ask: it restores, returns to the
+  memory and shows the toast "Restored version n" with **Undo**, which restores the version that was current.
+- **…** › **Remove this version's text…** asks first ("Remove the text of version n?" → **Remove text**; it can't be
+  undone). On the current version the item is disabled and says "The current version can't be removed: change the
+  memory first."; a removed version has no **…**.
 
 **Skills.** Name, "Use it when…" (the API's one-line `description`), Instructions (the `body`), "On for <Agent>",
 Save and Delete. The folder name is made by Aurora (`lib/skill-name.ts`: kebab-case, at most 64 characters, `aurora-`

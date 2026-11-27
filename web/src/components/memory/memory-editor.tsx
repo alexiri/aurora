@@ -44,6 +44,7 @@ export function MemoryEditor({
   agentId,
   agentName,
   memory,
+  draft,
   taken,
   narrow,
   onDirtyChange,
@@ -55,6 +56,8 @@ export function MemoryEditor({
   agentName: string;
   /** Absent for a new memory. */
   memory?: Memory;
+  /** What the form starts with instead, as unsaved changes. A key that is taken is dropped. */
+  draft?: { key?: string | null; title?: string; content: string };
   /** The agent's keys, so a made key is not one of them. */
   taken: string[];
   narrow: boolean;
@@ -69,10 +72,10 @@ export function MemoryEditor({
   const put = usePutMemory(agentId, memory?.key ?? "");
   const lock = useSetMemoryLocked(agentId, memory?.key ?? "");
   const toast = useUndoToast();
-  const [title, setTitle] = useState(memory?.title ?? "");
+  const [title, setTitle] = useState(memory?.title ?? draft?.title?.slice(0, MEMORY_TITLE_MAX) ?? "");
   const [description, setDescription] = useState(memory?.description ?? "");
-  const [content, setContent] = useState(memory?.content ?? "");
-  const [typedKey, setTypedKey] = useState<string | null>(null);
+  const [content, setContent] = useState(draft?.content ?? memory?.content ?? "");
+  const [typedKey, setTypedKey] = useState<string | null>(() => (!memory && draft?.key && !taken.includes(draft.key) ? draft.key : null));
   const [lockNew, setLockNew] = useState(false);
   const [locked, setLocked] = useState(memory?.locked ?? false);
   const [contentError, setContentError] = useState("");

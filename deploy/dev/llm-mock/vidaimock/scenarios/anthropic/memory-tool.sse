@@ -14,18 +14,18 @@ event: content_block_stop
 data: {"type":"content_block_stop","index":0}
 
 event: content_block_start
-data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_scn_memory_1","name":"mcp__aurora__memory_save","input":{}}}
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_scn_memory_1","name":"{% set direct = false %}{% for t in json.tools | default(value=[]) %}{% if t.name == "mcp__aurora__memory_save" %}{% set_global direct = true %}{% endif %}{% endfor %}{% if direct %}mcp__aurora__memory_save{% else %}Bash{% endif %}","input":{}}}
 
 event: content_block_delta
 data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}
 
 :vidai-delay 50
 event: content_block_delta
-data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"key\": \"conformance\", \"con"}}
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{% set direct = false %}{% for t in json.tools | default(value=[]) %}{% if t.name == "mcp__aurora__memory_save" %}{% set_global direct = true %}{% endif %}{% endfor %}{% if direct %}{\"key\": \"conformance\", \"con{% else %}{\"command\": \"aurora-agent call aurora memory_save key=conformance {% endif %}"}}
 
 :vidai-delay 50
 event: content_block_delta
-data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"tent\": \"Saved by the conformance run.\"}"}}
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{% set direct = false %}{% for t in json.tools | default(value=[]) %}{% if t.name == "mcp__aurora__memory_save" %}{% set_global direct = true %}{% endif %}{% endfor %}{% if direct %}tent\": \"Saved by the conformance run.\"}{% else %}content='Saved by the conformance run.'\"}{% endif %}"}}
 
 event: content_block_stop
 data: {"type":"content_block_stop","index":1}

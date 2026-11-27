@@ -235,6 +235,17 @@ async fn lane_at(
     org: Option<Value>,
     approval_pool: Option<aurora_db::PgPool>,
 ) -> Lane {
+    lane_snap(url_of, cfg, org, approval_pool, snapshot_json()).await
+}
+
+/// [`lane_at`] over the compiled snapshot `snap`.
+async fn lane_snap(
+    url_of: impl FnOnce(u16) -> String,
+    cfg: Value,
+    org: Option<Value>,
+    approval_pool: Option<aurora_db::PgPool>,
+    snap: Value,
+) -> Lane {
     let (port, ca_pem, seen) = server().await;
     let approval = approval_pool.is_some();
     let url = url_of(port);
@@ -249,7 +260,7 @@ async fn lane_at(
     };
     let (env, src, _) = start_in(
         w,
-        snapshot_json(),
+        snap,
         &[("c0", creds.as_str())],
         move |w| {
             let mut r = Rows::default();
@@ -344,6 +355,35 @@ fn hdr(req: &Received, name: &str) -> Option<String> {
 }
 
 const JSON: &str = "Content-Type: application/json\r\n";
+
+// A package stored before the linter refused it: this lane relays the receiver's answer without
+// any response projection, so a projected tool is refused and nothing is posted (a dry run too).
+#[tokio::test]
+async fn a_projected_tool_is_refused_and_nothing_is_sent() {
+    let mut snap = snapshot_json();
+    snap["apps"][0]["tools"]["write"]["items"][0]["project"] = json!(["$.ok"]);
+    let l = lane_snap(
+        |port| format!("https://localhost:{port}{}", hook_pq()),
+        config(json!({})),
+        None,
+        None,
+        snap,
+    )
+    .await;
+    for extra in [JSON.to_owned(), format!("{JSON}X-Aurora-Dry-Run: 1\r\n")] {
+        let r = l.post(&extra, &json!({"text": "hi"}).to_string()).await;
+        assert_eq!(r.status, 403, "{} {}", r.head, r.body);
+        assert_eq!(r.code(), "tool_projection_unsupported", "{}", r.body);
+        assert_eq!(
+            header(&r, "x-aurora-error").as_deref(),
+            Some("tool_projection_unsupported"),
+            "{}",
+            r.head
+        );
+        clean("refusal", &format!("{} {}", r.head, r.body));
+    }
+    assert!(l.upstream().is_empty());
+}
 
 /// No canary the agent must not see.
 fn clean(what: &str, text: &str) {

@@ -33,7 +33,8 @@ turns are **scripted scenarios**, not generated.
 
 LiteLLM (`deploy/dev/llm-mock/litellm.yaml`) has one model alias per scenario, `scn-<id>` →
 `anthropic/scn-<id>` on `http://vidaimock:8100`. The model name reaches VidaiMock in the request body
-and `providers/anthropic.yaml` renders the scenario id from it (`scenarios.key`). A model that does
+and `providers/anthropic.yaml` renders the scenario id from it (`scenarios.key`). A scenario file may read the
+request's tool **names** to choose how it calls a tool (`scn-memory-tool`). A model that does
 not start with `scn-` gets the plain "Mock model response." answer. An unknown `scn-` id returns a
 500 naming the scenario, so a mis-wired test fails loudly. Selection never reads the message text.
 
@@ -45,7 +46,7 @@ the answer after it.
 |---|---|---|---|
 | `scn-pong` | `pong` | streams/returns `pong` | conformance `say`/resume/correction; hosted e2e |
 | `scn-count` | `count` | 40 numbered lines, 250 ms apart | conformance abort (`long`) |
-| `scn-memory-tool` | `memory-tool`, `memory-tool-final` | text, then `tool_use` `mcp__aurora__memory_save` with input `{"key":"conformance","content":"Saved by the conformance run."}` streamed as fragmented `input_json_delta`; after the `tool_result`: `done` | conformance `tool`; hosted e2e |
+| `scn-memory-tool` | `memory-tool`, `memory-tool-final` | text, then a `tool_use` that saves the memory `conformance` ("Saved by the conformance run."), streamed as fragmented `input_json_delta`; after the `tool_result`: `done`. **Which tool depends on the request's tool list:** `mcp__aurora__memory_save` when the harness was given it (the conformance bridge; `hosted.platform_tools = all`), else `Bash` running `aurora-agent call aurora memory_save key=conformance content='…'` (the default `on_demand`: the bridge lists only the core tools, and a direct call is refused by the harness as "No such tool available") | conformance `tool`; hosted e2e |
 | `scn-steer` | `steer` | slow six-word answer (400 ms apart) for the steer cases; `claude-code` has `steer = false`, so the suite does not use it yet | reserved |
 | `scn-ratelimit` | `ratelimit` | HTTP 429 `rate_limit_error` | conformance `fail` → `provider_rate_limited` |
 | `scn-overload` | `overload` | HTTP 529 `overloaded_error` | smoke only |

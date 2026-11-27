@@ -42,6 +42,30 @@ fn a_tool_project_of_plain_paths_is_valid() {
     assert!(v.is_empty(), "{v:#?}");
 }
 
+// The database lane relays the server's rows and applies no response projection, so a tool of a
+// database app may not declare one.
+#[test]
+fn a_projection_on_a_database_tool_is_refused() {
+    let path = format!(
+        "{}/../../plugins/builtin/postgresql/plugin.yaml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let y = std::fs::read_to_string(path).unwrap().replacen(
+        "path: /read, methods: [POST]",
+        "path: /read, methods: [POST], project: [\"$.name\"]",
+        1,
+    );
+    let m = Manifest::parse(&y, "9.9.9").unwrap();
+    let v = validate::manifest(&m);
+    let codes: Vec<_> = v.iter().map(|x| (x.code, x.path.as_str())).collect();
+    assert_eq!(
+        codes,
+        [("tool_project_lane", "/apps/0/tools/read/items/0/project")],
+        "{v:#?}"
+    );
+    assert!(v[0].message.contains("database app"), "{v:#?}");
+}
+
 // A `kinds` rule type-checks the keys a newer server adds to a read-back: the key names an
 // identifier and carries at least one kind.
 #[test]

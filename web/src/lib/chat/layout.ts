@@ -186,7 +186,10 @@ export interface ToolCall {
 export interface ToolSummary {
   count: number;
   totalMs: number | null;
+  /** A policy denied a call. */
   hasDeny: boolean;
+  /** A call failed for any other reason (nobody denied it). */
+  hasFailed: boolean;
   label: string;
 }
 
@@ -196,21 +199,23 @@ export function formatDuration(ms: number): string {
   return s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} m ${Math.round(s % 60)} s`;
 }
 
-/** "Used 3 tools · 4.2 s", with `hasDeny` when any call was denied or failed. */
+/** "Used 3 tools · 4.2 s", with `hasDeny` when a policy denied a call and `hasFailed` when a call failed. */
 export function toolGroupSummary(calls: ToolCall[]): ToolSummary {
   const durations = calls.map((c) => c.durationMs).filter((d): d is number => d !== null);
   const totalMs = durations.length > 0 ? durations.reduce((a, b) => a + b, 0) : null;
-  const hasDeny = calls.some((c) => c.decision === "DENY" || c.ok === false);
+  const hasDeny = calls.some((c) => c.decision === "DENY");
+  const hasFailed = calls.some((c) => c.ok === false && c.decision !== "DENY");
   const used = `Used ${calls.length} ${calls.length === 1 ? "tool" : "tools"}`;
-  return { count: calls.length, totalMs, hasDeny, label: totalMs === null ? used : `${used} · ${formatDuration(totalMs)}` };
+  return { count: calls.length, totalMs, hasDeny, hasFailed, label: totalMs === null ? used : `${used} · ${formatDuration(totalMs)}` };
 }
 
-function decisionOf(p: Record<string, unknown>, ok: boolean | null): ToolCall["decision"] {
+/** Only a decision the payload states is shown: a failed call is not a denied one. */
+function decisionOf(p: Record<string, unknown>): ToolCall["decision"] {
   const raw = str(p.decision).toLowerCase();
   if (raw === "allow" || raw === "allowed") return "ALLOW";
   if (raw === "held" || raw === "hold") return "HELD";
   if (raw === "deny" || raw === "denied" || raw === "blocked") return "DENY";
-  return ok === false && raw ? "DENY" : "TOOL";
+  return "TOOL";
 }
 
 export type Block =
@@ -219,6 +224,8 @@ export type Block =
   | { kind: "after_turn"; key: string; turnId: string; texts: string[]; calls: ToolCall[] }
   | { kind: "approval"; ev: TranscriptEvent }
   | { kind: "attachment"; ev: TranscriptEvent }
+  /** `memory.saved` / `memory.refused` (C-1172): the card under the tool calls of its turn. */
+  | { kind: "memory"; ev: TranscriptEvent }
   | { kind: "error"; ev: TranscriptEvent };
 
 export type Row =
@@ -248,6 +255,8 @@ const FOLDED = new Set([
   "followup.steer_requested",
   "followup.edited",
 ]);
+
+const isMemoryOf = (b: Block, turnId: string): boolean => b.kind === "memory" && str(b.ev.payload.turn_id) === turnId;
 
 /** Turn the durable events into day dividers, sender groups (5-minute window), folded tool calls and standalone rows. */
 export function buildRows(state: TranscriptState, now: Date): Row[] {
@@ -343,20 +352,33 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
           ok,
           result: fin?.summary ?? "",
           durationMs: Number.isNaN(dur) ? null : Math.max(0, dur),
-          decision: decisionOf(p, ok),
+          decision: decisionOf(p),
         };
         const turnId = str(p.turn_id);
         const g = cur.group;
-        const prev: Block | undefined = g?.senderKey === "agent" ? g.blocks[g.blocks.length - 1] : undefined;
+        // The turn's memory cards sit under its tool group, so the group is looked for past them. The card's event is
+        // written by the API and the call by the runner, so a card can also arrive before its own call: the group
+        // then goes in front of it.
+        let at = g?.senderKey === "agent" ? g.blocks.length : 0;
+        while (g && at > 0 && isMemoryOf(g.blocks[at - 1]!, turnId)) at -= 1;
+        const prev: Block | undefined = g?.senderKey === "agent" ? g.blocks[at - 1] : undefined;
+        const block: Block = { kind: "tools", key: `t${ev.seq}`, turnId, calls: [call], running: running.has(turnId) };
         if (prev && prev.kind === "tools" && prev.turnId === turnId) {
           prev.calls.push(call);
-          const t = Date.parse(ev.ts);
-          if (!Number.isNaN(t)) lastTs = t;
+        } else if (g?.senderKey === "agent" && at < g.blocks.length) {
+          g.blocks.splice(at, 0, block);
         } else {
-          push("agent", "agent", "", "", ev, { kind: "tools", key: `t${ev.seq}`, turnId, calls: [call], running: running.has(turnId) });
+          push("agent", "agent", "", "", ev, block);
+          break;
         }
+        const t = Date.parse(ev.ts);
+        if (!Number.isNaN(t)) lastTs = t;
         break;
       }
+      case "memory.saved":
+      case "memory.refused":
+        push("agent", "agent", "", "", ev, { kind: "memory", ev });
+        break;
       case "approval.pending":
       case "action_approval.pending":
         push("agent", "agent", "", "", ev, { kind: "approval", ev });
@@ -386,7 +408,7 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
           ok,
           result: fin?.summary ?? "",
           durationMs: null,
-          decision: ok === false ? "DENY" : "TOOL",
+          decision: "TOOL",
         };
         const turnId = str(p.turn_id);
         const g = cur.group;

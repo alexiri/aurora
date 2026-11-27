@@ -140,7 +140,10 @@ links and peer tasks`); the origin conversation gets one durable `notice`
 a check is set for HH:MM." — once per wait. The wake gives the task conversation
 its own turn (a watch fire or schedule fire as those turns do, the approval
 decision as a `peer`-doored system turn) and the task is back to `open`; the
-task's own grants and policy apply to every wake turn.
+task's own grants and policy apply to every wake turn. (FIX-257) The end of a
+person's own turn in the task conversation runs the same check: with a wake
+registered the task goes `waiting`, otherwise it stays `open` with its expiry;
+a person's turn never closes it (`07 §Agent links and peer tasks`).
 
 (phase 5, P5-REFINE-7, D-409, C-1073, C-1074) **Titles and folders.**
 - `title_source` says who named a conversation: `auto` (none yet, or the first line of the
@@ -277,9 +280,10 @@ silent (D-470).
 turns become `aborted` immediately; dispatched/running ones get
 `turn.abort` and end `aborted` on the terminal event (or by stall recovery).
 (FIX-253, D-490) On a **finished** turn the same right stops the turn's still-running
-**Background activity** (below): it records the durable `background_stopped`
-notice and the conversation's idle harness session is released, so the child's
-background work dies with it.
+**Background activity** (below): the conversation's idle harness session is
+released, so the child's background work dies with it, and the durable
+`background_stopped` notice is recorded once the supervisor says that nothing
+is left (`12`).
 
 ### Turn context (phase 5, P5-PERSON, D-402, C-1052, C-1053, SEC-139)
 
@@ -465,9 +469,18 @@ its last tool call is written as durable `text` events before the `error` event 
   own background commands that outlive the turn (the claude-code adapter tracks the model's
   `Bash` calls with `run_in_background`); the API records one durable `notice`
   `{ code: "background_activity", turn_id, items: [{ command, started_at }], text }` — one entry
-  per conversation while it stands (re-reports are deduped), with Stop in the web (`10 §Abort`).
-  Stopping records `notice` `{ code: "background_stopped", turn_id, text }`. Other adapters report
-  nothing (their child has no such mode, or it is gone).
+  per conversation stands at a time, with Stop in the web (`10 §Abort`). (FIX-265) A report of the
+  same list adds nothing; a different one, at a turn's end or among the idle events, adds a new
+  entry that replaces the old one (Stop belongs to the newest only); an empty list records
+  `notice` `{ code: "background_stopped", turn_id, text: "Background activity finished." }`.
+  While a Stop is in flight no report changes the entry. An acknowledged release records
+  `background_stopped` with "Background activity stopped.", also when the supervisor released the
+  session on its own. Commands are masked (`aurora_core::sanitize::reason`). Other adapters
+  report nothing (their child has no such mode, or it is gone). (FIX-257) The lists among the
+  idle events add at most 50 rows per anchor turn; past that no new list is recorded and the
+  turn's one `after_turn_capped` "More activity was not recorded." notice says so. The end of
+  the list that stands is always recorded (so at most one row over), and the list a later turn
+  reports at its end is not capped.
 - **Worked after the turn (FIX-253, part B).** While the background work lasts, the supervisor
   watches the idle child (`12 §The idle reader`) and reports what it did as `turn.idle.events`
   anchored on the finished turn; the API records durable `after_turn.text`
@@ -960,7 +973,12 @@ people who may read it; others see the actor or the time without it.
 - **What the agent remembered, in the chat** (C-1172): after `memory_save`
 saves or is refused, the API appends `memory.saved` or `memory.refused` to the
 turn's transcript (§Transcript events), whatever the harness; the refusal
-reason is in plain words and the tool error keeps its code.
+reason is in plain words and the tool error keeps its code. In the chat
+(P5-MEMORY-4, `14` §Chat) the person sees a card: what was remembered, with
+**View** and **Undo**, or why it could not be and what the agent wanted to add,
+with **Save it yourself** and **Dismiss**. Undo and Redo use the ordinary memory
+routes with the person's own rights and never overwrite a newer edit the card
+can see.
 
 ### Memory language (Proposal 03)
 

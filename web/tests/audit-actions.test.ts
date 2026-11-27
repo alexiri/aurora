@@ -101,6 +101,15 @@ describe("audit actions in words", () => {
     expect(auditWords({ ...by, action: "workspace_access.set", metadata: { role: "owner", previous_role: "member" } }, "Carol").sentence).toBe("Alice changed Carol to Owner");
   });
 
+  it("says which skill was switched off or back on for an agent, by name and never by id", () => {
+    // The row carries the skill's name, its scope and the agent's id: no agent name.
+    const row = { actor_kind: "user", actor_label: "alice@example.test", actor_name: "Alice Admin", metadata: { name: "triage", scope: "workspace", agent_id: "0194a7c2-0000-7000-8000-000000000001" } };
+    expect(auditWords({ ...row, action: "skill.agent_off" }, null).sentence).toBe("Alice turned off the skill triage for an agent");
+    expect(auditWords({ ...row, action: "skill.agent_on" }, null).sentence).toBe("Alice turned the skill triage back on for an agent");
+    expect(auditActionLabel("skill.agent_off")).toBe("Turned off a skill for an agent");
+    expect(auditActionLabel("skill.agent_on")).toBe("Turned a skill back on for an agent");
+  });
+
   it("offers one 'All actions' filter in words, never a dotted key", () => {
     for (const level of ["workspace", "organization", "instance"] as const) {
       const groups = auditFilterGroups(level);
