@@ -68,11 +68,13 @@ export function AgentsView() {
   const needs = useAgentNeedsCounts(wsId);
   const base = `/o/${org}/w/${ws}/agents`;
   const behind = (agents.data?.items ?? []).filter((a) => a.needs_update);
-  const [reviewing, setReviewing] = useState(false);
+  // The agents the running walkthrough reviews, fixed when it starts: every apply refetches the
+  // list, so `behind` shrinks under a walkthrough that steps through it, skipping agents.
+  const [reviewing, setReviewing] = useState<{ id: string; name: string; handle: string }[] | null>(null);
   // The walkthrough is over: the applies changed what is behind, so the list reads again and the
   // filter (now empty) is cleared.
   const onReviewed = () => {
-    setReviewing(false);
+    setReviewing(null);
     if (wsId) void qc.invalidateQueries({ queryKey: queryKeys.agents(wsId) });
     router.push(base);
   };
@@ -112,7 +114,7 @@ export function AgentsView() {
             </p>
             <div className="flex flex-wrap gap-2">
               {behind.length > 0 ? (
-                <Button type="button" size="sm" onClick={() => setReviewing(true)}>
+                <Button type="button" size="sm" onClick={() => setReviewing(behind.map((a) => ({ id: a.id, name: a.name, handle: a.handle })))}>
                   Review updates
                 </Button>
               ) : null}
@@ -139,9 +141,9 @@ export function AgentsView() {
           orgId={resolved.data?.org.id}
         />
       ) : null}
-      {reviewing && behind.length > 0 ? (
+      {reviewing ? (
         <ReviewUpdates
-          agents={behind.map((a) => ({ id: a.id, name: a.name, handle: a.handle }))}
+          agents={reviewing}
           agentBaseOf={(handle) => `${base}/${handle}`}
           onClose={onReviewed}
         />
