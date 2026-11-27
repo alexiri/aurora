@@ -609,7 +609,8 @@ async fn background_activity_commands_are_masked_and_capped() {
     assert_eq!(items.len(), 10, "at most 10 items: {items:?}");
     assert_eq!(
         // (FIX-253 fixes2 F) The whole `Authorization:` value is masked, not just its tail.
-        items[0]["command"], "curl -H 'Authorization: *** https://x",
+        items[0]["command"],
+        "curl -H 'Authorization: *** https://x",
         "{items:?}"
     );
     assert_eq!(items[1]["command"], "API_KEY=*** ./deploy.sh", "{items:?}");
