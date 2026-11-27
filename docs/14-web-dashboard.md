@@ -955,8 +955,39 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       neutral `TOOL` for non-gateway tools), the mono method, host and path
       (or the tool name and argument), and the duration or result size,
       right-aligned in tabular numerals.
-    - A group that contains a denied or failed call shows the `DENY` chip in
-      its summary line.
+    - The summary line says **Deny** only when a policy denied a call (a
+      `DENY` decision) and **Failed** when a call failed for any other reason
+      (both when a group has both). A failed call's row reads `Failed`,
+      whatever it had been allowed to do; only a denied one reads `DENY`.
+  - **Memory cards** (P5-MEMORY-4, mem-5, C-1172, `memory-card.tsx`). The
+    `memory.saved` and `memory.refused` events are cards in the agent's turn,
+    under the tool group (which stays, as the record of the call); at most
+    570 px wide, the actions wrapping under the text when there is no room.
+    The words come from the event; nothing is read from tool names or results.
+    - **Saved** (a neutral card with a bookmark tile): "<Agent> remembered", the
+      title, one line of the content (wrapping on a phone), **View** and
+      **Undo**. **View** opens `?tab=memory&memory=<key>` for people who may
+      read the agent's memories (own access to the workspace, or emergency read
+      access). **Undo** is for people who may edit the agent (own access): a
+      created memory is deleted, a changed one restored to
+      `previous_revision`; the card then reads "Undone · **Redo**" and a toast
+      confirms. A restore brings a changed memory back; deleting a memory takes
+      its revisions along, so Redo of a created one writes it again (it then
+      reads as added by that person). The memory is read again at the click,
+      and when it is no longer what the card saved (a later revision, another
+      memory under the key, or none) the button reads **Changed since**,
+      disabled, with the reason under the text: a newer edit is never
+      overwritten.
+    - **Refused** (an amber card): "<Agent> tried to remember this but
+      couldn't", the event's `message` followed by "What it wanted to add:" and
+      the preview; **Save it yourself** (people who may edit the agent) and
+      **Dismiss**. Save it yourself opens the Memory page: for a locked memory,
+      that memory in edit mode with the text appended; otherwise the new-memory
+      form with the title, the text and the key (when it is free). Either way
+      nothing is saved until the person saves, and the draft is handed over in
+      memory only (never in the address or browser storage). **Dismiss** folds
+      the card to one line (with **Show**) for this viewer until the page is
+      loaded again.
   - **Inline approval.** The card sits in the agent column, under the message
     that caused it:
     - It is a `pending` panel: `#FFF8EA` with a `pending-soft` border (dark:
@@ -1269,7 +1300,7 @@ here, add it here and document it.
 | Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. (Phase 5, FIX-149, D-272) **Every dialog has a close icon**: `DialogContent` renders a × button (`aria-label="Close"`, `XIcon`, at least a 44 px target on touch) at the right of its title row. The title row stays visible while the body scrolls. Escape and a click on the scrim still dismiss. A view is shown on top of a page only as a `Dialog`, never as a page opened in another browser window (`window.open` is reserved for an OAuth provider's sign-in, C-842, and the terminal's owner-requested **Open in new window**, FIX-138; guard test). |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
 | Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
-| Buttons | `Button` (`primary`, `outline`, `approve`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. |
+| Buttons | `Button` (`primary`, `outline`, `approve`, `pending`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. `pending` is the one action of an amber card. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
 | Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. (Phase 5, P5-CHAT: `QuoteStrip`, `ReplyBar`, `JumpToLatest`, the formatting row and drafts under `components/chat/composer/`, and `components/chat/search/`, built from the phase-5 primitives listed under **Components**.) |
 | Composer tools | `Toolbar` + `ToolbarButton`, `Tooltip` + `Kbd`, `SuggestionList`, `EmojiPicker`, `DropZone` | (phase 5, P5-CHAT) Any row of icon actions is a `Toolbar`; any shortcut is shown with `Kbd` in a `Tooltip`; any typed-ahead choice under a field is a `SuggestionList`; a file drop target is a `DropZone`. |

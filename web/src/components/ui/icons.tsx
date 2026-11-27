@@ -37,7 +37,8 @@ export const UsersIcon = make(<><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c
 export const BuildingIcon = make(<><rect x="5" y="3" width="14" height="18" rx="1"/><path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2"/></>);
 export const PlugIcon = make(<><path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 01-12 0z"/><path d="M12 17v4"/></>);
 export const ScaleIcon = make(<><path d="M12 3v18M5 21h14"/><path d="M5 7h14"/><path d="M5 7l-3 7a3.5 3.5 0 006 0zM19 7l-3 7a3.5 3.5 0 006 0z"/></>);
-export const BookIcon = make(<><path d="M4 4.5A1.5 1.5 0 015.5 3H20v16H5.5A1.5 1.5 0 004 20.5z"/><path d="M4 20.5A1.5 1.5 0 005.5 22H20v-3"/></>);
+export const BookmarkIcon = make(<><path d="M6 3h12v18l-6-4-6 4z"/></>);
+export const BookIcon =make(<><path d="M4 4.5A1.5 1.5 0 015.5 3H20v16H5.5A1.5 1.5 0 004 20.5z"/><path d="M4 20.5A1.5 1.5 0 005.5 22H20v-3"/></>);
 export const MessageIcon = make(<><path d="M4 5h16v11H9l-5 4z"/></>);
 export const ScrollIcon = make(<><path d="M8 3h11v15a3 3 0 01-3 3H6a3 3 0 003-3V6a3 3 0 00-3-3"/><path d="M12 8h4M12 12h4"/></>);
 export const UserIcon = make(<><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></>);

@@ -12,6 +12,8 @@ const buttonVariants = cva(
         primary: "bg-primary text-on-primary hover:opacity-90",
         outline: "border border-line-strong bg-surface text-ink hover:bg-subtle",
         approve: "bg-accent text-on-accent hover:opacity-90",
+        // The one action of an amber (pending) card: something the viewer can do.
+        pending: "bg-pending-ink text-pending-panel hover:opacity-90",
         ghost: "text-ink-2 hover:bg-subtle hover:text-ink",
         danger: "border border-danger-ink bg-surface text-danger-ink hover:bg-danger-soft",
       },
