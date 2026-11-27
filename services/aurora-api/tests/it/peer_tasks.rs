@@ -1616,6 +1616,108 @@ async fn the_watch_firing_resumes_the_task_and_returns_it_to_open() {
     assert_eq!(agent_id, d.b);
 }
 
+/// (FIX-253 review, high) A `waiting` task occupies the one-open slot of its ordered pair exactly
+/// like an `open` one: a second A→B task does not open while the first waits (it queues, and the
+/// queued notice says the first is waiting), the unique index itself refuses a second `waiting`
+/// row of the pair, and the first task's wake still succeeds — no zombie waiting task.
+#[tokio::test]
+async fn a_waiting_task_holds_the_pair_slot_and_the_wake_succeeds() {
+    use aurora_api::domains::hosted::reports;
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+
+    // A second A→B task queues behind the waiting one instead of opening beside it.
+    let v = d.send("the pipeline again, please").await;
+    assert_eq!(v["status"], "queued", "{v}");
+    let pc2 = d.rig.peer_conversation(Rig::id(&v["peer_task_id"])).await;
+    let queued = d.rig.notices(pc2, "peer_task_queued").await;
+    assert_eq!(queued.len(), 1);
+    assert!(
+        queued[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("waiting"),
+        "the notice says the first task is waiting: {}",
+        queued[0]
+    );
+
+    // The index itself refuses a second `waiting` row of the same pair (a populated table: the
+    // pair's rows from above stand while the insert is tried).
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    let dup_pc = Uuid::now_v7();
+    let ws: Uuid = sqlx::query_scalar("SELECT workspace_id FROM agents WHERE id = $1")
+        .bind(d.b)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'peer',$1::text, now())",
+    )
+    .bind(dup_pc)
+    .bind(d.b)
+    .bind(ws)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let dup = sqlx::query(
+        "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
+            origin_conversation_id, task_conversation_id, status, messages_used, message_budget,
+            expires_at)
+         SELECT $1, link_id, from_agent_id, to_agent_id, requester_user_id,
+            origin_conversation_id, $2, 'waiting', messages_used, message_budget, expires_at
+         FROM peer_tasks WHERE id = $3",
+    )
+    .bind(Uuid::now_v7())
+    .bind(dup_pc)
+    .bind(task)
+    .execute(&mut *conn)
+    .await;
+    assert!(
+        dup.is_err(),
+        "a second `waiting` row of the pair must violate the unique index"
+    );
+    drop(conn);
+
+    // The wake of the waiting task still succeeds: no zombie.
+    let pc = d.rig.peer_conversation(task).await;
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    let facts = aurora_db::repo::hosted::SandboxFacts {
+        sandbox_id: w.sandbox,
+        agent_id: d.b,
+        runner_id: None,
+        state: "running".into(),
+        boot_id: Some(w.boot),
+        channel_replica_id: Some(w.replica),
+        harness_steer: false,
+    };
+    let r = aurora_protocol::runner::Report {
+        report_id: Uuid::now_v7(),
+        sandbox_id: w.sandbox,
+        boot_id: w.boot,
+        body: aurora_protocol::runner::ReportBody::WatchFired(
+            aurora_protocol::runner::WatchFired {
+                watch_id: w.watch.to_string(),
+                detail: "the pipeline exited".into(),
+            },
+        ),
+    };
+    let mut tx = d.rig.h.pool().begin().await.unwrap();
+    reports::apply(&d.rig.h.state, &mut tx, w.replica, &facts, &r)
+        .await
+        .unwrap()
+        .expect("the wake's report is handled");
+    tx.commit().await.unwrap();
+    assert_eq!(d.rig.task_status(task).await, "open");
+    assert!(
+        d.rig.running_turn(pc).await.is_some(),
+        "the wake turn exists"
+    );
+}
+
 /// (FIX-253, D-490(b)) The approval decision also wakes the task: the task conversation gets a
 /// turn and the task is back to `open` (the requester's origin notice is FIX-252's).
 #[tokio::test]

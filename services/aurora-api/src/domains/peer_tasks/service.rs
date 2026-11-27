@@ -265,7 +265,10 @@ pub async fn open_task(
             "The requesting person no longer has access to the sending agent's workspace.",
         ));
     }
-    let queued = repo::open_exists(&mut *conn, r.from.id, r.to.id).await?;
+    // (FIX-253 security review, high) A `waiting` task occupies the pair's slot like an `open`
+    // one: a second task queues behind it (see `repo::open_exists`).
+    let slot = repo::slot_status(&mut *conn, r.from.id, r.to.id).await?;
+    let queued = slot.is_some();
     // (FIX-110) A task queued behind the open one costs a conversation, a notice of up to
     // 12,000 characters and, later, a turn on the peer: bounded per ordered pair under the link
     // lock taken above.
@@ -311,14 +314,21 @@ pub async fn open_task(
     )
     .await?;
     if queued {
-        // The frozen request waits in the task conversation until the task is promoted.
+        // The frozen request waits in the task conversation until the task is promoted. When the
+        // slot is held by a waiting task, the notice says so (FIX-253 security review, high).
+        let text = if slot.as_deref() == Some("waiting") {
+            "This task is queued behind an earlier task from the same agent that is now waiting \
+             for its wake-up."
+        } else {
+            "This task is queued behind an earlier task from the same agent."
+        };
         conv::append_event(
             conn,
             pc.id,
             None,
             "notice",
             &json!({"code": "peer_task_queued", "peer_task_id": task.id,
-                "text": "This task is queued behind an earlier task from the same agent.",
+                "text": text,
                 "request": r.text}),
         )
         .await?;

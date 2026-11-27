@@ -130,19 +130,33 @@ pub async fn queued_count<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Is there an `open` task for the ordered pair?
+/// Is there an `open` or `waiting` task for the ordered pair? (FIX-253 security review, high: a
+/// `waiting` task occupies the pair's one-open slot exactly like an `open` one — a second task
+/// queues behind it instead of opening beside it, which would turn the first task into a zombie
+/// when its wake resumed it into the unique index.)
 pub async fn open_exists<'e, E: PgExecutor<'e>>(
     exec: E,
     from: Uuid,
     to: Uuid,
 ) -> Result<bool, DbError> {
+    Ok(slot_status(exec, from, to).await?.is_some())
+}
+
+/// The status (`open` or `waiting`) of the task that holds the ordered pair's one-open slot, so
+/// the queue notice can say whether the earlier task is waiting; `None` when the slot is free.
+pub async fn slot_status<'e, E: PgExecutor<'e>>(
+    exec: E,
+    from: Uuid,
+    to: Uuid,
+) -> Result<Option<String>, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM peer_tasks
-           WHERE from_agent_id = $1 AND to_agent_id = $2 AND status = 'open')",
+        "SELECT status FROM peer_tasks
+          WHERE from_agent_id = $1 AND to_agent_id = $2 AND status IN ('open', 'waiting')
+          ORDER BY created_at LIMIT 1",
     )
     .bind(from)
     .bind(to)
-    .fetch_one(exec)
+    .fetch_optional(exec)
     .await?)
 }
 
