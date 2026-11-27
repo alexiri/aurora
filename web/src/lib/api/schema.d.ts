@@ -8955,7 +8955,7 @@ export interface components {
          * @description (FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.
          * @enum {string}
          */
-        AttentionKind: "connector_approval" | "package_approval" | "agent_template_version" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "approval" | "access_request" | "broken_account" | "agent_cannot_answer" | "my_request";
+        AttentionKind: "connector_approval" | "package_approval" | "agent_template_version" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "approval" | "access_request" | "broken_account" | "agent_cannot_answer" | "my_request" | "template_update";
         /**
          * @description (C-1080) The level an item belongs to.
          * @enum {string}

@@ -1042,3 +1042,82 @@ pub async fn delete_part(
         .await?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------------------------
+// (FIX-251, D-488(a)) The update notices: one per workspace and version, the row is the dedup.
+// ---------------------------------------------------------------------------------------------
+
+/// One update notice a workspace's people were told (FIX-251, D-488(a)).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct UpdateNoticeRow {
+    pub workspace_id: Uuid,
+    /// The `<id>` of `template.yaml` (no FK, like the provenance).
+    pub template_id: String,
+    /// The template's display name (joined at read time).
+    pub template_name: String,
+    pub version: String,
+    pub created_at: DateTime<Utc>,
+    /// The workspace's display name (joined at read time).
+    pub workspace_name: String,
+    /// How many of the workspace's agents made from the template are behind this version
+    /// (computed at read time, never stored).
+    pub behind: i64,
+}
+
+/// Record that `version` of `template_id` was announced to `workspace_id`'s people. `true` when
+/// this run inserted the row (the caller tells the people); `false` when it was already told —
+/// the one-notice-per-workspace-and-version dedup (D-488(a)).
+pub async fn record_update_notice<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_id: Uuid,
+    template_id: &str,
+    version: &str,
+) -> Result<bool, DbError> {
+    let r = sqlx::query(
+        "INSERT INTO agent_template_update_notices (workspace_id, template_id, version) \
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+    )
+    .bind(workspace_id)
+    .bind(template_id)
+    .bind(version)
+    .execute(exec)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// The update notices of one workspace whose offer still stands and that still concern at least
+/// one of its agents (D-488(a)): the template is offered, the version is its newest approved
+/// one, the organization has not turned the template off, and at least one agent made from the
+/// template is behind. Oldest first (the notice's `created_at` is when it was first told).
+pub async fn update_notices_for_workspace<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_id: Uuid,
+    limit: i64,
+) -> Result<Vec<UpdateNoticeRow>, DbError> {
+    sqlx::query_as(
+        "SELECT n.workspace_id, n.template_id, t.name AS template_name, n.version, n.created_at, \
+                w.name AS workspace_name, \
+                (SELECT count(*) FROM agents a \
+                  WHERE a.workspace_id = n.workspace_id AND a.template_id = n.template_id \
+                    AND (a.template_version IS NULL OR a.template_version <> n.version)) AS behind \
+         FROM agent_template_update_notices n \
+         JOIN agent_templates t ON t.template_id = n.template_id AND t.offered \
+         JOIN workspaces w ON w.id = n.workspace_id \
+         WHERE n.workspace_id = $1 \
+           AND n.version = (SELECT v.version FROM agent_template_versions v \
+                             WHERE v.agent_template_id = t.id AND v.status = 'approved' \
+                             ORDER BY v.created_at DESC, v.id DESC LIMIT 1) \
+           AND NOT EXISTS (SELECT 1 FROM org_disabled_agent_templates d \
+                            WHERE d.org_id = (SELECT org_id FROM workspaces WHERE id = n.workspace_id) \
+                              AND d.template_id = n.template_id) \
+           AND EXISTS (SELECT 1 FROM agents a \
+                        WHERE a.workspace_id = n.workspace_id AND a.template_id = n.template_id \
+                          AND (a.template_version IS NULL OR a.template_version <> n.version)) \
+         ORDER BY n.created_at, n.template_id, n.version LIMIT $2",
+    )
+    .bind(workspace_id)
+    .bind(limit)
+    .fetch_all(exec)
+    .await
+    .map_err(DbError::from)
+}

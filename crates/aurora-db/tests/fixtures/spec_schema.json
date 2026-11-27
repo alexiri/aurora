@@ -116,6 +116,11 @@
       "update_interval",
       "url"
     ],
+    "agent_template_update_notices": [
+      "template_id",
+      "version",
+      "workspace_id"
+    ],
     "agent_template_versions": [
       "agent_template_id",
       "archive_sha256",
@@ -1828,6 +1833,11 @@
       "token_updated_at": "timestamptz null",
       "update_interval": "text not null",
       "url": "text not null"
+    },
+    "agent_template_update_notices": {
+      "template_id": "text not null",
+      "version": "text not null",
+      "workspace_id": "uuid not null"
     },
     "agent_template_versions": {
       "agent_template_id": "uuid not null",

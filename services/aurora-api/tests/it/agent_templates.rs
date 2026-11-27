@@ -5,6 +5,7 @@
 //! override maps every origin to it, so the token-origin rule stays testable). Real Postgres.
 
 use aurora_api::domains::agent_templates::poll;
+use aurora_api::domains::auth::mail::{Mail, MailError, Mailer};
 use aurora_template::TreeFile;
 use aurora_testkit::git_server::{Change, GitServer};
 use base64::Engine as _;
@@ -3596,8 +3597,7 @@ async fn an_edited_part_merges_and_applies_without_resolutions() {
     );
     // No conflict hunks (an empty list is omitted altogether).
     assert!(
-        merge["conflicts"].is_null()
-            || merge["conflicts"].as_array().unwrap().is_empty(),
+        merge["conflicts"].is_null() || merge["conflicts"].as_array().unwrap().is_empty(),
         "{merge}"
     );
     let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
@@ -7303,4 +7303,282 @@ async fn the_checked_in_example_walks_the_whole_journey() {
         vec!["alert-summary.sh".to_owned()]
     );
     assert_eq!(skills_of(&w, agent).await.len(), 3);
+}
+
+// ---------------------------------------------------------------------------------------------
+// (FIX-251, D-488(a)) The update notice on an approval and a re-offer.
+// ---------------------------------------------------------------------------------------------
+
+struct FailMailer;
+
+#[async_trait::async_trait]
+impl Mailer for FailMailer {
+    async fn send(&self, _: Mail) -> Result<(), MailError> {
+        Err(MailError("smtp down".into()))
+    }
+}
+
+/// Seed, ingest and approve nothing: the source is checked, `t`@`1.0.0` waits for review.
+async fn template_ingested(w: &W) {
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+}
+
+/// An agent made from `t`, recorded as coming from `version` (behind the offered one when that
+/// is newer).
+async fn agent_from_template(
+    w: &W,
+    org: Uuid,
+    ws: Uuid,
+    handle: &str,
+    version: Option<&str>,
+) -> Uuid {
+    let id = w.h.hosted_agent(org, ws, handle).await;
+    sqlx::query("UPDATE agents SET template_id = 't', template_version = $2 WHERE id = $1")
+        .bind(id)
+        .bind(version)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    id
+}
+
+/// An active org member with their own workspace binding (the apply right) and their cookie.
+async fn bound_member(w: &W, org: Uuid, ws: Uuid, email: &str, role: &str) -> (Uuid, String) {
+    let u = w.h.user(email, false).await;
+    w.h.member(org, u, "member", "active").await;
+    w.h.bind_ws(ws, u, role).await;
+    let cookie = cookie(&w.h.good_session(u).await.1);
+    (u, cookie)
+}
+
+/// An approval tells exactly the people who can apply the update — the active members with an
+/// effective workspace access (the right the apply route requires): the bound owner and member
+/// get it, a bound-but-disabled person and a workspace-less org member do not, the approver
+/// never does; one notice per workspace and version (the dedup row); the bodies name nobody by
+/// e-mail address; the workspace attention feed carries the in-app notice.
+#[tokio::test]
+async fn an_approval_tells_exactly_the_people_who_can_apply() {
+    let w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let (_, owner_cookie) = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    let _ = bound_member(&w, org, ws, "member@x.io", "member").await;
+    // A bound person whose account is disabled: never told.
+    let gone = w.h.user("gone@x.io", false).await;
+    w.h.member(org, gone, "member", "active").await;
+    w.h.bind_ws(ws, gone, "member").await;
+    w.h.disable_user(gone).await;
+    // An active org member with no workspace binding: no apply right, never told.
+    let outsider = w.h.user("outsider@x.io", false).await;
+    w.h.member(org, outsider, "member", "active").await;
+
+    agent_from_template(&w, org, ws, "behind", Some("0.9.0")).await;
+    w.approve("t", "1.0.0").await;
+
+    let mail = w.h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, vec!["owner@x.io", "member@x.io"], "{mail:?}");
+    for m in &mail {
+        assert!(
+            m.body.contains("T 1.0.0 is available for 1 agent in"),
+            "{m:?}"
+        );
+        assert!(m.body.contains("memories are never changed"), "{m:?}");
+        // Never an e-mail address as a label in the body.
+        assert!(!m.body.contains("@x.io"), "{m:?}");
+    }
+    // The dedup row: exactly one, for this workspace and version.
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT workspace_id, template_id, version FROM agent_template_update_notices",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![(ws, "t".into(), "1.0.0".into())], "{rows:?}");
+
+    // The in-app notice: the workspace attention feed shows it to a member with the apply
+    // right, with the link to the Agents page filtered to the agents that are behind.
+    let (s, v) =
+        w.h.call(
+            &owner_cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/attention"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let items: Vec<&Value> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"].as_str() == Some("template_update"))
+        .collect();
+    assert_eq!(items.len(), 1, "{v}");
+    assert!(
+        items[0]["title"]
+            .as_str()
+            .unwrap()
+            .starts_with("T 1.0.0 is available for 1 agent in "),
+        "{v}"
+    );
+    assert!(
+        items[0]["action"]["href"]
+            .as_str()
+            .unwrap()
+            .ends_with("/agents?needs_update=1")
+            && items[0]["action"]["href"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("/w/{}/agents", ws.simple())),
+        "{v}"
+    );
+    assert_eq!(items[0]["action"]["label"], json!("Review updates"), "{v}");
+
+    // The rails' number counts it under the agents topic.
+    let (s, v) =
+        w.h.call(
+            &owner_cookie,
+            Method::GET,
+            &format!("/v1/attention/counts?workspace={ws}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v["workspace"]["topics"]["agents"].as_i64().unwrap_or(0) >= 1,
+        "{v}"
+    );
+
+    // A re-approval path (the version is approved; a second decide is refused) — the dedup is
+    // proven by the re-offer test; here: a withdrawal and a re-offer keep it silent.
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": true})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(w.h.mail.sent().len(), 2, "no second notice");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_template_update_notices")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+}
+
+/// A re-offer of the same version is silent (the dedup), a new version tells again, and every
+/// workspace with agents from the template gets its own notice.
+#[tokio::test]
+async fn the_notice_is_sent_once_per_workspace_and_version() {
+    let w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws1 = w.h.workspace(org).await;
+    let ws2 = w.h.workspace(org).await;
+    let _ = bound_member(&w, org, ws1, "one@x.io", "owner").await;
+    let _ = bound_member(&w, org, ws2, "two@x.io", "owner").await;
+    agent_from_template(&w, org, ws1, "a1", Some("0.9.0")).await;
+    agent_from_template(&w, org, ws2, "a2", None).await;
+
+    w.approve("t", "1.0.0").await;
+    let mail = w.h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, vec!["one@x.io", "two@x.io"], "{mail:?}");
+    let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT workspace_id, version FROM agent_template_update_notices ORDER BY workspace_id",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+
+    // Withdraw and offer again: the same version is silent everywhere.
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": true})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(w.h.mail.sent().len(), 2, "the re-offer told nobody again");
+
+    // A new version tells again, once per workspace and version.
+    w.seed("acme/tpl", "t", "1.1.0");
+    w.git.serve_file("pkg/t-1.1.0.zip", pack("t", "1.1.0"));
+    let sid: Uuid = sqlx::query_scalar("SELECT id FROM agent_template_sources LIMIT 1")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &format!("/v1/admin/agent-template-sources/{sid}/check"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    w.approve("t", "1.1.0").await;
+    let mail = w.h.mail.sent();
+    assert_eq!(mail.len(), 4, "{mail:?}");
+    assert!(mail.iter().any(|m| m.body.contains("1.1.0")), "{mail:?}");
+}
+
+/// A failing mailer never fails or undoes the approval: the version is approved, the critical
+/// audit row stands and the in-app notice (the dedup row) is there.
+#[tokio::test]
+async fn a_failing_notice_does_not_fail_the_approval() {
+    let mut w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let _ = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    agent_from_template(&w, org, ws, "behind", Some("0.9.0")).await;
+
+    w.h.state =
+        w.h.state
+            .clone()
+            .with_mailer(std::sync::Arc::new(FailMailer));
+    w.h.app = test_router(w.h.state.clone());
+
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-templates/t/versions/1.0.0/approve",
+            Some(json!({"content_sha256": w.content_sha("1.0.0").await.unwrap()})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        w.versions().await,
+        vec![("1.0.0".into(), "approved".into(), None)]
+    );
+    assert_eq!(w.audit_critical("agent_template.approve").await, 1);
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_template_update_notices")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1, "the in-app notice is there");
 }

@@ -88,6 +88,9 @@ pub enum Kind {
     DefaultStore,
     /// (FIX-252) A delegated task's approval wait, told to the person who asked for the task.
     PeerApproval,
+    /// (FIX-251, D-488(a)) A new agent template version is offered; the people who can apply
+    /// an update to an agent made from it are told.
+    TemplateUpdate,
 }
 
 impl Kind {
@@ -108,6 +111,7 @@ impl Kind {
             Self::OrgLifecycle => "org_lifecycle",
             Self::DefaultStore => "default_store",
             Self::PeerApproval => "peer_approval",
+            Self::TemplateUpdate => "template_update",
         }
     }
 }
@@ -354,6 +358,25 @@ pub fn lifecycle_message(
         "normal",
         topic(sub.id, href.as_bytes()),
     )
+}
+
+/// (FIX-251, D-488(a)) One push per device of `user` for a template update notice.
+pub async fn notify_template_update(
+    state: &AppState,
+    user: Uuid,
+    title: &str,
+    href: &str,
+) -> usize {
+    if !state.push.enabled {
+        return 0;
+    }
+    let Ok(devices) = deliverable(state, user).await else {
+        return 0;
+    };
+    send_all(state, &devices, |s| {
+        lifecycle_message(s, Kind::TemplateUpdate, title, href)
+    })
+    .await
 }
 
 /// The dashboard path of a conversation: the agent page with `?c=` (D-102).
