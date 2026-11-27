@@ -6,7 +6,7 @@
 
 use aurora_core::{ApiError, limits};
 use aurora_db::repo::{agent_helpers as repo, skills};
-use aurora_template::helper_path_ok;
+use aurora_template::{file_folder_clash, helper_path_ok};
 use sha2::{Digest, Sha256};
 use sqlx::PgConnection;
 use uuid::Uuid;
@@ -73,6 +73,15 @@ pub(crate) fn check_set(files: &[HelperFile<'_>]) -> Result<(), ApiError> {
             return Err(invalid(f.path, "the same path twice"));
         }
     }
+    if let Some((file, below)) = file_folder_clash(files.iter().map(|f| f.path)) {
+        return Err(ApiError::unprocessable(
+            "template_helper_invalid",
+            format!(
+                "`{file}` and `{below}` cannot both be helper files: one path is a file and a \
+                 folder."
+            ),
+        ));
+    }
     Ok(())
 }
 
@@ -97,12 +106,12 @@ pub async fn replace_all(
 
 /// Delete one helper file (`Some(path)`) or every helper file (`None`) of an agent, inside the
 /// caller's transaction, and bump the home-sync generation when anything was removed. The
-/// number of files removed.
+/// paths this call removed, sorted.
 pub async fn delete(
     tx: &mut PgConnection,
     agent: Uuid,
     path: Option<&str>,
-) -> Result<u64, ApiError> {
+) -> Result<Vec<String>, ApiError> {
     let removed = match path {
         Some(p) => {
             if !helper_path_ok(p) {
@@ -111,11 +120,15 @@ pub async fn delete(
                     "at most 4 segments below helpers/, letters, digits, . _ / - only, no hidden or empty segment",
                 ));
             }
-            u64::from(repo::delete_one(&mut *tx, agent, p).await?)
+            if repo::delete_one(&mut *tx, agent, p).await? {
+                vec![p.to_owned()]
+            } else {
+                Vec::new()
+            }
         }
         None => repo::delete_all(&mut *tx, agent).await?,
     };
-    if removed > 0 {
+    if !removed.is_empty() {
         skills::bump_agent(&mut *tx, agent).await?;
     }
     Ok(removed)

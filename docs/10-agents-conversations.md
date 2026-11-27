@@ -905,7 +905,8 @@ No agent-reachable tool or route can lock or unlock. `PUT
 …/memories/{key}/locked` (`setMemoryLocked`, S/K) is idempotent, audited
 (`memory.lock` / `memory.unlock` only when the value changes), bumps the
 home-sync generation and writes **no revision** (a lock is not a content
-change). The index line ends with ` (locked)`, the projected file installs
+change). In the index line the key is followed by ` (locked)`
+(`key (locked): line`; agent text cannot produce that prefix), the projected file installs
 read-only (0444), and the harvest **restores** an edited or deleted locked
 file instead of uploading it. Locked memories count toward
 `MEMORY_MAX_PER_AGENT`.
@@ -938,8 +939,8 @@ index).
 - The dashboard memory editor states the rule ("Memories in this workspace are
 written in German"); it is shown, not enforced.
 - (P6-MEMLOCK, C-1151) When the agent holds at least one locked memory, the
-memory capability fragment adds: *"Memories marked (locked) were set by a
-person. Use them, but do not try to change or delete them; if one looks wrong
+memory capability fragment adds: *"Memories whose key is followed by (locked)
+were set by a person. Use them, but do not try to change or delete them; if one looks wrong
 or out of date, say so."* Without it the instruction files are byte-identical
 to before.
 
@@ -958,8 +959,8 @@ score = greatest(rank(<memory_language>), rank('simple'),
 ```
 
 - `memory_search`: top `MEMORY_SEARCH_HITS` by score &gt; 0, with a snippet.
-  (P6-MEMLOCK, C-1149) Each hit carries `locked`, and the index line of a
-locked memory ends with ` (locked)`.
+  (P6-MEMLOCK, C-1149) Each hit carries `locked`, and in the index line of a
+locked memory the key is followed by ` (locked)`.
 - **Turn-start recall** (composed at dispatch, delivered as context only, never
 stored in the transcript): the **index** (one `key: line` per memory, ≤
 `MEMORY_INDEX_MAX`, always included) plus up to `MEMORY_SNIPPETS` snippets

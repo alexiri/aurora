@@ -661,6 +661,13 @@ fn parse_skills(
             body: String::new(),
             files: Vec::new(),
         };
+        if let Some((file, below)) = file_folder_clash(files.iter().map(|(rel, _)| rel.as_str())) {
+            problems.push(TemplateProblem::new(
+                ProblemCode::TemplateSkillInvalid,
+                &at,
+                clash_message(file, below),
+            ));
+        }
         let mut has_skill_md = false;
         for (file_rel, f) in files {
             if file_rel == "SKILL.md" {
@@ -796,6 +803,24 @@ pub fn helper_path_ok(below_helpers: &str) -> bool {
     below_helpers.split('/').count() <= 4 && rel_path_problem(below_helpers).is_none()
 }
 
+/// The first pair among `paths` where one is a file and also a folder of the other (`run` and
+/// `run/x.sh`): `(file, the path below it)`. No filesystem can hold both. The validator and the
+/// API's helper writer both call this.
+pub fn file_folder_clash<'a>(
+    paths: impl IntoIterator<Item = &'a str>,
+) -> Option<(&'a str, &'a str)> {
+    let all: BTreeSet<&str> = paths.into_iter().collect();
+    all.iter().find_map(|below| {
+        below
+            .match_indices('/')
+            .find_map(|(i, _)| all.get(&below[..i]).map(|file| (*file, *below)))
+    })
+}
+
+fn clash_message(file: &str, below: &str) -> String {
+    format!("`{file}` and `{below}` cannot both exist: one path is a file and a folder")
+}
+
 /// `helpers/<path>`: text-only files (owner decision 2026-11-24: the home sync carries UTF-8
 /// text only, so anything else is `template_helper_invalid`), capped and shallow (C-1141;
 /// projected by C-1143).
@@ -811,6 +836,15 @@ fn parse_helpers(
                 "a template carries at most {} helper files",
                 limits::TEMPLATE_HELPERS_MAX
             ),
+        ));
+    }
+    if let Some((file, below)) =
+        file_folder_clash(raw.iter().map(|(rel, _)| &rel["helpers/".len()..]))
+    {
+        problems.push(TemplateProblem::new(
+            ProblemCode::TemplateHelperInvalid,
+            "helpers/",
+            clash_message(file, below),
         ));
     }
     let mut total = 0usize;
@@ -1443,6 +1477,29 @@ pub(crate) mod tests {
             mode: 0o100644,
         });
         assert!(read_tree("service-monitor", &files).is_ok());
+    }
+
+    /// A path that is a file and also a folder of another path is refused, for helpers and for
+    /// a skill's files.
+    #[test]
+    fn a_file_that_is_also_a_folder_is_refused() {
+        for (dir, code) in [
+            ("helpers", ProblemCode::TemplateHelperInvalid),
+            ("skills/what-is-on", ProblemCode::TemplateSkillInvalid),
+        ] {
+            let mut files = sample_files();
+            // `run.md` sorts between `run` and `run/x.sh`: neighbours alone are not enough.
+            for below in ["run", "run.md", "run/x.sh"] {
+                files.push(file(&format!("service-monitor/{dir}/{below}"), "x\n"));
+            }
+            let err = read_tree("service-monitor", &files).unwrap_err();
+            assert!(
+                err.iter().any(|p| p.code == code
+                    && p.message.contains("`run`")
+                    && p.message.contains("`run/x.sh`")),
+                "{dir}: {err:?}"
+            );
+        }
     }
 
     #[test]

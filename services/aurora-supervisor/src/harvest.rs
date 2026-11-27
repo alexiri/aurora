@@ -8,20 +8,22 @@
 //! edit is never uploaded — the file is restored (0444) and the agent is told the change was undone.
 
 use std::collections::HashMap;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::MEMORY_CONTENT_MAX;
+
+use crate::nofollow;
 
 /// (FIX-114) Largest memory file the harvest reads (four times the content limit, in bytes —
 /// generous for multi-byte text); a bigger file is skipped with a notice.
 pub const MEMORY_FILE_READ_MAX: u64 = 4 * MEMORY_CONTENT_MAX as u64;
 
 /// Read at most `max` bytes of `path`: `Ok(None)` when the file is larger (never read whole).
+/// Only a regular file is read: a link or a FIFO at `path` is an error.
 pub fn read_bounded(path: &std::path::Path, max: u64) -> std::io::Result<Option<Vec<u8>>> {
     use std::io::Read as _;
     let mut buf = Vec::new();
-    std::fs::File::open(path)?
+    crate::nofollow::open_regular(path)?
         .take(max + 1)
         .read_to_end(&mut buf)?;
     Ok((buf.len() as u64 <= max).then_some(buf))
@@ -181,7 +183,30 @@ impl Harvester {
         std::mem::take(&mut self.notices)
     }
 
+    /// `memory/` must be a real directory before anything in it is read or written: a link (or a
+    /// file) the agent put there is removed, never followed, and the folder is made again; a
+    /// missing one is made when there are locked memories to restore. False: leave it alone.
+    fn real_memory_dir(&self, needed: bool) -> bool {
+        match std::fs::symlink_metadata(&self.dir) {
+            Ok(m) if m.is_dir() => return true,
+            Ok(_) => {
+                if let Err(e) = std::fs::remove_file(&self.dir) {
+                    tracing::warn!(error = %e, "memory folder is not a directory and stays");
+                    return false;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && needed => {}
+            Err(_) => return false,
+        }
+        std::fs::create_dir(&self.dir)
+            .inspect_err(|e| tracing::warn!(error = %e, "memory folder not created"))
+            .is_ok()
+    }
+
     pub fn scan(&mut self, locked: &HashMap<String, Vec<u8>>) -> Vec<MemoryWrite> {
+        if !self.real_memory_dir(!locked.is_empty()) {
+            return Vec::new();
+        }
         let Ok(rd) = std::fs::read_dir(&self.dir) else {
             return Vec::new();
         };
@@ -280,7 +305,7 @@ impl Harvester {
         match current {
             // The unmodified projection (the recorded bytes verify by construction).
             Some(b) if b == recorded => {
-                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444));
+                let _ = nofollow::open_regular(&path).and_then(|f| nofollow::set_mode(&f, 0o444));
                 self.uploaded.remove(name);
             }
             current => {
@@ -299,18 +324,8 @@ impl Harvester {
 
     /// Rewrites a locked memory file from its recorded (sealed) bytes, 0444.
     fn restore_locked(&self, name: &str, recorded: &[u8]) {
-        use std::io::Write as _;
-        let path = self.dir.join(name);
-        let tmp = self.dir.join(format!(".{name}.aurora-tmp"));
-        let done = std::fs::File::create(&tmp)
-            .and_then(|mut f| {
-                f.write_all(recorded)?;
-                f.set_permissions(std::fs::Permissions::from_mode(0o444))
-            })
-            .and_then(|()| std::fs::rename(&tmp, &path));
-        if let Err(e) = done {
+        if let Err(e) = nofollow::write_atomic(&self.dir.join(name), recorded, 0o444) {
             tracing::warn!(name = %name, error = %e, "locked memory file not restored");
-            let _ = std::fs::remove_file(&tmp);
         }
     }
 
