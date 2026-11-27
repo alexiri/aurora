@@ -70,6 +70,9 @@ pub struct Create {
     pub gate_description: Option<String>,
     /// `creator` or `workspace` (RFE-021); tools always pass `creator`.
     pub anchor: &'static str,
+    /// (FIX-253 fixes2 G) A peer-created wake-up's deadline: the delegated task's `expires_at`.
+    /// The fire path skips and disables the schedule once the task has ended.
+    pub ends_at: Option<DateTime<Utc>>,
 }
 
 /// (P6-TPL-3) Pause a freshly created schedule inside the caller's transaction: the
@@ -258,6 +261,7 @@ pub async fn create_in_tx(
             anchor: c.anchor,
             origin_conversation_id: origin,
             next_fire_at: Some(next),
+            ends_at: c.ends_at,
         },
     )
     .await

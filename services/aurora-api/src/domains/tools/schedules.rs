@@ -267,6 +267,20 @@ impl PlatformTool for CreateT {
             Some(t) => t,
             None => default_tz(ctx, &agent, creator).await?,
         };
+        // (FIX-253 fixes2 G) A peer-created wake-up does not outlive its task: it carries the
+        // task's `expires_at`, and the fire path skips and disables it once the task is closed
+        // or that instant has passed.
+        let ends_at = if from_task {
+            Some(
+                peer_tasks::by_task_conversation(&ctx.agent.pool, ctx.conversation_id)
+                    .await?
+                    .filter(|task| task.status == "open")
+                    .ok_or_else(|| ToolError::Failed("This task is no longer open.".into()))?
+                    .expires_at,
+            )
+        } else {
+            None
+        };
         let row = service::create(
             &ctx.agent.pool,
             &agent,
@@ -280,6 +294,7 @@ impl PlatformTool for CreateT {
                 gate_description: a.gate_description,
                 // RFE-021: an agent can never mint a workspace-anchored automation.
                 anchor: "creator",
+                ends_at,
             },
             Some(creator),
             Some(ctx.conversation_id),

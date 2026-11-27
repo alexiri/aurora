@@ -9,6 +9,7 @@ use aurora_core::{ApiError, limits};
 use aurora_db::authz;
 use aurora_db::repo::agents;
 use aurora_db::repo::conversations::{self as convs, NewConversation};
+use aurora_db::repo::peer_tasks;
 use aurora_db::repo::schedules::{self as repo, RunRow, ScheduleRow};
 use aurora_db::repo::turns::{self, Created, TurnRow};
 use aurora_protocol::runner::GateOutcome;
@@ -300,6 +301,33 @@ async fn fire_once(
     row: &ScheduleRow,
     agent: &agents::AgentRow,
 ) -> Result<(), ApiError> {
+    // (FIX-253 fixes2 G) A peer-created wake-up does not outlive its delegated task: when the
+    // task behind the origin conversation is no longer open, or the task's `ends_at` has passed,
+    // the fire skips and the schedule is disabled — it never moves to its own run thread.
+    if row.origin_conversation_id.is_some() || row.ends_at.is_some() {
+        let task_ended = match row.origin_conversation_id {
+            Some(origin) => peer_tasks::by_task_conversation(&mut *conn, origin)
+                .await?
+                .is_some_and(|task| task.status != "open"),
+            None => false,
+        } || row.ends_at.is_some_and(|ends| ends <= Utc::now());
+        if task_ended {
+            repo::insert_run(conn, row.id, None, "skipped_task_closed").await?;
+            repo::disable(conn, row.id, "task_ended", Some("skipped_task_closed")).await?;
+            notify_origin(
+                conn,
+                row,
+                "schedule_disabled",
+                &format!(
+                    "Schedule \"{}\" was disabled: the delegated task it came from has ended.",
+                    row.name
+                ),
+                None,
+            )
+            .await?;
+            return Ok(());
+        }
+    }
     let started = match repo::origin_for_run(&mut *conn, row).await? {
         Some(origin) => start_in_origin(conn, row, origin).await?,
         None => None,

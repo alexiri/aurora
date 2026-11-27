@@ -815,6 +815,7 @@ async fn a_peer_turn_updates_and_deletes_only_its_own_task_schedules_and_rearmin
                     gate_command: None,
                     gate_description: None,
                     anchor: "creator",
+                    ends_at: None,
                 },
                 Some(requester),
                 Some(conv2),
@@ -833,6 +834,107 @@ async fn a_peer_turn_updates_and_deletes_only_its_own_task_schedules_and_rearmin
     .await
     .unwrap();
     assert_eq!(n, 3);
+}
+
+/// (FIX-253 fixes2 G) A wake-up created from a delegated task's peer turn carries the task's
+/// `ends_at` and does not outlive it: once the task is closed, the fire skips (a
+/// `skipped_task_closed` run) and the schedule is disabled with `task_ended` — it does not move
+/// to its own run thread and it does not fire.
+#[tokio::test]
+async fn a_peer_created_wakeup_skips_and_disables_when_the_task_has_ended() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req5@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+    let (conv, turn) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    let (s, v) = r
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "wake", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        ))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM schedules WHERE name = 'wake'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+
+    // The schedule carries the task's ends_at.
+    let (ends_at, expires_at): (
+        Option<chrono::DateTime<chrono::Utc>>,
+        chrono::DateTime<chrono::Utc>,
+    ) = sqlx::query_as(
+        "SELECT s.ends_at, t.expires_at FROM schedules s
+              JOIN peer_tasks t ON t.task_conversation_id = s.origin_conversation_id
+              WHERE s.id = $1",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(ends_at, Some(expires_at));
+
+    // A schedule from the person's own chat carries no ends_at.
+    let own: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "INSERT INTO schedules (id, agent_id, name, prompt, run_at, timezone, anchor)
+         VALUES ($1, $2, 'own_chat', 'p', '2026-12-01T09:00Z', 'UTC', 'creator')
+         RETURNING ends_at",
+    )
+    .bind(Uuid::now_v7())
+    .bind(a.agent)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(own, None);
+
+    // Close the task and fire: the wake skips and the schedule is disabled, not run.
+    sqlx::query("UPDATE peer_tasks SET status = 'completed' WHERE task_conversation_id = $1")
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE schedules SET next_fire_at = now() - interval '2 days' WHERE id = $1")
+        .bind(id)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let mut tx = r.h.pool().begin().await.unwrap();
+    aurora_api::domains::schedules::fire::arm9(&r.h.state, &mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (enabled, reason, outcome): (bool, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT enabled, disabled_reason, last_outcome FROM schedules WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        (enabled, reason.as_deref(), outcome.as_deref()),
+        (false, Some("task_ended"), Some("skipped_task_closed"))
+    );
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM schedule_runs WHERE schedule_id = $1 AND outcome = 'fired'",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0, "the wake never ran");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM schedule_runs WHERE schedule_id = $1 AND outcome = 'skipped_task_closed'",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
 }
 
 /// A `peer` conversation of `agent` with an agent-speaker turn, and an open peer task behind it

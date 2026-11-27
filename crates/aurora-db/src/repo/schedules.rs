@@ -38,6 +38,10 @@ pub struct ScheduleRow {
     pub last_outcome: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// (FIX-253 fixes2 G) A peer-created wake-up's deadline: the delegated task's `expires_at`.
+    /// The fire path skips and disables the schedule once the task has ended or this instant has
+    /// passed; only peer-created schedules carry it.
+    pub ends_at: Option<DateTime<Utc>>,
 }
 
 const COLS: &str = "s.id, s.agent_id, s.name, s.prompt, s.cron, s.run_at, s.completed_at, \
@@ -46,7 +50,8 @@ const COLS: &str = "s.id, s.agent_id, s.name, s.prompt, s.cron, s.run_at, s.comp
     (SELECT d.display_name FROM users d WHERE d.id = s.disabled_by) AS disabled_by_name, \
     s.consecutive_failures, s.creator_user_id, \
     u.display_name AS creator_name, s.anchor, s.origin_conversation_id, s.run_conversation_id, \
-    s.next_fire_at, s.last_fire_at, s.last_outcome, s.created_at, s.updated_at";
+    s.next_fire_at, s.last_fire_at, s.last_outcome, s.created_at, s.updated_at, \
+    s.ends_at";
 const FROM: &str = "FROM schedules s LEFT JOIN users u ON u.id = s.creator_user_id";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -74,6 +79,8 @@ pub struct NewSchedule<'a> {
     pub anchor: &'a str,
     pub origin_conversation_id: Option<Uuid>,
     pub next_fire_at: Option<DateTime<Utc>>,
+    /// (FIX-253 fixes2 G) Set from the delegated task's `expires_at` on a peer-created wake-up.
+    pub ends_at: Option<DateTime<Utc>>,
 }
 
 pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<ScheduleRow>, DbError> {
@@ -141,8 +148,9 @@ pub async fn insert(conn: &mut PgConnection, n: &NewSchedule<'_>) -> Result<Sche
     let id = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, gate_command,
-            gate_description, creator_user_id, anchor, origin_conversation_id, next_fire_at, run_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+            gate_description, creator_user_id, anchor, origin_conversation_id, next_fire_at, run_at,
+            ends_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
     )
     .bind(id)
     .bind(n.agent_id)
@@ -157,6 +165,7 @@ pub async fn insert(conn: &mut PgConnection, n: &NewSchedule<'_>) -> Result<Sche
     .bind(n.origin_conversation_id)
     .bind(n.next_fire_at)
     .bind(n.run_at)
+    .bind(n.ends_at)
     .execute(&mut *conn)
     .await?;
     get(&mut *conn, id).await?.ok_or(DbError::NotFound)

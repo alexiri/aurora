@@ -1515,6 +1515,7 @@ pub async fn remind_in_15_minutes(
             gate_command: None,
             gate_description: None,
             anchor: "creator",
+            ends_at: None,
         },
         Some(c.user_id),
         Some(id),
