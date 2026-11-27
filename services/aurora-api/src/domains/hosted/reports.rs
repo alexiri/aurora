@@ -428,7 +428,7 @@ const AFTER_TURN_TEXT_MAX: usize = 2000;
 /// turn"). The anchor must be the reporting sandbox's own finished turn: an idle child belongs
 /// to it, and a turn still running is not idle (its own path maps the events).
 async fn idle_events(
-    s: &AppState,
+    _s: &AppState,
     tx: &mut PgConnection,
     facts: &SandboxFacts,
     r: &Report,
@@ -459,7 +459,7 @@ async fn idle_events(
                     tx,
                     cid,
                     "after_turn.tool",
-                    &p["call_id"].as_str().unwrap_or(""),
+                    p["call_id"].as_str().unwrap_or(""),
                 )
                 .await?
                 {
@@ -478,7 +478,7 @@ async fn idle_events(
                     tx,
                     cid,
                     "after_turn.tool_end",
-                    &p["call_id"].as_str().unwrap_or(""),
+                    p["call_id"].as_str().unwrap_or(""),
                 )
                 .await?
                 {
@@ -494,7 +494,7 @@ async fn idle_events(
                     continue;
                 }
                 let mid = clip(str_of(d, "message_id").unwrap_or(""), 128);
-                if already_recorded(tx, cid, "after_turn.text", &mid).await? {
+                if already_recorded(tx, cid, "after_turn.text", mid).await? {
                     continue;
                 }
                 conv::append_event(
