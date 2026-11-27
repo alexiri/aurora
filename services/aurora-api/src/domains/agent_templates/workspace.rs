@@ -280,33 +280,47 @@ pub(crate) struct Resolver<'a> {
     org_names: BTreeMap<String, bool>,
 }
 
+/// The candidates (C-1142) in matching order: the organization's own libraries, then the
+/// instance ones, each group by label.
+pub(crate) fn candidate_order(rows: Vec<LibraryRow>) -> Vec<LibraryRow> {
+    let (mut own, mut instance): (Vec<LibraryRow>, Vec<LibraryRow>) =
+        rows.into_iter().partition(|l| l.org_id.is_some());
+    own.sort_by(|a, b| a.label.cmp(&b.label));
+    instance.sort_by(|a, b| a.label.cmp(&b.label));
+    own.extend(instance);
+    own
+}
+
+/// The candidate rule (C-1142): same url, same folder, and — when the reference gives a `ref`
+/// — the same one. The first candidate wins.
+pub(crate) fn match_library<'l>(libs: &'l [LibraryRow], r: &RefJson) -> Option<&'l LibraryRow> {
+    let url = r.url.as_deref()?;
+    libs.iter().find(|l| {
+        l.url.as_deref() == Some(url)
+            && l.path == r.path
+            && (r.reference.is_none() || l.reference.as_deref() == r.reference.as_deref())
+    })
+}
+
 impl<'a> Resolver<'a> {
-    /// The candidates (C-1142): the organization's own libraries, then the instance ones,
-    /// each group by label. The `active` filter happens at match time (a paused or failed
-    /// library is `library_unreadable`, not `library_not_added`).
+    /// The `active` filter happens at match time (a paused or failed library is
+    /// `library_unreadable`, not `library_not_added`).
     pub(crate) async fn new(state: &'a AppState, org: Uuid, ws: Uuid) -> Result<Self, ApiError> {
         let rows = skill_libraries::service::list_for_org(state, org).await?;
-        let mut own: Vec<LibraryRow> = Vec::new();
-        let mut instance: Vec<LibraryRow> = Vec::new();
-        for l in rows {
-            if l.org_id.is_some() {
-                own.push(l);
-            } else {
-                instance.push(l);
-            }
-        }
-        own.sort_by(|a, b| a.label.cmp(&b.label));
-        instance.sort_by(|a, b| a.label.cmp(&b.label));
-        own.extend(instance);
         Ok(Self {
             state,
             org,
             ws,
             libs_disabled: !state.ops().skills_library.enabled,
-            libs: own,
+            libs: candidate_order(rows),
             listings: HashMap::new(),
             org_names: BTreeMap::new(),
         })
+    }
+
+    /// The candidates this resolver matches against.
+    pub(crate) fn libraries(&self) -> &[LibraryRow] {
+        &self.libs
     }
 
     /// The listing of one library from the C-571 cache; `None` when the read failed (an
@@ -361,26 +375,7 @@ impl<'a> Resolver<'a> {
                 dir: None,
             });
         }
-        let Some(url) = r.url.as_deref() else {
-            return Ok(Resolved {
-                available: false,
-                unavailable_reason: Some("library_not_added"),
-                matched: None,
-                dir: None,
-            });
-        };
-        // The candidate rule: same url, same folder, and — when the reference gives a `ref` —
-        // the same one. The first match wins (org's own before instance ones, then by label).
-        let row = self
-            .libs
-            .iter()
-            .find(|l| {
-                l.url.as_deref() == Some(url)
-                    && l.path == r.path
-                    && (r.reference.is_none() || l.reference.as_deref() == r.reference.as_deref())
-            })
-            .cloned();
-        let Some(row) = row else {
+        let Some(row) = match_library(&self.libs, r).cloned() else {
             return Ok(Resolved {
                 available: false,
                 unavailable_reason: Some("library_not_added"),
@@ -633,24 +628,34 @@ pub(crate) async fn skill_ref_plans(
         let (library, content_brief) = match (&x.matched, x.available) {
             (Some((row, commit)), true) => {
                 let dir = x.dir.clone().unwrap_or_default();
-                let c =
-                    skill_libraries::service::skill_content(state, row, &dir, Some(commit)).await?;
-                if !c.valid {
-                    (None, None)
-                } else if !skills::library::agent_tier_fits(state, c.size) {
+                match skill_libraries::service::skill_content(state, row, &dir, Some(commit)).await
+                {
+                    // The listing was cached and the content read now fails: the library
+                    // is unreadable, as when the listing itself fails (C-1142). The
+                    // reference degrades; the request does not.
+                    Err(e) => {
+                        tracing::warn!(library = %row.id, code = e.code(), "a referenced library skill could not be read");
+                        x.available = false;
+                        x.unavailable_reason = Some("library_unreadable");
+                        (None, None)
+                    }
+                    Ok(c) if !c.valid => (None, None),
                     // The loaded content's exact budget unit does not fit the agent tier
                     // (C-1142's `over_budget`); the listing's estimate had let it through.
-                    x.available = false;
-                    x.unavailable_reason = Some("over_budget");
-                    (None, None)
-                } else {
-                    let view = resolved_view(row, commit);
-                    let brief = SkillContentBrief {
-                        use_it_when: c.description.unwrap_or_default(),
-                        body: c.body.unwrap_or_default(),
-                        files: c.files.iter().map(file_view).collect(),
-                    };
-                    (Some(view), Some(brief))
+                    Ok(c) if !skills::library::agent_tier_fits(state, c.size) => {
+                        x.available = false;
+                        x.unavailable_reason = Some("over_budget");
+                        (None, None)
+                    }
+                    Ok(c) => {
+                        let view = resolved_view(row, commit);
+                        let brief = SkillContentBrief {
+                            use_it_when: c.description.unwrap_or_default(),
+                            body: c.body.unwrap_or_default(),
+                            files: c.files.iter().map(file_view).collect(),
+                        };
+                        (Some(view), Some(brief))
+                    }
                 }
             }
             _ => (None, None),

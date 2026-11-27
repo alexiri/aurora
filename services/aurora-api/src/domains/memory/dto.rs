@@ -129,7 +129,7 @@ impl Memory {
                 at,
                 conversation: names.conversation(m.last_used_conversation_id),
             }),
-            index_line: super::service::index_line(
+            index_line: aurora_core::memory_index::index_line(
                 &m.key,
                 m.title.as_deref(),
                 m.description.as_deref(),

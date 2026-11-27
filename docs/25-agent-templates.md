@@ -229,7 +229,8 @@ inputs:                       # at most 10
                                   # compiled with a 64 KiB size limit, whole-value match
     max_length: 20            # text only, 1..200, default 100
     options: [Low, High]      # choice only: 1..20 distinct options, each 1..80
-    default: OPS              # optional; must satisfy the rules above
+    default: OPS              # optional; must satisfy the rules above; used when the person
+                              # gives no value (the field starts filled with it)
 apps:                         # at most 10; each names the app and a suggested level
   - app: grafana              # exactly one of app / any_of
     required: true            # default true

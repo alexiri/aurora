@@ -277,6 +277,19 @@ pub trait HarnessSession: Send {
     fn background_work(&self) -> Vec<BackgroundWork> {
         Vec::new()
     }
+
+    /// (FIX-253, part B) Start watching the idle child: while background work remains, the
+    /// adapter reads what the child writes after the turn and keeps it for
+    /// [`HarnessSession::take_idle_events`]. A following turn takes the stream back (nothing is
+    /// read twice, nothing is lost); the watch ends when the work is gone, the child dies, or
+    /// the watch budget runs out. No-op when unsupported or a turn is running.
+    fn start_idle_reader(&mut self) {}
+
+    /// (FIX-253, part B) What the watched idle child did since the last call, oldest first.
+    /// Empty while a turn runs (the watch yields the stream to it).
+    fn take_idle_events(&mut self) -> Vec<HarnessEvent> {
+        Vec::new()
+    }
 }
 
 /// (FIX-253, D-490) One piece of the harness child's own background work.

@@ -252,13 +252,14 @@ function RemovedFile({ path, change, label }: { path: string; change: TemplateCh
   );
 }
 
-/** The removed files among `changes` whose part starts with `prefix`; the rest of the part is the path. */
-function RemovedFiles({ changes, prefix, labelOf }: { changes: TemplateChange[]; prefix: string; labelOf: (path: string) => string }) {
+/** The removed files of one skill, or the removed helper files when `skill` is null; after the prefix, the part is the path. */
+function RemovedFiles({ changes, skill }: { changes: TemplateChange[]; skill: string | null }) {
+  const prefix = skill === null ? "helper:" : `skill:${skill}:file:`;
   return changes
     .filter((x) => x.kind === "removed" && x.part.startsWith(prefix))
     .map((x) => {
       const path = x.part.slice(prefix.length);
-      return <RemovedFile key={x.part} path={path} change={x} label={labelOf(path)} />;
+      return <RemovedFile key={x.part} path={path} change={x} label={skill === null ? `Helper file ${path}` : `File ${path} of skill ${skill}`} />;
     });
 }
 
@@ -271,7 +272,7 @@ function RemovedSkill({ name, change, changes }: { name: string; change: Templat
       </p>
       <p className="text-sm text-ink-2">Use it when: {change.useItWhen}</p>
       <DiffView old={change.old ?? ""} next="" label={`Diff of Skill ${name} body`} fileName={`Skill ${name} body`} status="removed" />
-      <RemovedFiles changes={changes} prefix={`skill:${name}:file:`} labelOf={(path) => `File ${path} of skill ${name}`} />
+      <RemovedFiles changes={changes} skill={name} />
     </section>
   );
 }
@@ -313,7 +314,7 @@ function SkillCard({ s, changes, comparing }: { s: TemplateContentView["skills"]
           {s.files.map((f) => (
             <ComparedFile key={f.path} f={f} change={changes.find((c) => c.part === `skill:${s.name}:file:${f.path}`) ?? null} label={`File ${f.path} of skill ${s.name}`} />
           ))}
-          <RemovedFiles changes={changes} prefix={`skill:${s.name}:file:`} labelOf={(path) => `File ${path} of skill ${s.name}`} />
+          <RemovedFiles changes={changes} skill={s.name} />
         </div>
       ) : (
         <>
@@ -416,7 +417,7 @@ function Content({ d, diff }: { d: TemplateVersionDetail; diff: TemplateDiff | n
                 <TextFile key={f.path} f={f} label={`Helper file ${f.path}`} />
               ),
             )}
-            <RemovedFiles changes={group("helpers")} prefix="helper:" labelOf={(path) => `Helper file ${path}`} />
+            <RemovedFiles changes={group("helpers")} skill={null} />
           </div>,
         )}
       </Section>

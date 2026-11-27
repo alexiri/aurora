@@ -216,6 +216,7 @@ function decisionOf(p: Record<string, unknown>, ok: boolean | null): ToolCall["d
 export type Block =
   | { kind: "bubble"; ev: TranscriptEvent }
   | { kind: "tools"; key: string; turnId: string; calls: ToolCall[]; running: boolean }
+  | { kind: "after_turn"; key: string; turnId: string; texts: string[]; calls: ToolCall[] }
   | { kind: "approval"; ev: TranscriptEvent }
   | { kind: "attachment"; ev: TranscriptEvent }
   | { kind: "error"; ev: TranscriptEvent };
@@ -255,8 +256,11 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
   const open = activeTurnId(state);
   if (open) running.add(open);
   const finishedAt = new Map<string, { ts: string; ok: boolean; summary: string }>();
+  const finishedAfter = new Map<string, { ok: boolean; summary: string }>();
   for (const e of state.events) {
     if (e.type === "tool.finished") finishedAt.set(str(e.payload.call_id), { ts: e.ts, ok: e.payload.ok === true, summary: str(e.payload.summary) });
+    // (FIX-253, part B) The idle child's own tool results fold the same way, under "Worked after the turn".
+    if (e.type === "after_turn.tool_end") finishedAfter.set(str(e.payload.call_id), { ok: e.payload.ok === true, summary: str(e.payload.summary) });
   }
   // A failed turn.finished repeats the `error` event's code: render the error once.
   const errored = new Set(state.events.filter((e) => e.type === "error").map((e) => str(e.payload.turn_id)));
@@ -357,6 +361,45 @@ export function buildRows(state: TranscriptState, now: Date): Row[] {
       case "action_approval.pending":
         push("agent", "agent", "", "", ev, { kind: "approval", ev });
         break;
+      // (FIX-253, part B) The idle child's own run, folded under "Worked after the turn": one
+      // block per run, texts and tool calls together.
+      case "after_turn.text": {
+        const text = str(p.text);
+        if (!text) break;
+        const turnId = str(p.turn_id);
+        const g = cur.group;
+        const prev: Block | undefined = g?.senderKey === "agent" ? g.blocks[g.blocks.length - 1] : undefined;
+        if (prev && prev.kind === "after_turn" && prev.turnId === turnId) {
+          prev.texts.push(text);
+        } else {
+          push("agent", "agent", "", "", ev, { kind: "after_turn", key: `a${ev.seq}`, turnId, texts: [text], calls: [] });
+        }
+        break;
+      }
+      case "after_turn.tool": {
+        const fin = finishedAfter.get(str(p.call_id));
+        const ok = fin ? fin.ok : null;
+        const call: ToolCall = {
+          callId: str(p.call_id),
+          name: str(p.name),
+          summary: str(p.summary),
+          ok,
+          result: fin?.summary ?? "",
+          durationMs: null,
+          decision: ok === false ? "DENY" : "TOOL",
+        };
+        const turnId = str(p.turn_id);
+        const g = cur.group;
+        const prev: Block | undefined = g?.senderKey === "agent" ? g.blocks[g.blocks.length - 1] : undefined;
+        if (prev && prev.kind === "after_turn" && prev.turnId === turnId) {
+          prev.calls.push(call);
+        } else {
+          push("agent", "agent", "", "", ev, { kind: "after_turn", key: `a${ev.seq}`, turnId, texts: [], calls: [call] });
+        }
+        break;
+      }
+      case "after_turn.tool_end":
+        break; // folded into the call by `finishedAfter` above
       case "attachment":
         push("agent", "agent", "", "", ev, { kind: "attachment", ev });
         break;

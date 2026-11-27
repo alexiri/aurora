@@ -6,7 +6,7 @@
 //! No credential is ever rendered (SEC-01).
 
 use crate::app::AppState;
-use aurora_core::{ApiError, limits};
+use aurora_core::{ApiError, limits, memory_index::index_line};
 use aurora_db::{
     DbError,
     repo::hosted::{self, HomeSyncClaim},
@@ -42,30 +42,18 @@ fn yaml_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
 }
 
-fn index_line(m: &hosted::MemoryRow) -> String {
-    let line = m
-        .description
-        .as_deref()
-        .filter(|d| !d.trim().is_empty())
-        .or(m.title.as_deref().filter(|t| !t.trim().is_empty()))
-        .or_else(|| m.content.lines().find(|l| !l.trim().is_empty()))
-        .unwrap_or("");
-    let one: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
-    // (P6-MEMLOCK, C-1149) A locked memory's line ends with ` (locked)` after the clamped line —
-    // the same rule as the memory service's index line, so the recall index, `memory_list` and
-    // `memory/index.md` agree. The suffix is inside the `MEMORY_INDEX_MAX` bound.
-    let mut out = format!("{}: {}", m.key, clamp(&one, 120));
-    if m.locked {
-        out.push_str(" (locked)");
-    }
-    out
-}
-
-/// `key: line` per memory, bounded by `MEMORY_INDEX_MAX` (also the turn-start recall index).
+/// One [`index_line`] per memory, bounded by `MEMORY_INDEX_MAX` (also the turn-start recall
+/// index).
 pub fn memory_index(rows: &[hosted::MemoryRow]) -> String {
     let mut out = String::new();
     for r in rows {
-        let l = index_line(r);
+        let l = index_line(
+            &r.key,
+            r.title.as_deref(),
+            r.description.as_deref(),
+            &r.content,
+            r.locked,
+        );
         if out.chars().count() + l.chars().count() + 1 > limits::MEMORY_INDEX_MAX {
             break;
         }

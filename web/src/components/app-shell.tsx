@@ -237,8 +237,6 @@ const TOPIC_ICON: Record<string, IconType> = {
 /** Overview and Workspaces are the level's own address; every other topic owns the paths below its folder. */
 function topicActive(pathname: string, href: string, topic: string): boolean {
   const path = href.split("?")[0]!;
-  // (P5-SKLIB-3) The instance's skill libraries are a sub-page of What agents may do.
-  if (path === "/admin/internet-access" && pathname.startsWith("/admin/skill-libraries")) return true;
   return topic === "overview" || topic === "workspaces" ? pathname === path : pathname === path || pathname.startsWith(`${path}/`);
 }
 

@@ -851,12 +851,13 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | requester_user_id | uuid null FK→users (set null) | |
 | origin_conversation_id | uuid FK→conversations (cascade) | where the report goes |
 | task_conversation_id | uuid FK→conversations (cascade) | conversation on the receiving agent |
-| status | text CHECK in (`queued`,`open`,`completed`,`cancelled`,`expired`) | |
+| status | text CHECK in (`queued`,`open`,`waiting`,`completed`,`cancelled`,`expired`) | `waiting` (FIX-253, D-490(b)): a wake is registered (an armed `process_watch` or a one-time schedule created from the task conversation, or a pending approval); the wake resumes the task to `open` |
 | messages_used | int not null default 0 | |
 | message_budget | int not null | |
+| wakes_used | int not null default 0 CHECK (>= 0) | (FIX-253) wake-ups so far; each is also counted in `messages_used` |
 | report | text null | |
 | expires_at | timestamptz not null | |
-| partial unique | (from_agent_id, to_agent_id) WHERE status=`open` | |
+| partial unique | (from_agent_id, to_agent_id) WHERE status in (`open`,`waiting`) | a waiting task holds the pair's slot (FIX-253, migration `20261201000287`) |
 
 ---
 
@@ -1064,6 +1065,7 @@ The gateway role gets nothing on these tables. (`created_at` is implicit, 03 §C
 | send_now_requested_at | timestamptz null | |
 | error_code | text null | open vocabulary |
 | error_message | text null | |
+| idle_usage_n | bigint not null default 0 | (FIX-253, migration `20261201000287`) number of the last idle usage event after this turn that was added to `usage_daily` (a redelivery counts nothing twice) |
 | usage | jsonb null | `{ input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, provider }`. (phase 5, P4-LLM) It also holds `endpoint_id`. (phase 5, P5-MODELS-2, D-304, C-879) It also holds `by_model: [{ model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens }]` and an optional `unverified_models: true`. The totals are the sum of `by_model`, and `model` is the default (`10 §Usage and metering`) |
 | model_basis | jsonb null | (phase 5, P5-MODELS-2, D-304) what the dispatcher chose: `{ provider, endpoint_id, model, roles?, key_id? }` (`roles` = the resolved role model ids; (C-1100) `key_id` = the secret the selection chose, never returned by a route). The trust rule at turn end reads the default and the roles from here, never from the harness. Null before the migration and never read for a turn that is not `role = 'turn'` |
 | dispatched_at, started_at, finished_at | timestamptz null | |
@@ -1352,7 +1354,7 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | consecutive_failures | int not null default 0 | |
 | creator_user_id | uuid null FK→users (set null) | fire-time authority anchor |
 | origin_conversation_id | uuid null FK→conversations (set null) | |
-| ends_at | timestamptz null | (FIX-253 fixes2 G) a peer-created wake-up's deadline: the delegated task's `expires_at`; the fire path skips and disables the schedule once the task has ended or this instant has passed (`10 §Schedules`) |
+| ends_at | timestamptz null | (FIX-253 fixes2 G) a peer-created wake-up's deadline: the delegated task's `expires_at`; the fire path skips and disables the schedule once the task has ended or this instant has passed, repeating or not; such a schedule takes no `cron` and no `run_at` at or after it (FIX-264, `10 §Schedules`) |
 | run_conversation_id | uuid null FK→conversations (set null) | created lazily |
 | next_fire_at | timestamptz null | |
 | fire_lease_until | timestamptz null | claim clock |

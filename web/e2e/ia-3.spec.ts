@@ -110,9 +110,9 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await axeClean(page)).toEqual([]);
       });
 
-      test("the organization's Agents page: the list, then Bring your own under Administration's limits (with Previews) and Skills", async ({ page }) => {
+      test("the organization's Agents page: the list, then Bring your own under Administration's limits (with Previews) and Templates", async ({ page }) => {
         await open(page, "/o/acme/agents", scheme);
-        await expect(page.getByRole("tab")).toHaveText(["Agents", "Bring your own", "Skills", "Templates"]);
+        await expect(page.getByRole("tab")).toHaveText(["Agents", "Bring your own", "Templates"]);
         await page.getByRole("tab", { name: "Bring your own" }).click();
         await expect(page).toHaveURL(/\/o\/acme\/agents\?tab=byo$/);
         const above = page.getByRole("region", { name: "Set for you by an Aurora administrator" });
@@ -142,7 +142,7 @@ for (const scheme of ["light", "dark"] as const) {
         }
         // The loop ends on the last tab (P6-TPL-4), so go back to Defaults for its headings.
         await page.getByRole("tab", { name: "Defaults" }).click();
-        // The agents section's groups, its runners table and the skills library refresh are one run on Defaults.
+        // The agents section's groups and its runners table are one run on Defaults; the library settings moved to Administration › Skills.
         // (P5-POLISH-2) Settings groups are SettingsCards: a section titled by its heading, no longer a named group.
         await expect(page.getByRole("heading", { name: "Defaults for new agents" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Runners and sandbox sizes" })).toBeVisible();

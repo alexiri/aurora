@@ -67,12 +67,20 @@ async fn recipients(
         .collect())
 }
 
-/// "until 18:00" in the recipient's time zone; UTC when they set none or an unknown one.
-fn until(expires_at: DateTime<Utc>, timezone: Option<&str>) -> String {
+/// "until 18:00" in the recipient's time zone; UTC when they set none or an unknown one. An end
+/// that is not on the recipient's current day names its date ("Thu 28 Nov 14:00"): a bare time
+/// would read as today's.
+fn until(expires_at: DateTime<Utc>, timezone: Option<&str>, now: DateTime<Utc>) -> String {
     let tz: Tz = timezone
         .and_then(|t| t.parse().ok())
         .unwrap_or(chrono_tz::UTC);
-    expires_at.with_timezone(&tz).format("%H:%M").to_string()
+    let end = expires_at.with_timezone(&tz);
+    let format = if end.date_naive() == now.with_timezone(&tz).date_naive() {
+        "%H:%M"
+    } else {
+        "%a %-d %b %H:%M"
+    };
+    end.format(format).to_string()
 }
 
 /// The same notice for a route that has just committed the grant: fetches the slugs and names,
@@ -160,7 +168,7 @@ pub async fn notify_open(
             opener_name,
             org_name,
             ws_name,
-            &until(expires_at, p.timezone.as_deref()),
+            &until(expires_at, p.timezone.as_deref(), Utc::now()),
             reason,
         );
         let mail = Mail::new(
@@ -176,4 +184,47 @@ pub async fn notify_open(
             .await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn until_is_the_time_alone_for_an_end_later_the_same_local_day() {
+        let now = at("2026-11-27T09:00:00Z");
+        assert_eq!(until(at("2026-11-27T18:00:00Z"), None, now), "18:00");
+    }
+
+    #[test]
+    fn until_names_the_date_for_an_end_on_another_local_day() {
+        let now = at("2026-11-27T15:00:00Z");
+        assert_eq!(
+            until(at("2026-11-28T14:00:00Z"), None, now),
+            "Sat 28 Nov 14:00"
+        );
+        // The day is the recipient's: the same UTC day crosses midnight in Auckland, and a UTC
+        // midnight crossing is still one day in New York.
+        assert_eq!(
+            until(
+                at("2026-11-27T12:00:00Z"),
+                Some("Pacific/Auckland"),
+                at("2026-11-27T09:00:00Z")
+            ),
+            "Sat 28 Nov 01:00"
+        );
+        assert_eq!(
+            until(
+                at("2026-11-28T01:00:00Z"),
+                Some("America/New_York"),
+                at("2026-11-27T23:00:00Z")
+            ),
+            "20:00"
+        );
+    }
 }

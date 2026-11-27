@@ -47,7 +47,7 @@ for (const scheme of ["light", "dark"] as const) {
       await openWith(page, "/o/acme", scheme, meAs(member, "owner", "owner"));
       const nav = page.getByRole("navigation", { name: "Manage Acme Labs" });
       await expect.poll(() => labels(nav)).toEqual([
-        "Overview", "Agents", "People", "Apps & accounts", "Chat platforms", "AI models", "Internet access", "Data", "Settings",
+        "Overview", "Agents", "Skills", "People", "Apps & accounts", "Chat platforms", "AI models", "Internet access", "Data", "Settings",
       ]);
       await expect(page.getByRole("link", { name: /^Back to / })).toBeVisible();
     });
@@ -119,8 +119,11 @@ const MOVED: [string, RegExp][] = [
   ["/o/acme/governance?tab=apps", /\/o\/acme\/apps\?tab=apps$/],
   ["/o/acme/governance?tab=byo", /\/o\/acme\/agents\?tab=byo$/],
   ["/o/acme/policy", /\/o\/acme\/internet-access$/],
-  ["/o/acme/skills", /\/o\/acme\/agents\?tab=skills$/],
-  ["/o/acme/skills/libraries", /\/o\/acme\/agents\/skills\/libraries$/],
+  // (D-506(a), (c)) Skills have their own pages: the organization's old tab and libraries addresses, and the instance's.
+  ["/o/acme/agents?tab=skills", /\/o\/acme\/skills$/],
+  ["/o/acme/skills/libraries", /\/o\/acme\/skills\?tab=libraries$/],
+  ["/o/acme/agents/skills/libraries", /\/o\/acme\/skills\?tab=libraries$/],
+  ["/admin/skill-libraries", /\/admin\/skills$/],
   ["/o/acme/channels", /\/o\/acme\/chat-platforms$/],
   ["/o/acme/instances", /\/o\/acme\/apps\?tab=self-hosted$/],
   ["/o/acme/api-keys", /\/o\/acme\/settings\?tab=api-keys$/],

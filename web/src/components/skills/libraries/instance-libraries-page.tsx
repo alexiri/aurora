@@ -2,39 +2,37 @@
 
 import { useState } from "react";
 
-import { AdminGuard } from "@/components/admin/admin-guard";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/ui/page-header";
+import { PlusIcon } from "@/components/ui/icons";
 import { ApiError } from "@/lib/api/client";
 import { useInstanceSkillLibraries } from "@/lib/api/skill-libraries";
-import { adminRoutes } from "@/lib/routes";
 
 import { AddLibraryDialog } from "./add-library-dialog";
-import { LibrariesTable } from "./libraries-table";
+import { LibraryCards } from "./library-cards";
 
-/** Administration › What agents may do › Skill libraries (D-450(b)): the libraries offered to every organization; instance admins. */
-export function InstanceLibrariesPage() {
-  return (
-    <AdminGuard>
-      <InstanceLibraries />
-    </AdminGuard>
-  );
-}
-
-function InstanceLibraries() {
+/** Administration › Skills (D-450(b), D-506(c)): the libraries offered to every organization. The page and its guard are `AdminSkillsPage`'s. */
+export function InstanceLibraries() {
   const libs = useInstanceSkillLibraries();
   const [adding, setAdding] = useState(false);
   const disabled = libs.error instanceof ApiError && libs.error.code === "skill_libraries_disabled";
   const items = libs.data?.items ?? [];
   return (
-    <div className="space-y-6">
-      <PageHeader
-        breadcrumb={[{ label: "What agents may do", href: adminRoutes.agentPolicy("defaults") }, { label: "Skill libraries" }]}
-        title="Skill libraries"
-        description="Libraries here are offered to every organization. People add skills from them with the same permissions as any skill, and each organization approves its own updates."
-        actions={disabled ? null : <Button onClick={() => setAdding(true)}>Add a library</Button>}
-      />
+    <section aria-labelledby="instance-libraries" className="space-y-3">
+      <h2 id="instance-libraries" className="font-display text-lg font-semibold text-ink">
+        Libraries
+      </h2>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="min-w-0 flex-1 basis-64 text-sm text-ink-2">
+          Libraries here are offered to every organization. People add skills from them with the same permissions as any skill, and each organization approves its own updates.
+        </p>
+        {disabled ? null : (
+          <Button onClick={() => setAdding(true)}>
+            <PlusIcon className="size-4" />
+            Add a library
+          </Button>
+        )}
+      </div>
       {libs.isPending ? <Loading /> : null}
       {disabled ? <EmptyState title="Skill libraries are turned off on this instance" /> : null}
       {libs.isError && !disabled ? <ErrorState error={libs.error} onRetry={() => libs.refetch()} /> : null}
@@ -43,8 +41,8 @@ function InstanceLibraries() {
           <p className="text-sm text-ink-2">Add a git repository of skills; every organization then sees it and people add the skills they want.</p>
         </EmptyState>
       ) : null}
-      {items.length > 0 ? <LibrariesTable scope="instance" orgId={null} rows={items} canManage caption="Skill libraries of this instance" /> : null}
+      {items.length > 0 ? <LibraryCards orgId={null} rows={items} canManage label="Skill libraries of this instance" /> : null}
       <AddLibraryDialog orgId={null} open={adding} onOpenChange={setAdding} />
-    </div>
+    </section>
   );
 }

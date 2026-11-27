@@ -26,12 +26,12 @@ export function label<Key extends string>(table: Record<Key, LabelEntry<never>>,
   return entry.label;
 }
 
-/** (P5-SKLIB-3, D-450(e)) A skill library's status (`SkillLibrary.status`); "Can't be read" carries the reason beside it. */
+/** (D-450(e), D-506) A skill library's status (`SkillLibrary.status`); "Needs attention" carries the reason on the card. */
 export const LIBRARY_STATUS = {
-  active: { label: "Active" },
+  active: { label: "Up to date" },
   paused: { label: "Paused" },
-  error: { label: "Can't be read" },
-  over_budget: { label: "Pending updates over budget" },
+  error: { label: "Needs attention" },
+  over_budget: { label: "Over budget" },
 } satisfies LabelTable;
 
 /** (C-1114) An agent template source's last read (`AgentTemplateSource.status`); the reason sits beside "Can't be read". */
@@ -352,6 +352,7 @@ COVERED.LinkPolicy = LINK_POLICY;
 export const PEER_TASK_STATUS = {
   queued: { label: "waiting its turn" },
   open: { label: "in progress" },
+  waiting: { label: "waiting for its wake-up" },
   completed: { label: "completed" },
   cancelled: { label: "cancelled" },
   expired: { label: "ran out of time" },
@@ -524,6 +525,12 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
     // when their membership returned (`metadata.from`: the previous role or `none`).
     sentence: (actor, t, m) =>
       `${actor} made ${t ?? "a person"} the owner of their personal workspace (previous role: ${typeof m?.from === "string" ? m.from : "none"})`,
+    weight: "important",
+  },
+  "workspace_access.self_grant": {
+    // (FIX-234, C-1161) An administrator gave themselves access. The row's target is that person or a group, so the
+    // sentence names neither; `metadata.via` is `group` when the access comes through a group.
+    sentence: (actor, _t, m) => `${actor} gave themselves access to the workspace${role(m) ? ` as ${role(m)}` : ""}${m.via === "group" ? " through a group" : ""}`,
     weight: "important",
   },
   "workspace_access.suspend": { sentence: (actor, t) => `${actor} suspended ${t ?? "a person"}`, weight: "important" },
@@ -757,6 +764,7 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   // Conversations, memory, skills, schedules, evals
   "conversation.delete": plain("deleted a conversation", "important"),
   "conversation.emergency_view": plain("read a conversation through emergency access", "important"),
+  "workspace.emergency_read": plain("read something in a workspace through emergency access", "important"),
   "conversation.export": plain("exported a conversation", "important"),
   "conversation.rename": plain("renamed a conversation"),
   "conversation.owner_view": plain("read someone else's conversation", "important"),

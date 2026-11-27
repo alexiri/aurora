@@ -1,4 +1,5 @@
 use crate::app::AppState;
+use crate::domains::emergency_access::service::{ReadKind, record_read};
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -104,7 +105,8 @@ pub struct ActivityQuery {
 /// Gateway request log of a workspace, newest first.
 #[utoipa::path(get, path = "/workspaces/{ws}/activity", operation_id = "listWorkspaceActivity", tag = "activity",
     params(("ws" = Uuid, Path, description = "Workspace id"), ActivityQuery),
-    responses((status = 200, body = Page<RequestLogEntry>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<RequestLogEntry>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn activity(
     c: Caller,
@@ -134,5 +136,7 @@ async fn activity(
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.ts, r.id));
+    let actor = crate::audit::AuditActor::from_caller(&c);
+    record_read(&s, &actor, &read, ReadKind::Activity, None).await?;
     Ok(Json(page.map(RequestLogEntry::from)))
 }

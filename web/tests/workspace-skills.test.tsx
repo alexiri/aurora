@@ -67,7 +67,10 @@ describe("workspace skills page", () => {
       },
     });
     wrap(<WorkspaceSkills />);
-    fireEvent.click(await screen.findByRole("button", { name: "New skill" }));
+    // (D-506) The header's Add skill is the one way to start a new skill, also while the list is empty.
+    expect(await screen.findByText("No skills yet")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "New skill" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add skill" }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Release notes" } });
     fireEvent.change(screen.getByLabelText("Use it when…"), { target: { value: "Write release notes" } });
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "steps" } });
@@ -83,7 +86,7 @@ describe("workspace skills page", () => {
     });
     wrap(<WorkspaceSkills />);
     expect(await screen.findByRole("heading", { name: "Skills" })).toBeTruthy();
-    expect(screen.getByText(/A skill is a set of instructions that teaches an agent how to do one job your way/)).toBeTruthy();
+    expect(screen.getByText("Skills every agent in Main can use")).toBeTruthy();
     const fold = screen.getByTestId("skills-combine");
     expect(fold).not.toHaveAttribute("open");
     expect(fold).toHaveTextContent("If both have a skill with the same name, the workspace's version is used.");
@@ -114,6 +117,7 @@ describe("workspace skills page", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Deploy checklist/ }));
     expect(await screen.findByText(/Only workspace owners can change them/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "New skill" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add skill" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save file" })).toBeNull();

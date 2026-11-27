@@ -649,8 +649,8 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   access law: an expiry sweep runs on every API replica every minute and the
   nightly retention pass deletes grant rows after 400 days, so no operator
   cron is needed. Audit the use through the audit log's
-  `workspace.emergency_access.*` and `conversation.emergency_view` actions;
-  they are all security-critical.
+  `workspace.emergency_access.*`, `workspace.emergency_read` and
+  `conversation.emergency_view` actions; they are all security-critical.
 - Wire contracts: API supports runner/connector/supervisor protocol versions N
   and N−1; plugin manifest contracts N and N−1; registry snapshots
   "newest contract wins" (`09 §9`).

@@ -166,7 +166,8 @@ export function NewAgentFromTemplateView() {
       content_sha256: template.content_sha256!,
       name: name.trim(),
       handle: handle.trim() || undefined,
-      inputs: values,
+      // Only the inputs this version declares: a newer version may have dropped one whose default had filled a field.
+      inputs: Object.fromEntries(inputs.flatMap((i) => (values[i.id] === undefined ? [] : [[i.id, values[i.id]!]]))),
       accounts: template.entries.flatMap((e) => {
         const r = resolveEntry(e, accounts[e.index]);
         if (!r.chosen || r.isNew || r.skipped || !r.accountId) return [];
@@ -355,6 +356,8 @@ export function NewAgentFromTemplateView() {
       ) : null}
       {secrets && secrets.length > 0 && secrets[secretAt] ? (
         <WebhookSecretDialog
+          // One dialog per secret: what was copied from one says nothing about the next.
+          key={secretAt}
           webhook={secrets[secretAt]}
           index={secretAt}
           count={secrets.length}

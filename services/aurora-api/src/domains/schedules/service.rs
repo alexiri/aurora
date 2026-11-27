@@ -118,6 +118,32 @@ pub fn completed() -> ApiError {
     )
 }
 
+/// (FIX-264) A one-time wake-up at or after the schedule's end never fires: refused, so nothing
+/// reports a wake-up that would be dropped when it comes due. The agent tools show the sentence.
+fn check_before_end(
+    at: DateTime<Utc>,
+    ends_at: Option<DateTime<Utc>>,
+    tz: &str,
+) -> Result<(), ApiError> {
+    match ends_at {
+        Some(ends) if at >= ends => Err(ApiError::unprocessable(
+            "wakeup_after_end",
+            format!(
+                "The task ends at {} ({tz}); a wake-up after that would never run.",
+                once::local_of(ends, tz)
+            ),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// (FIX-264) A schedule with an end is a delegated task's wake-up: it never repeats.
+fn cron_with_an_end() -> ApiError {
+    const MSG: &str = "this schedule ends with its delegated task, so it can only run once";
+    ApiError::unprocessable("schedule_has_end", "Invalid schedule.")
+        .with_details(serde_json::json!({"fields": [{"path": "/cron", "message": MSG}]}))
+}
+
 /// The instant to arm a schedule at when it is (re-)enabled: a cron's next occurrence; a pending
 /// one-time schedule's `run_at`, or now when that has passed (late rather than lost, D-421);
 /// `None` for a Done one (it stays Done).
@@ -224,6 +250,9 @@ pub async fn create_in_tx(
     };
     let (cron_expr, run_at, next) =
         timing(c.cron.as_deref(), c.run_at.as_deref(), &tz, Utc::now())?;
+    if let Some(at) = run_at {
+        check_before_end(at, c.ends_at, &tz)?;
+    }
     // (FIX-253 fixes2 A) The open-wake-up cap of a task conversation, serialized per
     // conversation before any row is locked.
     if let Some(origin) = origin
@@ -313,6 +342,9 @@ pub async fn patch_with(
     if p.cron.is_some() && p.run_at.is_some() {
         return Err(both_kinds());
     }
+    if p.cron.is_some() && r.ends_at.is_some() {
+        return Err(cron_with_an_end());
+    }
     // (FIX-253 fixes2 A) Re-arming a task conversation's one-time wake-up obeys the cap of three
     // open ones. The lock serializes it against a concurrent create or re-arm; the schedule
     // being re-armed (open again the moment the patch lands) does not count against itself.
@@ -360,6 +392,12 @@ pub async fn patch_with(
             (None, None) => {}
         }
     }
+    // A new time (`run_at`, or the same wall time in a new zone) stays before the end.
+    if retimed.is_some()
+        && let Some(at) = r.run_at
+    {
+        check_before_end(at, r.ends_at, &r.timezone)?;
+    }
     if p.enabled.is_some() && r.completed_at.is_some() {
         return Err(completed());
     }
@@ -391,6 +429,10 @@ pub async fn patch_with(
         reschedule = true;
     }
     let row = repo::update(&mut tx, &r, reschedule).await?;
+    // (FIX-253) Switched off, or no longer one-time: the same re-check as for a delete.
+    if let Some(origin) = row.origin_conversation_id {
+        crate::domains::peer_tasks::service::recheck_waiting(&mut tx, origin).await?;
+    }
     tx.commit().await.map_err(aurora_db::DbError::from)?;
     Ok(row)
 }
@@ -399,8 +441,15 @@ pub async fn patch_with(
 /// deleted in the same transaction.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let origin = repo::get(&mut *tx, id)
+        .await?
+        .and_then(|r| r.origin_conversation_id);
     if !delete_tx(&mut tx, id).await? {
         return Err(not_found());
+    }
+    // (FIX-253) A deleted wake-up may have been the last thing a waiting peer task waited for.
+    if let Some(origin) = origin {
+        crate::domains::peer_tasks::service::recheck_waiting(&mut tx, origin).await?;
     }
     tx.commit().await.map_err(aurora_db::DbError::from)?;
     Ok(())

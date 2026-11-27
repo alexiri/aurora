@@ -114,25 +114,20 @@ async fn default_tz(
         .map_or_else(|| "UTC".to_owned(), |w| w.timezone))
 }
 
-/// (FIX-253 fixes2 A) Whether this turn is a peer turn of a delegated task — no person speaks,
-/// the speaker is an agent, a peer task sits behind this conversation (whatever its status, so a
-/// closed task's turn can still tidy up what it created). Such a turn may only touch schedules
-/// created from this task conversation: the same scope `creator` gives `schedule_create`.
-async fn peer_turn(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
-    let turn = match ctx.turn_id {
-        Some(t) => turns::get(&ctx.agent.pool, t).await?,
-        None => None,
-    };
-    if turn.as_ref().and_then(|t| t.speaker_user_id).is_some() {
-        return Ok(None);
-    }
-    if !turn.is_some_and(|t| t.speaker_kind == "agent") {
-        return Ok(None);
+/// (FIX-253 fixes2 A, FIX-264) Whether this call is made by a delegated task's own work: a peer
+/// task sits behind this conversation (whatever its status, so a closed task's turn can still
+/// tidy up what it created) and no person speaks. Who else speaks does not matter: the peer's
+/// turn (`agent`), a wake-up, watch or decision turn (`system`) and a call outside any turn all
+/// act on the other agent's request. Such a call may only touch schedules created from this task
+/// conversation, and never make one repeat.
+async fn task_turn(ctx: &ToolCallContext) -> Result<bool, ToolError> {
+    if speaker(ctx).await?.is_some() {
+        return Ok(false);
     }
     Ok(
         peer_tasks::by_task_conversation(&ctx.agent.pool, ctx.conversation_id)
             .await?
-            .map(|_| ctx.conversation_id),
+            .is_some(),
     )
 }
 
@@ -344,7 +339,7 @@ impl PlatformTool for UpdateT {
         let cur = own(ctx, a.id).await?;
         // (FIX-253 fixes2 A) From a peer turn the scope is the task conversation — only
         // schedules created from it, and never a recurring one (the rules the create has).
-        if peer_turn(ctx).await?.is_some() {
+        if task_turn(ctx).await? {
             if cur.origin_conversation_id != Some(ctx.conversation_id) {
                 return Err(ToolError::Failed(
                     "Only a schedule of this task can be changed from here.".into(),
@@ -416,9 +411,7 @@ impl PlatformTool for DeleteT {
         let cur = own(ctx, a.id).await?;
         // (FIX-253 fixes2 A) From a peer turn only a schedule of this task conversation is
         // theirs to delete.
-        if peer_turn(ctx).await?.is_some()
-            && cur.origin_conversation_id != Some(ctx.conversation_id)
-        {
+        if task_turn(ctx).await? && cur.origin_conversation_id != Some(ctx.conversation_id) {
             return Err(ToolError::Failed(
                 "Only a schedule of this task can be deleted from here.".into(),
             ));

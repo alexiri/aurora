@@ -541,6 +541,24 @@
     {
       "allOf": [
         {
+          "$ref": "#/$defs/TurnEvents"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "turn.idle.events"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    {
+      "allOf": [
+        {
           "$ref": "#/$defs/TurnRef"
         },
         {

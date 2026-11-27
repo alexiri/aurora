@@ -26,13 +26,17 @@ use crate::domains::agent_templates::dto::{
 use crate::domains::agent_templates::merge::{
     self, Budget, MergeError, RESOLUTION_TEXT_MAX, ResolveError,
 };
-use crate::domains::agent_templates::workspace::{RefJson, Resolver, skill_ref_plans};
+use crate::domains::agent_templates::workspace::{
+    RefJson, Resolver, candidate_order, match_library, skill_ref_plans,
+};
 use crate::domains::agents;
+use crate::domains::skill_libraries;
 use crate::domains::skills::dto::FromLibrary;
 use crate::domains::skills::{self as skills_domain, NewSkill, library};
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
 use aurora_db::repo::agent_templates as trepo;
+use aurora_db::repo::skill_libraries::LibraryRow;
 use aurora_db::repo::skills::Owner;
 use aurora_db::repo::{
     agent_helpers as helpers_repo, agents as agents_repo, grants as grants_repo,
@@ -954,6 +958,144 @@ struct Diff {
     old_refs: Vec<(String, aurora_template::SkillRef, dto::SkillRefPlan)>,
 }
 
+// ---- the library references ----------------------------------------------------------------------
+
+/// One library reference of a stored version: its key, its `skills:` index and itself.
+type IndexedRef = (String, usize, aurora_template::SkillRef);
+
+/// The library references an offer looks at: the offered version's, and the stored version's
+/// that the offered one dropped.
+fn library_refs(ctx: &OfferCtx) -> (Vec<IndexedRef>, Vec<IndexedRef>) {
+    let of = |content: &aurora_template::TemplateContent| -> Vec<IndexedRef> {
+        content
+            .meta
+            .skill_refs
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| matches!(r, aurora_template::SkillRef::Library { .. }))
+            .map(|(index, r)| (skill_ref_key(r), index, r.clone()))
+            .collect()
+    };
+    let new = of(&ctx.new_content);
+    let mut old = ctx.old_content.as_ref().map(of).unwrap_or_default();
+    old.retain(|(k, _, _)| !new.iter().any(|(nk, _, _)| nk == k));
+    (new, old)
+}
+
+/// Which library one reference matches, as the database says it.
+#[derive(Debug, PartialEq, Eq)]
+struct LibraryMatch {
+    dropped: bool,
+    key: String,
+    index: usize,
+    /// The matched library's id, status and source.
+    library: Option<(Uuid, String, String)>,
+}
+
+fn library_matches(
+    libs: &[LibraryRow],
+    new: &[IndexedRef],
+    old: &[IndexedRef],
+) -> Vec<LibraryMatch> {
+    new.iter()
+        .map(|r| (false, r))
+        .chain(old.iter().map(|r| (true, r)))
+        .map(|(dropped, (key, index, r))| LibraryMatch {
+            dropped,
+            key: key.clone(),
+            index: *index,
+            library: match_library(libs, &ref_json(r)).map(|l| {
+                (
+                    l.id,
+                    l.status.clone(),
+                    skill_libraries::service::fingerprint(l),
+                )
+            }),
+        })
+        .collect()
+}
+
+/// An offer's library references resolved to their content. Resolving reads the secret store
+/// and the git hosts, so it happens **before** any transaction; the apply's transaction only
+/// checks that the database still says the same ([`library_reads_hold`]).
+struct LibraryReads {
+    new: Vec<(IndexedRef, dto::SkillRefPlan)>,
+    old: Vec<(IndexedRef, dto::SkillRefPlan)>,
+    matches: Vec<LibraryMatch>,
+}
+
+async fn read_libraries(
+    state: &AppState,
+    agent: &agents_repo::AgentRow,
+    ctx: &OfferCtx,
+) -> Result<LibraryReads, ApiError> {
+    let (new, old) = library_refs(ctx);
+    if new.is_empty() && old.is_empty() {
+        return Ok(LibraryReads {
+            new: Vec::new(),
+            old: Vec::new(),
+            matches: Vec::new(),
+        });
+    }
+    let mut resolver = Resolver::new(state, agent.org_id, agent.workspace_id).await?;
+    // Taken from the rows the resolver matches against, before any content is read: a change
+    // made during the reads is a difference too.
+    let matches = library_matches(resolver.libraries(), &new, &old);
+    let jsons: Vec<RefJson> = new
+        .iter()
+        .chain(&old)
+        .map(|(_, _, r)| ref_json(r))
+        .collect();
+    let mut plans = skill_ref_plans(state, &mut resolver, &jsons)
+        .await?
+        .into_iter();
+    let mut pair = |refs: Vec<IndexedRef>| -> Vec<(IndexedRef, dto::SkillRefPlan)> {
+        refs.into_iter()
+            .zip(plans.by_ref())
+            .map(|(r, mut plan)| {
+                plan.index = r.1;
+                (r, plan)
+            })
+            .collect()
+    };
+    let new = pair(new);
+    let old = pair(old);
+    Ok(LibraryReads { new, old, matches })
+}
+
+/// Whether what was read before the transaction is still what the database says: every
+/// reference of the transaction's offer matches the same library, in the same state, and no
+/// cached listing has moved to another commit. Reads the database and memory only.
+async fn library_reads_hold(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    org: Uuid,
+    ctx: &OfferCtx,
+    reads: &LibraryReads,
+) -> Result<bool, ApiError> {
+    let (new, old) = library_refs(ctx);
+    if new.is_empty() && old.is_empty() {
+        return Ok(reads.matches.is_empty());
+    }
+    let libs = candidate_order(skill_libraries::service::list_for_org_on(conn, org).await?);
+    if library_matches(&libs, &new, &old) != reads.matches {
+        return Ok(false);
+    }
+    Ok(reads
+        .new
+        .iter()
+        .chain(&reads.old)
+        .filter_map(|(_, plan)| plan.library.as_ref())
+        .all(|read| {
+            libs.iter().find(|l| l.id == read.id).is_some_and(|row| {
+                skill_libraries::service::cached_commit(state, row)
+                    .is_none_or(|commit| commit == read.commit_sha)
+            })
+        }))
+}
+
+// ---- the offer ----------------------------------------------------------------------------------
+
 /// Build the update offer of one agent against its template's offered version (C-1112).
 /// `render_inputs` are the values the proposed texts are rendered with: the stored inputs for
 /// the offer, the merged ones for the apply.
@@ -961,6 +1103,7 @@ async fn build_diff(
     state: &AppState,
     agent: &agents_repo::AgentRow,
     ctx: &OfferCtx,
+    libraries: &LibraryReads,
     person: &str,
     render_inputs: BTreeMap<String, String>,
 ) -> Result<Diff, ApiError> {
@@ -969,21 +1112,29 @@ async fn build_diff(
         .acquire()
         .await
         .map_err(aurora_db::DbError::from)?;
-    build_diff_on(state, &mut conn, agent, ctx, person, render_inputs).await
+    build_diff_on(&mut conn, agent, ctx, libraries, person, render_inputs).await
 }
 
 /// [`build_diff`] on an existing connection (SEC-146 A): the apply's transaction recomputes
 /// the diff under the per-agent lock, so the states it refuses on are the transaction's own.
+/// It takes no application state: everything it reads comes through `conn` or was read before
+/// (`libraries`), so it cannot reach the network or a second connection.
 async fn build_diff_on(
-    state: &AppState,
     conn: &mut sqlx::PgConnection,
     agent: &agents_repo::AgentRow,
     ctx: &OfferCtx,
+    libraries: &LibraryReads,
     person: &str,
     render_inputs: BTreeMap<String, String>,
 ) -> Result<Diff, ApiError> {
     let stored = stored_inputs(agent);
-    let checked = aurora_template::CheckedInputs::from_values(render_inputs);
+    // The new version's texts take its inputs' defaults (D-500), also for an input the agent
+    // has no value for; the base keeps what the agent started from.
+    let new_inputs = &ctx.new_content.meta.inputs;
+    let checked = aurora_template::CheckedInputs::from_values(aurora_template::with_defaults(
+        new_inputs,
+        render_inputs,
+    ));
     let rendered = aurora_template::render(&ctx.new_content, &checked, &agent.name, person);
     // The merge's own renders (FIX-251), both with the **stored** inputs: the base is the
     // text the agent started from, and theirs is what the review showed. The merge's hash
@@ -994,8 +1145,11 @@ async fn build_diff_on(
         .old_content
         .as_ref()
         .map(|old| aurora_template::render(old, &stored_checked, &agent.name, person));
+    let theirs_checked = aurora_template::CheckedInputs::from_values(
+        aurora_template::with_defaults(new_inputs, stored.clone()),
+    );
     let merge_theirs =
-        aurora_template::render(&ctx.new_content, &stored_checked, &agent.name, person);
+        aurora_template::render(&ctx.new_content, &theirs_checked, &agent.name, person);
 
     let recorded: BTreeMap<(String, String), String> = trepo::parts_of(&mut *conn, agent.id)
         .await?
@@ -1035,7 +1189,7 @@ async fn build_diff_on(
     let skill_ids: Vec<Uuid> = live.values().flatten().map(|r| r.id).collect();
     let mut live_files: BTreeMap<Uuid, Vec<skills_repo::FileRow>> = BTreeMap::new();
     if !skill_ids.is_empty() {
-        for f in skills_repo::files(conn, &skill_ids).await? {
+        for f in skills_repo::files(&mut *conn, &skill_ids).await? {
             live_files.entry(f.skill_id).or_default().push(f);
         }
     }
@@ -1331,96 +1485,64 @@ async fn build_diff_on(
     // The part hash of a `library_skill` is the constant key hash (C-1112), so the comparison
     // is by the agent's skill presence: the part is offered again only when the agent no longer
     // has a library skill of the reference's name.
-    let mut old_refs: Vec<(String, aurora_template::SkillRef, dto::SkillRefPlan)> = Vec::new();
-    let new_refs: Vec<(String, usize, aurora_template::SkillRef)> = ctx
-        .new_content
-        .meta
-        .skill_refs
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| matches!(r, aurora_template::SkillRef::Library { .. }))
-        .map(|(index, r)| (skill_ref_key(r), index, r.clone()))
-        .collect();
-    if !new_refs.is_empty() {
-        let mut resolver = Resolver::new(state, agent.org_id, agent.workspace_id).await?;
-        let jsons: Vec<RefJson> = new_refs.iter().map(|(_, _, r)| ref_json(r)).collect();
-        let plans = skill_ref_plans(state, &mut resolver, &jsons).await?;
-        for ((key, index, _), mut plan) in new_refs.iter().cloned().zip(plans) {
-            plan.index = index;
-            let rec = recorded.get(&("library_skill".to_owned(), key.clone()));
-            let constant = dto::sha256_hex(key.as_bytes());
-            let ch = live
-                .get(plan.name.as_str())
-                .cloned()
-                .flatten()
-                .filter(|row| row.library_id.is_some())
-                .map(|_| constant.as_str());
-            if let Some(st) = listed(rec, Some(&constant), ch) {
-                states.insert(("library_skill".to_owned(), key.clone()), st);
-                parts_out.push(OfferPart {
-                    kind: "library_skill".to_owned(),
-                    key,
-                    state: st.to_owned(),
-                    current: None,
-                    proposed: Some(ref_text(plan_ref(&ctx.new_content, index))),
-                    merge: None,
-                    merge_note: None,
-                    skill_ref: Some(plan.clone()),
-                });
-            }
+    for ((key, index, _), plan) in &libraries.new {
+        let rec = recorded.get(&("library_skill".to_owned(), key.clone()));
+        let constant = dto::sha256_hex(key.as_bytes());
+        let ch = live
+            .get(plan.name.as_str())
+            .cloned()
+            .flatten()
+            .filter(|row| row.library_id.is_some())
+            .map(|_| constant.as_str());
+        if let Some(st) = listed(rec, Some(&constant), ch) {
+            states.insert(("library_skill".to_owned(), key.clone()), st);
+            parts_out.push(OfferPart {
+                kind: "library_skill".to_owned(),
+                key: key.clone(),
+                state: st.to_owned(),
+                current: None,
+                proposed: Some(ref_text(plan_ref(&ctx.new_content, *index))),
+                merge: None,
+                merge_note: None,
+                skill_ref: Some(plan.clone()),
+            });
         }
     }
     // The stored version's references the offered one dropped: `removed_upstream`, with the
     // reference resolved from the *old* stored version (C-1112).
-    if let Some(old) = &ctx.old_content {
-        let old_lib: Vec<(String, usize, aurora_template::SkillRef)> = old
-            .meta
-            .skill_refs
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| matches!(r, aurora_template::SkillRef::Library { .. }))
-            .map(|(index, r)| (skill_ref_key(r), index, r.clone()))
-            .filter(|(k, _, _)| !new_refs.iter().any(|(nk, _, _)| nk == k))
-            .collect();
-        if !old_lib.is_empty() {
-            let mut resolver = Resolver::new(state, agent.org_id, agent.workspace_id).await?;
-            let jsons: Vec<RefJson> = old_lib.iter().map(|(_, _, r)| ref_json(r)).collect();
-            let plans = skill_ref_plans(state, &mut resolver, &jsons).await?;
-            for ((key, index, r), mut plan) in old_lib.into_iter().zip(plans) {
-                plan.index = index;
-                // Kept for the apply's `removed_upstream` match even when never listed (the
-                // recorded hash decides: never recorded → nothing to remove).
-                old_refs.push((key.clone(), r.clone(), plan.clone()));
-                let rec = recorded.get(&("library_skill".to_owned(), key.clone()));
-                if let Some(st) = listed(rec, None, None) {
-                    states.insert(("library_skill".to_owned(), key.clone()), st);
-                    parts_out.push(OfferPart {
-                        kind: "library_skill".to_owned(),
-                        key,
-                        state: st.to_owned(),
-                        current: Some(ref_text(&r)),
-                        proposed: None,
-                        merge: None,
-                        merge_note: None,
-                        skill_ref: Some(plan.clone()),
-                    });
-                }
-            }
+    let mut old_refs: Vec<(String, aurora_template::SkillRef, dto::SkillRefPlan)> = Vec::new();
+    for ((key, _, r), plan) in &libraries.old {
+        // Kept for the apply's `removed_upstream` match even when never listed (the
+        // recorded hash decides: never recorded → nothing to remove).
+        old_refs.push((key.clone(), r.clone(), plan.clone()));
+        let rec = recorded.get(&("library_skill".to_owned(), key.clone()));
+        if let Some(st) = listed(rec, None, None) {
+            states.insert(("library_skill".to_owned(), key.clone()), st);
+            parts_out.push(OfferPart {
+                kind: "library_skill".to_owned(),
+                key: key.clone(),
+                state: st.to_owned(),
+                current: Some(ref_text(r)),
+                proposed: None,
+                merge: None,
+                merge_note: None,
+                skill_ref: Some(plan.clone()),
+            });
         }
     }
 
     // ---- the apps the agent has no access for yet (C-1112's `apps_added`) ---------------------
-    let conn_ids: Vec<Uuid> = grants_repo::list_connection_grants(&state.pool, agent.id)
+    let conn_ids: Vec<Uuid> = grants_repo::list_connection_grants(&mut *conn, agent.id)
         .await?
         .into_iter()
         .map(|g| g.connection_id)
         .collect();
-    let agent_apps: BTreeSet<String> = grants_repo::connection_apps(&state.pool, &conn_ids)
+    let agent_apps: BTreeSet<String> = grants_repo::connection_apps(&mut *conn, &conn_ids)
         .await?
         .into_iter()
         .map(|(_, a)| a)
         .collect();
-    let snap = crate::domains::apps::service::snapshot(state).await?;
+    let snap = crate::domains::plugins::registry::active_typed_on(conn).await?;
     let mut apps_added = Vec::new();
     for a in &ctx.new_content.meta.apps {
         let (app_ids, required, why, level) = match a {
@@ -1806,7 +1928,16 @@ pub async fn status(
     };
     let update = if newer_than_stored(&ctx.offered.version, agent.template_version.as_deref()) {
         let person = creator_person(state, &agent).await?;
-        let diff = build_diff(state, &agent, &ctx, &person, stored_inputs(&agent)).await?;
+        let libraries = read_libraries(state, &agent, &ctx).await?;
+        let diff = build_diff(
+            state,
+            &agent,
+            &ctx,
+            &libraries,
+            &person,
+            stored_inputs(&agent),
+        )
+        .await?;
         Some(diff.offer)
     } else {
         None
@@ -1834,6 +1965,19 @@ fn version_changed() -> ApiError {
     )
 }
 
+/// Whether an apply still answers this offer: its version and content hash are the offered
+/// ones, and the offered version is newer than the agent's (the offer's own rule), so an apply
+/// never moves an agent backwards or writes a version it is already on.
+fn answers_offer(
+    req: &ApplyTemplateRequest,
+    ctx: &OfferCtx,
+    agent: &agents_repo::AgentRow,
+) -> bool {
+    req.version == ctx.offered.version
+        && ctx.offered.content_sha256.as_deref() == Some(req.content_sha256.as_str())
+        && newer_than_stored(&ctx.offered.version, agent.template_version.as_deref())
+}
+
 /// The 422 for a part that is not in the current offer (C-1112).
 fn part_unknown(kind: &str, key: &str) -> ApiError {
     ApiError::unprocessable(
@@ -1857,7 +2001,8 @@ fn ref_unprocessable(code: &str, msg: &str, index: usize) -> ApiError {
 }
 
 /// The apply's input values (C-1112): the request supplies `inputs_needed`; a stored value is
-/// kept only when it still passes the input's (possibly changed) rules on its own.
+/// kept only when it still passes the input's (possibly changed) rules on its own. An input
+/// left without a value takes its `default` (D-500).
 fn merged_inputs(
     ctx: &OfferCtx,
     stored: &BTreeMap<String, String>,
@@ -1876,7 +2021,7 @@ fn merged_inputs(
             }
         }
     }
-    out
+    aurora_template::with_defaults(&ctx.new_content.meta.inputs, out)
 }
 
 /// The stored provenance of a version: the merged values over the version's declared inputs
@@ -1902,8 +2047,12 @@ fn provenance_inputs(ctx: &OfferCtx, merged: &BTreeMap<String, String>) -> serde
 
 /// `POST /v1/agents/{agent}/template/apply` (C-1112): take the listed parts of the offered
 /// version. Only the listed parts change; `template_version` moves even when none was taken
-/// ("skip this version"). The library fetches happen before the transaction (as C-1111);
+/// ("skip this version"). Every library read happens before the transaction (as C-1111);
 /// everything else is one transaction through the existing writers.
+///
+/// Lock order in that transaction: the agent's memory lock, then the agent's row
+/// ([`agents_repo::lock_for_write`]), then rows of its parts (and, for a library skill, the
+/// tier's budget lock).
 pub async fn apply(
     state: &AppState,
     caller: &Caller,
@@ -1919,9 +2068,7 @@ pub async fn apply(
     let Some(ctx) = offer_ctx(state, &agent).await? else {
         return Err(version_changed());
     };
-    if req.version != ctx.offered.version
-        || ctx.offered.content_sha256.as_deref() != Some(req.content_sha256.as_str())
-    {
+    if !answers_offer(&req, &ctx, &agent) {
         return Err(version_changed());
     }
     let person = creator_person(state, &agent).await?;
@@ -1946,7 +2093,8 @@ pub async fn apply(
     }
     // The diff, rendered with the merged inputs: the proposed texts are exactly what an apply
     // writes, with the recorded-hash rendering (the creator's name, the agent's name).
-    let diff = build_diff(state, &agent, &ctx, &person, merged.clone()).await?;
+    let libraries = read_libraries(state, &agent, &ctx).await?;
+    let diff = build_diff(state, &agent, &ctx, &libraries, &person, merged.clone()).await?;
 
     // The taken parts, validated against the offer's states (C-1112): a part that is not in
     // the offer is 422, whatever its kind or key. A repeated part is one part.
@@ -2054,15 +2202,17 @@ pub async fn apply(
     let Some(ctx) = offer_ctx_on(state, &mut tx, &agent).await? else {
         return Err(version_changed());
     };
-    if req.version != ctx.offered.version
-        || ctx.offered.content_sha256.as_deref() != Some(req.content_sha256.as_str())
-    {
+    if !answers_offer(&req, &ctx, &agent) {
+        return Err(version_changed());
+    }
+    // The libraries were read before the transaction: the same ones must still match.
+    if !library_reads_hold(state, &mut tx, agent.org_id, &ctx, &libraries).await? {
         return Err(version_changed());
     }
     let stored = stored_inputs(&agent);
     let merged = merged_inputs(&ctx, &stored, &req.inputs);
     let inputs_json = provenance_inputs(&ctx, &merged);
-    let diff = build_diff_on(state, &mut tx, &agent, &ctx, &person, merged).await?;
+    let diff = build_diff_on(&mut tx, &agent, &ctx, &libraries, &person, merged).await?;
     // The listed parts' states must still be the ones the person answered to (SEC-146 A): a
     // part edited (or applied, or removed) while the offer was open is refused with the same
     // 409, never silently overwritten.
@@ -2197,6 +2347,8 @@ async fn apply_in_tx(
                         let Some(s) = diff.rendered.skills.iter().find(|s| &s.name == key) else {
                             continue; // cannot happen: every other state has proposed content
                         };
+                        // Filling in the inputs can push a text over a skill's limits.
+                        create::rendered_skill_ok(s)?;
                         (s.use_it_when.clone(), s.body.clone(), s.files.clone())
                     }
                 };
@@ -2265,7 +2417,7 @@ async fn apply_in_tx(
             // `removed_upstream`: the template no longer has helper files; the agent's go.
             ("helpers", "removed_upstream") => {
                 let removed = helpers_repo::delete_all(tx, agent.id).await?;
-                if removed > 0 {
+                if !removed.is_empty() {
                     skills_repo::bump_agent(tx, agent.id).await?;
                 }
             }

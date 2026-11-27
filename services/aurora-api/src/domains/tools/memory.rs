@@ -255,7 +255,7 @@ impl PlatformTool for List {
         let items: Vec<Value> = rows
             .into_iter()
             .map(|m| {
-                let line = memory::service::index_line(
+                let line = aurora_core::memory_index::index_line(
                     &m.key,
                     m.title.as_deref(),
                     m.description.as_deref(),

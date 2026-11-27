@@ -6,6 +6,7 @@ use crate::domains::automations::{
     dto::ReassignCreatorRequest,
     service::{self as auto, Acting, To},
 };
+use crate::domains::emergency_access::service::{ReadKind, record_read};
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -148,7 +149,8 @@ async fn redact_origins(
 /// List an agent's schedules.
 #[utoipa::path(get, path = "/agents/{agent}/schedules", operation_id = "listSchedules",
     tag = "schedules", params(("agent" = Uuid, Path, description = "Agent id")),
-    responses((status = 200, body = Page<Schedule>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<Schedule>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_schedules(
     c: Caller,
@@ -163,6 +165,14 @@ async fn list_schedules(
         &s,
         matches!(read, aurora_db::authz::ReadAuth::Emergency(_)),
         &mut items,
+    )
+    .await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Schedule,
+        None,
     )
     .await?;
     Ok(Json(Page {
@@ -216,7 +226,8 @@ async fn create_schedule(
 /// Get one schedule.
 #[utoipa::path(get, path = "/schedules/{id}", operation_id = "getSchedule", tag = "schedules",
     params(("id" = Uuid, Path, description = "Schedule id")),
-    responses((status = 200, body = Schedule), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Schedule), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn get_schedule(
     c: Caller,
@@ -232,6 +243,14 @@ async fn get_schedule(
         &mut out,
     )
     .await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Schedule,
+        Some(id),
+    )
+    .await?;
     Ok(Json(out.remove(0)))
 }
 
@@ -241,7 +260,8 @@ async fn get_schedule(
     request_body = UpdateScheduleRequest,
     responses((status = 200, body = Schedule), (status = 400, body = ErrorEnvelope),
         (status = 404, body = ErrorEnvelope),
-        (status = 409, description = "schedule_completed", body = ErrorEnvelope)),
+        (status = 409, description = "schedule_completed", body = ErrorEnvelope),
+        (status = 422, description = "schedule_has_end, wakeup_after_end", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn update_schedule(
     c: Caller,
@@ -324,7 +344,8 @@ struct RunsQuery {
 /// Recent runs of a schedule, newest first.
 #[utoipa::path(get, path = "/schedules/{id}/runs", operation_id = "listScheduleRuns",
     tag = "schedules", params(("id" = Uuid, Path, description = "Schedule id"), RunsQuery),
-    responses((status = 200, body = Page<ScheduleRun>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<ScheduleRun>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_runs(
     c: Caller,
@@ -332,10 +353,18 @@ async fn list_runs(
     Path(id): Path<Uuid>,
     Query(q): Query<RunsQuery>,
 ) -> Result<Json<Page<ScheduleRun>>, ApiError> {
-    authorized_read(&c, &s, id).await?;
+    let (_, _, read) = authorized_read(&c, &s, id).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = aurora_db::repo::schedules::runs_with_results(&s.pool, id, p.after_key(), p.fetch())
         .await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Schedule,
+        Some(id),
+    )
+    .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Json(page.map(ScheduleRun::from)))
 }

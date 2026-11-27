@@ -131,6 +131,17 @@ and a one-line action — never a request field. A later `peer_task_closed`
 notice settles a waiting card the same way (an abandoned approval, e.g. the
 task cancelled, fires no decision notice).
 
+(FIX-253, D-490(b)) **A waiting peer task.** A task whose receiving turn ends
+while a wake is registered (an armed watch on the task conversation, a one-time
+schedule created from it, or a pending approval) moves to `waiting` (`07 §Agent
+links and peer tasks`); the origin conversation gets one durable `notice`
+`{ code: "peer_task_waiting", peer_task_id, status: "waiting", text }` —
+"<Agent> is waiting for what it is watching to finish." or "<Agent> is waiting:
+a check is set for HH:MM." — once per wait. The wake gives the task conversation
+its own turn (a watch fire or schedule fire as those turns do, the approval
+decision as a `peer`-doored system turn) and the task is back to `open`; the
+task's own grants and policy apply to every wake turn.
+
 (phase 5, P5-REFINE-7, D-409, C-1073, C-1074) **Titles and folders.**
 - `title_source` says who named a conversation: `auto` (none yet, or the first line of the
   first person message: whitespace collapsed, markup and `@` removed, cut at 60 characters
@@ -457,12 +468,26 @@ its last tool call is written as durable `text` events before the `error` event 
   per conversation while it stands (re-reports are deduped), with Stop in the web (`10 §Abort`).
   Stopping records `notice` `{ code: "background_stopped", turn_id, text }`. Other adapters report
   nothing (their child has no such mode, or it is gone).
+- **Worked after the turn (FIX-253, part B).** While the background work lasts, the supervisor
+  watches the idle child (`12 §The idle reader`) and reports what it did as `turn.idle.events`
+  anchored on the finished turn; the API records durable `after_turn.text`
+  `{ turn_id, message_id, text }` and `after_turn.tool`/`after_turn.tool_end`
+  `{ turn_id, call_id, name, summary, ok }` events of that conversation — the child's own text
+  and tool calls, masked like every displayed text, once per message/call, at most 100 entries
+  per report, 500 per anchor turn and 2,000 per conversation, and none in a peer task's
+  conversation whose message budget is used up (one notice says what was not recorded). What
+  the idle runs spent is added to the usage ledger (`§Usage and metering`) in all these cases;
+  the budget stops the recording, not the idle work. They are the idle run's only trace: attributed to the agent, anchored on the turn
+  that ended, and folded in the web under **"Worked after the turn"**. Idle platform-tool calls
+  are refused `no_active_turn` (`16 §W5`), so nothing here raises or bypasses an approval.
 - **A promise without a wake (FIX-253, D-490).** When an agent turn ends `done` in a delegated
   task's conversation whose peer task is still open and nothing is set to wake the agent (no armed
   watch on the conversation, no uncompleted schedule anchored to it), the platform records one
   `notice` `{ code: "no_wakeup", turn_id, agent_id, agent_name, text }` — "<Agent> said it would
   continue, but nothing is set to wake it." The signal is the open task, never the wording of the
-  reply; a failed turn, a person turn and a conversation with a wake registered record nothing.
+  reply; a failed turn, a person turn and a conversation with a wake registered record nothing —
+  neither a task the peer hook just moved to `waiting` (FIX-253): its wake exists (the pending
+  approval's decision if nothing else).
 - **An error shows once (C-1076).** When a turn fails and a buffered message is the harness's own
   error line (it equals, contains or starts with the failure message, or starts with `API Error`, as
   the Claude Code adapter prints a failed model call), it is not written as the agent's `text`: the
@@ -906,7 +931,8 @@ No agent-reachable tool or route can lock or unlock. `PUT
 …/memories/{key}/locked` (`setMemoryLocked`, S/K) is idempotent, audited
 (`memory.lock` / `memory.unlock` only when the value changes), bumps the
 home-sync generation and writes **no revision** (a lock is not a content
-change). The index line ends with ` (locked)`, the projected file installs
+change). In the index line the key is followed by ` (locked)`
+(`key (locked): line`; agent text cannot produce that prefix), the projected file installs
 read-only (0444), and the harvest **restores** an edited or deleted locked
 file instead of uploading it. Locked memories count toward
 `MEMORY_MAX_PER_AGENT`.
@@ -954,8 +980,8 @@ index).
 - The dashboard memory editor states the rule ("Memories in this workspace are
 written in German"); it is shown, not enforced.
 - (P6-MEMLOCK, C-1151) When the agent holds at least one locked memory, the
-memory capability fragment adds: *"Memories marked (locked) were set by a
-person. Use them, but do not try to change or delete them; if one looks wrong
+memory capability fragment adds: *"Memories whose key is followed by (locked)
+were set by a person. Use them, but do not try to change or delete them; if one looks wrong
 or out of date, say so."* Without it the instruction files are byte-identical
 to before.
 
@@ -978,8 +1004,8 @@ control characters (removed from the stored text first, so content cannot forge
 them) which become UTF-16 highlight ranges for the API; the agent's tool and the
 recall get the text alone. Markdown marks are reduced as for message search.
 - `memory_search`: top `MEMORY_SEARCH_HITS` by score &gt; 0, with a snippet.
-  (P6-MEMLOCK, C-1149) Each hit carries `locked`, and the index line of a
-locked memory ends with ` (locked)`.
+  (P6-MEMLOCK, C-1149) Each hit carries `locked`, and in the index line of a
+locked memory the key is followed by ` (locked)`.
 - **Turn-start recall** (composed at dispatch, delivered as context only, never
 stored in the transcript): the **index** (one `key: line` per memory, ≤
 `MEMORY_INDEX_MAX`, always included) plus up to `MEMORY_SNIPPETS` snippets
@@ -1268,6 +1294,13 @@ thread link, the answer is posted there too (`13 §Mirror`).
   that task conversation while the task is not closed (`queued`/`open`); a closed task's
   conversation is nobody's chat any more, so the run keeps its own run thread. The Web Push never
   fires for these (the claim requires the creator's direct chat).
+  (FIX-264) **The task's limits hold for all its work.** Any tool call in a task conversation
+  with no person speaking (the peer's turn, a wake-up, watch or decision turn, or a call outside
+  a turn) may change or delete only schedules made from that conversation, and never gives one a
+  `cron`. **`ends_at` is a hard end:** the fire path checks it, and the end of the task behind
+  the origin conversation, before any fire, repeating schedules included, and disables the
+  schedule (`task_ended`). A schedule with `ends_at` takes no `cron` (422 `schedule_has_end`,
+  field `/cron`), and no `run_at` at or after it, on create or change (422 `wakeup_after_end`).
 
 ## Webhooks
 

@@ -9527,6 +9527,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -10428,6 +10438,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -13700,6 +13720,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -13891,6 +13921,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -13962,6 +14002,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -14415,6 +14465,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -14687,7 +14747,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "`queued` | `open` | `completed` | `cancelled` | `expired`",
+            "description": "`queued` | `open` | `waiting` | `completed` | `cancelled` | `expired`",
             "required": false,
             "schema": {
               "type": "string"
@@ -15747,6 +15807,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -16071,6 +16141,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -17235,6 +17315,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -17535,6 +17625,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -22515,7 +22615,17 @@
             }
           },
           "409": {
-            "description": "reminder_not_offered",
+            "description": "reminder_not_offered, conversation_archived, schedule_limit_reached, task_wakeup_cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "frozen",
             "content": {
               "application/json": {
                 "schema": {
@@ -35351,6 +35461,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -35491,6 +35611,16 @@
           },
           "409": {
             "description": "schedule_completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "schedule_has_end, wakeup_after_end",
             "content": {
               "application/json": {
                 "schema": {
@@ -35771,6 +35901,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -37506,6 +37646,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -39090,6 +39240,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -39422,6 +39582,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -41217,6 +41387,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -41686,6 +41866,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -45081,6 +45271,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -65586,7 +65786,7 @@
                 },
                 "status": {
                   "type": "string",
-                  "description": "`queued` | `open` | `completed` | `cancelled` | `expired`"
+                  "description": "`queued` | `open` | `waiting` | `completed` | `cancelled` | `expired`"
                 },
                 "task_conversation_id": {
                   "type": "string",
@@ -68233,7 +68433,7 @@
           },
           "status": {
             "type": "string",
-            "description": "`queued` | `open` | `completed` | `cancelled` | `expired`"
+            "description": "`queued` | `open` | `waiting` | `completed` | `cancelled` | `expired`"
           },
           "task_conversation_id": {
             "type": "string",

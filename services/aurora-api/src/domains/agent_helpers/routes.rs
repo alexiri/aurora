@@ -142,21 +142,13 @@ async fn delete_helper(
     Query(q): Query<HelperPathQuery>,
 ) -> Result<StatusCode, ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
-    let paths: Vec<String> = match &q.path {
-        Some(p) => vec![p.clone()],
-        None => repo::list(&s.pool, a.id)
-            .await?
-            .into_iter()
-            .map(|r| r.path)
-            .collect(),
-    };
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
     // Serializes with a template apply, which writes the helper set under this lock.
     agents::lock_for_write(&mut *tx, a.id).await?;
     let removed = service::delete(&mut tx, a.id, q.path.as_deref()).await?;
     tx.commit().await.map_err(DbError::from)?;
-    if removed > 0 {
-        record(&c, &s, &a, paths);
+    if !removed.is_empty() {
+        record(&c, &s, &a, removed);
     }
     Ok(StatusCode::NO_CONTENT)
 }

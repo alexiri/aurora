@@ -11,9 +11,9 @@ import { CANVAS, overflow } from "./support/open";
 // 390 px, have no serious axe violations, and render hostile repository text (markup, a javascript: link) as inert
 // data. The API is mocked.
 
-const PAGES = ["libraries", "instance-libraries"];
+const PAGES = ["skills", "ws-skills", "libraries", "instance-libraries"];
 
-for (const width of [1280, 768, 390]) {
+for (const width of [1256, 768, 390]) {
   test.describe(`skill library screens (${width} px)`, () => {
     test.use({ viewport: { width, height: 900 } });
     for (const scheme of ["light", "dark"] as const) {
@@ -72,9 +72,40 @@ for (const width of [1280, 390]) {
   test.describe(`skill library journeys (${width} px)`, () => {
     test.use({ viewport: { width, height: 900 } });
 
-    test("organization: add a GitHub page address → check → add → the row appears", async ({ page }) => {
+    // (D-506) skill-6: the page's heading and tabs, the header's Add skill on the Skills tab only, and cards with every
+    // action on screen (no table, no sideways scroll).
+    test("organization: the tabs Skills and Libraries; every card action is on screen", async ({ page }) => {
+      await openLibraryScreen(page, "skills", "light");
+      await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+      await expect(page.getByText("What every agent in Acme Labs can do, and where it comes from.")).toBeVisible();
+      await expect(page.getByRole("tab")).toHaveText(["Skills", "Libraries"]);
+      await page.getByRole("button", { name: "Add skill" }).click();
+      await expect(page.getByLabel("Use it when…")).toBeVisible();
+      await page.getByRole("tab", { name: "Libraries" }).click();
+      await expect(page).toHaveURL(/\/o\/acme\/skills\?tab=libraries$/);
+      await expect(page.getByRole("button", { name: "Add skill" })).toHaveCount(0);
+      await expect(page.getByRole("table")).toHaveCount(0);
+      const cards = page.getByRole("list", { name: "Your organization's libraries" });
+      for (const name of ["Check now Team skills", "Edit Team skills", "More actions for Team skills", "Check now Private tools"]) {
+        // Scrolled to (down the page only: nothing scrolls sideways, checked below), the whole button is on screen.
+        await cards.getByRole("button", { name }).scrollIntoViewIfNeeded();
+        await expect(cards.getByRole("button", { name })).toBeInViewport({ ratio: 1 });
+        expect(await cards.getByRole("button", { name }).evaluate((el) => el.getBoundingClientRect().right <= document.documentElement.clientWidth)).toBe(true);
+      }
+      await expect(cards.getByRole("link", { name: /Update available/ })).toBeVisible();
+      // One card per row at 1256 and 390 px: the two cards share a left edge.
+      const boxes = await Promise.all((await cards.locator(":scope > li").all()).map((li) => li.boundingBox()));
+      expect(new Set(boxes.map((b) => Math.round(b!.x))).size).toBe(1);
+      await cards.getByRole("button", { name: "More actions for Team skills" }).click();
+      await expect(page.getByRole("menuitem")).toHaveText(["Browse skills", "Pause", "Delete…"]);
+      const { violations } = await new AxeBuilder({ page }).include("main").analyze();
+      expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
+      expect(await overflow(page)).toBeLessThanOrEqual(0);
+    });
+
+    test("organization: add a GitHub page address → check → add → the card appears", async ({ page }) => {
       const mock = await openLibraryScreen(page, "libraries", "light");
-      await expect(page.getByRole("heading", { name: "Your organization's libraries" })).toBeVisible();
+      await expect(page.getByRole("list", { name: "Your organization's libraries" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Shared with every organization" })).toBeVisible();
       await page.getByRole("button", { name: "Add a library" }).first().click();
       const dlg = page.getByRole("dialog", { name: "Add a library" });
@@ -88,8 +119,8 @@ for (const width of [1280, 390]) {
       await expect(dlg.getByLabel("Label", { exact: true })).toHaveValue("skills");
       await dlg.getByRole("button", { name: "Add library" }).click();
       await expect(dlg).toHaveCount(0);
-      const table = page.getByRole("table", { name: "Your organization's libraries" });
-      await expect(table.getByText("github.com/acme/skills")).toBeVisible();
+      const cards = page.getByRole("list", { name: "Your organization's libraries" });
+      await expect(cards.getByText("github.com/acme/skills")).toBeVisible();
       expect(mock.writes.find((w) => w.key.endsWith("/skill-libraries"))?.body).toEqual({ label: "skills", url: "https://github.com/acme/skills.git", ref: "main", path: "skills" });
     });
 
@@ -134,15 +165,18 @@ for (const width of [1280, 390]) {
       expect(approve?.body).toEqual({ content_sha256: "b".repeat(64) });
     });
 
-    test("instance: Defaults › Skill libraries › Manage → add → the row and Organizations using it", async ({ page }) => {
+    test("instance: Administration › Skills holds the libraries and the settings; Defaults no longer does", async ({ page }) => {
       await openLibraryScreen(page, "libraries", "light");
       await page.goto("/admin/internet-access?tab=defaults");
-      await page.getByRole("heading", { name: "Skill libraries", level: 3 }).waitFor();
-      await expect(page.getByText("1 shared with every organization")).toBeVisible();
-      await page.getByRole("link", { name: "Manage skill libraries" }).click();
-      await expect(page).toHaveURL(/\/admin\/skill-libraries$/);
-      const table = page.getByRole("table", { name: "Skill libraries of this instance" });
-      await expect(table.getByRole("columnheader", { name: "Organizations using it" })).toBeVisible();
+      await page.getByRole("heading", { name: "Defaults for new agents" }).waitFor();
+      await expect(page.getByRole("heading", { name: "Library settings" })).toHaveCount(0);
+      // the old address lands on the new page
+      await page.goto("/admin/skill-libraries");
+      await expect(page).toHaveURL(/\/admin\/skills$/);
+      await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Library settings", level: 3 })).toBeVisible();
+      const cards = page.getByRole("list", { name: "Skill libraries of this instance" });
+      await expect(cards.getByText("Used by 2 organizations")).toBeVisible();
       await page.getByRole("button", { name: "Add a library" }).first().click();
       const dlg = page.getByRole("dialog", { name: "Add a library" });
       await dlg.getByLabel("Repository address", { exact: true }).fill("https://github.com/acme/skills/tree/main/skills");
@@ -150,7 +184,7 @@ for (const width of [1280, 390]) {
       await dlg.getByTestId("library-found").waitFor();
       await dlg.getByRole("button", { name: "Add library" }).click();
       await expect(dlg).toHaveCount(0);
-      await expect(table.getByText("github.com/acme/skills")).toBeVisible();
+      await expect(cards.getByText("github.com/acme/skills")).toBeVisible();
       expect(await overflow(page)).toBeLessThanOrEqual(0);
     });
   });

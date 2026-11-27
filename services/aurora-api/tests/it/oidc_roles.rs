@@ -1321,6 +1321,8 @@ struct Claimed {
     infra: Uuid,
     uid: Uuid,
     group: Uuid,
+    /// The second `it` owner (no access to `infra` in their own right).
+    other: Uuid,
 }
 
 impl Claimed {
@@ -1366,6 +1368,7 @@ impl Claimed {
             infra,
             uid,
             group,
+            other,
         };
         this.join_group().await;
         this
@@ -1399,6 +1402,52 @@ impl Claimed {
         .execute(self.h.pool())
         .await
         .unwrap();
+    }
+
+    /// Suspend E's membership of `it` (as an administrator's suspension leaves the row).
+    async fn suspend_membership(&self) {
+        self.h
+            .set_member_status(self.org, self.uid, "suspended")
+            .await;
+    }
+
+    /// E's `it` membership: `(role, status, claim-managed)`.
+    async fn membership(&self) -> Option<(String, String, bool)> {
+        sqlx::query_as(
+            "SELECT role, status, idp_source IS NOT NULL FROM org_members \
+             WHERE org_id = $1 AND user_id = $2",
+        )
+        .bind(self.org)
+        .bind(self.uid)
+        .fetch_optional(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    async fn org_audits(&self, action: &str) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = $1 AND org_id = $2 \
+             AND target_id = $3::text AND actor_label = 'idp:mock'",
+        )
+        .bind(action)
+        .bind(self.org)
+        .bind(self.uid)
+        .fetch_one(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    /// A call on E's `infra` binding by the second `it` owner, with a session.
+    async fn as_other(&self, method: Method, body: Option<Value>) -> (u16, Value) {
+        let (_, token) = self.h.good_session(self.other).await;
+        self.h
+            .call(
+                &crate::common::cookie(&token),
+                method,
+                &format!("/v1/workspaces/{}/access/{}", self.infra, self.uid),
+                body,
+            )
+            .await
     }
 
     async fn sign_in_with(&self, roles: Value) {
@@ -1439,6 +1488,8 @@ fn row(role: &str, status: &str, managed: bool) -> Option<(String, String, bool)
     Some((role.into(), status.into(), managed))
 }
 
+/// (FIX-256, D-492) The lapse of a claim that created a suspended binding leaves an ordinary
+/// manual suspended row, as `member` (there is no base role to go back to).
 #[tokio::test]
 async fn a_lapsed_claim_never_removes_a_suspended_binding() {
     let c = Claimed::new().await;
@@ -1446,11 +1497,37 @@ async fn a_lapsed_claim_never_removes_a_suspended_binding() {
     assert!(!c.can_use().await);
     let sets = c.infra_audits("workspace_access.set").await;
     c.sign_in_with(json!(["it-members"])).await;
-    assert_eq!(c.row().await, row("owner", "suspended", true));
+    assert_eq!(c.row().await, row("member", "suspended", false));
     assert_eq!(c.group_memberships().await, 1, "still in the bound group");
     assert!(!c.can_use().await, "the group's access must not come back");
     assert_eq!(c.infra_audits("workspace_access.remove").await, 0);
-    assert_eq!(c.infra_audits("workspace_access.set").await, sets);
+    assert_eq!(c.infra_audits("workspace_access.set").await, sets + 1);
+}
+
+/// (FIX-256) Once manual, a person restores it, and it comes back as `member`, never as the
+/// lapsed claim's `owner`.
+#[tokio::test]
+async fn a_restored_claim_created_owner_comes_back_as_member() {
+    let c = Claimed::new().await;
+    c.suspend().await;
+    c.sign_in_with(json!(["it-members"])).await;
+    let (s, v) = c
+        .as_other(Method::PATCH, Some(json!({"status": "active"})))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(c.row().await, row("member", "active", false));
+}
+
+/// (FIX-256) Once manual, removing it follows the rules of lifting a suspension (D-501)
+/// instead of answering 409 `managed_by_idp`.
+#[tokio::test]
+async fn a_lapsed_suspended_binding_can_be_removed() {
+    let c = Claimed::new().await;
+    c.suspend().await;
+    c.sign_in_with(json!(["it-members"])).await;
+    let (s, v) = c.as_other(Method::DELETE, None).await;
+    assert_eq!(s, 204, "{v}");
+    assert_eq!(c.row().await, None);
 }
 
 /// An active claim-managed binding goes with its claim, as before.
@@ -1462,12 +1539,13 @@ async fn a_lapsed_claim_still_removes_an_active_binding() {
     assert_eq!(c.infra_audits("workspace_access.remove").await, 1);
 }
 
-/// A claim that raised a manual role lapses: the suspended binding is not lowered back.
+/// A claim that raised a manual role lapses: the suspended binding goes back to that role and
+/// is manual again, still suspended (FIX-256, D-492).
 #[tokio::test]
-async fn a_lapsed_claim_never_lowers_a_suspended_binding() {
+async fn a_lapsed_claim_leaves_a_suspended_binding_at_its_base_role() {
     let c = Claimed::new().await;
     sqlx::query(
-        "UPDATE workspace_access SET base_role = 'member' \
+        "UPDATE workspace_access SET base_role = 'approver' \
          WHERE workspace_id = $1 AND user_id = $2",
     )
     .bind(c.infra)
@@ -1477,7 +1555,70 @@ async fn a_lapsed_claim_never_lowers_a_suspended_binding() {
     .unwrap();
     c.suspend().await;
     c.sign_in_with(json!(["it-members"])).await;
-    assert_eq!(c.row().await, row("owner", "suspended", true));
+    assert_eq!(c.row().await, row("approver", "suspended", false));
+    assert!(!c.can_use().await);
+}
+
+/// (FIX-256, D-492) The claim behind a **suspended** membership lapses and returns: it stays a
+/// suspended membership, and no workspace access comes back. Once lapsed it is a manual row.
+#[tokio::test]
+async fn a_suspended_membership_survives_its_claim_lapsing_and_returning() {
+    let c = Claimed::new().await;
+    c.suspend_membership().await;
+    assert_eq!(c.membership().await, row("owner", "suspended", true));
+    let updates = c.org_audits("member.update").await;
+
+    c.sign_in_with(json!([])).await;
+    assert_eq!(c.membership().await, row("member", "suspended", false));
+    assert_eq!(c.org_audits("member.remove").await, 0);
+    assert_eq!(c.org_audits("member.update").await, updates + 1);
+    assert_eq!(c.group_memberships().await, 1, "never left the org");
+    assert!(!c.can_use().await);
+
+    c.sign_in_with(json!(["it-ai-team"])).await;
+    let (_, status, _) = c.membership().await.expect("still a member row");
+    assert_eq!(status, "suspended", "a returning claim reactivates nothing");
+    assert_eq!(
+        c.org_audits("member.add").await,
+        1,
+        "only the first sign-in"
+    );
+    assert!(!c.can_use().await, "no workspace access comes back");
+}
+
+/// (FIX-256) A claim that raised a manual org role lapses on a suspended membership: back to
+/// that role, manual, still suspended.
+#[tokio::test]
+async fn a_suspended_membership_goes_back_to_its_base_role() {
+    let c = Claimed::new().await;
+    sqlx::query("UPDATE org_members SET base_role = 'admin' WHERE org_id = $1 AND user_id = $2")
+        .bind(c.org)
+        .bind(c.uid)
+        .execute(c.h.pool())
+        .await
+        .unwrap();
+    c.suspend_membership().await;
+    c.sign_in_with(json!([])).await;
+    assert_eq!(c.membership().await, row("admin", "suspended", false));
+}
+
+/// (FIX-256) The claim sync takes the membership before a lapsed binding.
+#[tokio::test]
+async fn the_sync_locks_the_membership_before_a_lapsed_binding() {
+    let c = Claimed::new().await;
+    c.h.while_membership_is_held(c.org, c.infra, c.uid, c.sign_in_with(json!([])))
+        .await;
+    assert_eq!(c.row().await, None);
+    assert_eq!(c.membership().await, None);
+}
+
+/// An active claim-managed membership goes with its claim, as before.
+#[tokio::test]
+async fn an_active_membership_still_goes_with_its_claim() {
+    let c = Claimed::new().await;
+    c.sign_in_with(json!([])).await;
+    assert_eq!(c.membership().await, None);
+    assert_eq!(c.org_audits("member.remove").await, 1);
 }
 
 /// A claim that now maps a weaker role: the suspended binding keeps its role; an active one is
@@ -1503,7 +1644,7 @@ async fn losing_and_regaining_the_org_claim_keeps_the_suspension() {
     c.sign_in_with(json!([])).await;
     assert_eq!(org_role(&c.h, "it", E).await, None, "left the org");
     assert_eq!(c.group_memberships().await, 0, "left every group");
-    assert_eq!(c.row().await, row("owner", "suspended", true));
+    assert_eq!(c.row().await, row("member", "suspended", false));
 
     c.sign_in_with(json!(["it-ai-team"])).await;
     assert!(org_role(&c.h, "it", E).await.is_some(), "re-joined");

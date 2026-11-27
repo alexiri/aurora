@@ -278,3 +278,21 @@ shows the existing memory's title to the conversation's readers, who can already
 ### Open questions
 
 Decisions 1 and 4 above are the two the owner or reviewer may want to change.
+
+### SEC-157 review and the master merge (2026-11-27)
+
+The review accepted the design and decisions 1 (an owner reads a direct chat's title by the access law, with no
+owner-view row) and 4 (`import` is in the schema only). Master was then merged in:
+
+- **FIX-262:** the memory list and get record an emergency reader's read (`record_read`, `ReadKind::Memory`, the
+  memory id on get) before the body, as on master. **Revisions and search still need own access** (a grant alone
+  gets 403, as `route_inventory` requires; not opened, per "Out of scope"). A caller with own access **and** an
+  active grant reads them under the grant too, so both now record the read (`record_own_read`: revisions with the
+  memory id, search as a list read; 503 `audit_unavailable` if it cannot be written, now in OpenAPI).
+- **FIX-270:** the shared `aurora_core::memory_index::index_line` (`<key> (locked): <line>`) is used by the DTO and
+  `memory_list`.
+- New test `an_emergency_readers_revisions_and_search_are_recorded` (grant alone: 403, no row; own access and grant:
+  one `workspace.emergency_read` per route; a member: none). Without the two calls it fails with no row.
+- After the merge: `memory::`, `emergency_access::`, `route_inventory::` and `openapi_matches_checked_in`
+  **58/58**; `web/openapi.json` and `schema.d.ts` regenerated; `pnpm typecheck` clean (after removing stale route
+  types in the ignored `web/.next*` build output). No Playwright, vitest or `aurora-db` re-run after the merge.

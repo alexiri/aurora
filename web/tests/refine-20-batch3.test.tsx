@@ -53,14 +53,14 @@ describe("P5-REFINE-20 batch 3 (organization words)", () => {
       "GET /v1/orgs/o1/skills": () => json(200, { items: [], next_cursor: null }),
     });
     wrap(<OrgSkills />);
-    expect(await screen.findByRole("heading", { name: "Organization skills" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Skills" })).toBeTruthy();
     const fold = screen.getByTestId("skills-combine");
     expect(fold).not.toHaveAttribute("open");
     expect(fold).toHaveTextContent("A workspace skill or an agent's own skill with the same name overrides an organization skill");
     // The paragraph is not a notice under the heading any more.
     for (const n of screen.queryAllByRole("status")) expect(n.textContent ?? "").not.toMatch(/with the same name overrides/);
     // The fold comes after the list, not before it.
-    const heading = screen.getByRole("heading", { name: "Organization skills" });
+    const heading = screen.getByRole("heading", { level: 1, name: "Skills" });
     expect(heading.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(fold.querySelector("summary")!);
   });

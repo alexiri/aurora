@@ -2,12 +2,14 @@ use super::actor::{self, StoredActor};
 use super::dto::*;
 use super::service::{self, Author, Source, Write};
 use crate::app::AppState;
-use crate::audit::{self, AuditEvent};
+use crate::audit::{self, AuditActor, AuditEvent};
+use crate::domains::emergency_access::service::{ReadKind, record_read};
 use crate::http::auth::{Caller, Principal};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
 use aurora_core::{ApiError, limits};
+use aurora_db::authz::ReadAuth;
 use aurora_db::repo::agents;
 use aurora_db::repo::memory::{MemoryRow, RevisionRow};
 use axum::extract::State;
@@ -36,17 +38,39 @@ async fn visible_agent(c: &Caller, s: &AppState, id: Uuid) -> Result<agents::Age
 }
 
 /// [`visible_agent`] for a *read* (C-1165): the emergency reader of the workspace lists and
-/// reads the agent's memory. Never for a write.
+/// reads the agent's memory. Never for a write. The caller records what it returns
+/// ([`record_read`] with this authority).
 async fn visible_agent_read(
     c: &Caller,
     s: &AppState,
     id: Uuid,
-) -> Result<agents::AgentRow, ApiError> {
+) -> Result<(agents::AgentRow, ReadAuth), ApiError> {
     let row = agents::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    c.workspace_read(s, row.workspace_id).await?;
-    Ok(row)
+    let read = c.workspace_read(s, row.workspace_id).await?;
+    Ok((row, read))
+}
+
+/// The emergency record of a route that needs **own** access (revisions, search: a grant alone
+/// does not open them; [`visible_agent`] has already refused that). A caller who holds own access
+/// *and* an active grant reads under the grant too (D-478(b)), so what they read is recorded like
+/// any other memory read (D-502): before the body, 503 `audit_unavailable` if it cannot be.
+async fn record_own_read(
+    c: &Caller,
+    s: &AppState,
+    agent: &agents::AgentRow,
+    target: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let read = c.workspace_read(s, agent.workspace_id).await?;
+    record_read(
+        s,
+        &AuditActor::from_caller(c),
+        &read,
+        ReadKind::Memory,
+        target,
+    )
+    .await
 }
 
 fn author(c: &Caller) -> Author {
@@ -126,16 +150,25 @@ fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, action: &str, key: &st
 /// List an agent's memories (workspace access).
 #[utoipa::path(get, path = "/agents/{agent}/memories", operation_id = "listMemories",
     tag = "memory", params(("agent" = Uuid, Path, description = "Agent id")),
-    responses((status = 200, body = Page<Memory>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<Memory>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_memories(
     c: Caller,
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Memory>>, ApiError> {
-    let a = visible_agent_read(&c, &s, agent).await?;
+    let (a, read) = visible_agent_read(&c, &s, agent).await?;
     let rows = service::list(&s.pool, agent).await?;
     let items = present(&c, &s, &a, rows).await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Memory,
+        None,
+    )
+    .await?;
     Ok(Json(Page {
         items,
         next_cursor: None,
@@ -177,7 +210,8 @@ async fn create_memory(
 #[utoipa::path(get, path = "/agents/{agent}/memories/search", operation_id = "searchMemories",
     tag = "memory", params(("agent" = Uuid, Path, description = "Agent id"), SearchParams),
     responses((status = 200, body = MemorySearchResponse), (status = 400, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope)),
+        (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn search_memories(
     c: Caller,
@@ -185,12 +219,13 @@ async fn search_memories(
     Path(agent): Path<Uuid>,
     Query(p): Query<SearchParams>,
 ) -> Result<Json<MemorySearchResponse>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    let a = visible_agent(&c, &s, agent).await?;
     let items = service::search(&s.pool, agent, &p.q)
         .await?
         .into_iter()
         .map(Into::into)
         .collect();
+    record_own_read(&c, &s, &a, None).await?;
     Ok(Json(MemorySearchResponse { items }))
 }
 
@@ -198,16 +233,27 @@ async fn search_memories(
 #[utoipa::path(get, path = "/agents/{agent}/memories/{key}", operation_id = "getMemory",
     tag = "memory",
     params(("agent" = Uuid, Path, description = "Agent id"), ("key" = String, Path, description = "Memory key")),
-    responses((status = 200, body = Memory), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Memory), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn get_memory(
     c: Caller,
     State(s): State<AppState>,
     Path((agent, key)): Path<(Uuid, String)>,
 ) -> Result<Json<Memory>, ApiError> {
-    let a = visible_agent_read(&c, &s, agent).await?;
+    let (a, read) = visible_agent_read(&c, &s, agent).await?;
     let row = service::get(&s.pool, agent, &key).await?;
-    present_one(&c, &s, &a, row).await
+    let id = row.id;
+    let body = present_one(&c, &s, &a, row).await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Memory,
+        Some(id),
+    )
+    .await?;
+    Ok(body)
 }
 
 /// Replace a memory's title, description and content; creates it when the key is new.
@@ -294,7 +340,8 @@ async fn set_memory_locked(
 #[utoipa::path(get, path = "/agents/{agent}/memories/{key}/revisions",
     operation_id = "listMemoryRevisions", tag = "memory",
     params(("agent" = Uuid, Path, description = "Agent id"), ("key" = String, Path, description = "Memory key")),
-    responses((status = 200, body = Page<MemoryRevision>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<MemoryRevision>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_revisions(
     c: Caller,
@@ -302,7 +349,7 @@ async fn list_revisions(
     Path((agent, key)): Path<(Uuid, String)>,
 ) -> Result<Json<Page<MemoryRevision>>, ApiError> {
     let a = visible_agent(&c, &s, agent).await?;
-    let rows = service::revisions(&s.pool, agent, &key).await?;
+    let (memory, rows) = service::revisions(&s.pool, agent, &key).await?;
     let actors: Vec<StoredActor> = rows.iter().map(StoredActor::of_revision).collect();
     let names = actor::names(&s, &c, &a, &actors, &[]).await?;
     let items = rows
@@ -310,6 +357,7 @@ async fn list_revisions(
         .zip(&actors)
         .map(|(r, who): (RevisionRow, _)| MemoryRevision::present(r, who, &names))
         .collect();
+    record_own_read(&c, &s, &a, Some(memory)).await?;
     Ok(Json(Page {
         items,
         next_cursor: None,

@@ -65,7 +65,7 @@ pub async fn webhooks<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Open or queued peer tasks requested by `user` from agents in scope. The row's `name` is
+/// Open, waiting or queued peer tasks requested by `user` from agents in scope. The row's `name` is
 /// `"<from agent> → <to agent>"`; peer tasks have no anchor and expire within 24 h.
 pub async fn peer_tasks<'e, E: PgExecutor<'e>>(
     exec: E,
@@ -80,7 +80,7 @@ pub async fn peer_tasks<'e, E: PgExecutor<'e>>(
          FROM peer_tasks t JOIN agents a ON a.id = t.from_agent_id
          JOIN agents b ON b.id = t.to_agent_id JOIN workspaces w ON w.id = a.workspace_id
          WHERE w.org_id = $1 AND ($2::uuid IS NULL OR w.id = $2)
-           AND t.requester_user_id = $3 AND t.status IN ('queued','open')
+           AND t.requester_user_id = $3 AND t.status IN ('queued','open','waiting')
          ORDER BY w.name, t.expires_at, t.id",
     )
     .bind(org)

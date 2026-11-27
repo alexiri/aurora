@@ -354,6 +354,18 @@ async fn stream_registers_a_watcher_and_created_carries_only_the_notice() {
 async fn peer_approval(h: &Harness, f: &crate::approvals::Fx, requester: Uuid) -> Uuid {
     let p = h.pool();
     let from = crate::approvals::agent(h, f.org, f.ws, "delegator").await;
+    // Whoever asked for a task can use the sending agent's workspace.
+    let bound: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM workspace_access WHERE workspace_id = $1 AND user_id = $2)",
+    )
+    .bind(f.ws)
+    .bind(requester)
+    .fetch_one(p)
+    .await
+    .unwrap();
+    if !bound {
+        h.bind_ws(f.ws, requester, "member").await;
+    }
     let (a, b) = if from < f.agent {
         (from, f.agent)
     } else {
@@ -439,6 +451,48 @@ async fn the_requester_of_a_peer_task_is_mailed_about_the_wait_once() {
     // Claimed: the next sweep does not repeat it.
     assert_eq!(notify_once(&h.state).await.unwrap(), 0);
     assert_eq!(h.mail.sent().len(), 1);
+}
+
+/// (FIX-264) A requester who has since lost the sending agent's workspace, or left the
+/// organization, hears nothing about the wait; with the access back, the mail goes out.
+#[tokio::test]
+async fn a_requester_without_access_to_the_sending_workspace_gets_no_mail() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    peer_approval(&h, &f, requester).await;
+    age(&h).await;
+    sqlx::query("DELETE FROM workspace_access WHERE workspace_id = $1 AND user_id = $2")
+        .bind(f.ws)
+        .bind(requester)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0);
+    assert!(h.mail.sent().is_empty());
+
+    // Back in the workspace but suspended in the organization: still nothing.
+    h.bind_ws(f.ws, requester, "member").await;
+    let membership = "UPDATE org_members SET status = $3 WHERE org_id = $1 AND user_id = $2";
+    sqlx::query(membership)
+        .bind(f.org)
+        .bind(requester)
+        .bind("suspended")
+        .execute(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0);
+    assert!(h.mail.sent().is_empty());
+
+    sqlx::query(membership)
+        .bind(f.org)
+        .bind(requester)
+        .bind("active")
+        .execute(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(h.mail.sent()[0].to, "req@x.io");
 }
 
 /// (FIX-252) A requester who is also a decider is served once: the mail claim is the shared

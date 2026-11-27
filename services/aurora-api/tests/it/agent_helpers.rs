@@ -224,6 +224,76 @@ async fn writer_enforces_paths_and_caps() {
     assert_eq!(w.helper_count(a).await, 0);
 }
 
+/// A path cannot be a file and a folder at once: the sandbox could never hold both.
+#[tokio::test]
+async fn writer_refuses_a_file_that_is_also_a_folder() {
+    let w = world().await;
+    let a = w.agent("h1").await;
+    for pair in [["run", "run/x.sh"], ["a/b/c", "a/b"]] {
+        let mut tx = w.h.pool().begin().await.unwrap();
+        let err = service::replace_all(
+            &mut tx,
+            a,
+            // `run.sh` sorts between `run` and `run/x.sh`: neighbours alone are not enough.
+            &[
+                f(pair[0], b"x", false),
+                f("run.sh", b"x", false),
+                f(pair[1], b"y", false),
+            ],
+        )
+        .await
+        .unwrap_err();
+        tx.rollback().await.unwrap();
+        assert_eq!(
+            (err.status(), err.code()),
+            (StatusCode::UNPROCESSABLE_ENTITY, "template_helper_invalid"),
+            "{pair:?}"
+        );
+        for p in pair {
+            assert!(err.message().contains(&format!("`{p}`")), "{err}");
+        }
+    }
+    assert_eq!(w.helper_count(a).await, 0);
+}
+
+/// The delete-all audit names what the delete removed, not what was there before a concurrent
+/// apply replaced the set.
+#[tokio::test]
+async fn delete_all_audits_what_it_removed() {
+    let w = world().await;
+    let a = w.agent("h1").await;
+    w.seed(a, &[f("old.sh", b"x", false)]).await;
+    // An apply in flight: it holds the agent's write lock and swaps the set.
+    let mut tx = w.h.pool().begin().await.unwrap();
+    aurora_db::repo::agents::lock_for_write(&mut *tx, a)
+        .await
+        .unwrap();
+    service::replace_all(
+        &mut tx,
+        a,
+        &[f("z.sh", b"y", false), f("new.sh", b"y", false)],
+    )
+    .await
+    .unwrap();
+    let app = w.h.app.clone();
+    let tok = w.tok.clone();
+    let request = tokio::spawn(async move {
+        let req = http::Request::builder()
+            .method(Method::DELETE)
+            .uri(format!("/v1/agents/{a}/helpers"))
+            .header("cookie", cookie(&tok))
+            .header("origin", ORIGIN)
+            .body(Body::empty())
+            .unwrap();
+        app.oneshot(req).await.unwrap().status()
+    });
+    crate::memory::wait_until_blocked(w.h.pool(), "%FOR NO KEY UPDATE%").await;
+    tx.commit().await.unwrap();
+    assert_eq!(request.await.unwrap(), StatusCode::NO_CONTENT);
+    assert_eq!(w.helper_count(a).await, 0);
+    assert_eq!(w.wait_audit_paths(1).await, json!(["new.sh", "z.sh"]));
+}
+
 #[tokio::test]
 async fn list_read_and_delete() {
     let w = world().await;

@@ -334,7 +334,7 @@ async fn escaped_titles_and_descriptions_survive_two_round_trips() {
 }
 
 /// (P6-MEMLOCK, C-1149) A locked memory renders with `locked: true` on the entry and in the front
-/// matter, an index line ending ` (locked)`, installs 0444 and is never harvested: an edited,
+/// matter, an index line whose key is followed by ` (locked)`, installs 0444 and is never harvested: an edited,
 /// replaced or deleted file is restored from the recorded bytes, while an unlocked memory behaves
 /// exactly as before.
 #[tokio::test]
@@ -386,14 +386,14 @@ async fn locked_memories_install_read_only_and_are_restored_not_uploaded() {
     // The locked entry carries `locked: true`; the unlocked one is unchanged (no key at all).
     assert_eq!(entry_of("memory/pinned.md")["locked"], true, "{entries:?}");
     assert!(entry_of("memory/free.md").get("locked").is_none());
-    // The file's front matter ends with `locked: true`; the index line ends ` (locked)`.
+    // The file's front matter ends with `locked: true`; the index marks the key.
     let pinned = entry_of("memory/pinned.md")["content"].as_str().unwrap();
     assert!(
         pinned.starts_with("---\ntitle: \"Rules\"\nlocked: true\n---\n"),
         "{pinned}"
     );
     let index = entry_of("memory/index.md")["content"].as_str().unwrap();
-    assert!(index.contains("pinned: Rules (locked)\n"), "{index}");
+    assert!(index.contains("pinned (locked): Rules\n"), "{index}");
     assert!(index.contains("free: agent may edit this\n"), "{index}");
     // The recall index agrees with `memory/index.md`.
     let mems = aurora_db::repo::hosted::memories(&mut conn, agent)

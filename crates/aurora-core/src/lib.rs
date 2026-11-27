@@ -12,6 +12,7 @@ pub mod git_url;
 pub mod ids;
 pub mod limits;
 pub mod llm_classify;
+pub mod memory_index;
 pub mod meta_paths;
 pub mod model_id;
 pub mod names;

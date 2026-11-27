@@ -177,8 +177,9 @@ export function SecretOnce({
   /** A heading above the box ("Your address", "Your secret"). */
   label?: string;
 }) {
-  // Mounted only while there is a secret, so copy and ask state start over with every new one.
-  return secret === null ? null : <OpenSecret secret={secret} {...rest} />;
+  // Mounted only while there is a secret, and keyed by it, so copy and ask state start over with every new one even
+  // when the caller replaces one secret with the next without unmounting.
+  return secret === null ? null : <OpenSecret key={secret} secret={secret} {...rest} />;
 }
 
 function OpenSecret({

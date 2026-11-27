@@ -128,6 +128,7 @@ are dropped.
 | `home.synced` | `{ generation }` | `home_applied_generation` |
 | `turn.started` | `{ turn_id }` | `running` |
 | `turn.events` | `{ turn_id, events: [{ n, event: HarnessEventWire }] }` | events with `n ≤ turns.last_event_n` are duplicates; durable ones persisted with seq; ephemeral ones NOTIFY'd |
+| `turn.idle.events` (FIX-253, part B) | `{ turn_id, events: [{ n, event: HarnessEventWire }] }` — the anchor turn is finished; the events are what the idle harness child did after it (`12 §The idle reader`): only `text.delta`, `tool.started`/`tool.finished` and `usage` (one per idle run: added to `usage_daily` once per `n`, tokens only, also when the anchor is stale; in a peer task conversation with its message budget used up no entry is recorded, one `after_turn_capped` notice says so) | durable `after_turn.text` / `after_turn.tool` / `after_turn.tool_end` events of the anchor turn's conversation (text masked like displayed text, once per message id or call id — an event without one is keyed by its `n`, which runs on across the reports of one watch; at most 100 entries per report, 500 per anchor turn and 2,000 per conversation; whatever any of the three leaves out, one `after_turn_capped` notice says so); the anchor is the conversation's latest finished turn and ran on the report's boot — otherwise `invalid` (unknown anchor, still-running turn, `stale_anchor`) or `fenced` (`other_boot`) |
 | `turn.progress` | `{ turn_id }` | `last_progress_at` |
 | `turn.result` | `{ turn_id, status: "done"|"failed"|"aborted", error_code?, error_message?, usage? }`. (phase 5, P5-MODELS-2, C-879) `usage` may carry `by_model` | terminal state, context credential expiry, mirror, follow-up promotion |
 | `steer.result` | `{ followup_id, outcome: "delivered"|"missed"|"refused" }` | `joining` bookkeeping |
@@ -174,7 +175,8 @@ Runner → supervisor kinds: `turn.deliver`, `turn.message`, `turn.send_now`,
 (`§W18`: stream frames are outside the seq/ack lineage).
 
 Supervisor → runner kinds: `ready`, `home.synced`, `turn.started`, `turn.event`
-(`{ turn_id, n, event }`), `turn.progress`, `turn.result`, `steer.result`,
+(`{ turn_id, n, event }`), (FIX-253, part B) `turn.idle.events`
+(`{ turn_id, events }`, the idle child's work after the turn), `turn.progress`, `turn.result`, `steer.result`,
 `send_now.result`, `session`, `process.state`, `watch.fired`, `gate.result`,
 `ports.state`, `tool.call`, `memory.write`, `file.part` (`{ upload_id, index,
 data_b64 }` ≤ 144 KiB decoded, so the base64 frame stays under `WS_FRAME_MAX`; spec fix S-06), `file.commit` (`{ upload_id, conversation_id,

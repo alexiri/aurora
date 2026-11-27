@@ -241,6 +241,23 @@
       ],
       "type": "object"
     },
+    "NumberedEvent": {
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/HarnessEventWire"
+        },
+        "n": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "n",
+        "event"
+      ],
+      "type": "object"
+    },
     "Observed": {
       "properties": {
         "cpu_millis": {
@@ -759,6 +776,25 @@
       ],
       "type": "object"
     },
+    "TurnEvents": {
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/NumberedEvent"
+          },
+          "type": "array"
+        },
+        "turn_id": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "events"
+      ],
+      "type": "object"
+    },
     "TurnRef": {
       "properties": {
         "turn_id": {
@@ -877,6 +913,20 @@
         },
         "kind": {
           "const": "turn.event"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "body": {
+          "$ref": "#/$defs/TurnEvents"
+        },
+        "kind": {
+          "const": "turn.idle.events"
         }
       },
       "required": [

@@ -20,6 +20,8 @@ pub struct PeerTaskRow {
     pub status: String,
     pub messages_used: i32,
     pub message_budget: i32,
+    /// Wake-ups so far (each one is also counted in `messages_used`).
+    pub wakes_used: i32,
     pub report: Option<String>,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
@@ -28,8 +30,8 @@ pub struct PeerTaskRow {
 
 const SELECT: &str = "SELECT t.id, t.link_id, t.from_agent_id, t.to_agent_id, \
     t.requester_user_id, u.display_name AS requester_name, t.origin_conversation_id, \
-    t.task_conversation_id, t.status, t.messages_used, t.message_budget, t.report, \
-    t.expires_at, t.created_at, t.updated_at \
+    t.task_conversation_id, t.status, t.messages_used, t.message_budget, t.wakes_used, \
+    t.report, t.expires_at, t.created_at, t.updated_at \
     FROM peer_tasks t LEFT JOIN users u ON u.id = t.requester_user_id";
 
 pub struct NewPeerTask {
@@ -130,19 +132,33 @@ pub async fn queued_count<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Is there an `open` task for the ordered pair?
+/// Is there an `open` or `waiting` task for the ordered pair? (FIX-253 security review, high: a
+/// `waiting` task occupies the pair's one-open slot exactly like an `open` one — a second task
+/// queues behind it instead of opening beside it, which would turn the first task into a zombie
+/// when its wake resumed it into the unique index.)
 pub async fn open_exists<'e, E: PgExecutor<'e>>(
     exec: E,
     from: Uuid,
     to: Uuid,
 ) -> Result<bool, DbError> {
+    Ok(slot_status(exec, from, to).await?.is_some())
+}
+
+/// The status (`open` or `waiting`) of the task that holds the ordered pair's one-open slot, so
+/// the queue notice can say whether the earlier task is waiting; `None` when the slot is free.
+pub async fn slot_status<'e, E: PgExecutor<'e>>(
+    exec: E,
+    from: Uuid,
+    to: Uuid,
+) -> Result<Option<String>, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM peer_tasks
-           WHERE from_agent_id = $1 AND to_agent_id = $2 AND status = 'open')",
+        "SELECT status FROM peer_tasks
+          WHERE from_agent_id = $1 AND to_agent_id = $2 AND status IN ('open', 'waiting')
+          ORDER BY created_at LIMIT 1",
     )
     .bind(from)
     .bind(to)
-    .fetch_one(exec)
+    .fetch_optional(exec)
     .await?)
 }
 
@@ -198,8 +214,8 @@ pub async fn open_queued(
     get_hinted(conn, id).await
 }
 
-/// Close a `queued`/`open` task (`completed` | `cancelled` | `expired`). Fenced: `None` when the
-/// task was already closed, so the caller posts the report only when this returns `Some`.
+/// Close a `queued`/`open`/`waiting` task (`completed` | `cancelled` | `expired`). Fenced: `None`
+/// when the task was already closed, so the caller posts the report only when this returns `Some`.
 pub async fn close(
     conn: &mut PgConnection,
     id: Uuid,
@@ -208,7 +224,7 @@ pub async fn close(
 ) -> Result<Option<PeerTaskRow>, DbError> {
     let done = sqlx::query(
         "UPDATE peer_tasks SET status = $2, report = COALESCE($3, report), updated_at = now()
-         WHERE id = $1 AND status IN ('queued', 'open')",
+         WHERE id = $1 AND status IN ('queued', 'open', 'waiting')",
     )
     .bind(id)
     .bind(status)
@@ -264,13 +280,159 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Ids of `queued`/`open` tasks past `expires_at` (oldest first).
+/// Ids of `queued`/`open`/`waiting` tasks past `expires_at` (oldest first). A `waiting` task
+/// still ends by its overall expiry (FIX-253): the requester gets the existing expiry report.
 pub async fn overdue_ids<'e, E: PgExecutor<'e>>(exec: E, limit: i64) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT id FROM peer_tasks WHERE status IN ('queued', 'open') AND expires_at <= now()
+        "SELECT id FROM peer_tasks WHERE status IN ('queued', 'open', 'waiting')
+           AND expires_at <= now()
          ORDER BY expires_at LIMIT $1",
     )
     .bind(limit)
     .fetch_all(exec)
+    .await?)
+}
+
+/// (FIX-253) `waiting` tasks that look as if nothing is left to wake them: no armed watch, no
+/// open one-time wake-up, no pending approval in the task conversation and no decision still to
+/// be delivered (those, held by a freeze for as long as it lasts, are [`held_decision_ids`]'s;
+/// listed here they would fill the batch and starve the rest). Candidates only: the caller
+/// re-checks each under its lock.
+pub async fn waiting_without_wake_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT t.id FROM peer_tasks t WHERE t.status = 'waiting'
+           AND NOT EXISTS (SELECT 1 FROM watches w
+                WHERE w.conversation_id = t.task_conversation_id AND w.status = 'armed')
+           AND NOT EXISTS (SELECT 1 FROM schedules s
+                WHERE s.origin_conversation_id = t.task_conversation_id AND s.enabled
+                  AND s.completed_at IS NULL AND s.run_at IS NOT NULL AND s.cron IS NULL
+                  AND s.agent_id = t.to_agent_id AND s.ends_at IS NOT NULL)
+           AND NOT EXISTS (SELECT 1 FROM approvals a
+                WHERE a.conversation_id = t.task_conversation_id AND a.status = 'pending')
+           AND NOT EXISTS (SELECT 1 FROM approvals a
+                WHERE a.conversation_id = t.task_conversation_id
+                  AND a.status IN ('approved', 'denied', 'expired')
+                  AND NOT EXISTS (SELECT 1 FROM transcript_events e
+                       WHERE e.conversation_id = t.origin_conversation_id AND e.type = 'notice'
+                         AND e.payload->>'code' = 'peer_approval_decided'
+                         AND e.payload->>'approval_id' = a.id::text))
+         ORDER BY t.updated_at, t.id LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (FIX-253) Whether an approval of this task conversation was answered (or expired) and the
+/// requester has not been told yet: its wake is still on the way.
+pub async fn has_undelivered_decision<'e, E: PgExecutor<'e>>(
+    exec: E,
+    task_conversation: Uuid,
+    origin_conversation: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM approvals a
+          WHERE a.conversation_id = $1 AND a.status IN ('approved', 'denied', 'expired')
+            AND NOT EXISTS (SELECT 1 FROM transcript_events e
+                 WHERE e.conversation_id = $2 AND e.type = 'notice'
+                   AND e.payload->>'code' = 'peer_approval_decided'
+                   AND e.payload->>'approval_id' = a.id::text))",
+    )
+    .bind(task_conversation)
+    .bind(origin_conversation)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// (FIX-253) Answered (or expired) approvals of `waiting` tasks whose requester has not been
+/// told: their delivery was held (a frozen receiver).
+pub async fn held_decision_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT a.id FROM peer_tasks t
+           JOIN approvals a ON a.conversation_id = t.task_conversation_id
+          WHERE t.status = 'waiting' AND a.status IN ('approved', 'denied', 'expired')
+            AND NOT EXISTS (SELECT 1 FROM transcript_events e
+                 WHERE e.conversation_id = t.origin_conversation_id AND e.type = 'notice'
+                   AND e.payload->>'code' = 'peer_approval_decided'
+                   AND e.payload->>'approval_id' = a.id::text)
+          ORDER BY t.updated_at, a.id LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (FIX-253, D-490(b)) Move an `open` task to `waiting` (the end of the receiving turn while one
+/// of the wake registrations stands). Fenced: `None` when the task is not `open` any more, so
+/// the caller posts the waiting notice only when this returns `Some`.
+pub async fn set_waiting(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<PeerTaskRow>, DbError> {
+    let done = sqlx::query(
+        "UPDATE peer_tasks SET status = 'waiting', updated_at = now()
+         WHERE id = $1 AND status = 'open'",
+    )
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get_hinted(conn, id).await
+}
+
+/// (FIX-253, D-490(b)) The wake (the watch firing, the schedule firing, the approval decision)
+/// resumes a `waiting` task of this conversation back to `open` (an `open` one stays open) — the
+/// task keeps the grants and policy it had: a wake never extends rights. The wake turn is charged
+/// to the message budget and counted. Returns the task id, if a live task was charged. The caller
+/// holds the task's row lock and has checked both limits.
+pub async fn resume(conn: &mut PgConnection, conversation: Uuid) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "UPDATE peer_tasks SET status = 'open', messages_used = messages_used + 1,
+             wakes_used = wakes_used + 1, updated_at = now()
+         WHERE task_conversation_id = $1 AND status IN ('open', 'waiting') RETURNING id",
+    )
+    .bind(conversation)
+    .fetch_optional(&mut *conn)
+    .await?)
+}
+
+/// Count the tasks already waiting: `(of the requester, on the receiving agent)`. It first
+/// *tries* the transaction locks of this requester and receiver, which keep concurrent "go
+/// waiting" transitions from counting past each other, and counts without a lock another one
+/// holds: it **never waits**. The caller holds its conversation and goes on to lock the origin
+/// conversation, which for chained tasks is another turn end's conversation, so waiting here would
+/// deadlock. The price: transitions that overlap may pass a bound by at most one task for each
+/// of the others in flight.
+pub async fn count_waiting(
+    conn: &mut PgConnection,
+    requester: Option<Uuid>,
+    receiver: Uuid,
+) -> Result<(i64, i64), DbError> {
+    for key in [
+        format!("peer-waiting:user:{}", requester.unwrap_or_default()),
+        format!("peer-waiting:agent:{receiver}"),
+    ] {
+        sqlx::query("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(key)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE requester_user_id = $1),
+                count(*) FILTER (WHERE to_agent_id = $2)
+           FROM peer_tasks
+          WHERE status = 'waiting' AND (requester_user_id = $1 OR to_agent_id = $2)",
+    )
+    .bind(requester)
+    .bind(receiver)
+    .fetch_one(&mut *conn)
     .await?)
 }

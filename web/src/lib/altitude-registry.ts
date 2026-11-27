@@ -19,7 +19,8 @@ export interface AltitudeEntry {
 
 export const ALTITUDE_REGISTRY = {
   // Rail topics other than Overview, Agents and Approvals: hidden by `visibleTopics`, not by a wrapper.
-  "rail.skills": { altitude: "setup", area: "rail", mark: true },
+  // (D-506(b)) Skills is listed to a workspace's owners at Use; everyone else sees it from Set up.
+  "rail.skills": { altitude: "setup", area: "rail (Use for the workspace's owners)", mark: true },
   "rail.apps": { altitude: "setup", area: "rail", mark: true },
   "rail.internet": { altitude: "setup", area: "rail", mark: true },
   "rail.activity": { altitude: "setup", area: "rail", mark: true },
@@ -75,7 +76,6 @@ export const ALTITUDE_REGISTRY = {
   "ws.memlang": { altitude: "expert", area: "New workspace, Settings" },
   "chat.redact": { altitude: "expert", area: "Chat" },
   "org.byo": { altitude: "expert", area: "Agents (organization)" },
-  "org.skills": { altitude: "expert", area: "Agents (organization)" },
   "org.groups": { altitude: "expert", area: "People" },
   "org.directory": { altitude: "expert", area: "People" },
   "apikeys": { altitude: "setup", area: "Account" },

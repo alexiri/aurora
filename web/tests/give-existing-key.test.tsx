@@ -82,6 +82,28 @@ describe("Use another key (FIX-249)", () => {
     expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method === "POST" && new URL(r.url).pathname === "/v1/secrets/k2/grants")).toBe(false);
   });
 
+  it("while the one-click give runs, Use another key waits (FIX-272)", async () => {
+    mockFetch({
+      "GET /v1/agents/a1/ai-keys": () => json(200, { items: [key("k2", "Lab key", "organization")] }),
+      "POST /v1/secrets/k1/grants": () => new Promise<Response>(() => {}),
+    });
+    view();
+    const other = await screen.findByRole("button", { name: "Use another key" });
+    fireEvent.click(screen.getByRole("button", { name: "Give Rex the Company key" }));
+    await waitFor(() => expect(other).toBeDisabled());
+  });
+
+  it("while a grant from Use another key runs, the one-click give waits (FIX-272)", async () => {
+    mockFetch({
+      "GET /v1/agents/a1/ai-keys": () => json(200, { items: [key("k2", "Lab key", "organization")] }),
+      "POST /v1/secrets/k2/grants": () => new Promise<Response>(() => {}),
+    });
+    view();
+    fireEvent.keyDown(await screen.findByRole("button", { name: "Use another key" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Lab key Organization key" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Give Rex the Company key" })).toBeDisabled());
+  });
+
   it("a failed grant says so, and the menu stays", async () => {
     mockFetch({
       "GET /v1/agents/a1/ai-keys": () => json(200, { items: [key("k2", "Lab key", "organization")] }),

@@ -128,6 +128,17 @@ pub async fn get_source<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// [`get_source`] with the row locked until the transaction ends: what a writer reads before it
+/// replaces or discards the stored token.
+pub async fn lock_source(conn: &mut PgConnection, id: Uuid) -> Result<Option<SourceRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {SEL} FROM agent_template_sources WHERE id = $1 FOR UPDATE"
+    )))
+    .bind(id)
+    .fetch_optional(conn)
+    .await?)
+}
+
 /// Whether this exact address (url + ref + path) is already a source (C-1107's 409).
 pub async fn addr_taken<'e, E: PgExecutor<'e>>(
     exec: E,

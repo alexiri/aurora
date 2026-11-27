@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type MutationKey, type QueryClient } from "@tanstack/react-query";
 
 import { answerReadinessKey } from "./answer-readiness";
 import { agentAiKeysKey } from "./agent-ai-keys";
@@ -90,9 +90,10 @@ export interface AddGrantsResult {
 }
 
 /** Bulk add (C-503, C-504). All-or-nothing: a failure carries `details.agent_id`. */
-export function useAddCredentialGrants(target: GrantTarget) {
+export function useAddCredentialGrants(target: GrantTarget, mutationKey?: MutationKey) {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey,
     mutationFn: async ({ agentIds, grant }: AddGrantsInput): Promise<AddGrantsResult> => {
       const items =
         target.kind === "secret"
@@ -122,9 +123,10 @@ export function useAddCredentialGrants(target: GrantTarget) {
  * (FIX-249, C-1168) One grant from the "Use another key" pickers: grants one secret to one agent
  * and refreshes every view that follows a grant (the answer check, the key lists, the accounts).
  */
-export function useGrantSecretToAgent() {
+export function useGrantSecretToAgent(mutationKey?: MutationKey) {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey,
     mutationFn: ({ secretId, agentId }: { secretId: string; agentId: string }) =>
       unwrap(api.POST("/v1/secrets/{id}/grants", { params: { path: { id: secretId } }, body: { agent_ids: [agentId] } })),
     onSuccess: (_r, v) => invalidateGrants(qc, { kind: "secret", id: v.secretId }, [v.agentId]),

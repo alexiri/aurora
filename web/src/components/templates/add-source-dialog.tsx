@@ -92,6 +92,12 @@ function AddSourceFlow({ onOpenChange }: { onOpenChange: (open: boolean) => void
         size="xl"
         footer={
           <div className="flex flex-wrap justify-end gap-2">
+            {/* Step 2 has no address field, so an address the add refused is said here, above Add repository. */}
+            {found && urlProblem ? (
+              <Notice tone="danger" role="alert" className="w-full">
+                {urlProblem} Go back to change the address.
+              </Notice>
+            ) : null}
             <DialogClose asChild>
               <Button type="button" variant="outline">
                 Cancel
@@ -185,7 +191,7 @@ function Found({ found: f }: { found: TemplateSourcePreview }) {
         </p>
         <ul aria-label="Templates found" className="space-y-2">
           {f.templates.map((t) => (
-            <li key={t.template_id} className="rounded border border-subtle px-3 py-2 text-sm">
+            <li key={t.template_id} className="rounded-control border border-line px-3 py-2 text-sm">
               <p className="min-w-0 font-medium text-ink [overflow-wrap:anywhere]">{t.name}</p>
               <p className="min-w-0 text-xs text-ink-2 [overflow-wrap:anywhere]">{t.dir}</p>
               <p className="text-xs text-ink-2">

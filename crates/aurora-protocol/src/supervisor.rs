@@ -19,8 +19,8 @@ use crate::runner::{
     MemoryWrite, PortsState, PreviewStartFrame, ProcessStates, PtyClose, PtyCredit, PtyOpen,
     PtyOpened, PtyRefused, PtyResize, SandboxStatus, SendNowResult, SessionPurge, SessionPurged,
     SessionRelease, SessionReleased, SessionReport, SteerResult, StreamClose, StreamCredit,
-    StreamOpen, StreamOpened, StreamRefused, SupervisorReady, TurnDeliver, TurnEvent, TurnMessage,
-    TurnNotice, TurnRef, TurnResult, WatchFired,
+    StreamOpen, StreamOpened, StreamRefused, SupervisorReady, TurnDeliver, TurnEvent, TurnEvents,
+    TurnMessage, TurnNotice, TurnRef, TurnResult, WatchFired,
 };
 use crate::tools::{ToolCallBody, ToolError, ToolResult};
 
@@ -214,6 +214,9 @@ tagged_open! {
         HomeSynced(HomeSynced) = "home.synced",
         TurnStarted(TurnRef) = "turn.started",
         TurnEvent(TurnEvent) = "turn.event",
+        // (FIX-253, part B) What the idle harness child did after the turn: anchored on the turn
+        // that ended, its own numbering.
+        TurnIdleEvents(TurnEvents) = "turn.idle.events",
         TurnProgress(TurnRef) = "turn.progress",
         TurnResult(TurnResult) = "turn.result",
         SteerResult(SteerResult) = "steer.result",

@@ -146,19 +146,41 @@ async fn start_run(
     }))
 }
 
+/// What firing a one-time schedule in its origin did (FIX-253 review, medium 2: the origin can
+/// be a `waiting` task's conversation, and its wake can be refused).
+enum OriginStart {
+    /// The run started.
+    Started(Started),
+    /// There was no origin conversation to run in.
+    NoOrigin,
+    /// The origin is a `waiting` task's conversation and the wake was refused: the task was
+    /// cancelled with its close report and no run starts anywhere (not in the task conversation,
+    /// and not in the schedule's own run thread either).
+    WakeRefused,
+}
+
 /// (P5-SCHED-ONCE, D-422, C-1093, SEC-144) Start a one-time run in its origin conversation, the
-/// direct chat of the schedule's current creator ([`repo::origin_for_run`] checked it). It queues
-/// behind an active turn there as a follow-up (never steered into it, never skipped); when the
-/// follow-up is promoted the run follows its turn ([`on_followup_promoted`]).
+/// direct chat of the schedule's current creator or a delegated task's conversation
+/// ([`repo::origin_for_run`] checked it). It queues behind an active turn there as a follow-up
+/// (never steered into it, never skipped); when the follow-up is promoted the run follows its
+/// turn ([`on_followup_promoted`]).
 async fn start_in_origin(
     conn: &mut PgConnection,
     s: &ScheduleRow,
     origin: Uuid,
-) -> Result<Option<Started>, ApiError> {
+) -> Result<OriginStart, ApiError> {
     let Some(c) = convs::get(&mut *conn, origin).await? else {
-        return Ok(None);
+        return Ok(OriginStart::NoOrigin);
     };
     let run_id = Uuid::now_v7();
+    // (FIX-253, D-490(b); security review, medium 2) A one-time wake-up firing into a delegated
+    // task's conversation is a `waiting` task's wake: through the one wake helper, before the run
+    // starts — it re-checks the requester's rights and the freeze, and a refused wake cancels the
+    // task with its close report and starts no run.
+    let wake = crate::domains::peer_tasks::service::resume_on_wake(conn, c.id).await?;
+    if wake.is_cancelled() {
+        return Ok(OriginStart::WakeRefused);
+    }
     let text = turn_text(s);
     let (msg, display) = schedule_message(s, run_id, &text);
     let created = conv::create_turn_tx_with(conn, &c, &msg, Some(&display)).await?;
@@ -166,7 +188,7 @@ async fn start_in_origin(
         Created::Turn(t) | Created::Followup(t) => t,
     };
     let run = repo::insert_run_with_id(conn, run_id, s.id, Some(turn.id), "fired").await?;
-    Ok(Some(Started {
+    Ok(OriginStart::Started(Started {
         conversation: c.id,
         run,
     }))
@@ -270,7 +292,15 @@ async fn fire_due(
             None,
         )
         .await?;
+        if let Some(origin) = row.origin_conversation_id {
+            crate::domains::peer_tasks::service::recheck_waiting(conn, origin).await?;
+        }
         return Ok(());
+    }
+    // (FIX-253 fixes2 G, FIX-264) `ends_at` and the delegated task's end are hard ends, for a
+    // repeating schedule as for a one-time one.
+    if task_ended(conn, row).await? {
+        return disable_task_ended(conn, row).await;
     }
     let Some(expr) = row.cron.as_deref() else {
         return fire_once(conn, row, &agent).await;
@@ -293,6 +323,39 @@ async fn fire_due(
     Ok(())
 }
 
+/// (FIX-253 fixes2 G) A schedule does not outlive its delegated task: whether the task behind
+/// its origin conversation has ended (closed — a `waiting` task is still alive and its wake must
+/// fire, FIX-253) or its `ends_at` has passed.
+async fn task_ended(conn: &mut PgConnection, row: &ScheduleRow) -> Result<bool, ApiError> {
+    if row.ends_at.is_some_and(|ends| ends <= Utc::now()) {
+        return Ok(true);
+    }
+    let Some(origin) = row.origin_conversation_id else {
+        return Ok(false);
+    };
+    Ok(peer_tasks::by_task_conversation(&mut *conn, origin)
+        .await?
+        .is_some_and(|task| !matches!(task.status.as_str(), "open" | "waiting")))
+}
+
+/// (FIX-253 fixes2 G) The delegated task a wake-up came from has ended: no run, the schedule
+/// is disabled and its origin conversation is told.
+async fn disable_task_ended(conn: &mut PgConnection, row: &ScheduleRow) -> Result<(), ApiError> {
+    repo::insert_run(conn, row.id, None, "skipped_task_closed").await?;
+    repo::disable(conn, row.id, "task_ended", Some("skipped_task_closed")).await?;
+    notify_origin(
+        conn,
+        row,
+        "schedule_disabled",
+        &format!(
+            "Schedule \"{}\" was disabled: the delegated task it came from has ended.",
+            row.name
+        ),
+        None,
+    )
+    .await
+}
+
 /// (P5-SCHED-ONCE, D-421, D-422, C-1092, C-1093) Fire a due one-time schedule: in the creator's
 /// own chat when [`repo::origin_for_run`] allows it (SEC-144), else in its own run thread; never
 /// skipped as busy, never coalesced. Done in the same transaction.
@@ -301,35 +364,15 @@ async fn fire_once(
     row: &ScheduleRow,
     agent: &agents::AgentRow,
 ) -> Result<(), ApiError> {
-    // (FIX-253 fixes2 G) A peer-created wake-up does not outlive its delegated task: when the
-    // task behind the origin conversation is no longer open, or the task's `ends_at` has passed,
-    // the fire skips and the schedule is disabled — it never moves to its own run thread.
-    if row.origin_conversation_id.is_some() || row.ends_at.is_some() {
-        let task_ended = match row.origin_conversation_id {
-            Some(origin) => peer_tasks::by_task_conversation(&mut *conn, origin)
-                .await?
-                .is_some_and(|task| task.status != "open"),
-            None => false,
-        } || row.ends_at.is_some_and(|ends| ends <= Utc::now());
-        if task_ended {
-            repo::insert_run(conn, row.id, None, "skipped_task_closed").await?;
-            repo::disable(conn, row.id, "task_ended", Some("skipped_task_closed")).await?;
-            notify_origin(
-                conn,
-                row,
-                "schedule_disabled",
-                &format!(
-                    "Schedule \"{}\" was disabled: the delegated task it came from has ended.",
-                    row.name
-                ),
-                None,
-            )
-            .await?;
-            return Ok(());
-        }
-    }
     let started = match repo::origin_for_run(&mut *conn, row).await? {
-        Some(origin) => start_in_origin(conn, row, origin).await?,
+        Some(origin) => match start_in_origin(conn, row, origin).await? {
+            OriginStart::Started(st) => Some(st),
+            // (FIX-253 review, medium 2) The wake was refused: the task behind the origin is
+            // closed with its report, and the wake-up must not run in the schedule's own run
+            // thread either.
+            OriginStart::WakeRefused => return disable_task_ended(conn, row).await,
+            OriginStart::NoOrigin => None,
+        },
         None => None,
     };
     let started = match started {

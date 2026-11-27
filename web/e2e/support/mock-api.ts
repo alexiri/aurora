@@ -545,7 +545,7 @@ export async function mockApi(
         });
       }
       if (p.endsWith("/skills")) {
-        // Defaults › Skill libraries: the group's settings; its first row (the libraries' count and Manage) is not a setting.
+        // Administration › Skills: the library settings under the instance's libraries.
         return sec("skills", "Skill libraries", [
           { ...k, key: "skills.library.enabled", value: true, default: true, schema: sch("bool") },
           { ...k, key: "skills.library.refresh_interval_secs", value: 900, default: 900, schema: sch("int") },
@@ -961,7 +961,7 @@ const PRE_IA_ROUTES: RouteEntry[] = [
 const KEPT = new Set([
   "root", "sign-in", "cli-login", "join", "link-channel", "setup-error", "account", "account-security", "account-api-keys",
   "account-channels", "account-delete", "admin-settings", "org-workspaces", "org-settings", "ws-overview", "ws-welcome",
-  "ws-activity", "ws-agents", "ws-agent", "ws-approvals", "ws-skills", "ws-settings",
+  "ws-activity", "ws-agents", "ws-agent", "ws-approvals", "ws-skills", "ws-settings", "org-skills",
 ]);
 
 /** Every old address of a page that moved (C-960): it must still open, on its new page. */
@@ -981,10 +981,10 @@ const TOPIC_ROUTES: RouteEntry[] = [
   { name: "admin-chat-platforms", path: "/admin/chat-platforms" },
   ...tab("/admin/data", ["retention", "storage", "audit", "usage"], "admin-data"),
   ...tab("/admin/platform", ["health", "runners", "computers", "secret-stores", "email", "limits"], "admin-platform"),
-  ...tab("/o/acme/agents", ["agents", "byo", "skills"], "org-agents"),
-  { name: "org-skill-libraries", path: "/o/acme/agents/skills/libraries" },
-  // (P5-SKLIB-3, D-450(b)) A sub-page of What agents may do › Defaults.
-  { name: "admin-skill-libraries", path: "/admin/skill-libraries" },
+  ...tab("/o/acme/agents", ["agents", "byo"], "org-agents"),
+  // (D-506) Manage <org> › Skills (the Skills tab is `ws-skills`'s organization twin, kept as `org-skills`) and Administration › Skills.
+  { name: "org-skills-libraries", path: "/o/acme/skills?tab=libraries" },
+  { name: "admin-skills", path: "/admin/skills" },
   ...tab("/o/acme/apps", ["accounts", "apps", "oauth-clients", "self-hosted"], "org-apps"),
   { name: "org-ai-models", path: "/o/acme/ai-models" },
   { name: "org-internet-access", path: "/o/acme/internet-access" },

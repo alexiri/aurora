@@ -28,8 +28,10 @@ export const TABS = {
   adminData: ["retention", "storage", "audit", "usage"],
   // Health & runners: Health · Runners · Computers, then the installation's own settings pages.
   adminPlatform: ["health", "runners", "computers", "secret-stores", "email", "limits"],
-  // (P5-REFINE-17, org-6) Agents · Bring your own · Skills · Templates (C-1115); Previews is a second section of Bring your own.
-  orgAgents: ["agents", "byo", "skills", "templates"],
+  // (P5-REFINE-17, org-6) Agents · Bring your own · Templates (C-1115); Previews is a second section of Bring your own.
+  orgAgents: ["agents", "byo", "templates"],
+  // (D-506(a), C-1177) Manage <org> › Skills.
+  orgSkills: ["skills", "libraries"],
   orgApps: ["accounts", "apps", "oauth-clients", "self-hosted"],
   orgPeople: ["members", "groups", "directory-sync"],
   orgData: ["retention", "storage", "audit", "usage"],
@@ -55,8 +57,8 @@ export const adminRoutes = {
   /** AI endpoints: the endpoints only; the AI key rules moved to What agents may do › AI keys and rules. */
   aiModels: () => "/admin/ai-models",
   internetAccess: () => "/admin/internet-access",
-  /** (P5-SKLIB-3, D-450(b)) The instance's skill libraries, a sub-page of What agents may do › Defaults. */
-  skillLibraries: () => "/admin/skill-libraries",
+  /** (D-506(c), C-1177) Administration › Skills: the instance's libraries and the library settings. */
+  skills: () => "/admin/skills",
   /** (C-1114) The review of one template version, a sub-page of What agents may do › Agent templates. */
   templateReview: (templateId: string, version: string) => `/admin/internet-access/templates/${seg(templateId)}/${seg(version)}`,
   people: (tab?: TabOf<"adminPeople">, hash?: string) => url("/admin/people", { tab }, hash),
@@ -95,7 +97,7 @@ const SETTINGS_SECTION_PAGE: Record<string, { path: string; tab?: string }> = {
   approvals: { path: "/admin/internet-access", tab: "defaults" },
   terminal: { path: "/admin/platform", tab: "computers" },
   previews: { path: "/admin/platform", tab: "computers" },
-  skills: { path: "/admin/internet-access", tab: "defaults" },
+  skills: { path: "/admin/skills" },
   retention: { path: "/admin/data", tab: "retention" },
   limits: { path: "/admin/platform", tab: "limits" },
   outgoing_webhooks: { path: "/admin/apps", tab: "advanced" },
@@ -132,7 +134,8 @@ export function orgRoutes(org: string) {
     agents: (tab?: TabOf<"orgAgents">) => url(`${base}/agents`, { tab }),
     /** The manage page for a workspace an administrator is not in (FIX-235). */
     workspace: (ws: string) => `${base}/workspaces/${seg(ws)}`,
-    skillLibraries: () => `${base}/agents/skills/libraries`,
+    /** (D-506(a), C-1177) Manage <org> › Skills: the Skills tab, or `?tab=libraries`. */
+    skills: (tab?: TabOf<"orgSkills">) => url(`${base}/skills`, { tab }),
     apps: (tab?: TabOf<"orgApps">, query?: Query, hash?: string) => url(`${base}/apps`, { tab, ...query }, hash),
     /** The organization's accounts; `kind` filters the list (`ai-key`, `app`, `website`). */
     accounts: (query?: Query, hash?: string) => url(`${base}/apps`, { tab: "accounts", ...query }, hash),
@@ -194,6 +197,7 @@ export const accountRoutes = {
 export type AdminTopic =
   | "overview"
   | "apps"
+  | "skills"
   | "ai-models"
   | "internet-access"
   | "people"
@@ -202,7 +206,7 @@ export type AdminTopic =
   | "platform"
   | "set-in-helm"
   | "settings";
-export type OrgTopic = "overview" | "agents" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "settings";
+export type OrgTopic = "overview" | "agents" | "skills" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "settings";
 export type WorkspaceTopic = "overview" | "agents" | "skills" | "apps" | "internet-access" | "approvals" | "activity" | "people" | "settings";
 
 /** The name of each topic in the interface (the vocabulary of `14`). */
@@ -232,6 +236,7 @@ export const ADMIN_RAIL_LABEL: Record<AdminTopic, string> = {
   overview: "Overview",
   "internet-access": "What agents may do",
   apps: "Apps",
+  skills: "Skills",
   "chat-platforms": "Chat platforms",
   people: "People & sign-in",
   data: "Data",
@@ -243,7 +248,7 @@ export const ADMIN_RAIL_LABEL: Record<AdminTopic, string> = {
 
 export const ADMIN_RAIL_GROUPS: { label: string | null; topics: AdminTopic[] }[] = [
   { label: null, topics: ["overview"] },
-  { label: "Policy for everyone", topics: ["internet-access", "apps", "chat-platforms", "people", "data"] },
+  { label: "Policy for everyone", topics: ["internet-access", "apps", "skills", "chat-platforms", "people", "data"] },
   { label: "This installation", topics: ["platform", "ai-models", "set-in-helm", "settings"] },
 ];
 

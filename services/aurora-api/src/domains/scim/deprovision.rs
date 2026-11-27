@@ -41,6 +41,9 @@ pub async fn suspend_membership(
         return Ok(()); // idempotent
     }
     members::update(&mut *conn, org, user, None, Some("suspended")).await?;
+    // (FIX-262, C-1164) Emergency read access ends with the ownership, in this transaction (a
+    // no-op without an open grant), so a reactivation never brings one back.
+    crate::domains::emergency_access::service::end_lost_in_tx(&mut *conn, actor, org, user).await?;
     // (FIX-083) Access the IdP's group claim granted ends with the suspension and is not
     // restored by a reactivation; the next sign-in re-syncs.
     crate::domains::groups::sync::drop_idp_memberships(
@@ -102,11 +105,64 @@ pub async fn remove_membership(
         return Ok(()); // idempotent
     }
     members::remove(&mut *conn, org, user).await?;
+    // (FIX-262, C-1164) As in [`suspend_membership`].
+    crate::domains::emergency_access::service::end_lost_in_tx(&mut *conn, actor, org, user).await?;
     notify(conn, org, user).await?;
     let ev = AuditEvent::new(actor.clone(), "member.remove", Outcome::Success)
         .org(org)
         .target("user", user)
         .metadata(json!({"via": crate::domains::scim::service::VIA}));
+    crate::audit::insert_tx(&mut *conn, &ev)
+        .await
+        .map_err(|_| ApiError::unavailable("audit_unavailable", "The audit log is unavailable."))?;
+    Ok(())
+}
+
+/// (FIX-256, D-492) The directory takes `user`'s account out of `org` (`DELETE /Users`, or a
+/// link moved to another account). The membership goes, except when it is suspended and SCIM
+/// did not make the suspension (`suspended_by_scim` is the link's flag): only a person lifts
+/// that one. The row is held while this is decided.
+pub async fn leave_org(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+    suspended_by_scim: bool,
+    actor: &AuditActor,
+) -> Result<(), ApiError> {
+    let kept = aurora_db::repo::idp_roles::org_row(&mut *conn, org, user)
+        .await?
+        .is_some_and(|m| m.status == "suspended" && !suspended_by_scim);
+    if kept {
+        remove_keeping_suspension(conn, org, user, actor).await
+    } else {
+        remove_membership(conn, org, user, actor).await
+    }
+}
+
+/// The membership row stays, suspended, so that neither a later `POST` nor a link moved back
+/// brings the account back active. Everything else goes as in [`remove_membership`].
+async fn remove_keeping_suspension(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+    actor: &AuditActor,
+) -> Result<(), ApiError> {
+    tracing::info!(
+        org = %org,
+        user = %user,
+        "the directory dropped a suspended member; the suspended membership is kept"
+    );
+    members::strip_keeping_membership(&mut *conn, org, user).await?;
+    // (FIX-262, C-1164) As in [`suspend_membership`].
+    crate::domains::emergency_access::service::end_lost_in_tx(&mut *conn, actor, org, user).await?;
+    notify(conn, org, user).await?;
+    let ev = AuditEvent::new(actor.clone(), "member.update", Outcome::Success)
+        .org(org)
+        .target("user", user)
+        .metadata(json!({
+            "via": crate::domains::scim::service::VIA,
+            "reason": "suspension_kept",
+        }));
     crate::audit::insert_tx(&mut *conn, &ev)
         .await
         .map_err(|_| ApiError::unavailable("audit_unavailable", "The audit log is unavailable."))?;

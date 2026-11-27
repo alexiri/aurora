@@ -2085,3 +2085,485 @@ async fn the_sweep_expires_due_grants_and_prunes_past_retention() {
             .unwrap();
     assert!(gone.is_none(), "the old row is deleted");
 }
+
+// ---------------------------------------------------------------- FIX-262: ends with the owner
+
+impl W {
+    /// The grant's end reason, its access-lost audit rows, and what the person's banner says.
+    async fn assert_lost(&self, grant: Uuid) {
+        let reason: Option<String> =
+            sqlx::query_scalar("SELECT end_reason FROM workspace_emergency_access WHERE id = $1")
+                .bind(grant)
+                .fetch_one(self.h.pool())
+                .await
+                .unwrap();
+        assert_eq!(reason.as_deref(), Some("access_lost"), "the grant ended");
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = 'workspace.emergency_access.end' \
+             AND target_id = $1 AND metadata->>'end_reason' = 'access_lost' AND critical",
+        )
+        .bind(grant.to_string())
+        .fetch_one(self.h.pool())
+        .await
+        .unwrap();
+        assert_eq!(n, 1, "one critical end row");
+    }
+
+    /// After the ownership came back: the old grant stays ended.
+    async fn assert_stays_ended(&self) {
+        let reader = aurora_db::authz::emergency_reader(self.h.pool(), self.opener, self.ws)
+            .await
+            .unwrap();
+        assert!(reader.is_none(), "the old grant never comes back");
+        let (s, v) = self
+            .call(
+                &self.person_tok,
+                Method::GET,
+                &format!("/v1/workspaces/{}", self.ws),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["audience"]["emergency"]["active"], json!(false), "{v}");
+    }
+
+    async fn opened(&self, reason: &str) -> Uuid {
+        let (s, v) = self.open(&self.opener_tok, json!({"reason": reason})).await;
+        assert_eq!(s, 201, "{v}");
+        v["id"].as_str().unwrap().parse().unwrap()
+    }
+}
+
+/// SCIM's suspension (also what `active: false` runs) ends the grant in its own transaction, so
+/// a reactivation never brings the old grant back. The SCIM routes refuse to touch an owner
+/// today (SEC-72), so the deprovisioning functions are driven directly.
+#[tokio::test]
+async fn a_scim_suspension_ends_the_grant_for_good() {
+    use aurora_api::domains::scim::deprovision;
+    let w = world().await;
+    let grant = w.opened("suspended by the directory").await;
+    let actor = aurora_api::audit::AuditActor::system("scim-test");
+    let mut tx = w.h.pool().begin().await.unwrap();
+    deprovision::suspend_membership(&mut tx, w.org, w.opener, &actor)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    w.assert_lost(grant).await;
+    let mut tx = w.h.pool().begin().await.unwrap();
+    deprovision::reactivate_membership(&mut tx, w.org, w.opener, &actor)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    w.assert_stays_ended().await;
+}
+
+/// SCIM's removal ends the grant in its own transaction too.
+#[tokio::test]
+async fn a_scim_removal_ends_the_grant_for_good() {
+    use aurora_api::domains::scim::deprovision;
+    let w = world().await;
+    let grant = w.opened("removed by the directory").await;
+    let actor = aurora_api::audit::AuditActor::system("scim-test");
+    let mut tx = w.h.pool().begin().await.unwrap();
+    deprovision::remove_membership(&mut tx, w.org, w.opener, &actor)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    w.assert_lost(grant).await;
+    w.h.member(w.org, w.opener, "owner", "active").await;
+    w.assert_stays_ended().await;
+}
+
+/// An instance admin disabling the account ends every open grant the person holds; enabling the
+/// account again does not bring one back.
+#[tokio::test]
+async fn disabling_the_account_ends_the_grant_for_good() {
+    let w = world().await;
+    let grant = w.opened("the account gets disabled").await;
+    let root = w.h.user("root-262@x.io", true).await;
+    let (_, root_tok) = w.h.good_session(root).await;
+    let uri = format!("/v1/admin/users/{}", w.opener);
+    for disabled in [true, false] {
+        let (s, v) = w
+            .call(
+                &root_tok,
+                Method::PATCH,
+                &uri,
+                Some(json!({"disabled": disabled})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+    }
+    w.assert_lost(grant).await;
+    w.assert_stays_ended().await;
+    // A new sign-in reads nothing through the old grant.
+    let (_, fresh) = w.h.good_session(w.opener).await;
+    let (s, v) = w.events(&fresh).await;
+    assert!(matches!(s, 403 | 404), "{s} {v}");
+}
+
+// ---------------------------------------------------------------- FIX-262: every read recorded
+
+/// `(kind, target)` of every `workspace.emergency_read` row, oldest first.
+async fn emergency_reads(h: &Harness) -> Vec<(String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT metadata->>'kind', target_id FROM audit_log \
+         WHERE action = 'workspace.emergency_read' ORDER BY created_at, id",
+    )
+    .fetch_all(h.pool())
+    .await
+    .unwrap()
+}
+
+async fn fail_critical_audit(h: &Harness) {
+    sqlx::query(
+        "CREATE FUNCTION audit_critical_fail() RETURNS trigger AS $$ BEGIN \
+         RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql",
+    )
+    .execute(h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER audit_critical_fail BEFORE INSERT ON audit_log FOR EACH ROW \
+         WHEN (NEW.critical) EXECUTE FUNCTION audit_critical_fail()",
+    )
+    .execute(h.pool())
+    .await
+    .unwrap();
+}
+
+const CONTENT: &str = "WORKSPACE-content-262";
+
+/// One content read: its URI, the row's kind, its target (`None` for a list), and whether the
+/// answer carries the seeded content.
+struct Read {
+    uri: String,
+    kind: &'static str,
+    target: Option<Uuid>,
+    marked: bool,
+}
+
+/// Seeds one of each kind of content as the workspace's own person and returns the reads of it.
+async fn content_reads(w: &W) -> Vec<Read> {
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM conversations WHERE id = $1")
+        .bind(w.conv)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET brief = $2 WHERE id = $1")
+        .bind(agent)
+        .bind(CONTENT)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let post = async |uri: String, body: Value| -> Value {
+        let (s, v) = w.call(&w.person_tok, Method::POST, &uri, Some(body)).await;
+        assert!((200..300).contains(&s), "{uri}: {s} {v}");
+        v
+    };
+    post(
+        format!("/v1/agents/{agent}/memories"),
+        json!({"key": "k", "content": CONTENT}),
+    )
+    .await;
+    let memory: Uuid = sqlx::query_scalar("SELECT id FROM memories WHERE agent_id = $1")
+        .bind(agent)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let v = post(
+        format!("/v1/agents/{agent}/schedules"),
+        json!({"name": "s", "prompt": CONTENT, "cron": "0 * * * *"}),
+    )
+    .await;
+    let schedule: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let v = post(
+        format!("/v1/agents/{agent}/webhooks"),
+        json!({"name": "h", "instructions": CONTENT}),
+    )
+    .await;
+    let webhook: Uuid = v["webhook"]["id"].as_str().unwrap().parse().unwrap();
+    // An automation thread, so the agent's folder list names the schedule.
+    sqlx::query(
+        "UPDATE conversations SET automation_kind = 'schedule', automation_id = $2 WHERE id = $1",
+    )
+    .bind(w.conv)
+    .bind(schedule)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let mut skills = Vec::new();
+    for (agent_id, ws, name) in [
+        (Some(agent), None, "agent-skill"),
+        (None, Some(w.ws), "ws-skill"),
+    ] {
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO skills (id, org_id, workspace_id, agent_id, name, description, body, \
+             created_by_kind) VALUES ($1,$2,$3,$4,$5,'d',$6,'user')",
+        )
+        .bind(id)
+        .bind(w.org)
+        .bind(ws)
+        .bind(agent_id)
+        .bind(name)
+        .bind(CONTENT)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+        skills.push(id);
+    }
+    let r = |uri: String, kind, target, marked| Read {
+        uri,
+        kind,
+        target,
+        marked,
+    };
+    let ws = w.ws;
+    vec![
+        r(format!("/v1/agents/{agent}/memories"), "memory", None, true),
+        r(
+            format!("/v1/agents/{agent}/memories/k"),
+            "memory",
+            Some(memory),
+            true,
+        ),
+        r(
+            format!("/v1/agents/{agent}/schedules"),
+            "schedule",
+            None,
+            true,
+        ),
+        r(
+            format!("/v1/schedules/{schedule}"),
+            "schedule",
+            Some(schedule),
+            true,
+        ),
+        r(
+            format!("/v1/agents/{agent}/webhooks"),
+            "webhook",
+            None,
+            true,
+        ),
+        r(
+            format!("/v1/webhooks/{webhook}"),
+            "webhook",
+            Some(webhook),
+            true,
+        ),
+        r(format!("/v1/agents/{agent}/skills"), "skill", None, false),
+        r(
+            format!("/v1/skills/{}", skills[0]),
+            "skill",
+            Some(skills[0]),
+            true,
+        ),
+        r(
+            format!("/v1/skills/{}", skills[1]),
+            "skill",
+            Some(skills[1]),
+            true,
+        ),
+        r(format!("/v1/agents/{agent}"), "agent", Some(agent), true),
+        r(
+            format!("/v1/workspaces/{ws}/activity"),
+            "activity",
+            None,
+            false,
+        ),
+        r(
+            format!("/v1/agents/{agent}/timeline"),
+            "timeline",
+            None,
+            false,
+        ),
+    ]
+}
+
+/// The reads whose dedup row another read of the list above already holds (a list row has no
+/// target): each must record when it is the first of its kind.
+async fn more_reads(w: &W, reads: &[Read]) -> Vec<Read> {
+    let agent = reads[9].target.unwrap();
+    let schedule = reads[3].target.unwrap();
+    let webhook = reads[5].target.unwrap();
+    let r = |uri: String, kind, target| Read {
+        uri,
+        kind,
+        target,
+        marked: false,
+    };
+    vec![
+        r(
+            format!("/v1/schedules/{schedule}/runs"),
+            "schedule",
+            Some(schedule),
+        ),
+        r(
+            format!("/v1/webhooks/{webhook}/deliveries"),
+            "webhook",
+            Some(webhook),
+        ),
+        r(format!("/v1/workspaces/{}/skills", w.ws), "skill", None),
+        r(format!("/v1/workspaces/{}/agents", w.ws), "agent", None),
+        r(
+            format!("/v1/agents/{agent}/conversation-folders"),
+            "schedule",
+            None,
+        ),
+    ]
+}
+
+/// Every content read under emergency access leaves one `workspace.emergency_read` row, written
+/// before the body; the same read within the hour writes none.
+#[tokio::test]
+async fn every_workspace_content_read_is_recorded_once_an_hour() {
+    let w = world().await;
+    let reads = content_reads(&w).await;
+    let more = more_reads(&w, &reads).await;
+    let grant = w.opened("reading everything").await;
+    let each = reads
+        .iter()
+        .map(|r| (r, true))
+        .chain(more.iter().map(|r| (r, false)));
+    for (r, first_pass) in each {
+        // The second group shares dedup keys with the first: start it from an empty log.
+        if !first_pass {
+            sqlx::query("DELETE FROM audit_log WHERE action = 'workspace.emergency_read'")
+                .execute(w.h.pool())
+                .await
+                .unwrap();
+        }
+        let before = emergency_reads(&w.h).await.len();
+        let (s, v) = w.call(&w.opener_tok, Method::GET, &r.uri, None).await;
+        assert_eq!(s, 200, "{}: {v}", r.uri);
+        if r.marked {
+            assert!(v.to_string().contains(CONTENT), "{}: {v}", r.uri);
+        }
+        let rows = emergency_reads(&w.h).await;
+        assert_eq!(rows.len(), before + 1, "{}: one row, {rows:?}", r.uri);
+        let want = (r.kind.to_owned(), r.target.map(|t| t.to_string()));
+        assert!(rows.contains(&want), "{}: {want:?} in {rows:?}", r.uri);
+        let (s, v) = w.call(&w.opener_tok, Method::GET, &r.uri, None).await;
+        assert_eq!(s, 200, "{}: {v}", r.uri);
+        assert_eq!(
+            emergency_reads(&w.h).await.len(),
+            before + 1,
+            "{}: deduplicated within the hour",
+            r.uri
+        );
+    }
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM audit_log WHERE action = 'workspace.emergency_read' \
+         AND critical AND workspace_id = $1 AND actor_id = $2 \
+         AND metadata->>'emergency_access' = $3",
+    )
+    .bind(w.ws)
+    .bind(w.opener)
+    .bind(grant.to_string())
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert!(
+        n >= 1,
+        "the rows name the grant, the reader and the workspace"
+    );
+}
+
+/// A record that cannot be written refuses the read: 503 and no content.
+#[tokio::test]
+async fn a_workspace_read_that_cannot_be_recorded_is_refused() {
+    let w = world().await;
+    let reads = content_reads(&w).await;
+    let more = more_reads(&w, &reads).await;
+    w.opened("the audit is down").await;
+    fail_critical_audit(&w.h).await;
+    for r in reads.iter().chain(&more) {
+        let (s, v) = w.call(&w.opener_tok, Method::GET, &r.uri, None).await;
+        assert_eq!(s, 503, "{}: {v}", r.uri);
+        assert_eq!(code(&v), "audit_unavailable", "{}: {v}", r.uri);
+        assert!(!v.to_string().contains(CONTENT), "{}: {v}", r.uri);
+    }
+}
+
+/// A person reading with their own access writes no emergency record.
+#[tokio::test]
+async fn an_own_access_reader_leaves_no_emergency_record() {
+    let w = world().await;
+    let reads = content_reads(&w).await;
+    let more = more_reads(&w, &reads).await;
+    w.opened("someone else holds a grant").await;
+    for r in reads.iter().chain(&more) {
+        let (s, v) = w.call(&w.person_tok, Method::GET, &r.uri, None).await;
+        assert_eq!(s, 200, "{}: {v}", r.uri);
+    }
+    assert_eq!(emergency_reads(&w.h).await, Vec::new());
+}
+
+// ---------------------------------------------------------------- FIX-262: keys and streams
+
+/// A stream opened with an API key reads on the key's own access only: it ends when that access
+/// is removed, even while the key's holder has a session-opened grant, and records no view.
+#[tokio::test]
+async fn a_key_opened_stream_ends_with_the_holders_own_access() {
+    let w = world().await;
+    w.opened("a grant the key must not use").await;
+    w.h.bind_ws(w.ws, w.opener, "owner").await;
+    seed_key(&w.h, w.org, Some(w.ws), w.opener, "auk_stream-token").await;
+    let app = test_router(
+        w.h.state
+            .clone()
+            .with_stream_recheck(std::time::Duration::from_millis(250)),
+    );
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri(format!("/v1/conversations/{}/stream", w.conv))
+                .header("authorization", bearer("auk_stream-token"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status().as_u16(), 200);
+    let mut body = Body::new(res.into_body());
+    // The replay arrives while the own access holds.
+    let mut bytes = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !String::from_utf8_lossy(&bytes).contains(MARKER) {
+        let frame = tokio::time::timeout_at(deadline, body.frame()).await;
+        let f = frame.expect("the replay in time").expect("open").unwrap();
+        if let Ok(d) = f.into_data() {
+            bytes.extend_from_slice(&d);
+        }
+    }
+    sqlx::query("DELETE FROM workspace_access WHERE workspace_id = $1 AND user_id = $2")
+        .bind(w.ws)
+        .bind(w.opener)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let ended = loop {
+        match tokio::time::timeout_at(deadline, body.frame()).await {
+            Ok(Some(Ok(f))) => {
+                if let Ok(d) = f.into_data() {
+                    bytes.extend_from_slice(&d);
+                }
+            }
+            Ok(_) => break true,
+            Err(_) => break false,
+        }
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(ended, "the key's stream ends with its own access: {text}");
+    assert!(text.contains("access.changed"), "{text}");
+    let views: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'conversation.emergency_view'",
+    )
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(views, 0, "a key never reads through the grant");
+}

@@ -2,7 +2,7 @@
 //!
 //! Parts of one generation are staged on disk under `.aurora/sync/` (never buffered in memory) and
 //! idempotently overwritten on replay. Only [`HomeProjector::commit`] touches the live projection:
-//! staged files are renamed into place, managed roots are pruned to the manifest and instruction
+//! staged files are installed, managed roots are pruned to the manifest and instruction
 //! files are re-rendered. A crash before commit leaves the previous projection intact; the next
 //! generation (or a restart of the same one at part 0) wipes the stale staging area.
 //!
@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::io::Write as _;
+use std::io::Read as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -33,6 +33,7 @@ use serde_json::{Map, Value};
 
 use crate::harvest::{INDEX_FILE, MEMORY_DIR, seal, verify};
 use crate::instructions::{RenderInputs, render_with};
+use crate::nofollow;
 use crate::pg::PgDatabase;
 
 /// The `databases` of an installed `render_inputs.json`.
@@ -129,18 +130,8 @@ fn clean_rel(p: &str) -> Option<PathBuf> {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(parent)?;
-    let name = path
-        .file_name()
-        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let tmp = parent.join(format!(".{name}.aurora-tmp"));
-    let _ = fs::remove_file(&tmp);
-    let mut f = fs::File::create(&tmp)?;
-    f.write_all(bytes)?;
-    f.set_permissions(fs::Permissions::from_mode(mode))?;
-    f.sync_all()?;
-    fs::rename(&tmp, path)
+    fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
+    nofollow::write_atomic(path, bytes, mode)
 }
 
 /// (C-643) Root of the app folders in the home.
@@ -214,6 +205,55 @@ fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(e.path());
         }
     }
+}
+
+/// Removes every file under `dir` that `keep` (paths relative to `root`) does not name, then
+/// every folder that is left empty.
+fn prune_to(root: &Path, dir: &Path, keep: &BTreeSet<PathBuf>) {
+    let mut files = Vec::new();
+    walk_files(dir, &mut files);
+    for f in files {
+        if f.strip_prefix(root).is_ok_and(|r| !keep.contains(r)) {
+            let _ = fs::remove_file(&f);
+        }
+    }
+    let mut dirs = Vec::new();
+    walk_dirs(dir, &mut dirs);
+    for d in dirs {
+        let _ = fs::remove_dir(&d); // only succeeds when empty
+    }
+}
+
+/// Installs one staged file, `file` being `src` already opened and checked, at `dst` with
+/// `mode`, and removes `src`. The content comes from the open file, never from the path: the
+/// staging area is in the agent's home, so `src` may name something else by now. Returns the
+/// installed bytes.
+fn install_staged(
+    root: &Path,
+    file: fs::File,
+    src: &Path,
+    dst: &Path,
+    mode: u32,
+) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    file.take(STAGED_READ_MAX + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > STAGED_READ_MAX {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "staged file too large",
+        ));
+    }
+    if let Some(p) = dst.parent() {
+        // Every managed destination: no link in the chain from the home down.
+        if let Ok(rp) = p.strip_prefix(root) {
+            clear_link_chain(root, rp);
+        }
+        fs::create_dir_all(p)?;
+    }
+    nofollow::write_atomic(dst, &bytes, mode)?;
+    // The whole staging area is removed after the commit anyway.
+    let _ = fs::remove_file(src);
+    Ok(bytes)
 }
 
 fn walk_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -375,11 +415,19 @@ impl HomeProjector {
                     match clean_rel(&e.path) {
                         Some(r) if is_helper_path(&r) => {
                             let staged_mode = if e.exec { 0o700 } else { 0o600 };
-                            write_atomic(
+                            // One helper the home cannot hold (a file that is also a folder)
+                            // is skipped: it must not stall the whole sync.
+                            if let Err(error) = write_atomic(
                                 &self.staged_files().join(&r),
                                 e.content.as_bytes(),
                                 staged_mode,
-                            )?;
+                            ) {
+                                tracing::warn!(
+                                    path = %e.path.escape_debug(),
+                                    %error,
+                                    "helper file not written; skipped"
+                                );
+                            }
                         }
                         _ => {
                             tracing::warn!(
@@ -434,7 +482,7 @@ impl HomeProjector {
         Ok(())
     }
 
-    /// Installs the staged generation: renames staged files into place, prunes managed roots to the
+    /// Installs the staged generation: installs the staged files, prunes managed roots to the
     /// manifest (agent-edited memory files are kept until superseded), renders instructions.
     pub fn commit(&mut self, generation: u64) -> Result<(), HomeError> {
         let root = self.cfg.root.clone();
@@ -465,6 +513,9 @@ impl HomeProjector {
         clear_link_chain(&root, Path::new(HELPERS_DIR));
         unlink_tree_symlinks(&helpers_root);
         set_dirs(&helpers_root, 0o755);
+        // The helpers are pruned before the install, so that a name can turn from a file into a
+        // folder (or back) between two generations.
+        prune_to(&root, &helpers_root, &keep);
 
         // Install.
         let mut staged = Vec::new();
@@ -477,6 +528,15 @@ impl HomeProjector {
             };
             let rel = rel.to_path_buf();
             let dst = root.join(&rel);
+            // The staging area is in the agent's home too: only a regular file is installed, and
+            // its mode and content are read from the open descriptor.
+            let file = match nofollow::open_regular(&src) {
+                Ok(f) => f,
+                Err(error) => {
+                    tracing::warn!(path = %rel.display(), %error, "staged file refused");
+                    continue;
+                }
+            };
             let locked = self.locked_keys.contains(&rel);
             let mode = if rel.starts_with(MEMORY_DIR) {
                 if rel.file_name().is_some_and(|n| n == INDEX_FILE) || locked {
@@ -485,36 +545,32 @@ impl HomeProjector {
                 } else {
                     0o644
                 }
-            } else if fs::metadata(&src)?.permissions().mode() & 0o100 != 0 {
+            } else if file.metadata()?.permissions().mode() & 0o100 != 0 {
                 0o555
             } else {
                 0o444
             };
+            let bytes = match install_staged(&root, file, &src, &dst, mode) {
+                Ok(b) => b,
+                Err(error) => {
+                    if !is_helper_path(&rel) {
+                        return Err(error.into());
+                    }
+                    tracing::warn!(path = %rel.display(), %error, "helper file not installed; skipped");
+                    continue;
+                }
+            };
             if locked {
                 // The harvest restores these exact (sealed) bytes instead of uploading an edit.
                 match rel.file_name().and_then(|n| n.to_str()) {
-                    Some(n) => match fs::read(&src) {
-                        Ok(b) => {
-                            locked_bytes.insert(n.trim_end_matches(".md").to_owned(), b);
-                        }
-                        Err(e) => {
-                            tracing::warn!(path = %rel.display(), error = %e, "locked memory file not recorded");
-                        }
-                    },
+                    Some(n) => {
+                        locked_bytes.insert(n.trim_end_matches(".md").to_owned(), bytes);
+                    }
                     None => {
                         tracing::warn!(path = %rel.display(), "locked memory file name refused")
                     }
                 }
             }
-            if let Some(p) = dst.parent() {
-                // Every managed destination: no link in the chain from the home down.
-                if let Ok(rp) = p.strip_prefix(&root) {
-                    clear_link_chain(&root, rp);
-                }
-                fs::create_dir_all(p)?;
-            }
-            fs::set_permissions(&src, fs::Permissions::from_mode(mode))?;
-            fs::rename(&src, &dst)?;
             keep.insert(rel);
         }
 
@@ -533,6 +589,8 @@ impl HomeProjector {
                 let _ = fs::remove_dir(&d); // only succeeds when empty
             }
         }
+        // A link at `memory` must not let the prune remove files elsewhere.
+        clear_link_chain(&root, Path::new(MEMORY_DIR));
         if let Ok(rd) = fs::read_dir(root.join(MEMORY_DIR)) {
             for e in rd.filter_map(Result::ok) {
                 let p = e.path();
@@ -577,24 +635,10 @@ impl HomeProjector {
                 lock_tree(&apps_root);
             }
         }
-        // (P6-TPL-6, C-1143) The helper files: pruned to the manifest like the app folders, so a
-        // removed helper disappears, then locked read-only (0555/0444 files, 0555 dirs).
-        {
-            let mut files = Vec::new();
-            walk_files(&helpers_root, &mut files);
-            for f in files {
-                if f.strip_prefix(&root).is_ok_and(|r| !keep.contains(r)) {
-                    let _ = fs::remove_file(&f);
-                }
-            }
-            let mut dirs = Vec::new();
-            walk_dirs(&helpers_root, &mut dirs);
-            for d in dirs {
-                let _ = fs::remove_dir(&d);
-            }
-            if helpers_root.is_dir() {
-                lock_tree(&helpers_root);
-            }
+        // (P6-TPL-6, C-1143) The helper files (pruned to the manifest before the install, so a
+        // removed helper is gone): locked read-only (0555/0444 files, 0555 dirs).
+        if helpers_root.is_dir() {
+            lock_tree(&helpers_root);
         }
 
         // .aurora cache + instruction files.
@@ -766,12 +810,16 @@ fn lock_tree(root: &Path) {
     let mut files = Vec::new();
     walk_files(root, &mut files);
     for f in files {
-        // Executable skill files stay 0555; everything else is 0444.
-        let exec = fs::metadata(&f).is_ok_and(|m| m.permissions().mode() & 0o100 != 0);
-        let _ = fs::set_permissions(
-            &f,
-            fs::Permissions::from_mode(if exec { 0o555 } else { 0o444 }),
-        );
+        // Only a regular file, and the mode is read and set on its open descriptor: a link
+        // here (planted after the link sweep) is never followed.
+        if !fs::symlink_metadata(&f).is_ok_and(|m| m.is_file()) {
+            continue;
+        }
+        let _ = nofollow::open_regular(&f).and_then(|file| {
+            // Executable skill files stay 0555; everything else is 0444.
+            let exec = file.metadata()?.permissions().mode() & 0o100 != 0;
+            nofollow::set_mode(&file, if exec { 0o555 } else { 0o444 })
+        });
     }
     set_dirs(root, 0o555);
 }
@@ -779,6 +827,70 @@ fn lock_tree(root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fresh folder with `home/` and, beside it, a file outside the home at mode 0600.
+    fn scratch() -> (PathBuf, PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("aurora-home-{}", uuid::Uuid::now_v7()));
+        let home = dir.join("home");
+        fs::create_dir_all(&home).unwrap();
+        let victim = dir.join("victim");
+        fs::write(&victim, "outside").unwrap();
+        fs::set_permissions(&victim, fs::Permissions::from_mode(0o600)).unwrap();
+        (dir, home, victim)
+    }
+
+    fn mode_of(p: &Path) -> u32 {
+        fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    /// The staged path may become a link after it was opened and checked: what is installed is
+    /// what the open file holds, never whatever the path names by then.
+    #[test]
+    fn a_staged_path_swapped_for_a_link_installs_the_checked_file() {
+        let (dir, home, victim) = scratch();
+        let (src, dst) = (home.join("staged"), home.join("managed/file"));
+        fs::write(&src, "checked bytes").unwrap();
+        let file = nofollow::open_regular(&src).unwrap();
+        fs::remove_file(&src).unwrap();
+        std::os::unix::fs::symlink(&victim, &src).unwrap();
+
+        let installed = install_staged(&home, file, &src, &dst, 0o444).unwrap();
+
+        assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_file());
+        assert_eq!(fs::read(&dst).unwrap(), b"checked bytes");
+        assert_eq!(installed, b"checked bytes");
+        assert_eq!(mode_of(&dst), 0o444);
+        assert!(
+            fs::symlink_metadata(&src).is_err(),
+            "the staged path is removed"
+        );
+        assert_eq!(fs::read(&victim).unwrap(), b"outside");
+        assert_eq!(mode_of(&victim), 0o600);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A link may appear in a managed tree after the link sweep: locking the tree must not
+    /// change the mode of what it points at.
+    #[test]
+    fn locking_a_tree_does_not_chmod_through_a_link() {
+        let (dir, home, victim) = scratch();
+        let tree = home.join("helpers");
+        fs::create_dir_all(tree.join("sub")).unwrap();
+        for (name, mode) in [("run.sh", 0o700), ("sub/note", 0o600)] {
+            fs::write(tree.join(name), "x").unwrap();
+            fs::set_permissions(tree.join(name), fs::Permissions::from_mode(mode)).unwrap();
+        }
+        std::os::unix::fs::symlink(&victim, tree.join("sub/link")).unwrap();
+
+        lock_tree(&tree);
+
+        assert_eq!(mode_of(&victim), 0o600, "outside file chmodded");
+        assert_eq!(mode_of(&tree.join("run.sh")), 0o555);
+        assert_eq!(mode_of(&tree.join("sub/note")), 0o444);
+        assert_eq!(mode_of(&tree.join("sub")), 0o555);
+        set_dirs(&tree, 0o755);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     /// (P6-MEMLOCK, C-1149) `locked` is optional on a file entry: an older API never sends it and
     /// an unlocked memory's entry has no key at all; only `true` marks the file.

@@ -383,9 +383,15 @@ auth:
    ones are added. Claim-derived ones whose value is gone are removed. Removing an org
    role drops the user to the strongest role they still hold from another source. If
    they have no other source, the membership is removed: it was the claim that admitted
-   them. The sync never removes or lowers a **suspended** workspace binding (FIX-261,
-   D-501): when its claim lapses or weakens it stays as it is, still suspended, and only
-   a person lifts it (*Suspension in one workspace*).
+   them. The sync never lifts a suspension, of a **suspended** workspace binding (FIX-261,
+   D-501) or of a **suspended** org membership (FIX-256, D-492). When the claim behind a
+   suspended row lapses, the row stays, still suspended, and becomes an ordinary manual
+   row: it goes back to its base role, or to `member` when the claim had created it
+   (audited like any other lapse, and logged with ids only). A claim that only weakens
+   leaves a suspended row as it is. A returning claim never reactivates a suspended row.
+   Only a person lifts a suspension (*Suspended in one workspace*). One exception to the
+   conversion: a claim-sourced binding in a personal workspace is never unbound or lowered
+   by the sync (FIX-244), so a suspended one there stays claim-managed.
 2. Each assignment remembers its source (`idp:<provider>:<value>`). Roles given by hand
    (invitation, dashboard, JIT, SCIM, `bootstrap-admin`, `auth.instance_admins`) are
    **never** changed or removed by the sync, and the strongest source wins (as for
@@ -580,7 +586,29 @@ sessions (other workspaces and orgs are unaffected), API keys (refused, not revo
 and everything they own. Restoring sets the row `active` again. Only a person lifts a
 suspension, through the restore or remove routes and their rules (D-501): the sign-in claim
 sync leaves the row alone, and removing the person from the organization keeps it, so it
-still applies if they join again. Audit:
+still applies if they join again. While the person is not an active member of the org, the
+binding is not addressable: `PATCH` and `DELETE` answer 404 before any change, like an
+unknown binding (FIX-256, D-492).
+
+**The same rule for the organization** (FIX-256, D-492). A suspended org membership is
+lifted only by a person through the API's rules, never by the identity provider's sync:
+the sign-in claim sync neither removes nor reactivates it (*OIDC role claims*, step 1),
+and a SCIM `DELETE`, or a SCIM link moved to another account, keeps a membership whose
+suspension SCIM did not make, suspended (*SCIM*, Deprovisioning). An administrator can still restore or remove such a
+member.
+
+**Current behaviour at the edges** of both rules:
+- a stronger claim still raises the role stored on a suspended **workspace binding** (it
+  grants nothing until someone restores it, and the restore then gives the raised role);
+  a suspended org membership's role is not changed by a returning or stronger claim;
+- a suspension does not follow a person to a **new user row** (the account deleted and
+  made again, or a SCIM link moved to another user). The **old** account keeps it: a move
+  leaves a membership SCIM did not suspend in place, suspended, as a `DELETE` does, so a
+  link moved back finds it still suspended;
+- account deletion's "sole personal workspace" check counts a kept binding like any other
+  person's binding.
+
+Audit:
 `workspace_access.suspend|restore` (critical). The single SQL definition is the
 `effective_workspace_access` view; the gateway role's `can_use` restates it, and a
 source-scan guard (`aurora-db` `membership_queries`) lists every other raw reader of the
@@ -1074,7 +1102,7 @@ invalidation (`org` and `user` scopes, `aurora_auth_revoked` kinds `access` and 
 
 | Effect | Suspend | Remove |
 |--------|---------|--------|
-| Org membership | `suspended` (role kept; "non-member for every check", *Roles*) | row deleted; workspace bindings and group memberships go with it, except **suspended** workspace bindings, which stay and grant nothing (FIX-261, D-501: a re-join must not lift a suspension; every removal of a membership does the same) |
+| Org membership | `suspended` (role kept; "non-member for every check", *Roles*) | row deleted; workspace bindings and group memberships go with it, except **suspended** workspace bindings, which stay and grant nothing (FIX-261, D-501: a re-join must not lift a suspension; every removal of a membership does the same). (FIX-256, D-492) A membership **someone other than SCIM suspended** (`suspended_by_scim = false`) is not deleted: it stays `suspended` (audited `member.update`, `reason: "suspension_kept"`), everything else in this column happens, group memberships and non-suspended bindings included, and a later `POST` adopts it still suspended |
 | Sessions | revoked **only if the user has no other active membership** in any org (they would be signed into nothing); otherwise kept: the org's data is already 404 | same |
 | API keys (`auk_`, `auo_`) of this org owned by the user | **revoked** (`revoked_at`; not merely dormant: a reactivation never revives a key that may have leaked); keys of other orgs untouched | same |
 | Running work | turns spoken by the user in this org and `joining` follow-ups: queued ones `aborted`, live ones get `turn.abort` and end `aborted` with `error_code = user_deprovisioned`; their speaker binding is gone from the next gateway request | same |
@@ -1083,7 +1111,7 @@ invalidation (`org` and `user` scopes, `aurora_auth_revoked` kinds `access` and 
 | Direct conversations, authored content | kept; owners still read them (`§The access law`); the content keeps its label | kept |
 | Pending invitations of this org for the link's `userName` or the account's e-mail | cancelled | cancelled |
 | JIT / invitation / sign-in re-entry | refused for this org while `suspended` or `removed` (*OIDC* note) | same |
-| Reactivation (`active=true`) | membership `active` again **only if SCIM suspended it** (`scim_users.suspended_by_scim`): a membership an org admin suspended by hand is never reactivated by the IdP; revoked keys stay revoked, aborted turns stay aborted, disabled automations stay disabled (owners re-enable) | `POST` re-adds a member |
+| Reactivation (`active=true`) | membership `active` again **only if SCIM suspended it** (`scim_users.suspended_by_scim`): a membership an org admin suspended by hand is never reactivated by the IdP; revoked keys stay revoked, aborted turns stay aborted, disabled automations stay disabled (owners re-enable) | `POST` re-adds a member (a kept, suspended membership stays suspended) |
 
 SCIM never deletes a `users` row or an account and never touches other orgs: a person in two
 orgs deprovisioned by one remains a user of the other.
@@ -1375,14 +1403,18 @@ legal and incident work sometimes needs the content.
   files, preview and grants route refuses it. The reader sees every
   conversation of the workspace, direct ones included.
 - **Every read is recorded.** Each response carrying a conversation's content
-  writes `conversation.emergency_view` before the body is sent; a failed
-  write refuses the read (503). The open, list and end responses carry
-  metadata only.
+  writes `conversation.emergency_view` before the body is sent; every other
+  read of workspace content under the grant (memory, schedules, webhooks,
+  skills, agents, activity, the timeline) writes `workspace.emergency_read`
+  (FIX-262, D-502, C-1165); a failed write refuses the read (503). The open,
+  list and end responses carry metadata only.
 - **It ends.** At `expires_at`, evaluated on every use (never only by the
   sweep); early, by the opener or any active org owner (critical audit row,
   idempotent); with `access_lost` when the opener stops being an active org
-  owner, in the same transaction as that change. Rows are kept 400 days for
-  the history views, then the nightly sweep deletes them.
+  owner (a person's, a claim's or SCIM's change) or their account is
+  disabled, in the same transaction as that change. An ended grant never
+  comes back. Rows are kept 400 days for the history views, then the nightly
+  sweep deletes them.
 
 ## Invitations
 

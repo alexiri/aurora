@@ -161,19 +161,118 @@ struct ChosenAccount {
     grant: PutConnectionGrant,
 }
 
-/// Everything the transaction needs, checked and fetched before it.
 /// The 409 of a create against anything but the offered version the request answered to
-/// (C-1110, SEC-146 B): with the plan as the reload answer.
-fn version_changed(plan: &dto::TemplatePlan) -> ApiError {
-    ApiError::conflict(
+/// (C-1110, SEC-146 B): with the plan as the reload answer, when there is one.
+fn version_changed(plan: Option<&dto::TemplatePlan>) -> ApiError {
+    let e = ApiError::conflict(
         "template_version_changed",
         "This template was updated. Check the changes, then create.",
-    )
-    .with_details(json!({ "plan": plan }))
+    );
+    match plan {
+        Some(plan) => e.with_details(json!({ "plan": plan })),
+        None => e,
+    }
 }
 
+/// [`version_changed`] once the offer has moved under the request: the plan is built again, so
+/// the answer carries the current one. A template that is not available any more (withdrawn,
+/// or turned off by the organization) has no plan.
+async fn current_version_changed(
+    state: &AppState,
+    caller: &Caller,
+    ws: Uuid,
+    template_id: &str,
+) -> ApiError {
+    match super::workspace::plan(state, caller, ws, template_id).await {
+        Ok(plan) => version_changed(Some(&plan)),
+        Err(e) if e.code() == "not_found" => version_changed(None),
+        Err(e) => e,
+    }
+}
+
+/// A rendered skill keeps the limits of an edit: filling in the inputs and names can push a
+/// text over them after the version was validated (422 `template_too_large`).
+pub(crate) fn rendered_skill_ok(s: &aurora_template::RenderedSkill) -> Result<(), ApiError> {
+    let files: Vec<&[u8]> = s.files.iter().map(|f| f.bytes.as_slice()).collect();
+    skills_domain::service::check_composed(&s.use_it_when, &s.body, &files).map_err(|e| {
+        // An empty description is not a size problem: it keeps the edit's own error.
+        if s.use_it_when.trim().is_empty() {
+            return e;
+        }
+        let field = e.details().and_then(|d| d.get("fields")?.get(0));
+        let limit = match field {
+            Some(f) => format!(
+                "{}: {}",
+                f["path"].as_str().unwrap_or("").trim_start_matches('/'),
+                f["message"].as_str().unwrap_or("")
+            ),
+            None => e.message().to_owned(),
+        };
+        ApiError::unprocessable(
+            "template_too_large",
+            format!(
+                "The skill {} is too large once the template is filled in ({}).",
+                s.name,
+                limit.trim_end_matches('.')
+            ),
+        )
+    })
+}
+
+/// Every automation choice names one of the template's schedules (C-1111): a choice that
+/// matched nothing would leave the real schedule created as the template has it.
+fn automations_ok(
+    choices: &[AutomationChoice],
+    rendered: &aurora_template::RenderedTemplate,
+) -> Result<(), ApiError> {
+    for (i, c) in choices.iter().enumerate() {
+        let refused = |field: &str, message: &str| {
+            ApiError::unprocessable("invalid_request", "Invalid request.").with_details(json!({
+                "fields": [{"path": format!("/automations/{i}/{field}"), "message": message}]
+            }))
+        };
+        if c.kind != "schedule" {
+            return Err(refused("kind", "must be schedule"));
+        }
+        let known = rendered.automations.iter().any(|a| {
+            matches!(a, aurora_template::RenderedAutomation::Schedule { name, .. } if *name == c.name)
+        });
+        if !known {
+            return Err(refused("name", "the template has no schedule of this name"));
+        }
+    }
+    Ok(())
+}
+
+/// What a create has made outside its transaction: the sealed webhook secrets and the avatar
+/// blob. Each is recorded as soon as it may exist, so a failure at any later step removes it
+/// (SEC-146 D).
+#[derive(Default)]
+struct Outside {
+    /// The webhooks whose secrets are sealed, in the template's order.
+    hooks: Vec<(webhooks::PreparedWebhook, Option<Value>)>,
+    avatar_key: Option<String>,
+}
+
+impl Outside {
+    async fn discard(&self, state: &AppState, org: Uuid, ws: Uuid) {
+        for (hook, verification) in &self.hooks {
+            if let Some(r) = webhooks::stored_ref(verification) {
+                webhooks::discard_for(state, org, ws, hook.id, &r).await;
+            }
+        }
+        if let Some(key) = &self.avatar_key {
+            let (_, store) = blob::current(&state.pool);
+            let _ = store.delete(key).await;
+        }
+    }
+}
+
+/// Everything the transaction needs, checked and fetched before it.
 struct Prepared<'a> {
     req: &'a CreateFromTemplateRequest,
+    /// The agent's name, cleaned as any agent create cleans it.
+    name: &'a str,
     plan: &'a dto::TemplatePlan,
     content: &'a aurora_template::TemplateContent,
     rendered: &'a aurora_template::RenderedTemplate,
@@ -197,12 +296,15 @@ pub async fn create_from_template(
 ) -> Result<CreatedFromTemplate, ApiError> {
     org_switch::ensure_enabled(state)?;
     let auth = caller.workspace(state, ws).await?;
+    // The agent is a hosted one on the default harness: the rules of any hosted create.
+    agents::service::hosted_enabled(state)?;
+    agents::service::harness_ok(state, &state.ops().hosted.default_harness)?;
     // The plan decides (C-1110): it is also the 409's reload answer, so build it first.
     let plan = super::workspace::plan(state, caller, ws, &req.template_id).await?;
     if req.version != plan.version
         || plan.content_sha256.as_deref() != Some(req.content_sha256.as_str())
     {
-        return Err(version_changed(&plan));
+        return Err(version_changed(Some(&plan)));
     }
     // The stored version row: the bytes creation copies are exactly the approved content.
     let t = trepo::template_by_template_id(&state.pool, &req.template_id)
@@ -220,7 +322,7 @@ pub async fn create_from_template(
         || content.meta.version != v.version
         || aurora_template::content_sha256(&content) != req.content_sha256
     {
-        return Err(version_changed(&plan));
+        return Err(current_version_changed(state, caller, ws, &req.template_id).await);
     }
 
     // The inputs (C-1104's rules, all problems at once).
@@ -253,16 +355,21 @@ pub async fn create_from_template(
         .await?
         .map(|u| u.display_name)
         .unwrap_or_else(|| caller.email.clone());
-    let rendered = aurora_template::render(&content, &checked, &req.name, &person);
+    // The name is cleaned before anything renders it, as any agent create cleans it.
+    let name = agents::service::name_ok(&req.name)?;
+    let rendered = aurora_template::render(&content, &checked, &name, &person);
     if rendered.instructions.chars().count() > agents::service::BRIEF_MAX {
         return Err(ApiError::unprocessable(
             "template_too_large",
             "The rendered instructions are too large for an agent brief.",
         ));
     }
+    for s in &rendered.skills {
+        rendered_skill_ok(s)?;
+    }
+    automations_ok(&req.automations, &rendered)?;
     // The name, handle and max_agents rules of agent creation apply (C-1111); the agent-limit
     // and handle-uniqueness rules live in `agents::service::insert_in_tx`.
-    agents::service::name_ok(&req.name)?;
     if let Some(h) = &req.handle
         && !agents::service::valid_handle(h)
     {
@@ -360,124 +467,125 @@ pub async fn create_from_template(
         }
     }
 
-    // The webhooks' secrets are sealed before the transaction (vault IO); the agent that does
-    // not exist yet is named by its org and workspace.
-    let mut prepared_hooks: Vec<(webhooks::PreparedWebhook, Option<Value>)> = Vec::new();
-    for a in &rendered.automations {
-        if let aurora_template::RenderedAutomation::Webhook {
-            name,
-            instructions,
-            verification,
-        } = a
-        {
-            let input = match verification {
-                aurora_template::Verification::None => Some(webhooks::dto::VerificationInput {
-                    kind: "none".into(),
-                    header: None,
-                    secret: None,
-                    generate_secret: false,
-                }),
-                // Signed and password hooks get the create default (or bearer): a new secret
-                // Aurora generates, shown once in the answer (C-1111).
-                aurora_template::Verification::Password => Some(webhooks::dto::VerificationInput {
-                    kind: "bearer".into(),
-                    header: None,
-                    secret: None,
-                    generate_secret: true,
-                }),
-                aurora_template::Verification::Signed => None,
-            };
-            let p = webhooks::prepare(
-                webhooks::Create {
-                    name: name.clone(),
-                    instructions: instructions.clone(),
-                    verification: input,
-                    anchor: "creator",
-                },
-                Some(caller.user_id),
-            )?;
-            let verification = p.seal(state, auth.org_id, ws).await?;
-            prepared_hooks.push((p, verification));
-        }
-    }
-
-    // The avatar blob goes to the store before the transaction; the row joins it.
-    let avatar = match &rendered.avatar {
-        Some((_, bytes)) => {
-            let (_, store) = blob::current(&state.pool);
-            let key = blob::new_key();
-            store.put(&key, bytes).await?;
-            let public_key = agents::avatar::new_public_key()?;
-            Some((key, public_key))
-        }
-        None => None,
-    };
-
-    let p = Prepared {
-        req: &req,
-        plan: &plan,
-        content: &content,
-        rendered: &rendered,
-        inputs_json,
-        accounts,
-        refs: &prepared_refs,
-        hooks: &prepared_hooks,
-        avatar,
-    };
-
-    // ---- the one transaction -------------------------------------------------------------------
-    let mut tx = audit::begin(state).await?;
-    // Re-read the offer under the row locks and re-verify (SEC-146 B): the offered version may
-    // have moved between the plan and this transaction. The FOR SHARE holds the template row
-    // and the version rows until the commit (a concurrent approval waits behind it), and the
-    // agent is stamped with the version this transaction read, not the one the plan showed.
-    let t = trepo::template_by_template_id_share(&mut *tx, &req.template_id)
-        .await?
-        .ok_or_else(not_found)?;
-    let v = admin::offered_version_share(&mut *tx, t.id)
-        .await?
-        .ok_or_else(|| version_changed(&plan))?;
-    if v.version != req.version || v.content_sha256.as_deref() != Some(req.content_sha256.as_str())
-    {
-        return Err(version_changed(&plan));
-    }
-    let result = create_in_tx(&mut tx, state, caller, &auth, ws, &p, &notes).await;
-    // Either commit path can fail (SEC-146 D): a failure after the avatar blob put and the
-    // vault seals must still clean up what was created outside the transaction, so both the
-    // in-transaction errors and the commit errors fall through to the same cleanup.
-    let outcome = match result {
-        Ok((created, events)) => {
-            // The critical events (the grants, the library adds) commit with the transaction;
-            // without any, a plain commit (C-1111: all or nothing).
-            if events.is_empty() {
-                tx.commit()
-                    .await
-                    .map_err(aurora_db::DbError::from)
-                    .map_err(ApiError::from)
-                    .map(|_| created)
-            } else {
-                audit::commit_critical_many(tx, &events)
-                    .await
-                    .map(|_| created)
+    // ---- everything from the first seal to the commit ------------------------------------------
+    // One block, so that every way out of it but success passes the cleanup below (SEC-146 D).
+    // `Ok(None)`: the offer moved on before the transaction.
+    let mut outside = Outside::default();
+    let outcome: Result<Option<CreatedFromTemplate>, ApiError> = async {
+        // The webhooks' secrets are sealed before the transaction (vault IO); the agent that
+        // does not exist yet is named by its org and workspace.
+        for a in &rendered.automations {
+            if let aurora_template::RenderedAutomation::Webhook {
+                name,
+                instructions,
+                verification,
+            } = a
+            {
+                let input = match verification {
+                    aurora_template::Verification::None => Some(webhooks::dto::VerificationInput {
+                        kind: "none".into(),
+                        header: None,
+                        secret: None,
+                        generate_secret: false,
+                    }),
+                    // Signed and password hooks get the create default (or bearer): a new
+                    // secret Aurora generates, shown once in the answer (C-1111).
+                    aurora_template::Verification::Password => {
+                        Some(webhooks::dto::VerificationInput {
+                            kind: "bearer".into(),
+                            header: None,
+                            secret: None,
+                            generate_secret: true,
+                        })
+                    }
+                    aurora_template::Verification::Signed => None,
+                };
+                let p = webhooks::prepare(
+                    webhooks::Create {
+                        name: name.clone(),
+                        instructions: instructions.clone(),
+                        verification: input,
+                        anchor: "creator",
+                    },
+                    Some(caller.user_id),
+                )?;
+                let verification = p.seal(state, auth.org_id, ws).await?;
+                outside.hooks.push((p, verification));
             }
         }
-        Err(e) => Err(e),
-    };
-    match outcome {
-        Ok(created) => Ok(created),
-        Err(e) => {
-            // Roll back (tx drops) and clean up what was created outside it.
-            for (hook, verification) in &prepared_hooks {
-                if let Some(r) = webhooks::stored_ref(verification) {
-                    webhooks::discard_for(state, auth.org_id, ws, hook.id, &r).await;
-                }
-            }
-            if let Some((key, _)) = &p.avatar {
+
+        // The avatar blob goes to the store before the transaction; the row joins it.
+        let avatar = match &rendered.avatar {
+            Some((_, bytes)) => {
                 let (_, store) = blob::current(&state.pool);
-                let _ = store.delete(key).await;
+                let key = blob::new_key();
+                // Recorded first: a put that fails may have written something.
+                outside.avatar_key = Some(key.clone());
+                store.put(&key, bytes).await?;
+                let public_key = agents::avatar::new_public_key()?;
+                Some((key, public_key))
             }
-            Err(e)
+            None => None,
+        };
+
+        let p = Prepared {
+            req: &req,
+            name: &name,
+            plan: &plan,
+            content: &content,
+            rendered: &rendered,
+            inputs_json,
+            accounts,
+            refs: &prepared_refs,
+            hooks: &outside.hooks,
+            avatar,
+        };
+
+        // ---- the one transaction ---------------------------------------------------------------
+        let mut tx = audit::begin(state).await?;
+        // Re-read the offer and re-verify (SEC-146 B): it may have moved between the plan and
+        // this transaction, and the agent is stamped with the version verified here. FOR SHARE
+        // holds the template row and the approved version rows until the commit, so a
+        // withdrawal or a change to those rows waits. It does not hold back the approval of a
+        // pending version (that row is not locked): this create then still makes the version
+        // it verified. The organization's switch is a plain read.
+        let t = trepo::template_by_template_id_share(&mut *tx, &req.template_id)
+            .await?
+            .ok_or_else(not_found)?;
+        if trepo::org_disabled(&mut *tx, auth.org_id)
+            .await?
+            .contains(&t.template_id)
+        {
+            return Ok(None);
         }
+        let Some(v) = admin::offered_version_share(&mut *tx, t.id).await? else {
+            return Ok(None);
+        };
+        if v.version != req.version
+            || v.content_sha256.as_deref() != Some(req.content_sha256.as_str())
+        {
+            return Ok(None);
+        }
+        let (created, events) = create_in_tx(&mut tx, state, caller, &auth, ws, &p, &notes).await?;
+        // The critical events (the grants, the library adds) commit with the transaction;
+        // without any, a plain commit (C-1111: all or nothing).
+        if events.is_empty() {
+            tx.commit().await.map_err(aurora_db::DbError::from)?;
+        } else {
+            audit::commit_critical_many(tx, &events).await?;
+        }
+        Ok(Some(created))
+    }
+    .await;
+    if let Ok(Some(created)) = outcome {
+        return Ok(created);
+    }
+    // The transaction is rolled back (it was dropped with the block); remove what was made
+    // outside it.
+    outside.discard(state, auth.org_id, ws).await;
+    match outcome {
+        Err(e) => Err(e),
+        Ok(_) => Err(current_version_changed(state, caller, ws, &req.template_id).await),
     }
 }
 
@@ -714,7 +822,7 @@ async fn create_in_tx(
         org,
         ws,
         "hosted",
-        &p.req.name,
+        p.name,
         p.req.handle.clone(),
         Some(harness),
         Some(effort),

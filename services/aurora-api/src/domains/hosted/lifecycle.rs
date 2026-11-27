@@ -188,6 +188,21 @@ async fn no_wakeup_notice(conn: &mut PgConnection, t: &TurnRow) -> Result<(), Ap
     if wake_registered {
         return Ok(());
     }
+    // (FIX-253, D-490(b)) A task the peer hook moved to `waiting` has a wake (the pending
+    // approval's decision, if nothing else): no no-wakeup notice for it.
+    let waiting = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM peer_tasks pt
+            WHERE pt.task_conversation_id = $1 AND pt.status = 'waiting'
+         )",
+    )
+    .bind(t.conversation_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(aurora_db::DbError::from)?;
+    if waiting {
+        return Ok(());
+    }
     let name = aurora_db::repo::agents::get(&mut *conn, t.agent_id)
         .await?
         .map(|a| a.name)
