@@ -176,6 +176,16 @@ both themes (mocked data). Not committed; `MEMORY_SHOTS=<dir> … web playwright
 - `pnpm typecheck`, eslint on touched files, `cargo fmt --all --check`, `scripts/guards/run-all.sh`,
   `extract-schema.py --check`: all clean on the final tree. `pnpm build` not run.
 
+### Drift guards (gate addition, after the first commit)
+
+`audit-actions`, `arbitrary-values`, `ui-text`, `labels`:
+- `arbitrary-values` failed on `border-l-[3px]`, in the History rows **and in `memory-list.tsx`, merged with
+  P5-MEMORY-2, so master fails this guard today**. Both are `border-l-3` now (same 3 px), in a second commit; after it
+  `memory-history` **8/8** and `memory` **14/14** mocked (on web ports 4143/4144: another lane held 4100).
+- `audit-actions` still fails, **not from this lane and not changed here**: `skill.agent_off` and `skill.agent_on`
+  (P5-SKILLS-1, `domains/skills/routes.rs`, on master) are missing from `tests/fixtures/audit-actions.json` and
+  `lib/labels.ts`. `ui-text` and `labels` pass. No Rust touched, so no clippy.
+
 ### Security notes
 
 No SEC row. Names are the API's display names (never an e-mail; tested); a conversation is named only from its reference
