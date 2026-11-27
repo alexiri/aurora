@@ -405,18 +405,34 @@ optional ref, folder, optional read-only token, check interval). Then, per
 check (default daily, minimum every 6 hours):
 
 1. Aurora reads the head of the tracked ref. If nothing changed since the last
-   check and no version is waiting for its package, it stops.
-2. It reads `aurora-templates.yaml` and every `<dir>/template.yaml`: new
-   templates are listed, broken ones are flagged for the admin, and a head
-   `version` newer than every stored version becomes a **candidate**.
+   check and no version is waiting for its package, it stops. A check that
+   could not store something it read (the problem `template_not_stored`) does
+   not count the head as read, so the next check reads it again.
+2. It reads `aurora-templates.yaml` and every `<dir>/template.yaml` in the
+   source's folder: new templates are listed, broken ones are flagged for the
+   admin, and a head `version` newer than every stored version becomes a
+   **candidate**.
 3. For each candidate it downloads the package from the rendered
-   `packages.url` (https, at most 3 redirects, streamed under the size cap,
-   30 s timeout). A missing or failing package is retried for up to 24 hours
-   (first retry after about 15 minutes) and then the version is marked
-   invalid for good.
-4. A downloaded package is unpacked, validated, and compared with the source
-   tree at that commit: both must have the same `content_sha256`. On a match
-   the version goes to **pending approval** with its full parsed content.
+   `packages.url` (https, at most 3 redirects, relative or absolute, streamed
+   under the size cap, 30 s timeout). A missing or failing package is retried
+   (first retry after about 15 minutes) until 24 hours after the version was
+   first seen. If the last failure was one that can pass by itself (the
+   download failed, the repository could not be read, or Aurora could not
+   re-encode the avatar), it is retried for 48 hours instead; a package that
+   is not there (404 or 410) gets 24. Then the version is marked invalid for
+   good.
+4. A downloaded package is unpacked, validated, and compared with the template
+   directory (`<folder>/<dir>`) at that commit: both must have the same
+   content hash, the one `aurora template pack` prints after `content:`. On a
+   match the version goes to **pending approval** with its full parsed
+   content. Aurora stores the avatar re-encoded as a 256×256 PNG, and the
+   hash an approval is bound to (`content_sha256`) is that of the **stored**
+   content. So for a template **with an avatar** it differs from `pack`'s
+   `content:` line; without one the two are equal. The dashboard's review page
+   shows the commit and neither hash. To match a reviewed version to a CI run,
+   compare the commit, or the package's hash: `pack`'s `sha256:` is the
+   `archive_sha256` of the version in the admin API (which also carries
+   `content_sha256`).
 5. An admin reviews — everything the agent would be told or given, in full —
    and approves or rejects. Only an approved version is offered.
 

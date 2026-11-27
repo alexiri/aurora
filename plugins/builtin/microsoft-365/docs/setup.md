@@ -51,8 +51,14 @@ time.
   (OneDrive, SharePoint), the beta API, other users' resources and other hosts are not.
 - The Graph `$batch` endpoint is not offered: one request can mix reads and writes, so it cannot
   be classified.
-- Sending drafts, replying, deleting or moving mail, updating or deleting events, sharing links
-  and Teams are not offered.
+- Sending drafts, replying, forwarding, deleting or moving mail, updating, cancelling or deleting
+  events, sharing links and Teams are not offered.
+- Only the operations of this package work: every other request to Graph is blocked, whatever
+  access you give an agent. Since version 1.8.0, **full access** means every operation listed here,
+  not everything the account's token can do: an agent can no longer create a draft and send it,
+  reply or forward, or change or cancel an event under full access. Mail and invitations leave
+  only through the send and create operations, which ask for approval first unless you set that
+  operation itself to *Allowed*.
 - Sign-in uses the sign-in app's directory (tenant) ID, or the multitenant `common` endpoint when
   none is set. One sign-in app serves one directory; people from another directory need a
   multitenant registration.

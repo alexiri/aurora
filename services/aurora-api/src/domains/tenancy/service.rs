@@ -638,6 +638,39 @@ pub fn personal_workspace_owner_only(first: &str) -> ApiError {
     )
 }
 
+/// (FIX-261, D-501, SEC-161) The rules of an act that **lifts a suspension** of `target` in the
+/// workspace: restoring the binding, or removing it (the person's group access then applies
+/// again). In a personal workspace only its person may; lifting one's own without own `can_own`
+/// is a self-grant, which needs a session. `Ok(true)` for a self-grant: the caller then writes
+/// the `self_grant` row in `tx` and sends the notice after the commit.
+///
+/// Call it with the binding row already locked in `tx`. The caller's access is read here, not
+/// taken from `a.own`: that was read before the lock, so a suspension committed in between would
+/// still show the caller the access they are about to give back.
+pub async fn lifting_suspension(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    c: &crate::http::auth::Caller,
+    a: &crate::http::auth::AdminAuth,
+    target: Uuid,
+) -> Result<bool, ApiError> {
+    let caller_owns = aurora_db::authz::workspace_access(&mut *tx, c.user_id, a.workspace_id)
+        .await?
+        .is_some_and(|o| o.can_own());
+    if let Some(person) = a.personal_of
+        && (c.user_id != person || !caller_owns)
+    {
+        return Err(personal_workspace_owner_only(
+            &person_first_name(state, person).await?,
+        ));
+    }
+    let self_grant = target == c.user_id && !caller_owns;
+    if self_grant {
+        super::self_grant::require_session(c)?;
+    }
+    Ok(self_grant)
+}
+
 /// The turn end of a workspace suspension (P5-APIGAP-4, C-1051).
 const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
     crate::domains::scim::deprovision::TurnEnd {
@@ -652,26 +685,31 @@ const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
 /// invalidations (gateway identities of the person, open streams) and the critical audit row.
 /// The same status again is a no-op without audit. A personal workspace's person can never be
 /// suspended there — the person included (D-480).
-#[allow(clippy::too_many_arguments)]
+///
+/// (FIX-261, D-501, SEC-161) Restoring is a **grant**, under the rules of adding: in a personal
+/// workspace only its person restores anyone, and restoring oneself without own `can_own` is a
+/// self-grant (session only, the critical `self_grant` row, the other owners told).
 pub async fn set_access_status(
     state: &AppState,
-    org: Uuid,
-    ws: Uuid,
-    personal_of: Option<Uuid>,
-    caller: Uuid,
+    c: &crate::http::auth::Caller,
+    a: &crate::http::auth::AdminAuth,
     target: Uuid,
     status: super::dto::AccessStatus,
     mut ev: crate::audit::AuditEvent,
 ) -> Result<(), ApiError> {
     use super::dto::AccessStatus;
+    let (org, ws, personal_of, caller) = (a.org_id, a.workspace_id, a.personal_of, c.user_id);
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
-    let Some((_role, cur, idp_role)) = workspaces::lock_binding(&mut tx, ws, target).await? else {
+    let Some((role, cur, idp_role)) = workspaces::lock_binding(&mut tx, ws, target).await? else {
         return Err(ApiError::not_found("Binding not found."));
     };
     if cur == status.as_str() {
         return Ok(());
     }
-    if status == AccessStatus::Suspended {
+    let mut self_grant = false;
+    if status == AccessStatus::Active {
+        self_grant = lifting_suspension(state, &mut tx, c, a, target).await?;
+    } else {
         if target == caller {
             return Err(ApiError::conflict(
                 "cannot_suspend_self",
@@ -712,9 +750,15 @@ pub async fn set_access_status(
     aurora_db::repo::groups::notify_member_changed(&mut tx, org, target).await?;
     notify_auth_revoked(&mut *tx, "user", target).await?;
     ev.metadata["change"] = serde_json::json!({"status": format!("{cur} → {}", status.as_str())});
+    if self_grant {
+        super::self_grant::audit_tx(&mut tx, c, org, ws, &role, "restore").await?;
+    }
     crate::audit::commit_critical(tx, &ev).await?;
-    for (c, t) in flush {
-        crate::domains::hosted::lifecycle::flush_deltas(state, c, t).await;
+    for (conv, turn) in flush {
+        crate::domains::hosted::lifecycle::flush_deltas(state, conv, turn).await;
+    }
+    if self_grant {
+        super::self_grant::notify_committed(state, org, ws, c, &role).await;
     }
     Ok(())
 }

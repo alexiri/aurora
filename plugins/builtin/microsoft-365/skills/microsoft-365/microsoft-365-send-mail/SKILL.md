@@ -8,9 +8,11 @@ description: "Send a mail as the person: the exact command, the approval wait, h
 **First check you may send:** `aurora-agent describe microsoft-365 send_mail` shows your access. If it is
 `blocked`, you cannot send: offer the person the text to send themselves.
 
-Replying, forwarding, saving drafts, moving and deleting mail are **not available**: `/reply`,
-`/forward`, `/createReply` and drafts are refused. To answer a mail, send a new one to the sender with
-`Re: <subject>` and quote what is needed.
+Mail goes out **only** through `send_mail`. Replying, forwarding, saving or sending drafts, moving
+and deleting mail are **not available**, whatever access you have: `/reply`, `/replyAll`, `/forward`,
+`/createReply` and drafts (`POST /me/messages`, `/me/messages/<id>/send`) are blocked, and no
+approval can allow them. To answer a mail, send a new one to the sender with `Re: <subject>` and
+quote what is needed.
 
 ## 1. Agree on the mail with the person
 

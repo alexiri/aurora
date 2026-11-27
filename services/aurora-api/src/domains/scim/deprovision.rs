@@ -93,8 +93,8 @@ pub async fn reactivate_membership(
     Ok(())
 }
 
-/// Remove the membership row (workspace bindings and group memberships go with it, by the
-/// composite foreign keys).
+/// Remove the membership row. Group memberships go with it (foreign key) and
+/// `members::remove` deletes the workspace bindings, except suspended ones.
 pub async fn remove_membership(
     conn: &mut PgConnection,
     org: Uuid,

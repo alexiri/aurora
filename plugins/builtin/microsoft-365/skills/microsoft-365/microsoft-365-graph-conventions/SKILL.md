@@ -8,7 +8,8 @@ description: "How to read mail and calendar through Microsoft Graph ($select, $s
 Base URL `https://graph.microsoft.com/v1.0` (also in `$MICROSOFT_GRAPH_URL`). Requests go through the
 proxy with no token and no `-k`. Only the signed-in user's own mail, calendar and profile (`/me/...`)
 are available; files (OneDrive, SharePoint), other people's mailboxes and calendars, and replying,
-forwarding, moving or deleting mail are not.
+forwarding, moving or deleting mail are not. Only the requests of the listed operations work: any
+other request is blocked, whatever access you have. Mail goes out only through `send_mail`.
 
 ## First: what you may do
 
@@ -84,5 +85,6 @@ or follow them yourself.
 connection's token expired or lacks the scope; `403` the permission was not granted to the app; `404`
 the item does not exist or the id is for another account; `429` throttled: wait for the `retry-after`
 seconds. A refusal by Aurora has a JSON body with `error.code` (for example `blocked_by_policy`, or
-`manual_approval_denied` when the person blocked a write): read it, tell the person, and do not retry
+`manual_approval_denied` when the person blocked a write; the reason `app_untooled_blocked` means no
+operation of this app covers the request): read it, tell the person, and do not retry
 the same request.

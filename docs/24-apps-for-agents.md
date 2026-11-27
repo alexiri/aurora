@@ -397,6 +397,8 @@ workspace and organization policy can be stricter than this list, never looser.
   (`grants.mode`, `allow_tools`, `ask_tools`): `full` → every tool `allowed`; `custom` → `allowed`
   if in `allow_tools`, `approval` if in `ask_tools`, else `blocked`. The last section is
   `allowed` only for a `full` grant of an app without `grants.block_untooled` (`09 §3.4 grants`).
+  Built-in `microsoft-365` has it (D-504), so its agents see that section as `blocked` under every
+  grant, and its skills say that mail goes out only through `send_mail`.
 - It is **not** the effective view (`07 §Effective views`): hand-written rules, conditions,
   rate limits and the speaker are not evaluated, because the effective view depends on who is
   speaking and policy publication does not resync homes. The header says so. The table can

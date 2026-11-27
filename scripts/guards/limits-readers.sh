@@ -14,7 +14,9 @@ cd "$ROOT"
 
 LIMITS=crates/aurora-core/src/limits.rs
 ALLOW=scripts/guards/limits-gaps.allow
-DOC="$(ls docs/02-*.md | head -1)"
+docs02=(docs/02-*.md)
+DOC="${docs02[0]}"
+[ -f "$DOC" ] || { echo "limits guard: no docs/02-*.md" >&2; exit 1; }
 
 listed() { grep -qE "^$1[[:space:]]+$2([[:space:]]|$)" "$ALLOW" 2>/dev/null; }
 
@@ -37,17 +39,18 @@ check() { # name tag present(0/1) message
   fi
 }
 
-for n in $(grep -oE '^pub const [A-Z][A-Z0-9_]*' "$LIMITS" | awk '{print $3}'); do
+while read -r n; do
   if grep -qw -e "$n" "$corpus"; then check "$n" unread 1 ""; else check "$n" unread 0 "has no reader outside $LIMITS"; fi
   if grep -qw -e "$n" "$DOC"; then check "$n" no-row 1 ""; else check "$n" no-row 0 "has no row in $DOC"; fi
-done
+done < <(grep -oE '^pub const [A-Z][A-Z0-9_]*' "$LIMITS" | awk '{print $3}')
 
-for n in $(grep -oE '`[A-Z][A-Z0-9]*(_[A-Z0-9]+)+`' "$DOC" | tr -d '`' | sort -u); do
+# shellcheck disable=SC2016  # the backticks are the Markdown being searched for
+while read -r n; do
   if grep -qw "^pub const $n" "$LIMITS" || grep -qE "^pub const $n\b" "$LIMITS"; then
     check "$n" doc-only 1 ""
   else
     check "$n" doc-only 0 "is named in $DOC but is not a constant of $LIMITS"
   fi
-done
+done < <(grep -oE '`[A-Z][A-Z0-9]*(_[A-Z0-9]+)+`' "$DOC" | tr -d '`' | sort -u)
 
 exit "$fail"

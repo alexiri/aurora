@@ -370,6 +370,51 @@ async fn leaving_the_org_empties_every_membership() {
     assert_eq!(groups::member_count(&pool, g2).await.unwrap(), 0);
 }
 
+/// (FIX-261, D-501) Leaving deletes active bindings, never a suspended one: the row grants
+/// nothing, and after a re-join it still keeps group access off until a person lifts it.
+#[tokio::test]
+async fn leaving_the_org_keeps_a_suspension() {
+    let (_db, pool) = TestDb::with_pool().await;
+    let f = fx(&pool).await;
+    let other_ws = workspace(&pool, f.org).await;
+    let u = member(&pool, f.org, "member").await;
+    bind(&pool, f.ws, u, "owner").await;
+    bind(&pool, other_ws, u, "member").await;
+    sqlx::query(
+        "UPDATE workspace_access SET status = 'suspended' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(f.ws)
+    .bind(u)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut c = pool.acquire().await.unwrap();
+    aurora_db::repo::members::remove(&mut c, f.org, u)
+        .await
+        .unwrap();
+    drop(c);
+    let rows: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT workspace_id, status FROM workspace_access WHERE user_id = $1")
+            .bind(u)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, vec![(f.ws, "suspended".to_owned())], "{rows:?}");
+    assert!(!can_use(&pool, u, f.ws).await.unwrap());
+
+    // Back in the org and in a bound group: still nothing there.
+    sqlx::query("INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'member')")
+        .bind(f.org)
+        .bind(u)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let g = group(&pool, f.org, "g", None).await;
+    gbind(&pool, g, f.ws, f.org, "owner").await.unwrap();
+    add(&pool, g, f.org, u).await.unwrap();
+    assert!(!can_use(&pool, u, f.ws).await.unwrap());
+}
+
 #[tokio::test]
 async fn same_org_composite_foreign_keys() {
     let (_db, pool) = TestDb::with_pool().await;

@@ -28,7 +28,7 @@ found="$(grep -rnoE "\.config\.($sections)\.[a-z_]+" services crates --include='
 fail=0
 keys="$(printf '%s\n' "$found" | sed -E '/^$/d; s/^[^:]+:[0-9]+:\.config\.//' | sort -u)"
 for k in $keys; do
-  if ! grep -qE "^$k[[:space:]]" "$ALLOW" 2>/dev/null; then
+  if ! grep -qE "^${k}[[:space:]]" "$ALLOW" 2>/dev/null; then
     echo "live-settings guard: a reader of the boot config's '$k' (a live setting): use state.ops() (SET-5), or list it in $ALLOW if it is configuration-only (NOT_SETTINGS):" >&2
     printf '%s\n' "$found" | grep -E ":\.config\.$k\$" | sed 's/^/  /' >&2
     fail=1

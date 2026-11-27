@@ -50,13 +50,16 @@ for f in "$SK"/*/scripts/*; do
   [ -x "$f" ] || bad "not executable: $f"
 done
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck "$SK"/indico-find-and-book-room/scripts/free-rooms "$SK"/indico-book-recurring-room/scripts/series-free \
-    && ok "shellcheck" || bad "shellcheck"
+  if shellcheck "$SK"/indico-find-and-book-room/scripts/free-rooms "$SK"/indico-book-recurring-room/scripts/series-free; then
+    ok "shellcheck"
+  else
+    bad "shellcheck"
+  fi
 else
   echo "skip shellcheck (not installed)"
 fi
 for f in "$SK"/indico-meeting-prep/scripts/event-brief "$SK"/indico-meeting-prep/scripts/doc2text; do
-  python3 -I -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$f" && ok "python syntax $(basename "$f")" || bad "python syntax $f"
+  if python3 -I -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$f"; then ok "python syntax $(basename "$f")"; else bad "python syntax $f"; fi
 done
 
 # --- free-rooms: joined with the room list, sorted, filtered by building -----------------------

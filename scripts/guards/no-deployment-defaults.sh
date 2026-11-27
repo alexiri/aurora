@@ -44,6 +44,7 @@ if [ -n "$chart_hits" ]; then
   echo "$chart_hits" >&2
   fail=1
 fi
+# shellcheck disable=SC2016  # $cfg is the Helm template's variable
 if ! grep -q 'hasKey (default (dict) \$cfg.gateway) "insecure_loopback_injection"' deploy/helm/aurora/templates/configmap.yaml; then
   echo "no-deployment-defaults: FAIL: configmap.yaml must refuse config.gateway.insecure_loopback_injection" >&2
   fail=1
@@ -62,6 +63,7 @@ if [ -n "$override_hits" ]; then
   echo "$override_hits" >&2
   fail=1
 fi
+# shellcheck disable=SC2016  # $cfg is the Helm template's variable
 if ! grep -q 'hasKey (default (dict) \$cfg.llm) "dev_upstream_overrides"' deploy/helm/aurora/templates/configmap.yaml; then
   echo "no-deployment-defaults: FAIL: configmap.yaml must refuse config.llm.dev_upstream_overrides" >&2
   fail=1
@@ -80,6 +82,7 @@ if [ -n "$push_hits" ]; then
   echo "$push_hits" >&2
   fail=1
 fi
+# shellcheck disable=SC2016  # $ps is the Helm template's variable
 if ! grep -q 'hasKey \$ps "dev_endpoint_overrides"' deploy/helm/aurora/templates/configmap.yaml; then
   echo "no-deployment-defaults: FAIL: configmap.yaml must refuse config.push.dev_endpoint_overrides" >&2
   fail=1

@@ -1,6 +1,44 @@
-# Dangerous endpoints no tool offers (FIX-118): the request is classified but selects no tool, so
-# custom grants and `block_untooled` refuse it. All credentials and ids are fake.
+# Dangerous endpoints no tool offers (FIX-118): the request is classified but selects no tool, so the
+# package's `grants.block_untooled` refuses it under every grant, a full one included (FIX-273,
+# D-504; the gateway test `microsoft_365_full_grant_sends_nothing_outside_the_asking_tools` shows
+# the refusal itself). All credentials and ids are fake.
 - name: "refused mail deletion: DELETE a message selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: DELETE, url: "https://graph.microsoft.com/v1.0/me/messages/msg-fixture-1" }
-  expect: { app: microsoft-365 }
+  expect: { app: microsoft-365, no_tool: true }
+- name: "refused draft creation: POST /me/messages selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://graph.microsoft.com/v1.0/me/messages"
+    headers: { content-type: application/json }
+    body: '{"subject":"Draft","toRecipients":[{"emailAddress":{"address":"spy@evil.example"}}]}'
+  expect: { app: microsoft-365, no_tool: true }
+- name: "refused draft send: POST /me/messages/<id>/send selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://graph.microsoft.com/v1.0/me/messages/msg-fixture-1/send" }
+  expect: { app: microsoft-365, no_tool: true }
+- name: "refused mail forward: POST /me/messages/<id>/forward selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://graph.microsoft.com/v1.0/me/messages/msg-fixture-1/forward"
+    headers: { content-type: application/json }
+    body: '{"toRecipients":[{"emailAddress":{"address":"spy@evil.example"}}]}'
+  expect: { app: microsoft-365, no_tool: true }
+- name: "refused mail reply: POST /me/messages/<id>/reply selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://graph.microsoft.com/v1.0/me/messages/msg-fixture-1/reply" }
+  expect: { app: microsoft-365, no_tool: true }
+- name: "refused mail reply: POST /me/messages/<id>/replyAll selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://graph.microsoft.com/v1.0/me/messages/msg-fixture-1/replyAll" }
+  expect: { app: microsoft-365, no_tool: true }
+- name: "refused event change: PATCH an event (which can mail its attendees) selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/events/evt-fixture-1" }
+  expect: { app: microsoft-365, no_tool: true }
+- name: "refused event cancellation: POST /me/events/<id>/cancel selects no tool"
+  connection: { credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://graph.microsoft.com/v1.0/me/events/evt-fixture-1/cancel" }
+  expect: { app: microsoft-365, no_tool: true }

@@ -915,12 +915,8 @@ async fn put_access(
     let self_grant = user == c.user_id
         && !a.own.as_ref().is_some_and(|o| o.can_own())
         && rank_of(Some(req.role.as_str())) > rank_of(prev.as_ref().map(|r| r.role.as_str()));
-    if self_grant && !c.is_session() {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "session_required",
-            "Adding yourself to a workspace needs a signed-in session, not an API key.",
-        ));
+    if self_grant {
+        crate::domains::tenancy::self_grant::require_session(&c)?;
     }
     workspaces::bind_user(&mut *tx, ws, user, req.role.as_str()).await?;
     let ev = event(&c, "workspace_access.set")
@@ -929,25 +925,28 @@ async fn put_access(
         .target("user", user)
         .metadata(json!({"role": req.role.as_str(), "previous_role": prev.as_ref().map(|r| r.role.clone())}));
     if self_grant {
-        let ev2 = event(&c, "workspace_access.self_grant")
-            .org(a.org_id)
-            .workspace(ws)
-            .target("user", user)
-            .metadata(json!({"role": req.role.as_str(), "via": "user"}));
-        audit::insert_tx(&mut tx, &ev2).await?;
+        crate::domains::tenancy::self_grant::audit_tx(
+            &mut tx,
+            &c,
+            a.org_id,
+            ws,
+            req.role.as_str(),
+            "user",
+        )
+        .await?;
     }
     audit::commit_critical(tx, &ev).await?;
     if self_grant {
         // (FIX-234 review 5) The notice names the actor by their display name, never the
         // e-mail — `notify_for_user` resolves it like the other notices.
-        crate::domains::tenancy::self_grant::notify_for_user(
+        crate::domains::tenancy::self_grant::notify_committed(
             &s,
             a.org_id,
             ws,
             &c,
             req.role.as_str(),
         )
-        .await?;
+        .await;
     }
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?
@@ -958,6 +957,8 @@ async fn put_access(
 /// Suspend or restore a person's direct binding in this workspace only (`can_administer`,
 /// C-1160; P5-APIGAP-4, C-1051, SEC-138). A suspended binding grants nothing here, direct or
 /// through a group. A personal workspace's person is never suspended there (C-1161).
+// (FIX-261, D-501) Restoring follows the rules of adding, enforced in `set_access_status`: in a
+// personal workspace only its person restores, and restoring oneself is a self-grant.
 #[utoipa::path(patch, path = "/workspaces/{ws}/access/{user}", operation_id = "patchAccess", tag = "workspaces",
     params(("ws" = Uuid, Path, description = "Workspace id"), ("user" = Uuid, Path, description = "User id")),
     request_body = PatchAccessRequest,
@@ -981,17 +982,7 @@ async fn patch_access(
         .workspace(ws)
         .target("user", user)
         .metadata(json!({}));
-    service::set_access_status(
-        &s,
-        a.org_id,
-        ws,
-        a.personal_of,
-        c.user_id,
-        user,
-        req.status,
-        ev,
-    )
-    .await?;
+    service::set_access_status(&s, &c, &a, user, req.status, ev).await?;
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?
         .ok_or_else(|| ApiError::not_found("Binding not found."))?;
@@ -1025,6 +1016,15 @@ async fn delete_access(
     // removed like anyone's; only a personal workspace's person is protected (above).
     // RFE-021: reassignment and the unbind commit or roll back together.
     let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    // (FIX-261, D-501) Removing a suspended binding lifts the suspension, so group access
+    // applies again: the rules of restoring it. Lock the row first, as `set_access_status` does.
+    let mut self_grant_of = None;
+    if let Some((role, status, _)) = workspaces::lock_binding(&mut tx, ws, user).await?
+        && status == AccessStatus::Suspended.as_str()
+        && service::lifting_suspension(&s, &mut tx, &c, &a, user).await?
+    {
+        self_grant_of = Some(role);
+    }
     if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {
         return Err(crate::domains::admin::service::managed_by_idp());
     }
@@ -1056,7 +1056,24 @@ async fn delete_access(
         .org(a.org_id)
         .workspace(ws)
         .target("user", user);
+    // The self-grant names the access that came back with the removal; when no group gives any,
+    // the role of the binding whose suspension was lifted.
+    let self_grant = match self_grant_of {
+        None => None,
+        Some(removed) => Some(
+            authz::workspace_access(&mut *tx, user, ws)
+                .await?
+                .map_or(removed, |now| now.effective_ws_role.as_str().to_owned()),
+        ),
+    };
+    if let Some(role) = &self_grant {
+        crate::domains::tenancy::self_grant::audit_tx(&mut tx, &c, a.org_id, ws, role, "remove")
+            .await?;
+    }
     audit::commit_critical(tx, &ev).await?;
+    if let Some(role) = &self_grant {
+        crate::domains::tenancy::self_grant::notify_committed(&s, a.org_id, ws, &c, role).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

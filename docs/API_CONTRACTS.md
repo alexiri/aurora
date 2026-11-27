@@ -2857,9 +2857,9 @@ Rule: `docs/tasks/P6-TEMPLATES.md` (design), `docs/25-agent-templates.md` (the p
   - **`auo_` keys** act with their creator's own access: 403 `workspace_access_required` on workspace routes without it. The administer routes work with an org key except a self-grant (C-1161).
 
 - C-1161 **Personal workspaces and adding oneself** (FIX-234, C-1161, D-480; amends C-919, C-521, C-524).
-  - **Personal workspaces.** In a workspace with `personal_owner_user_id`, adding a person (`PUT …/access/{user}` creating a row, `by-email`), adding a group binding and raising a role (member→approver→owner, user or group) are allowed only to that person while they hold own `can_own` there; anyone else gets 403 `personal_workspace_owner_only` ("Only <First> can add people to their personal workspace."). Removing, lowering, suspending, deleting pending rows, freezing and deleting the workspace stay with `can_administer`. The person themselves can never be lowered, suspended or removed there: 409 `personal_workspace_person` (D-480: the person always owns their personal workspace; the migration binds every person `owner` and writes `workspace_access.personal_owner` audit rows). Membership driven by the organization's identity provider or SCIM is trusted for shared workspaces; an administrator who can mint SCIM tokens can therefore add people to groups bound to shared workspaces — a group bound to a personal workspace keeps the person-only rule through SCIM: SCIM refuses (403, the whole atomic change) an add of anyone but that person, and a link move skips such a group with a logged reason instead of failing the user's sync.
+  - **Personal workspaces.** In a workspace with `personal_owner_user_id`, adding a person (`PUT …/access/{user}` creating a row, `by-email`), adding a group binding and raising a role (member→approver→owner, user or group) are allowed only to that person while they hold own `can_own` there; anyone else gets 403 `personal_workspace_owner_only` ("Only <First> can add people to their personal workspace."). Removing, lowering, suspending, deleting pending rows, freezing and deleting the workspace stay with `can_administer`. Restoring a suspended binding (`PATCH …/access/{user}` `status: "active"`; amends C-1051; FIX-261, D-501) is a **grant**, unlike suspend, lower and remove: (a) in a personal workspace only that person, holding own `can_own` there, restores anyone (403 `personal_workspace_owner_only`); (b) restoring **oneself** without own `can_own` in the workspace is a self-grant (**Adding oneself**, below): a session (403 `session_required` for an API key), the critical `workspace_access.self_grant` row with `via: "restore"` beside `workspace_access.restore`, in the same transaction, and the notice to the other owners; (c) restoring someone else in a shared workspace stays a `can_administer` action. The same status again stays a no-op. **Removing** a suspended binding (`DELETE …/access/{user}`) lifts the suspension, so group-derived access applies again: it follows (a)–(c) exactly, with `via: "remove"` and the role the person then holds (the removed binding's role when they hold none); removing an active binding is unchanged. The sign-in claim sync never removes or lowers a suspended binding (it stays claim-managed, so `DELETE` still answers 409 `managed_by_idp`; restore is allowed, and the next sign-in then applies the claim), and removing an org membership by any path keeps the person's suspended bindings: they grant nothing, are not listed while the person is not an active member, and still apply after a re-join. The person themselves can never be lowered, suspended or removed there: 409 `personal_workspace_person` (D-480: the person always owns their personal workspace; the migration binds every person `owner` and writes `workspace_access.personal_owner` audit rows). Membership driven by the organization's identity provider or SCIM is trusted for shared workspaces; an administrator who can mint SCIM tokens can therefore add people to groups bound to shared workspaces — a group bound to a personal workspace keeps the person-only rule through SCIM: SCIM refuses (403, the whole atomic change) an add of anyone but that person, and a link move skips such a group with a logged reason instead of failing the user's sync.
   - **Placement.** `personal_role` is retired: new personal workspaces always bind their person `owner`; `GET /v1/admin/placement` answers `"owner"` for one release; `PUT` accepts the field and ignores it.
-  - **Adding oneself.** An administrator without own `can_own` who gives *themselves* access or a higher role in a shared workspace counts as a self-grant — their own user, a group they belong to, or raising their own role. It needs a session (an API key gets 403 `session_required`), writes the security-critical audit row `workspace_access.self_grant` (actor, workspace, role, `via: "user"|"group"`) in the same transaction, and tells by e-mail and Web Push every other active own-right owner — when there is none, every other active org owner. Text: "<Name> (organization admin) gave themselves <role> access to <Workspace>.", link to the workspace's People page.
+  - **Adding oneself.** An administrator without own `can_own` who gives *themselves* access or a higher role in a shared workspace counts as a self-grant — their own user, a group they belong to, raising their own role, or restoring or removing their own suspended binding. It needs a session (an API key gets 403 `session_required`), writes the security-critical audit row `workspace_access.self_grant` (actor, workspace, role, `via: "user"|"group"|"restore"|"remove"`) in the same transaction, and tells by e-mail and Web Push every other active own-right owner — when there is none, every other active org owner. Text: "<Name> (organization admin) gave themselves <role> access to <Workspace>.", link to the workspace's People page.
 
 - C-1162 **`Workspace.audience`** (FIX-234; additive on `GET /v1/workspaces/{ws}`). For any caller with own access or `can_administer`: `audience: { people: int, owners: [{ id, display_name }], owners_total: int }`. `people` counts distinct active users in `own_workspace_access`; `owners` holds the own-right owners, at most 5, the caller first if an owner, then by display name; `owners_total` is their count.
 
@@ -2907,6 +2907,66 @@ Rule: `docs/tasks/P6-TEMPLATES.md` (design), `docs/25-agent-templates.md` (the p
 - C-1168 **The AI keys an agent could be given** (FIX-249; additive new route, no migration or schema change; `05`, `08 §Key scopes`, `14`).
   - **`GET /v1/agents/{agent}/ai-keys`** (`can_own` on the agent's workspace; a caller without it gets the grant routes' refusal — `require_own`'s 403 `forbidden` with the `who_can` details naming the workspace owner role; a non-hosted agent is 404) → **200** `{ items: [AgentAiKey] }`. Each item is one **active LLM key of the agent's organization or workspace that the agent does not have yet**: `{ secret_id: Uuid, name: string, scope: "organization" | "workspace", starter: bool, usable: bool, reason: string | null }`. The starter key comes first, then the dispatcher's own order (`provider_preference`, oldest first; the workspace key first on its endpoint); at most 50. `usable` and `reason` come from the dispatcher's own per-key check (the same function as `GET …/model-readiness`, C-500) — an unusable key is **listed with its reason** instead of being silently dropped; `reason` is that reason in short plain words ("Its service is not allowed here.", "It does not work with this agent's model tool."), never the internal code, a secret, an endpoint address or an internal detail beyond the provider's words. **Metadata only**: the response never carries a key value or any endpoint address.
   - **Feeds the give-a-key pickers** (`14 §Agent page`): the "Use another key" menu beside the one-click "Give <Agent> the <key>" fix and the "Use a key you already have" choice of the "Add an AI key" dialog. `AnswerFix::GiveKey { key }` (C-1062) is unchanged.
+
+### Phase 5 — P5-MEMORY and P5-SKILLS (the Skills & Memory review; D-496..D-499, D-505, D-506, SEC-157, SEC-158)
+
+Design target: `docs/design/skills-memory/` (D-496). The lanes complete each contract in place with the final field
+names, and copy the route rows into `05`, the tables into `03`, the rules into `10` and the screens into `14`.
+
+- C-1169 **A memory's provenance and last use** (D-497; P5-MEMORY-1; migration `20261201000288`). `Memory` gains
+  `added_by: MemoryActor`, `changed_by: MemoryActor` and `last_used: { at: timestamp, conversation: ConversationRef|null }|null`.
+  `MemoryActor` = `{ kind: "person" | "api_key" | "agent" | "template" | "import" | "unknown", person: { id, display_name }|null,
+  api_key: { id, name }|null, agent: { id, name }|null, conversation: ConversationRef|null, template: { name, version }|null }`;
+  `ConversationRef` = `{ id, title }` **only when the caller may read that conversation** (else the field is null and the
+  actor or use still shows, D-497(c)). Existing memories are back-filled from their oldest and newest kept revision;
+  what cannot be known is `kind: "unknown"`. `last_used` is written by `memory_get`, by a `memory_search` hit the agent
+  then reads, and by the turn-start recall, at most once per memory, conversation and hour (D-497(b)); never by a
+  dashboard or API read. The list stays one page (`MEMORY_MAX_PER_AGENT`); filtering and sorting are client-side.
+- C-1170 **Revisions name people, not e-mails** (D-497(d); P5-MEMORY-1). `MemoryRevision` gains `author: MemoryActor`
+  (C-1169), `via: "dashboard" | "api" | "conversation" | "harvest" | "template" | "restore" | "import"`,
+  `restored_from: integer|null`; `author_label` becomes the display name (never an e-mail) and is deprecated in favour
+  of `author`. The API key id is recorded on new revisions (`memory_revisions.author_api_key_id`); older revisions
+  through an API key show the key's person with `api_key: null`.
+- C-1171 **Search snippets are plain text with highlight ranges** (P5-MEMORY-1; fixes M-1). `MemorySearchHit` gains
+  `highlights: [[start, end]]` (UTF-16 offsets into `snippet`, the conversation search's form, `repo/search.rs`
+  `snippet()`), `snippet` carries no markup, and a match in the title or key is highlighted in `title_highlights`.
+  The `memory_search` tool and the turn-start recall give the agent the same plain text (no `<b>`).
+- C-1172 **What the agent remembered, in the transcript** (D-497; P5-MEMORY-1 server, P5-MEMORY-4 web; fixes M-6).
+  When the `memory_save` tool (any harness) saves or refuses, the API appends one transcript event to the turn, after
+  the tool call: `memory.saved` `{ key, title, preview (the content's first 200 characters, one line), revision,
+  created: bool, previous_revision: integer|null }` or `memory.refused` `{ key, title|null, preview, code:
+  "memory_locked" | "memory_limit_reached" | "invalid" | "not_allowed", message }` (plain words). They are ordinary
+  `transcript_events` rows, readable by whoever may read the conversation, and replayed like the others. The
+  `memory_save` result also returns `title`, and a refusal keeps its code (`tool_failed: memory_locked: …`) instead of
+  a bare failure.
+- C-1173 **A skill's display name** (D-498; P5-SKILLS-1; migration `20261201000289`). `Skill` gains `title: string|null`
+  (at most 80 characters, plain text). Create and update accept it; the folder `name` is still the immutable slug.
+  Library and app skills have `title: null`. Export, import and templates carry `title` when set. The projected
+  `SKILL.md` front matter is unchanged (`name`, `description`).
+- C-1174 **Turn an inherited skill off for one agent** (D-499; P5-SKILLS-1; same migration). `PUT
+  /v1/agents/{agent}/skills/{skill_id}/off` (no body) and `DELETE …/off`, both idempotent, for anyone who may edit the
+  agent; `skill_id` must be a workspace or organization skill that reaches the agent (404 otherwise; 409
+  `skill_not_inherited` for the agent's own or an app skill). Table `agent_skills_off (agent_id, skill_id, set_by,
+  set_at)`, cascading on either. `EffectiveSkill` gains `off_for_agent: bool` and the shadow reason `off_for_agent`;
+  the effective set, the projection (`hosted::skills` must apply it, or use `service::effective`), the skill tools and
+  the eval fingerprint honour it; the agent's home sync is bumped; audit `skill.agent_off` / `skill.agent_on`.
+- C-1175 **Skill usage** (D-505; P5-SKILLS-1; migration `20261201000290`). Table `skill_uses (skill_id, agent_id,
+  conversation_id, turn_id, at)`, kept 90 days. Written by the `skill_get` tool and by a new optional field `skill`
+  (the folder name) on the supervisor's `tool.started` report (`16`) when the harness's own skill tool runs or a file
+  `<skills dir>/<name>/SKILL.md` is read; the API maps the name to the skill that reached the agent at that time.
+  `EffectiveSkill` (the agent's view) gains `usage: { week: integer, last: { at, conversation: ConversationRef|null }|null }`;
+  workspace and organization `Skill` lists gain `used_by_agents: integer` (distinct agents, last 30 days).
+- C-1176 **Libraries say what they offer and what cannot be added** (P5-SKILLS-1; skill-5, skill-6). `SkillLibrary`
+  gains `skills_offered: integer|null` (valid skills at the last check) and `skills_unavailable: integer|null`.
+  `LibrarySkillItem` gains `blocked: { reason: "name_taken" | "budget" | "invalid", message }|null` for the tier the
+  browse is for (`?tier=agent&agent=…`, `?tier=workspace&workspace=…`, `?tier=organization`); `valid`/`reason` stay.
+  `GET /v1/skill-libraries/{id}/skills` returns `budget: { bytes, used }` for that tier, replacing the dashboard's
+  hard-coded numbers.
+- C-1177 **Dashboard routes** (D-506, D-497; P5-SKILLS-2, P5-MEMORY-2; `14`). `/o/<org>/skills` with `?tab=skills|libraries`
+  (Manage <org> › Skills); `/admin/skills` (Administration › Skills: instance libraries and library settings); the
+  agent's memory deep link `…/agents/<handle>?tab=memory&memory=<key>` (opens that memory's reading view; `&history=1`
+  its history). Old routes redirect: `/o/<org>/agents?tab=skills` and `/o/<org>/agents/skills/libraries` →
+  `/o/<org>/skills[?tab=libraries]`, `/admin/skill-libraries` → `/admin/skills`.
 
 ## Shared schemas
 
