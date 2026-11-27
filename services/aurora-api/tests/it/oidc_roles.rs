@@ -1602,6 +1602,16 @@ async fn a_suspended_membership_goes_back_to_its_base_role() {
     assert_eq!(c.membership().await, row("admin", "suspended", false));
 }
 
+/// (FIX-256) The claim sync takes the membership before a lapsed binding.
+#[tokio::test]
+async fn the_sync_locks_the_membership_before_a_lapsed_binding() {
+    let c = Claimed::new().await;
+    c.h.while_membership_is_held(c.org, c.infra, c.uid, c.sign_in_with(json!([])))
+        .await;
+    assert_eq!(c.row().await, None);
+    assert_eq!(c.membership().await, None);
+}
+
 /// An active claim-managed membership goes with its claim, as before.
 #[tokio::test]
 async fn an_active_membership_still_goes_with_its_claim() {

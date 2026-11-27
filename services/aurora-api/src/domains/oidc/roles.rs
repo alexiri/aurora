@@ -402,6 +402,9 @@ pub async fn sync(
             );
             continue;
         }
+        // (FIX-256) Membership before binding (the lock order, `tenancy::service`): this
+        // org may be one that nothing above has locked.
+        db::org_row(&mut *tx, r.org_id, user.id).await?;
         let Some(row) = db::ws_row(&mut *tx, r.workspace_id, user.id).await? else {
             continue;
         };

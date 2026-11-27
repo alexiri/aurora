@@ -253,6 +253,7 @@ pub async fn update<'e, E: PgExecutor<'e>>(
 /// nothing without a membership, and deleting it would lift the suspension, so that group or
 /// claim access came back by itself after a re-join. Only a person lifts it, through the API.
 pub async fn remove(conn: &mut PgConnection, org: Uuid, user: Uuid) -> Result<(), DbError> {
+    lock_for_removal(&mut *conn, org, user).await?;
     unbind_all_unsuspended(&mut *conn, org, user).await?;
     sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
         .bind(org)
@@ -270,11 +271,23 @@ pub async fn strip_keeping_membership(
     org: Uuid,
     user: Uuid,
 ) -> Result<(), DbError> {
+    lock_for_removal(&mut *conn, org, user).await?;
     unbind_all_unsuspended(&mut *conn, org, user).await?;
     sqlx::query("DELETE FROM group_members WHERE org_id = $1 AND user_id = $2")
         .bind(org)
         .bind(user)
         .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// (FIX-256) The lock order is membership, then binding: hold the membership row before any
+/// binding of the person is touched.
+async fn lock_for_removal(conn: &mut PgConnection, org: Uuid, user: Uuid) -> Result<(), DbError> {
+    sqlx::query("SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2 FOR UPDATE")
+        .bind(org)
+        .bind(user)
+        .fetch_optional(&mut *conn)
         .await?;
     Ok(())
 }

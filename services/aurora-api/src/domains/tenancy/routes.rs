@@ -1017,11 +1017,15 @@ async fn delete_access(
     // RFE-021: reassignment and the unbind commit or roll back together.
     let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
     // (FIX-261, D-501) Removing a suspended binding lifts the suspension, so group access
-    // applies again: the rules of restoring it. Lock the row first, as `set_access_status` does.
+    // applies again: the rules of restoring it. Lock the rows first, as `set_access_status`
+    // does: the membership, then the binding (`service`, the lock order).
     let mut self_grant_of = None;
+    let addressable = aurora_db::repo::members::lock_if_active(&mut tx, a.org_id, user).await?;
     if let Some((role, status, _)) = workspaces::lock_binding(&mut tx, ws, user).await? {
         // (FIX-256) A departed member's kept row is not addressable.
-        service::require_addressable(&mut tx, a.org_id, user).await?;
+        if !addressable {
+            return Err(service::binding_not_found());
+        }
         if status == AccessStatus::Suspended.as_str()
             && service::lifting_suspension(&s, &mut tx, &c, &a, user).await?
         {

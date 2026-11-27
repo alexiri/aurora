@@ -1066,6 +1066,76 @@ async fn an_org_suspended_persons_binding_is_not_addressable() {
     f.assert_not_addressable(ws, carol).await;
 }
 
+/// (FIX-256) The binding routes take the membership before the binding.
+#[tokio::test]
+async fn the_binding_routes_lock_the_membership_before_the_binding() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    f.h.bind_ws(ws, carol, "member").await;
+    let (s, v) =
+        f.h.while_membership_is_held(
+            f.org,
+            ws,
+            carol,
+            f.call(
+                &f.bob_cookie,
+                Method::PATCH,
+                &format!("/v1/workspaces/{ws}/access/{carol}"),
+                Some(json!({"status": "suspended"})),
+            ),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) =
+        f.h.while_membership_is_held(f.org, ws, carol, f.remove(&f.bob_cookie, ws, carol))
+            .await;
+    assert_eq!(s, 204, "{v}");
+}
+
+/// (FIX-256) So does removing a member (not an owner, whose rows are locked up front anyway).
+#[tokio::test]
+async fn removing_a_member_locks_the_membership_before_the_bindings() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    f.h.bind_ws(ws, carol, "member").await;
+    let (s, v) =
+        f.h.while_membership_is_held(
+            f.org,
+            ws,
+            carol,
+            f.call(
+                &f.admin_cookie,
+                Method::DELETE,
+                &format!("/v1/orgs/{}/members/{carol}", f.org),
+                None,
+            ),
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+}
+
+/// (FIX-256) A person with no membership answers as before: 404, with and without a binding
+/// row.
+#[tokio::test]
+async fn the_binding_routes_answer_404_for_a_person_with_no_membership() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let stranger = f.h.user("stranger@x.io", false).await;
+    let uri = format!("/v1/workspaces/{ws}/access/{stranger}");
+    for (method, body) in [
+        (Method::PATCH, Some(json!({"status": "active"}))),
+        (Method::DELETE, None),
+    ] {
+        let (s, v) = f.call(&f.bob_cookie, method, &uri, body).await;
+        assert_eq!(s, 404, "{v}");
+        assert_eq!(v["error"]["message"], "Binding not found.", "{v}");
+    }
+}
+
 struct FailMailer;
 
 #[async_trait::async_trait]
