@@ -18,7 +18,9 @@ export default function WorkspaceRedirect({ children }: { children: ReactNode })
   const wsId = resolved.data?.workspace?.id;
   const workspace = useWorkspace(wsId);
   const w = workspace.data;
-  const manage = !!w && w.my_role == null && w.administers === true;
+  // (FIX-277, D-478) Never the emergency reader: an organization owner with an open grant also `administers`, and
+  // the pages here are what the grant lets them read. When it ends, the next answer sends them to the manage page.
+  const manage = !!w && w.my_role == null && w.administers === true && w.emergency_reader !== true;
   useEffect(() => {
     if (manage) router.replace(orgRoutes(org).workspace(ws));
   }, [manage, router, org, ws]);

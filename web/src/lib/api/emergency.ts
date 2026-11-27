@@ -61,9 +61,10 @@ export function useOpenEmergencyAccess(wsId: string) {
     mutationFn: (body: components["schemas"]["OpenEmergencyAccessRequest"]) =>
       unwrap(api.POST("/v1/workspaces/{ws}/emergency-access", { params: { path: { ws: wsId } }, body })),
     onSuccess: () => {
-      // The workspace answer carries `audience.emergency` and `emergency_reader`.
-      void qc.invalidateQueries({ queryKey: ["workspaces"] });
       void qc.invalidateQueries({ queryKey: ["resolve"] });
+      // The workspace answer carries `audience.emergency` and `emergency_reader`. Waited for (FIX-277): the caller's
+      // own `onSuccess` goes to the workspace, whose layout would send a cached "no grant" answer to the manage page.
+      return qc.invalidateQueries({ queryKey: ["workspaces"] });
     },
   });
 }

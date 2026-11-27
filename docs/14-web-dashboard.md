@@ -1735,9 +1735,13 @@ every other topic is owners/admins and is not listed for a member.)
   (D-480), said in words), **Agents** (name, handle, state, Pause/Resume; no
   link into the agent), **Pause workspace** and **Delete workspace** (the
   existing controls). Any `/o/<org>/w/<ws>/…` address whose `Workspace` says
-  `my_role: null` with `administers: true` redirects here, and a
-  403 `workspace_access_required` from any workspace call shows the same
-  notice with a link to it.
+  `my_role: null` with `administers: true` redirects here — except while it
+  says `emergency_reader: true` (FIX-277: the reader stays on the page they
+  asked for, read-only) — and a 403 `workspace_access_required` from any
+  workspace call shows the same notice with a link to it. While the viewer's
+  own emergency read access is open, the notice drops "open its chats or",
+  and in place of the offer to open it says "Emergency read access is open
+  until <time>."
 - **Chat platforms** (`/o/<org>/chat-platforms`, P5-REFINE-17 org-1): "Let people talk to agents from the chat tools <org>
   already uses." One row per connectable platform (icon, name, "Ready · connector running", the **Ready** status line
   and **Connect**: the same readiness as Administration, a running host that serves the type means connectable). Under

@@ -381,9 +381,11 @@
 .md li + li {
   margin-top: 0.125rem;
 }
-.md ul.contains-task-list {
+/* (FIX-277) Per item, not per list: an ordinary item in a list with checklist items keeps its bullet and indent. A
+   checklist item has its box instead of a bullet, and the box stands 1rem into the bullet's room. */
+.md ul > li.task-list-item {
   list-style: none;
-  padding-left: 0.25rem;
+  margin-left: -1rem;
 }
 .md .task-list-item input {
   margin-right: 0.5rem;

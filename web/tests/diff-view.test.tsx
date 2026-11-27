@@ -26,11 +26,33 @@ describe("DiffView", () => {
     const cell = () => screen.getByTestId("diff-view").querySelector('[data-diff="add"] td:last-child')!;
     const { unmount } = render(<DiffView old="a" next="b" label="d" />);
     expect(cell().className.split(" ")).toContain("whitespace-pre");
-    expect(cell().className).not.toContain("pre-wrap");
+    expect(cell().innerHTML).not.toContain("pre-wrap");
+    expect(cell().querySelector("[data-diff-text]")).toBeNull();
+    expect(cell().textContent).toBe("+ b");
     unmount();
     render(<DiffView old="a" next="b" label="d" wrap />);
-    expect(cell().className.split(" ")).toEqual(expect.arrayContaining(["whitespace-pre-wrap", "wrap-anywhere"]));
+    const text = cell().querySelector("[data-diff-text]")!;
+    expect(text.className.split(" ")).toEqual(expect.arrayContaining(["whitespace-pre-wrap", "wrap-anywhere"]));
     expect(cell().className.split(" ")).not.toContain("whitespace-pre");
+  });
+
+  // (FIX-277) With `wrap` the sign stands in its own column and the text beside it, so a continued line starts under
+  // the text, never under the sign. (The geometry is checked in e2e/fix-277.spec.ts.)
+  it("with wrap, puts the sign and the text side by side", () => {
+    render(<DiffView old={"keep\nSwitch the bot off"} next={"keep\nSwitch the bot off by 1 December"} label="d" wrap />);
+    for (const [kind, sign, words] of [
+      ["same", "  ", "keep"],
+      ["del", "- ", "Switch the bot off"],
+      ["add", "+ ", "Switch the bot off by 1 December"],
+    ] as const) {
+      const cell = document.querySelector(`tr[data-diff="${kind}"] td:last-child`)!;
+      const [mark, text] = Array.from(cell.firstElementChild!.children);
+      expect(mark!.textContent, kind).toBe(sign);
+      expect(mark!.className.split(" "), kind).toEqual(expect.arrayContaining(["shrink-0", "whitespace-pre"]));
+      expect(text!.hasAttribute("data-diff-text"), kind).toBe(true);
+      expect(text!.textContent, kind).toBe(words);
+      expect(cell.firstElementChild!.className.split(" "), kind).toContain("flex");
+    }
   });
 
   it("labels the fold row with the lines it hides, and each button names its range", () => {

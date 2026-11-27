@@ -43,7 +43,7 @@ const memory = (over: Record<string, unknown> = {}) => ({
   added_by: { kind: "agent" }, changed_by: { kind: "agent" }, last_used: null, ...over,
 });
 
-type Reader = { my_role: "owner" | "member" | null; emergency_reader?: boolean };
+type Reader = { my_role: "owner" | "member" | null; emergency_reader?: boolean; administers?: boolean };
 
 interface Call { method: string; path: string; body: unknown }
 /** The mock API: `store.memory` is what the agent has now (`null` = no such memory). */
@@ -234,7 +234,7 @@ describe("who may do what", () => {
 
   it("an emergency reader may View, and nothing else", async () => {
     st.events = [e(1, "memory.saved", savedPayload)];
-    const calls = mock({ my_role: null, emergency_reader: true }, { memory: memory() });
+    const calls = mock({ my_role: null, administers: true, emergency_reader: true }, { memory: memory() });
     pane();
     await waitFor(() => expect(view()).not.toBeNull());
     expect(button("Undo")).toBeNull();

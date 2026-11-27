@@ -32,6 +32,11 @@ export function emergencyReaderBannerText(expiresAt: string): string {
   return `Emergency read access until ${formatTime(expiresAt)}. Everything you open is recorded, and this workspace's people have been told.`;
 }
 
+/** The manage page, while the viewer's own grant is open (FIX-277); without an end time it says only that it is open. */
+export function emergencyOpenText(expiresAt: string | null): string {
+  return expiresAt ? `Emergency read access is open until ${formatTime(expiresAt)}.` : "Emergency read access is open.";
+}
+
 /** "14:00 to 18:00", or "19 Nov, 14:00 to 20 Nov, 18:00" when the days differ. */
 export function emergencySpanText(from: string, to: string | null | undefined): string {
   const start = formatDay(from);

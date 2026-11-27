@@ -106,7 +106,9 @@ export function AgentPage() {
     if (byIdHandle) router.replace(`/o/${org}/w/${ws}/agents/${byIdHandle}${window.location.search}`);
   }, [byIdHandle, org, ws, router]);
 
-  if (resolved.isPending || (wsId && agents.isPending)) return <Loading />;
+  // (FIX-277) The workspace answer too: it says whether the viewer only reads (`emergency_reader`), so until it is
+  // here no part of the page may be drawn as writable or ask for what a reader may not read.
+  if (resolved.isPending || (wsId && (agents.isPending || workspace.isPending))) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   if (agents.isError) return <ErrorState error={agents.error} onRetry={() => agents.refetch()} />;
   const agent = agents.data?.items.find((a) => a.handle === handle);
