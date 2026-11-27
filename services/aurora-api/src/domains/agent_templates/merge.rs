@@ -383,6 +383,7 @@ fn diff_lines(a: &[&str], b: &[&str], budget: &Budget) -> Result<Vec<Hunk>, Merg
     Ok(coalesce(hunks))
 }
 
+#[allow(clippy::too_many_arguments)] // two ranges, the output and the budget of one recursion
 fn diff_rec(
     a: &[&str],
     mut a0: usize,
