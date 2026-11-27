@@ -212,8 +212,9 @@ function WhatChanged({ diff, baseVersion }: { diff: TemplateDiff; baseVersion: s
   );
 }
 
-/** One file of this version inside a comparison: its diff, or its "Unchanged" fold; with a side that is not text,
- * the change in words and the file as it is now. */
+/** One file of this version inside a comparison: its diff, or its "Unchanged" fold; with no text to compare (a side
+ * that is not text, or only the executable bit changed), the change in words and the file as it is now. A change in
+ * words next to a diff (the executable bit) is said above it. */
 function ComparedFile({ f, change, label }: { f: FileView; change: TemplateChange | null; label: string }) {
   const wordsOnly = change != null && change.old == null && change.new == null;
   if (wordsOnly || f.text == null) {
@@ -231,6 +232,11 @@ function ComparedFile({ f, change, label }: { f: FileView; change: TemplateChang
   return (
     <div className="space-y-1">
       <FileHeading f={f} />
+      {change?.detail ? (
+        <p className="text-sm text-ink-2" data-testid="file-change">
+          {change.detail}
+        </p>
+      ) : null}
       <PartText change={change} label={label} current={f.text} />
     </div>
   );

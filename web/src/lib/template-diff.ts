@@ -66,14 +66,26 @@ function textChange(part: string, group: string, label: string, oldText: string 
   return { part, group, label, kind, attention, old: oldText ?? undefined, new: newText ?? undefined };
 }
 
-type DiffFile = { text?: string | null; sha256: string };
+type DiffFile = { text?: string | null; sha256: string; executable: boolean };
 
 /**
- * One file's change, by presence: a file that is not text is still added, removed or changed (compared by its hash),
- * and one that stops or starts being text is changed, not removed or added. With a side that is not text there is no
- * line comparison, so the change carries words and neither text.
+ * One file's change: its content, and (FIX-275) its executable bit, which is a change by itself — a file that becomes
+ * runnable is never left as unchanged. The bit is said in `detail`, beside the content diff when there is one.
  */
 function fileChange(part: string, group: string, label: string, b: DiffFile | undefined, n: DiffFile | undefined, attention = false): TemplateChange | null {
+  const content = contentChange(part, group, label, b, n, attention);
+  if (!b || !n || b.executable === n.executable) return content;
+  const mode = n.executable ? "This file is now runnable." : "This file is no longer runnable.";
+  if (!content) return { part, group, label, kind: "changed", attention, detail: mode };
+  return { ...content, detail: content.detail ? `${content.detail} ${mode}` : mode };
+}
+
+/**
+ * A file's content change, by presence: a file that is not text is still added, removed or changed (compared by its
+ * hash), and one that stops or starts being text is changed, not removed or added. With a side that is not text there is
+ * no line comparison, so the change carries words and neither text.
+ */
+function contentChange(part: string, group: string, label: string, b: DiffFile | undefined, n: DiffFile | undefined, attention: boolean): TemplateChange | null {
   const oldText = b?.text ?? null;
   const newText = n?.text ?? null;
   if ((!b || oldText != null) && (!n || newText != null)) return textChange(part, group, label, b ? oldText : null, n ? newText : null, attention);

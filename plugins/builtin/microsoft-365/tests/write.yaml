@@ -16,16 +16,16 @@
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://graph.microsoft.com/v1.0/me/sendMail" }
   expect: { app: microsoft-365 }
-- name: "create_event: summary shows subject and start"
+- name: "create_event: summary shows subject, start, attendees and the invitation's body"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request:
     method: POST
     url: "https://graph.microsoft.com/v1.0/me/events"
     headers: { content-type: application/json }
-    body: '{"subject":"Design review","start":{"dateTime":"2026-03-02T10:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-02T11:00:00","timeZone":"UTC"},"attendees":[{"emailAddress":{"address":"bob@example.com"},"type":"required"},{"emailAddress":{"address":"eve@example.org"},"type":"optional"}]}'
+    body: '{"subject":"Design review","body":{"contentType":"Text","content":"Please read the draft first."},"start":{"dateTime":"2026-03-02T10:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-02T11:00:00","timeZone":"UTC"},"attendees":[{"emailAddress":{"address":"bob@example.com"},"type":"required"},{"emailAddress":{"address":"eve@example.org"},"type":"optional"}]}'
   expect:
     tool: create_event
-    summary: { title: "create a calendar event", fields: { Subject: "Design review", Starts: "2026-03-02T10:00:00", Attendees: "bob@example.com, eve@example.org" } }
+    summary: { title: "create a calendar event", fields: { Subject: "Design review", Starts: "2026-03-02T10:00:00", Attendees: "bob@example.com, eve@example.org", Message: "Please read the draft first." } }
 - name: "negative create_event: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/events" }
@@ -36,10 +36,10 @@
     method: POST
     url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events"
     headers: { content-type: application/json }
-    body: '{"subject":"Planning","start":{"dateTime":"2026-03-03T09:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-03T09:30:00","timeZone":"UTC"},"attendees":[{"emailAddress":{"address":"frank@example.net"}}]}'
+    body: '{"subject":"Planning","body":{"contentType":"HTML","content":"<p>Quarterly planning.</p>"},"start":{"dateTime":"2026-03-03T09:00:00","timeZone":"UTC"},"end":{"dateTime":"2026-03-03T09:30:00","timeZone":"UTC"},"attendees":[{"emailAddress":{"address":"frank@example.net"}}]}'
   expect:
     tool: create_calendar_event
-    summary: { title: "create a calendar event", fields: { Calendar: "AAMkAGcal=", Subject: "Planning", Starts: "2026-03-03T09:00:00", Attendees: "frank@example.net" } }
+    summary: { title: "create a calendar event", fields: { Calendar: "AAMkAGcal=", Subject: "Planning", Starts: "2026-03-03T09:00:00", Attendees: "frank@example.net", Message: "<p>Quarterly planning.</p>" } }
 - name: "negative create_calendar_event: PATCH selects no tool"
   connection: { credentials: { access_token: "tok-fixture-1" } }
   request: { method: PATCH, url: "https://graph.microsoft.com/v1.0/me/calendars/AAMkAGcal=/events" }

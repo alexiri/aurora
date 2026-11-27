@@ -247,6 +247,32 @@ describe("Agent template review (C-1114)", () => {
     [`GET /v1/admin/agent-templates/schedule-manager/versions/${v}`]: () => json(200, v === "1.0.0" ? { ...offered, content: c } : { ...detail, content: c }),
   });
 
+  // FIX-275: the executable bit alone is a change the person must see before approving.
+  it("a helper whose executable bit alone changed is shown, not folded, and says it is now runnable", async () => {
+    const run = (executable: boolean) => ({ ...txt("helpers/run.sh", "#!/bin/sh\n"), executable });
+    renderReview({
+      ...answer("1.0.0", content({ helpers: [run(false)] })),
+      ...answer("1.1.0", content({ helpers: [run(true)] })),
+    });
+    await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    const helpers = screen.getByRole("region", { name: "Helper files" });
+    expect(within(helpers).queryByTestId("diff-unchanged")).toBeNull();
+    expect(within(helpers).getByTestId("file-change").textContent).toMatch(/now runnable/i);
+    expect(within(helpers).getByLabelText("Helper file helpers/run.sh").textContent).toContain("#!/bin/sh");
+  });
+
+  it("a skill file that changed and stopped being runnable shows the line next to its diff", async () => {
+    const skill = (text: string, executable: boolean) => ({ name: "code-review", use_it_when: "A pull request is open", body: "Review carefully.\n", files: [{ ...txt("check.sh", text), executable }] });
+    renderReview({
+      ...answer("1.0.0", content({ skills: [skill("echo old\n", true)] })),
+      ...answer("1.1.0", content({ skills: [skill("echo new\n", false)] })),
+    });
+    await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    const card = screen.getByRole("region", { name: "Skill code-review" });
+    expect(within(card).getByLabelText("Diff of File check.sh of skill code-review").textContent).toContain("+ echo new");
+    expect(within(card).getByTestId("file-change").textContent).toMatch(/no longer runnable/i);
+  });
+
   it("shows removed skills, skill files and helper files in their sections, marked Removed", async () => {
     const kept = (files: unknown[]) => ({ name: "code-review", use_it_when: "A pull request is open", body: "Review carefully.\n", files });
     renderReview({
