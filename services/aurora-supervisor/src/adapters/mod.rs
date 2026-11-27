@@ -372,8 +372,10 @@ mod tests {
         };
         let spec = claude_code::config::LaunchSpec {
             // The background shell ignores HUP; the leader itself dies on it at once.
-            args: vec!["-c".into(),
-                "/bin/sh -c 'trap \"\" HUP; /bin/sleep 300' & echo $!; exec /bin/sleep 600".into()],
+            args: vec![
+                "-c".into(),
+                "/bin/sh -c 'trap \"\" HUP; /bin/sleep 300' & echo $!; exec /bin/sleep 600".into(),
+            ],
             env: vec![],
             cwd: std::env::temp_dir(),
             conversation_id: uuid::Uuid::now_v7(),
@@ -413,15 +415,16 @@ mod tests {
         let l = claude_code::launcher::ProcessLauncher {
             program: "/bin/sh".into(),
         };
-        let spec = claude_code::config::LaunchSpec {
-            // The background shell ignores HUP; the leader exits at once, without any release.
-            args: vec!["-c".into(),
+        let spec =
+            claude_code::config::LaunchSpec {
+                // The background shell ignores HUP; the leader exits at once, without any release.
+                args: vec!["-c".into(),
                 "/bin/sh -c 'trap \"\" HUP; /bin/sleep 300' & echo $!; echo leader-done; exit 0"
                     .into()],
-            env: vec![],
-            cwd: std::env::temp_dir(),
-            conversation_id: uuid::Uuid::now_v7(),
-        };
+                env: vec![],
+                cwd: std::env::temp_dir(),
+                conversation_id: uuid::Uuid::now_v7(),
+            };
         let mut io = claude_code::launcher::Launcher::launch(&l, spec)
             .await
             .unwrap();
@@ -468,8 +471,10 @@ mod tests {
             program: "/bin/sh".into(),
         };
         let spec = claude_code::config::LaunchSpec {
-            args: vec!["-c".into(),
-                "setsid /bin/sleep 300 & echo $!; exec /bin/sleep 600".into()],
+            args: vec![
+                "-c".into(),
+                "setsid /bin/sleep 300 & echo $!; exec /bin/sleep 600".into(),
+            ],
             env: vec![],
             cwd: std::env::temp_dir(),
             conversation_id: uuid::Uuid::now_v7(),

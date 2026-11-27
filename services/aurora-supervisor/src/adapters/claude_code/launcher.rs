@@ -187,7 +187,12 @@ fn descendants(root: Option<rustix::process::Pid>) -> Vec<Swept> {
         }
     }
     raw.drain(..)
-        .filter_map(|pid| Some(Swept { pid, starttime: *starts.get(&pid)? }))
+        .filter_map(|pid| {
+            Some(Swept {
+                pid,
+                starttime: *starts.get(&pid)?,
+            })
+        })
         .collect()
 }
 

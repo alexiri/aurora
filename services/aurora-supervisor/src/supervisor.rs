@@ -401,7 +401,13 @@ impl Supervisor {
             false
         } else {
             match self.sessions.remove(&conversation_id) {
-                Some(SessionEntry { session, cred, epoch, reported_ref, _proxy }) => {
+                Some(SessionEntry {
+                    session,
+                    cred,
+                    epoch,
+                    reported_ref,
+                    _proxy,
+                }) => {
                     // (FIX-253 fixes2) `ok` only when the release really ran and succeeded. A
                     // session another live clone still holds was not released: the entry goes
                     // back, so the next Stop can try again.
@@ -409,7 +415,13 @@ impl Supervisor {
                     if let Some(session) = back {
                         self.sessions.insert(
                             conversation_id,
-                            SessionEntry { session, cred, epoch, reported_ref, _proxy },
+                            SessionEntry {
+                                session,
+                                cred,
+                                epoch,
+                                reported_ref,
+                                _proxy,
+                            },
                         );
                     }
                     released
@@ -1279,7 +1291,9 @@ mod release_tests {
     }
 
     fn stub(fails: bool) -> SharedSession {
-        Arc::new(Mutex::new(Box::new(StubSession { fails }) as Box<dyn HarnessSession>))
+        Arc::new(Mutex::new(
+            Box::new(StubSession { fails }) as Box<dyn HarnessSession>
+        ))
     }
 
     fn _unused(_: &Path) {}
