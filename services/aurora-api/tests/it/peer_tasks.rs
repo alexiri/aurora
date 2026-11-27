@@ -2561,6 +2561,36 @@ async fn a_wake_and_a_recheck_wait_for_the_task_conversation_before_the_link_and
     assert_eq!(d.rig.task_status(task).await, "cancelled");
 }
 
+/// (FIX-253 review 2, item 2) A turn end holds its conversation while it counts the waiting
+/// tasks, and then writes into the origin conversation: with chained tasks of one requester,
+/// waiting there for the counting lock would deadlock. It never waits for it.
+#[tokio::test]
+async fn a_turn_end_never_waits_for_the_waiting_count_locks() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    d.arm_watch(task).await;
+    // Another turn end of the same requester and receiver is counting.
+    let mut other = d.rig.h.pool().begin().await.unwrap();
+    for key in [
+        format!("peer-waiting:user:{}", d.rig.p.id),
+        format!("peer-waiting:agent:{}", d.b),
+    ] {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(key)
+            .execute(&mut *other)
+            .await
+            .unwrap();
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        d.finish_receiving_turn(task),
+    )
+    .await
+    .expect("the turn end waits for the counting lock");
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    other.rollback().await.unwrap();
+}
+
 /// (FIX-253, D-490(b)) With no registration the task is cancelled as today, and the FIX-252
 /// pending approval is the third waiting cause (no extra notice beyond FIX-252's own).
 #[tokio::test]

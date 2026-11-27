@@ -1095,13 +1095,14 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
 }
 
 /// (FIX-253 review, medium 3) Why `task` may not start waiting: the requester or the receiving
-/// agent already has as many waiting tasks as allowed. Serialized until the transaction ends.
+/// agent already has as many waiting tasks as allowed. A soft bound under concurrency (see
+/// `repo::count_waiting`).
 async fn waiting_cap(
     conn: &mut PgConnection,
     task: &PeerTaskRow,
 ) -> Result<Option<String>, ApiError> {
     let (of_requester, on_receiver) =
-        repo::lock_waiting_counts(conn, task.requester_user_id, task.to_agent_id).await?;
+        repo::count_waiting(conn, task.requester_user_id, task.to_agent_id).await?;
     if on_receiver >= limits::PEER_TASK_WAITING_PER_RECEIVER_MAX {
         let to = agent(conn, task.to_agent_id).await?;
         return Ok(Some(format!(

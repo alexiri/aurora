@@ -395,10 +395,14 @@ pub async fn resume(conn: &mut PgConnection, conversation: Uuid) -> Result<Optio
     .await?)
 }
 
-/// Lock out concurrent "go waiting" transitions of this requester and receiver until the
-/// transaction ends (always in this order), then count the tasks already waiting:
-/// `(of the requester, on the receiving agent)`.
-pub async fn lock_waiting_counts(
+/// Count the tasks already waiting: `(of the requester, on the receiving agent)`. It first
+/// *tries* the transaction locks of this requester and receiver, which keep concurrent "go
+/// waiting" transitions from counting past each other, and counts without a lock another one
+/// holds: it **never waits**. The caller holds its conversation and goes on to lock the origin
+/// conversation, which for chained tasks is another turn end's conversation, so waiting here would
+/// deadlock. The price: transitions that overlap may pass a bound by at most one task for each
+/// of the others in flight.
+pub async fn count_waiting(
     conn: &mut PgConnection,
     requester: Option<Uuid>,
     receiver: Uuid,
@@ -407,7 +411,7 @@ pub async fn lock_waiting_counts(
         format!("peer-waiting:user:{}", requester.unwrap_or_default()),
         format!("peer-waiting:agent:{receiver}"),
     ] {
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        sqlx::query("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
             .bind(key)
             .execute(&mut *conn)
             .await?;
