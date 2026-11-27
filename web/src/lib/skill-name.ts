@@ -1,7 +1,7 @@
 /**
- * (P5-REFINE-12, behaviour-2) A person names a skill in words ("Weekly report"); Aurora makes the skill's folder name:
- * kebab-case ASCII, at most 64 characters, never starting with the reserved `aurora-`, unique by a numeric suffix. The
- * display name is the stored name with hyphens as spaces and a capital first letter.
+ * (P5-REFINE-12, behaviour-2; D-498) A person names a skill in words ("Weekly report"); that is its **title**, and
+ * Aurora makes the folder name from it: kebab-case ASCII, at most 64 characters, never starting with the reserved
+ * `aurora-`, unique by a numeric suffix. Everywhere but the editor's folder line a skill is called by its display name.
  */
 import { SKILL_NAME_MAX } from "@/lib/api/skills";
 import { slugify } from "@/lib/memory-key";
@@ -41,8 +41,34 @@ export function newSkillName(display: string, taken: Iterable<string>, skip = 0)
   }
 }
 
-/** "weekly-report" → "Weekly report". */
-export function skillDisplayName(name: string): string {
+/**
+ * (D-498(b)) What a skill is called: its title, else its folder name made readable. Dashes become spaces and the first
+ * letter is capitalized ("internal-comms" → "Internal comms"); a one-word name stays as written ("pdf").
+ */
+export function skillDisplayName(name: string, title?: string | null): string {
+  if (title?.trim()) return title.trim();
+  if (!name.includes("-")) return name;
   const s = name.replace(/-+/g, " ").trim();
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : name;
+}
+
+/** A description in a list: as written, with only its first letter capitalized. */
+export function descriptionSentence(description: string): string {
+  const d = description.trim();
+  return d ? d.charAt(0).toUpperCase() + d.slice(1) : d;
+}
+
+/** Openings that do not complete "Use it to …" (a sentence of its own, or the old "Use it when …" wording). */
+const OWN_SENTENCE = /^(use|used|when|whenever|if|for|someone|asked|this|these|a|an|the|any|anything)\b/i;
+
+/**
+ * (D-498(c)) The panel's "Use it to …" line for a skill written in Aurora, whose description completes that sentence.
+ * A description that is a sentence of its own stays as written; so does repository or app text (`asWritten`).
+ */
+export function useItToLine(description: string, asWritten = false): string {
+  const d = description.trim();
+  if (!d || asWritten || OWN_SENTENCE.test(d)) return descriptionSentence(d);
+  // "PR summaries" keeps its capitals.
+  const rest = /^\p{Lu}\p{Ll}/u.test(d) ? d.charAt(0).toLowerCase() + d.slice(1) : d;
+  return `Use it to ${rest}`;
 }

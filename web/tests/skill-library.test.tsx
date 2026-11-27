@@ -1,11 +1,19 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SkillsEditor } from "@/components/skills/skills-view";
+import { UpdateReviewDialog } from "@/components/skills/library";
+import { SkillsList } from "@/components/skills/skills-list";
+import { SkillsTab } from "@/components/skills/skills-tab";
 import { diffLines } from "@/lib/api/skill-libraries";
 import type { Skill } from "@/lib/api/skills";
 import { wrap } from "./support/render";
 import { json } from "./support/api";
+import { menuItems, openMenu } from "./support/skills";
+
+const OrgList = () => <SkillsList page={{ kind: "organization", orgId: "o1", label: "Acme" }} />;
+
+// `?skill=` is kept in the address, which jsdom keeps from one test to the next.
+beforeEach(() => window.history.replaceState(null, "", "/o/acme/skills"));
 
 // P4-GSL (D-148; docs/14 Skill libraries, Add from library, update review; docs/18 Dashboard): Add from
 // library, library badges and read-only skills, detach and remove, the update review with the whole diff,
@@ -84,21 +92,22 @@ describe("library skills", () => {
         return json(200, libSkill({ enabled: false }));
       },
     });
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    expect(await screen.findByText("Library · git.example.org/acme/agent-skills · 0123456")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Code review/ }));
-    expect(await screen.findByText("Managed by a skill library; edit it in the repository or detach it.")).toBeTruthy();
-    expect((screen.getByLabelText("Use it when…") as HTMLInputElement).readOnly).toBe(true);
-    expect((screen.getByLabelText("Instructions") as HTMLTextAreaElement).readOnly).toBe(true);
-    fireEvent.click(screen.getByLabelText("On for the organization's agents"));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    wrap(<OrgList />);
+    expect(await screen.findByTestId("source-chip")).toHaveTextContent("Library · Team skills");
+    fireEvent.click(screen.getByRole("button", { name: "Code review" }));
+    const p = await screen.findByRole("article", { name: "Code review" });
+    expect(within(p).getByTestId("skill-lock").textContent).toBe("From Team skills · pinned to 0123456. Changes come from the library, not from here.");
+    // read-only: no fields, no Save; the one switch is the skill's own and writes only that
+    expect(within(p).queryAllByRole("textbox")).toEqual([]);
+    expect(within(p).queryByRole("button", { name: "Save" })).toBeNull();
+    expect(within(p).queryByRole("button", { name: "Edit" })).toBeNull();
+    fireEvent.click(within(p).getByRole("switch", { name: "Turn off for Acme: Code review" }));
     await waitFor(() => expect(patched).toEqual({ enabled: false }));
-    // remove, not delete
-    expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    openMenu("More actions for Code review");
+    expect(menuItems()).toEqual(["Stop updates and edit", "Remove from Acme…"]);
   });
 
-  it("detach asks first and then converts the skill", async () => {
+  it("Stop updates and edit asks first and then converts the skill", async () => {
     let detached = false;
     mockFetch({
       ...skills([libSkill()]),
@@ -107,22 +116,30 @@ describe("library skills", () => {
         return json(200, libSkill({ source: source({ detached: true, library_id: null }) as Skill["source"] }));
       },
     });
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: /Code review/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Detach" }));
-    expect(screen.getByText(/ordinary editable skill/)).toBeTruthy();
+    wrap(<OrgList />);
+    fireEvent.click(await screen.findByRole("button", { name: "Code review" }));
+    await screen.findByRole("article", { name: "Code review" });
+    // never a button beside Remove: it is in the menu, with its explanation
+    expect(screen.queryByRole("button", { name: /Stop updates|Detach/ })).toBeNull();
+    openMenu("More actions for Code review");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Stop updates and edit" }));
+    const dlg = await screen.findByRole("dialog", { name: "Stop updates and edit “Code review”?" });
+    expect(dlg.textContent).toMatch(/ordinary skill you can edit/);
     expect(detached).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Confirm detach" }));
+    fireEvent.click(within(dlg).getByRole("button", { name: "Stop updates and edit" }));
     await waitFor(() => expect(detached).toBe(true));
   });
 
-  it("a detached skill is editable again and keeps its provenance note", async () => {
+  it("a skill whose updates were stopped is editable again and keeps its provenance note", async () => {
     mockFetch(skills([libSkill({ source: source({ detached: true, library_id: null }) as Skill["source"] })]));
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: /Code review/ }));
-    expect((await screen.findByLabelText("Use it when…") as HTMLInputElement).readOnly).toBe(false);
-    expect(screen.getAllByText(/Detached · was git\.example\.org\/acme\/agent-skills@0123456/).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/Managed by a skill library/)).toBeNull();
+    wrap(<OrgList />);
+    fireEvent.click(await screen.findByRole("button", { name: "Code review" }));
+    const p = await screen.findByRole("article", { name: "Code review" });
+    expect(within(p).getByText("Was from git.example.org/acme/agent-skills at 0123456. Updates are stopped.")).toBeTruthy();
+    expect(within(p).queryByTestId("skill-lock")).toBeNull();
+    fireEvent.click(within(p).getByRole("button", { name: "Edit" }));
+    const form = await screen.findByRole("form", { name: "Edit Code review" });
+    expect((within(form).getByLabelText("When should agents use it?") as HTMLInputElement).readOnly).toBe(false);
   });
 });
 
@@ -141,9 +158,10 @@ describe("update review", () => {
       ...over,
     },
   });
-  const open = async (readOnly = false) => {
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" readOnly={readOnly} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Code review/ }));
+  const open = async () => {
+    window.history.replaceState(null, "", "/o/acme/skills");
+    wrap(<OrgList />);
+    fireEvent.click(await screen.findByRole("button", { name: "Code review" }));
     fireEvent.click(await screen.findByRole("button", { name: "Review update" }));
     const dlg = await screen.findByRole("dialog");
     // the update is loaded when its buttons exist
@@ -189,7 +207,10 @@ describe("update review", () => {
 
   it("a person without the tier's authority reads the diff but cannot approve, with the reason", async () => {
     mockFetch(base(() => json(200, review())));
-    const dlg = await open(true);
+    // The panel offers Review update only to who may decide; the dialog itself still refuses everybody else.
+    wrap(<UpdateReviewDialog skill={pendingSkill()} tier="org" canDecide={false} open onOpenChange={() => undefined} />);
+    const dlg = await screen.findByRole("dialog", { name: "Update to Code review" });
+    await within(dlg).findByRole("button", { name: "Approve" });
     expect(within(dlg).getByLabelText("SKILL.md diff")).toBeTruthy();
     expect((within(dlg).getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
     expect((within(dlg).getByRole("button", { name: "Reject" }) as HTMLButtonElement).disabled).toBe(true);
@@ -247,11 +268,21 @@ describe("Add from library", () => {
     ...extra,
   });
 
+  const fromLibrary = async () => {
+    await waitFor(() => {
+      openMenu("Add skill");
+      screen.getByRole("menuitem", { name: "Add from a library" });
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add from a library" }));
+  };
+
   it("is absent when the org has no active library", async () => {
-    mockFetch({ ...routes(), "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [{ id: "l1", label: "Paused", status: "paused" }] }) });
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    await screen.findByRole("button", { name: "New skill" });
-    expect(screen.queryByRole("button", { name: "Add from library…" })).toBeNull();
+    const fn = mockFetch({ ...routes(), "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [{ id: "l1", label: "Paused", status: "paused" }] }) });
+    wrap(<OrgList />);
+    await screen.findByRole("button", { name: "Add skill" });
+    await waitFor(() => expect(fn.mock.calls.some(([r]) => (r as Request).url.includes("/skill-libraries"))).toBe(true));
+    openMenu("Add skill");
+    expect(menuItems()).toEqual(["Write a new skill", "Upload a skill folder"]);
   });
 
   it("lists skills at the commit, disables invalid ones with the reason, previews the exact content and adds it pinned", async () => {
@@ -262,8 +293,8 @@ describe("Add from library", () => {
         return json(201, libSkill({ id: "new", name: "release-notes" }));
       },
     }));
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add from library…" }));
+    wrap(<OrgList />);
+    await fromLibrary();
     const list = await screen.findByRole("list", { name: "Library skills" });
     expect(within(list).getByText("Already added · Organization")).toBeTruthy();
     expect((within(list).getByRole("button", { name: /^Bad_Name/ }) as HTMLButtonElement).disabled).toBe(true);
@@ -297,8 +328,8 @@ describe("Add from library", () => {
           : json(200, { commit_sha: SHA_B, truncated: false, next_cursor: "c2", items: mk(0, 50) });
       },
     }));
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add from library…" }));
+    wrap(<OrgList />);
+    await fromLibrary();
     const list = await screen.findByRole("list", { name: "Library skills" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(50);
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
@@ -311,14 +342,15 @@ describe("Add from library", () => {
   it("disables Add when the tier's library budget is full, with the numbers", async () => {
     const full = Array.from({ length: 25 }, (_, i) => skill({ id: `s${i}`, name: `lib-${i}`, tier: "agent", source: source({ path: `lib-${i}` }) as Skill["source"] }));
     mockFetch({
-      "GET /v1/agents/a1/skills": () => json(200, { items: full, next_cursor: null }),
+      "GET /v1/agents/a1/skills/effective": () =>
+        json(200, { items: full.map((s) => ({ skill: s, tier: "agent", enabled: true, shadows: [], off_for_agent: false, usage: null })), shadowed: [] }),
       "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [{ id: "l1", label: "Team skills", status: "active" }] }),
       "GET /v1/skill-libraries/l1/skills": () => json(200, catalogue),
       "GET /v1/skill-libraries/l1/skills/release-notes": () => json(200, content),
       "GET /v1/agents/a1/skill-library-updates": () => json(200, { items: [] }),
     });
-    wrap(<SkillsEditor scope={{ kind: "agent", id: "a1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add from library…" }));
+    wrap(<SkillsTab agentId="a1" orgId="o1" agentName="Daneel" />);
+    await fromLibrary();
     // (a heavier render than the other tests: allow for a loaded machine)
     fireEvent.click(await screen.findByRole("button", { name: /^release-notes/ }));
     expect(await screen.findByText(/26 of 25 skills/, undefined)).toBeTruthy();

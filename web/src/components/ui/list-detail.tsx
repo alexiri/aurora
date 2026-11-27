@@ -78,11 +78,23 @@ export function ListDetail({
     if (sub) window.scrollTo?.({ top: 0 });
   }, [sub]);
 
-  if (narrow) return <div className={cn("min-w-0", className)}>{detailOpen ? detail : list}</div>;
+  // One tree for both layouts, the panes told apart by their keys: crossing the breakpoint (a window dragged, a phone
+  // turned) must not mount the item's pane again, or a form in it loses what was typed.
   return (
-    <div className={cn("grid items-start gap-4 grid-cols-[minmax(0,18rem)_minmax(0,1fr)]", className)}>
-      <div className="min-w-0">{list}</div>
-      <div className="min-w-0">{detail}</div>
+    <div className={cn(narrow ? "min-w-0" : "grid items-start gap-4 grid-cols-[minmax(0,18rem)_minmax(0,1fr)]", className)}>
+      {narrow && detailOpen ? null : (
+        <div key="list" className="min-w-0">
+          {list}
+        </div>
+      )}
+      {narrow && !detailOpen ? null : (
+        <div key="detail" className="min-w-0">
+          {detail}
+        </div>
+      )}
     </div>
   );
 }
+
+/** On a narrow screen an item is the page itself, not a card on it. The same element either way (see `ListDetail`). */
+export const BARE_ON_NARROW = "border-0 bg-transparent p-0 shadow-none sm:p-0";

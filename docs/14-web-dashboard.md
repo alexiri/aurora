@@ -37,7 +37,10 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   shortcodes, highlighted code with a language label and Copy, math, heading
   anchors and GitHub's raw-HTML allowlist — **except**: an image from another
   origin is a link ("🖼 alt"), never loaded (same-origin attachments are
-  inline); only `http`, `https`, `mailto` and same-origin relative links are
+  inline); (P5-SKILLS-3) `images={false}`, for text an outsider wrote (a
+  library's or an app's skill, also in the editor's preview after its updates
+  were stopped), loads nothing from any origin: every picture is the words
+  "image: <alt>", and `source` and `picture` are not allowed; only `http`, `https`, `mailto` and same-origin relative links are
   links (any other scheme is its label as text); a link whose label looks like
   a URL or domain of another host gets "→ host"; raw HTML outside the
   allowlist is dropped (its text kept; a `<script>`'s content goes with it);
@@ -501,6 +504,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     `SubScreenHeader` ("‹ <list>" and the item's actions), and the surrounding
     settings heading and sub-nav are hidden on the item's screen. `HeaderActions`
     puts a page's main action beside the settings heading (inline without one).
+    (P5-SKILLS-3) Crossing 1100 px never mounts the item's pane again, so a form
+    keeps what was typed and what was opened: `ListDetail` is one tree for both
+    layouts (keyed panes), and a pane that is a card on a wide screen and bare on
+    a narrow one is the same `Card` with `BARE_ON_NARROW`, never two elements.
   - **CopyChip** (`ui/copy-value.tsx`) [P5-MEMORY-2]: a short identifier as an
     inline monospace chip with a copy button named "Copy <label>".
   - **Markdown marks** [P5-MEMORY-2]: `Markdown marks={terms}` wraps each
@@ -1841,8 +1848,7 @@ every other topic is owners/admins and is not listed for a member.)
 - **Skills** (`/o/<org>/skills`, `?tab=skills|libraries`; D-506, C-1177, P5-SKILLS-2; org owners/admins, others are
   sent where `OrgGate` sends them): the heading **Skills**, "What every agent in <org> can do, and where it comes
   from.", and the tabs **Skills** (default) · **Libraries**; its own **Skills** entry in the Manage sub-nav. On the
-  Skills tab the header has **Add skill** (opens the create form in the list below; no menu until P5-SKILLS-3, so
-  **Add from library…** stays above the list). The old addresses `/o/<org>/agents?tab=skills`,
+  Skills tab the header has the **Add skill** menu (P5-SKILLS-3, §Skills below). The old addresses `/o/<org>/agents?tab=skills`,
   `/o/<org>/agents/skills/libraries` and `/o/<org>/skills/libraries` redirect here.
   - **Libraries** tab (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450, C-1129): "Libraries are git repositories
     of skills. Add one, then pick the skills <org> should use." with **Add a library**, then the organization's
@@ -1890,9 +1896,8 @@ every other topic is owners/admins and is not listed for a member.)
     the repository again; its failure keeps the dialog open with the reason.
   No library exists until an admin creates one; with none, the Skills tab shows an inline "Add a
   library" call to action (it opens the Libraries tab).
-  - **Skills** tab: the org skills editor (tier badge "Organization"; phase 3, RFE-020: states that workspace and
-    agent skills with the same name take precedence, in the closed **How skills combine** fold). P5-SKILLS-3 replaces
-    the list.
+  - **Skills** tab: the one list and panel (§Skills below), with **For <Org>** as the switch column; **How skills
+    combine** says that workspace and agent skills with the same name take precedence.
 - **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
   attachment quota with the storage breakdown (by workspace and direction), a
   usage bar with the 80 %/100 % notices, validation against the instance maximum.
@@ -1982,8 +1987,9 @@ every other topic is owners/admins and is not listed for a member.)
     org has none, who can create one (a link for org admins).
   - **Memory** — list, reading view, editor, revisions with restore and redact, search (§Memory below,
     P5-MEMORY-2).
-  - **Skills** — editor with file tree, executable bit, size meter. (phase 3, RFE-020) Lists the agent's **effective** skills with a tier badge (Agent / Workspace / Organization) and, for shadowing, "overrides the Workspace skill of the same name" / "overridden by …"; workspace and org skills open read-only here with a link to where they are edited.
-    (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450(f)) **Add from library…** (next to New skill, shown
+  - **Skills** — one list of everything the agent can do, a panel that reads first and an editor (P5-SKILLS-3,
+    §Skills below).
+    (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450(f)) **Add from a library** (in the Add skill menu, shown
     when the organization **or the instance** has an active library): a picker of libraries in two
     groups, "Your organization" and "Shared with every organization" (library labels are data; a paused
     library is not offered; an instance library is browsed with `?org=` for this organization) → a searchable list of the library's skills at its current
@@ -1991,15 +1997,16 @@ every other topic is owners/admins and is not listed for a member.)
     full preview of exactly what would be stored (`SKILL.md` and files, rendered as text) with the
     commit sha and the sentence "Pinned to this commit. Changes in the repository are not applied until
     someone with permission approves them." → **Add** (disabled when over budget, with the numbers).
-    A library skill carries the badge "Library · <host/path> · <sha7>" (the same for a skill from an
-    instance library, whose update this organization approves or rejects itself), opens **read-only** with the banner
-    "Managed by a skill library; edit it in the repository or detach it" and the actions Enable/Disable,
-    **Detach** (confirm: becomes an editable skill) and Remove; an **Update available** chip opens the
+    A library skill (the same for a skill from an instance library, whose update this organization approves or
+    rejects itself) opens **read-only** in the panel (§Skills below); **Stop updates and edit** (in "…", confirmed)
+    makes it an editable skill. **Review update**, offered to who may decide, opens the
     review dialog: whole-content diff (no truncation), the new commit sha, kind (changed / removed /
-    invalid), budget impact, **Approve** (the tier's write authority; disabled with the explanation for
-    others, who can still read the diff) and **Reject**. The same flow on the workspace Skills page
+    invalid), budget impact, **Approve** and **Reject**. The same flow on the workspace Skills page
     (`can_own` to add or approve) and the org Skills page (org owners/admins); repository text is
-    shown as data, never as HTML or markdown with links that auto-open.
+    shown as data, never as HTML or markdown with links that auto-open. That holds in this browser and in the update
+    review; the panel of an added skill renders its instructions with the sanitizing `Markdown` and `images={false}`
+    (P5-SKILLS-3: no scripts or handlers, nothing is fetched by showing it, a picture is "image: <alt>", an outside
+    link opens only when pressed and shows its address), and its files, names and descriptions stay plain text.
   - **Schedules**, **Webhooks** (URL shown once on create/rotate; phase 2,
     RFE-021: each item shows its owner — a person or "Workspace" — with
     **Reassign…** (picker of members who can use the workspace; re-enable option
@@ -2281,7 +2288,7 @@ every other topic is owners/admins and is not listed for a member.)
     have it (`GET …/grants`), "Remove" per agent (agent-side `DELETE`) and the
     same add picker.
 - **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
-- **Skills** (phase 3, RFE-020; phase 4, P4-GSL: also **Add from library…**, library badges, read-only library skills and the update review, as on the agent Skills tab, with `can_own` as the authority; D-506, P5-SKILLS-2: the same page frame as the organization's — the heading **Skills**, "Skills every agent in <Workspace> can use" and, for owners, **Add skill** in the header; its owners have it in the rail without "Show more controls") — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
+- **Skills** (phase 3, RFE-020; D-506, P5-SKILLS-2: the same page frame as the organization's — the heading **Skills**, "Skills every agent in <Workspace> can use" and, for owners, the **Add skill** menu in the header; its owners have it in the rail without "Show more controls") — the one list and panel (P5-SKILLS-3, §Skills below) with **For <Workspace>** as the switch column and "Used by n agents"; owners write (`can_own`, also the authority for library updates), members read; a skill's panel names any agent's own skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage ((phase 5, P5-USAGE-2) the **Usage** tab, §Usage below). (phase 5, P5-MODELS-3, C-879, C-880) The request log shows an LLM request's model
   (`llm_model`). Usage, wherever it is shown (a turn's details, and the usage view once its route
@@ -2929,11 +2936,59 @@ screen); `&history=1` deep-links to it. "History", then "<memory> · n versions"
   undone). On the current version the item is disabled and says "The current version can't be removed: change the
   memory first."; a removed version has no **…**.
 
-**Skills.** Name, "Use it when…" (the API's one-line `description`), Instructions (the `body`), "On for <Agent>",
-Save and Delete. The folder name is made by Aurora (`lib/skill-name.ts`: kebab-case, at most 64 characters, `aurora-`
-prefixed names become `my-aurora-…`, unique by suffix, one retry on a 409). **Advanced: files and scripts** (Expert,
-`skill.files`) holds the folder name, the files, Executable and the precedence rule. The form is shared with the
-workspace and organization pages.
+**Skills** (P5-SKILLS-3; D-496, D-498, D-499, D-505, D-506, C-1173..C-1175; mockups skill-1..4 and the list of
+skill-6 in `docs/design/skills-memory/`). One list and one panel (`components/skills/skills-list.tsx`) serve the
+agent's, the workspace's and the organization's pages.
+
+- **Names and words.** A skill is called by its title, else its folder name made readable (dashes to spaces, first
+  letter capitalized, a one-word name as written: "Internal comms", "pdf"); the folder name shows only in the editor.
+  A list shows the description as a sentence with its first letter capitalized, never behind a label. The panel's line
+  completes "Use it to …" for a skill written in Aurora (a description that is a sentence of its own, and any library
+  or app text, stays as written). The words are **Turn off for <name>** (the switch's accessible name, with the
+  skill's name), **Remove from <Agent | this workspace | Org>…** and **Stop updates and edit**, the last two only in
+  the "…" menu.
+- **The list.** Search (name, folder, description); chips with counts (agent: All · <Agent>’s own · From the workspace
+  · From <Org> · Off; workspace and organization: All · Written here · From libraries · Off); columns **Skill · Source
+  · For <Agent | workspace | Org>**, sorted by name, a row stacked where the list is narrower than 36 rem. One source
+  chip per row (<Agent> · Workspace · <Org> · Workspace · Library · <Org> · Library · Library · <label> · App; on the
+  level pages Written here or Library · <label>), an **Update available** mark on a library skill with one waiting, and
+  on the level pages "Used by n agents". The agent's rows are its effective set plus what is off; a skill another
+  level's skill of the same name replaces has no row: the winner says "<Agent>’s version replaces the workspace’s ·
+  **Compare**" (a dialog with the `DiffView` of the two). The switch of an inherited skill is the per-agent off
+  (C-1174), of the agent's own skill (and on the level pages) the skill's own; what its owners switched off is off and
+  disabled with the reason; an app's skill reads **On** with no switch (D-455). Under the list, the sentence naming the
+  one replacement there is and the link **How skills combine**.
+- **The panel.** Choosing a row opens the skill beside the list (`?skill=<id>`; below 1100 px its own screen with
+  **‹ Skills**; choosing it again closes it): name, source, switch, the "Use it to …" line, **Edit** (only where the
+  skill can be edited here), **Try it in chat** (agent page, a skill that applies: the chat with the draft "Use the
+  “<name>” skill to "), "…" (**Duplicate as <Agent>’s own** for an inherited skill or an app skill without files,
+  **Stop updates and edit** for a library skill, **Remove from …**); **Instructions** rendered with `Markdown`;
+  **Files · n** as a tree, each opening in a read-only code view (C-1099; an app skill's other files have no route and
+  are listed only); the usage line (C-1175): "Used n times this week · last in “<conversation>”" ("in a conversation"
+  when the server names none), "Not used yet"; for an inherited skill "Used by n agents in <Org> · <Agent> used it n
+  times this week"; on the level pages "Used by n agents". A workspace skill also names the agents whose own skill
+  overrides it.
+- **Read-only.** What cannot be changed here has no field and no Save: a lock line, by the skill's own tier ("Managed
+  by <Org>’s admins. You can turn it off for <Agent>." · "Managed by the workspace’s owners. …" · "Comes with the
+  <App> app." · "From <library> · pinned to <sha7>. Changes come from the library, not from here."). A waiting library
+  update shows **Update available** with what changed and **Review update**, only to people who may decide it.
+- **The editor.** In the panel: **Name** (the title) with "Folder: <slug>" small under it (made by Aurora from the
+  name: kebab-case, at most 64 characters, `aurora-` names become `my-aurora-…`, unique by suffix, one retry on a 409;
+  fixed after the first save), "When should <Agent> use it?" ("agents" on the level pages) with "Finish “Use it to …”.
+  Example: *write the Friday status report from Jira and GitHub*.", **Instructions** in `ui/markdown-editor.tsx` with
+  "Markdown · n of 24,000 characters", the files folded to one line ("Files · n  SKILL.md, …  **Add file**"), and the
+  shared `SaveBar`; leaving with unsaved changes asks first. Opened, each file is read and edited in place (a text edit
+  is saved with the form; a file that isn't text offers **Replace**), **Delete** asks first. **Add file** is a dialog:
+  File name ("Relative to the skill’s folder."; the server's rules: `[A-Za-z0-9._/-]`, at most 4 levels and 200
+  characters, no `SKILL.md`, at most 50 files; an existing name replaces that file), Content ("Paste the file here, or
+  upload one"), **Executable**. Adding and deleting a file of a skill that exists is written at once; a new skill's
+  files are written when it is saved.
+- **Add skill** (the header, for who may write there): **Write a new skill**, **Add from a library** (the library
+  browser; only with an active library), **Upload a skill folder** (pick a folder with a `SKILL.md`; the dialog shows
+  the name, folder, files and size, or per file what stops it, before anything is written; a file starting with `#!` is
+  made executable, because a browser cannot tell). A skill with files is created switched off and switched on once all
+  are there; if a file is refused it is removed again.
+- An emergency reader sees the agent's own skills only, with nothing to change.
 
 **Tests.** A run is "Test run, <date>" with "Started by …"; tiles Pass rate · Passed · Failed · Couldn't be
 checked; Refused writes under Details; the configuration hash in Technical details. A result row says `Matches 42`

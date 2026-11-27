@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { personalWorkspaceSentence } from "@/components/org/invite-dialog";
@@ -54,14 +54,16 @@ describe("P5-REFINE-20 batch 3 (organization words)", () => {
     });
     wrap(<OrgSkills />);
     expect(await screen.findByRole("heading", { level: 1, name: "Skills" })).toBeTruthy();
-    const fold = screen.getByTestId("skills-combine");
-    expect(fold).not.toHaveAttribute("open");
+    const fold = await screen.findByTestId("skills-combine");
+    // (P5-SKILLS-3) The link under the list opens the explanation; it is closed to start with.
+    expect(within(fold).getByRole("button", { name: "How skills combine" })).toHaveAttribute("aria-expanded", "false");
     expect(fold).toHaveTextContent("A workspace skill or an agent's own skill with the same name overrides an organization skill");
     // The paragraph is not a notice under the heading any more.
     for (const n of screen.queryAllByRole("status")) expect(n.textContent ?? "").not.toMatch(/with the same name overrides/);
     // The fold comes after the list, not before it.
     const heading = screen.getByRole("heading", { level: 1, name: "Skills" });
     expect(heading.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(fold.querySelector("summary")!);
+    fireEvent.click(within(fold).getByRole("button", { name: "How skills combine" }));
+    expect(within(fold).getByRole("button", { name: "How skills combine" })).toHaveAttribute("aria-expanded", "true");
   });
 });

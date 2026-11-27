@@ -1052,6 +1052,11 @@ from searching the incoming message with score ≥ 0.1.
   agent skill that shadows a higher-tier one with `shadows`). Deleting a workspace
   deletes its skills (cascade).
   The dashboard shows, per agent, each skill's tier and what it shadows.
+- **What a person can do with a skill** (P5-SKILLS-3, `14 §Skills`): read it with its files; write one, with files,
+  in the editor; **upload a skill folder** (`SKILL.md` front matter `name` and `description`, then the files; created
+  through the ordinary routes, switched on only once every file is there); add one from a library; **turn a workspace
+  or organization skill off for one agent** (below) and on again; duplicate an inherited skill as the agent's own;
+  stop a library skill's updates and edit it; remove it at the level it is kept.
 - (P5-SKILLS-1, D-498, C-1173) A skill may have a **display name** (`title`, ≤ 80
   characters of plain text on one line) beside its folder name; people write it in the
   dashboard or API and agents with `skill_create`/`skill_update` (their own skills).

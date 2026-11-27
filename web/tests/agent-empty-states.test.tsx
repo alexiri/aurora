@@ -42,16 +42,17 @@ describe("empty states on the agent's pages", () => {
     expect(screen.queryByText(/Select a memory/)).toBeNull();
   });
 
-  it("Skills: the same pattern, no Select-a-skill pane, and 'Skills this agent receives' only when there are some", async () => {
+  // (P5-SKILLS-3) One list: no second "Skills this agent receives" section; Add skill in the header is the one way in.
+  it("Skills: the same pattern, no Select-a-skill pane, and one list", async () => {
     mockFetch({
-      "GET /v1/agents/a1/skills": page(),
       "GET /v1/agents/a1/skills/effective": () => json(200, { items: [], shadowed: [] }),
     });
     wrap(<SkillsTab agentId="a1" />);
     expect(await screen.findByRole("heading", { name: "No skills yet" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New skill" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add skill" })).toBeInTheDocument();
     expect(screen.queryByText(/Select a skill/)).toBeNull();
     expect(screen.queryByText("Skills this agent receives")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Skills" })).toBeNull();
   });
 
   it("Automations: the empty state has New automation (P5-REFINE-14: schedules, webhooks and chats are one page)", async () => {

@@ -228,7 +228,8 @@ export async function openLibraryScreen(page: Page, screen: LibraryScreen, schem
     await page.getByRole("button", { name: "Approve" }).waitFor();
     return mock;
   }
-  await page.getByRole("button", { name: "Add from library…" }).click();
+  await page.getByRole("button", { name: "Add skill" }).click();
+  await page.getByRole("menuitem", { name: "Add from a library" }).click();
   await page.getByRole("list", { name: "Library skills" }).waitFor();
   if (screen === "add-list") return mock;
   await page.getByRole("button", { name: /^release-notes/ }).click();

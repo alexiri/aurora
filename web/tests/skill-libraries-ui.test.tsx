@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AdminSkillsPage } from "@/components/admin/admin-topics";
 import { SkillLibrariesTab } from "@/components/skills/libraries-page";
 import { OrgSkills } from "@/components/skills/org-skills";
-import { SkillsEditor } from "@/components/skills/skills-view";
+import { SkillsList } from "@/components/skills/skills-list";
 import { json, type Handler } from "./support/api";
 import { wrap } from "./support/render";
 
@@ -56,6 +56,15 @@ const card = (list: HTMLElement, label: string) => within(list).getByRole("headi
 /** Radix opens a dropdown on keydown Enter (jsdom has no pointer capture). */
 const openMenu = (label: string) => fireEvent.keyDown(screen.getByRole("button", { name: `More actions for ${label}` }), { key: "Enter" });
 const LibrariesTab = () => <SkillLibrariesTab slug="acme" orgId="o1" orgName="Acme" />;
+const OrgList = () => <SkillsList page={{ kind: "organization", orgId: "o1", label: "Acme" }} />;
+/** (P5-SKILLS-3) Add skill › Add from a library, once the libraries are read. */
+const fromLibrary = async () => {
+  await waitFor(() => {
+    fireEvent.keyDown(screen.getByRole("button", { name: "Add skill" }), { key: "Enter" });
+    screen.getByRole("menuitem", { name: "Add from a library" });
+  });
+  fireEvent.click(screen.getByRole("menuitem", { name: "Add from a library" }));
+};
 /** The words of a card's facts line, in order. */
 const facts = (c: HTMLElement) => within(within(c).getByRole("list")).getAllByRole("listitem").map((i) => i.textContent);
 
@@ -526,12 +535,13 @@ describe("Manage <org> › Skills", () => {
     expect(screen.getByText("What every agent in Acme can do, and where it comes from.")).toBeTruthy();
     expect(screen.getAllByRole("tab").map((t) => [t.textContent, t.getAttribute("aria-selected")])).toEqual([["Skills", "true"], ["Libraries", "false"]]);
     expect(await screen.findByText("No skills yet")).toBeTruthy();
-    // the header's Add skill opens the create form; the editor draws no second button for it
+    // (P5-SKILLS-3) the header's Add skill is a menu; writing a new one opens the editor in the list's place
     expect(screen.queryByRole("button", { name: "New skill" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Add skill" }));
-    expect(screen.getByLabelText("Use it when…")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByLabelText("Use it when…")).toBeNull());
+    fireEvent.keyDown(screen.getByRole("button", { name: "Add skill" }), { key: "Enter" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Write a new skill" }));
+    expect(screen.getByLabelText("When should agents use it?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.queryByLabelText("When should agents use it?")).toBeNull());
     // with no library yet, the way to add one leads to the Libraries tab
     expect((await screen.findByRole("link", { name: "Add a library" })).getAttribute("href")).toBe("/o/acme/skills?tab=libraries");
     fireEvent.click(screen.getByRole("tab", { name: "Libraries" }));
@@ -626,8 +636,8 @@ describe("Add from library with shared libraries", () => {
         },
       ),
     );
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add from library…" }));
+    wrap(<OrgList />);
+    await fromLibrary();
     const pick = (await screen.findByLabelText("Library")) as HTMLSelectElement;
     const groups = [...pick.querySelectorAll("optgroup")].map((g) => [g.label, [...g.querySelectorAll("option")].map((o) => o.textContent)]);
     expect(groups).toEqual([["Your organization", ["Team <b>skills</b>"]], ["Shared with every organization", ["Company skills"]]]);
@@ -640,15 +650,18 @@ describe("Add from library with shared libraries", () => {
 
   it("is offered when only the instance has an active library", async () => {
     mockFetch(routes([{ id: "l9", label: "Company skills", status: "active", scope: "instance" }]));
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    expect(await screen.findByRole("button", { name: "Add from library…" })).toBeTruthy();
+    wrap(<OrgList />);
+    await fromLibrary();
+    expect(await screen.findByRole("dialog", { name: "Add from a library" })).toBeTruthy();
   });
 
   it("is not offered when the only library is paused", async () => {
-    mockFetch(routes([{ id: "l9", label: "Company skills", status: "paused", scope: "instance" }]));
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    await screen.findByRole("button", { name: "New skill" });
-    expect(screen.queryByRole("button", { name: "Add from library…" })).toBeNull();
+    const fn = mockFetch(routes([{ id: "l9", label: "Company skills", status: "paused", scope: "instance" }]));
+    wrap(<OrgList />);
+    await screen.findByRole("button", { name: "Add skill" });
+    await waitFor(() => expect(fn.mock.calls.some(([r]) => (r as Request).url.includes("/skill-libraries"))).toBe(true));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Add skill" }), { key: "Enter" });
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Write a new skill", "Upload a skill folder"]);
   });
 
   it("adds a skill from an instance library with the instance library's id", async () => {
@@ -664,8 +677,8 @@ describe("Add from library with shared libraries", () => {
         },
       }),
     );
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add from library…" }));
+    wrap(<OrgList />);
+    await fromLibrary();
     fireEvent.click(await screen.findByRole("button", { name: /^from-l9/ }));
     await screen.findByLabelText("Preview of what will be stored");
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
@@ -699,9 +712,10 @@ describe("update review of a skill from an instance library", () => {
         return json(200, skill);
       },
     });
-    wrap(<SkillsEditor scope={{ kind: "organization", id: "o1" }} orgId="o1" />);
-    expect(await screen.findByText("Library · git.example.org/it/skills · 0123456")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Triage/ }));
+    wrap(<OrgList />);
+    expect(await screen.findByTestId("source-chip")).toHaveTextContent("Library · Company skills");
+    fireEvent.click(screen.getByRole("button", { name: "triage" }));
+    expect((await screen.findByTestId("skill-lock")).textContent).toContain("From Company skills · pinned to 0123456.");
     fireEvent.click(await screen.findByRole("button", { name: "Review update" }));
     const dlg = await screen.findByRole("dialog");
     expect((await within(dlg).findByLabelText("SKILL.md diff")).textContent).toContain("+ Then close.");
