@@ -47,9 +47,17 @@ struct Proc {
 }
 
 fn stat_of(pid: i32) -> Option<Proc> {
+    // Bytes, not text: the kernel cuts `comm` to 15 bytes, also inside a character.
+    parse_stat(pid, &std::fs::read(format!("/proc/{pid}/stat")).ok()?)
+}
+
+fn parse_stat(pid: i32, stat: &[u8]) -> Option<Proc> {
     // `comm` may hold spaces and brackets, so the fields are read after the last ')'.
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let f: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+    let after = &stat[stat.iter().rposition(|b| *b == b')')? + 1..];
+    let f: Vec<&str> = std::str::from_utf8(after)
+        .ok()?
+        .split_whitespace()
+        .collect();
     Some(Proc {
         pid,
         zombie: matches!(*f.first()?, "Z" | "X"),

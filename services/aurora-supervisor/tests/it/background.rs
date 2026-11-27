@@ -223,8 +223,9 @@ fn commands(event: &Value) -> Vec<String> {
 
 /// `true` while the process runs (a zombie has ended; only its parent's wait is missing).
 fn running(pid: u32) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| {
-        s.rsplit_once(')')
+    std::fs::read(format!("/proc/{pid}/stat")).is_ok_and(|s| {
+        String::from_utf8_lossy(&s)
+            .rsplit_once(')')
             .is_some_and(|(_, f)| !f.trim_start().starts_with('Z'))
     })
 }
@@ -339,6 +340,39 @@ async fn stop_reaches_a_detached_process_whose_parent_exited() {
         "released was reported while the orphan {orphan} still runs"
     );
     gone(orphan).await;
+}
+
+/// (SEC-165) The kernel cuts a process's name to 15 bytes, also inside a character. Its
+/// `stat` is then not UTF-8, and Stop finds it all the same.
+#[tokio::test]
+async fn stop_reaches_a_process_whose_name_is_cut_inside_a_character() {
+    let mut lines = bg_started("toolu_a", "ta", "cmd-a");
+    lines.push(RESULT.into());
+    // 14 bytes, then a two-byte character: the cut falls between its bytes.
+    let name = "aaaaaaaaaaaaaaé";
+    let script = format!("setsid -f ./{name}\n{}", say(&lines));
+    let mut r = rig(&[script]).await;
+    let named = r.ws.join(name);
+    fs::write(
+        &named,
+        // It waits on a pipe nobody writes to, with no child that Stop could see instead.
+        "#!/bin/sh\nmkfifo never\necho $$ > named.pid\nread line < never\n",
+    )
+    .unwrap();
+    fs::set_permissions(&named, fs::Permissions::from_mode(0o755)).unwrap();
+    r.turn().await;
+    let pid = r.pid_in("named.pid").await;
+    let _reap = Reap(pid);
+    assert!(
+        fs::read_to_string(format!("/proc/{pid}/stat")).is_err(),
+        "the name was not cut inside a character"
+    );
+    r.stop().await;
+    assert!(
+        !running(pid),
+        "released was reported while {pid} still runs"
+    );
+    gone(pid).await;
 }
 
 /// The release is acknowledged only after the processes are gone: this background shell ignores

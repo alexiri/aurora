@@ -167,9 +167,11 @@ fn zombie_children(me: i32) -> Vec<i32> {
     rd.filter_map(Result::ok)
         .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
         .filter(|pid| {
-            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            // Bytes, not text: the kernel cuts the name to 15 bytes, also inside a
+            // character.
+            std::fs::read(format!("/proc/{pid}/stat"))
                 .ok()
-                .and_then(|s| parse_proc_stat(&s))
+                .and_then(|s| parse_proc_stat(&String::from_utf8_lossy(&s)))
                 .is_some_and(|(state, ppid)| state == 'Z' && ppid == me)
         })
         .collect()

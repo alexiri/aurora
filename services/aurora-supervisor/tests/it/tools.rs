@@ -585,6 +585,49 @@ async fn the_reaper_collects_zombie_children_nobody_waits_for() {
     reaper.abort();
 }
 
+/// (SEC-165) The kernel cuts a process's name to 15 bytes, also inside a character: such a
+/// zombie's `stat` is not UTF-8, and it is reaped all the same.
+#[tokio::test]
+async fn the_reaper_collects_a_zombie_whose_name_is_cut_inside_a_character() {
+    use aurora_supervisor::process::spawn_reaper;
+    use std::os::unix::fs::PermissionsExt;
+    let d = TempDir::new();
+    // 14 bytes, then a two-byte character: the cut falls between its bytes.
+    let script = d.path().join("aaaaaaaaaaaaaaé");
+    std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let child = aurora_supervisor::spawn::command(&script, std::iter::empty::<(&str, &str)>())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    std::mem::forget(child);
+    let stat = move || std::fs::read(format!("/proc/{pid}/stat")).ok();
+    let zombie = |s: &[u8]| {
+        let after = &s[s.iter().rposition(|b| *b == b')').unwrap() + 1..];
+        after.trim_ascii_start().starts_with(b"Z")
+    };
+    timeout(T, async {
+        while !stat().is_some_and(|s| zombie(&s)) {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .expect("the child became a zombie");
+    assert!(
+        std::str::from_utf8(&stat().unwrap()).is_err(),
+        "the name was not cut inside a character"
+    );
+    let reaper = spawn_reaper(Duration::from_millis(100));
+    timeout(T, async {
+        while stat().is_some() {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .expect("the zombie was reaped");
+    reaper.abort();
+}
+
 /// (FIX-114) Shutdown signals the registered process groups.
 #[tokio::test]
 async fn terminate_all_signals_running_groups() {
