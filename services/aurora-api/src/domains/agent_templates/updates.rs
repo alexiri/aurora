@@ -23,6 +23,9 @@ use crate::domains::agent_templates::create;
 use crate::domains::agent_templates::dto::{
     self, AgentTemplateRefView, AgentTemplateStatus, ApplyTemplateRequest, OfferPart,
 };
+use crate::domains::agent_templates::merge::{
+    self, Budget, MergeError, RESOLUTION_TEXT_MAX, ResolveError,
+};
 use crate::domains::agent_templates::workspace::{RefJson, Resolver, skill_ref_plans};
 use crate::domains::agents;
 use crate::domains::skills::dto::FromLibrary;
@@ -178,6 +181,60 @@ fn newer_than_stored(offered: &str, stored: Option<&str>) -> bool {
     }
 }
 
+/// The offered version of each of the given templates, by template id: the semver-newest
+/// approved one while the template is offered (C-1108), whatever order the versions were
+/// stored in. A withdrawn or unknown template has no entry.
+pub(crate) async fn offered_version_strings(
+    pool: &sqlx::PgPool,
+    template_ids: &[String],
+) -> Result<BTreeMap<String, String>, ApiError> {
+    let strings = trepo::approved_version_strings(pool, template_ids).await?;
+    let mut newest: BTreeMap<String, String> = BTreeMap::new();
+    // The rows come newest stored first, so a tie keeps the newest stored one.
+    for (template_id, version) in strings {
+        let key = aurora_registry::manifest::parse_semver(&version).unwrap_or_default();
+        let best = newest.entry(template_id).or_insert_with(|| version.clone());
+        if key > aurora_registry::manifest::parse_semver(best).unwrap_or_default() {
+            *best = version;
+        }
+    }
+    Ok(newest)
+}
+
+/// (FIX-251, D-488(a)) Which of the listed agents are behind their template: the template's
+/// offered version (the semver-newest approved one, C-1108) is semver-newer than the agent's
+/// stored one — the same rule [`status`] applies to decide `update`, computed for a list from
+/// one read of the approved version strings. An agent without a template, or whose template is
+/// withdrawn or turned off for the organization, is never behind. Keyed by agent id; absent
+/// means not behind.
+pub(crate) async fn behind_map(
+    pool: &sqlx::PgPool,
+    rows: &[agents_repo::AgentRow],
+) -> Result<BTreeMap<Uuid, bool>, ApiError> {
+    let mut ids: Vec<String> = Vec::new();
+    for id in rows.iter().filter_map(|r| r.template_id.as_deref()) {
+        if !ids.iter().any(|x| x == id) {
+            ids.push(id.to_owned());
+        }
+    }
+    let newest = offered_version_strings(pool, &ids).await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let behind = r
+                .template_id
+                .as_deref()
+                .and_then(|t| {
+                    newest
+                        .get(t)
+                        .map(|v| newer_than_stored(v, r.template_version.as_deref()))
+                })
+                .unwrap_or(false);
+            (r.id, behind)
+        })
+        .collect())
+}
+
 // ---- the part states ----------------------------------------------------------------------------
 
 /// Which of the offer's states a part gets, from its recorded hash, the offered content's hash
@@ -215,6 +272,537 @@ fn listed(
             }
         },
     }
+}
+
+// ---- the three-way merge of a part (FIX-251, D-488(b)) ------------------------------------------
+//
+// A part the agent edited since the recorded version is no longer offered as an
+// all-or-nothing overwrite: where the agent's starting text is stored (the version content
+// the recorded hashes were written from), the part is offered as a three-way merge per text
+// unit — the starting text (base), the agent's current text (ours) and the new version's text
+// rendered for this agent (theirs). The merge, its hunks and the merged text are computed
+// here, on the server, from the stored rows: the apply recomputes them under the per-agent
+// lock and accepts nothing but the person's per-hunk choices. Memories, schedules, webhooks
+// and grants are never parts, so no merge can ever touch them.
+
+/// Why a part has no merge (the offer says so in words).
+const MERGE_NOTE: &str = "The text this agent started from is not stored any more, so your \
+     changes cannot be merged: taking the new version replaces this part wholesale.";
+
+/// Why a part's merge was capped (FIX-251): the offer says so in words.
+const MERGE_TOO_LARGE_NOTE: &str = "This file is too large to merge automatically: taking the new version replaces \
+     this part wholesale.";
+
+/// One text unit of a part: which text it is (`text` for instructions, `description` and
+/// `body` for a skill, `file:<path>` for a skill or helper file), and the three texts the
+/// merge works on. `None` is a file that does not exist at that layer. A file whose bytes
+/// are not text on a side it exists is a **byte unit**: its texts are the digests of the
+/// bytes (so the comparisons and the hash stay byte-exact) and the bytes themselves ride
+/// along — such a unit is never line-merged, only kept or taken wholesale.
+struct UnitTexts {
+    unit: String,
+    base: Option<String>,
+    ours: Option<String>,
+    theirs: Option<String>,
+    /// The executable bit the merged file gets (a file unit: the new version's bit).
+    executable: bool,
+    /// The agent's own bit (what Keep mine keeps).
+    ours_executable: bool,
+    /// The real bytes behind `ours`/`theirs` on a byte unit.
+    ours_bytes: Option<Vec<u8>>,
+    theirs_bytes: Option<Vec<u8>>,
+}
+
+/// The offer's line for a file unit whose bytes are not text.
+const BINARY_UNIT_TEXT: &str = "(not a text file)";
+
+/// A whole-unit choice: the unit's file is gone on one side, its texts are over the merge's
+/// input cap, or it is a byte unit — there is nothing to line-merge, and the person's choice
+/// replaces the unit's content wholesale. `None` is a file that side does not have.
+struct WholeChoice {
+    /// The offer's texts of the two sides (a byte unit shows a placeholder line).
+    ours: Option<String>,
+    theirs: Option<String>,
+    /// What Keep mine / Take the new one write on a byte unit (a text unit's content is its
+    /// texts, so these stay empty).
+    ours_bytes: Option<Vec<u8>>,
+    theirs_bytes: Option<Vec<u8>>,
+}
+
+/// The server's own merge of one unit, computed once for the offer and recomputed
+/// identically for the apply.
+struct UnitPlan {
+    unit: String,
+    /// The unit's text when the merge decided on its own and the content is text; `None`
+    /// when the unit is not in the merged set, is a byte unit (its `bytes` carry the
+    /// content), or still has conflicts to resolve.
+    text: Option<String>,
+    /// The unit's content when it is not its text (a byte unit's winner).
+    bytes: Option<Vec<u8>>,
+    /// The unit's hunks to resolve, when the merge is not clean.
+    merge: Option<merge::Merge>,
+    /// The unit's whole choice, when there is nothing to line-merge.
+    whole: Option<WholeChoice>,
+    executable: bool,
+    ours_executable: bool,
+}
+
+/// The server's own merge of one part: what the offer shows and what the apply writes.
+struct PartPlan {
+    view: dto::PartMerge,
+    /// The units in the offer's conflict order: the apply resolves them unit by unit.
+    units: Vec<UnitPlan>,
+    /// The agent's own files of the part that neither the starting text nor the new version
+    /// has: the person added them, and an apply keeps them.
+    own_files: Vec<aurora_template::TemplateFile>,
+}
+
+/// The merge of one part, or the fallback when there is nothing to merge against.
+struct PlannedPart {
+    state: &'static str,
+    view: Option<dto::PartMerge>,
+    note: Option<String>,
+    plan: Option<PartPlan>,
+}
+
+/// The three texts of one unit into a [`UnitPlan`]: one side untouched takes the other, the
+/// same edit on both sides once, a clean three-way merge as it is, and everything else a
+/// conflict the person resolves hunk by hunk. A file one side no longer has — or one whose
+/// bytes are not text — is one whole-unit choice, never a line merge.
+fn plan_unit(u: &UnitTexts, budget: &Budget) -> Result<UnitPlan, MergeError> {
+    let byte_unit = u.ours_bytes.is_some() || u.theirs_bytes.is_some();
+    // The winning side's content: a text unit's text, a byte unit's bytes.
+    let content = |t: &Option<String>, b: &Option<Vec<u8>>| {
+        if byte_unit {
+            (None, b.clone())
+        } else {
+            (t.clone(), None)
+        }
+    };
+    let decided = |text: Option<String>, bytes: Option<Vec<u8>>, executable: bool| UnitPlan {
+        unit: u.unit.clone(),
+        text,
+        bytes,
+        merge: None,
+        whole: None,
+        executable,
+        ours_executable: u.ours_executable,
+    };
+    if u.ours == u.theirs {
+        // The agent already has the new version's content (or both removed the file).
+        let (text, bytes) = content(&u.ours, &u.ours_bytes);
+        return Ok(decided(text, bytes, u.ours_executable));
+    }
+    if u.base == u.ours {
+        // The agent never touched this unit: the new version's content.
+        let (text, bytes) = content(&u.theirs, &u.theirs_bytes);
+        return Ok(decided(text, bytes, u.executable));
+    }
+    if u.base == u.theirs {
+        // The new version did not touch this unit: the person's edit stays.
+        let (text, bytes) = content(&u.ours, &u.ours_bytes);
+        return Ok(decided(text, bytes, u.ours_executable));
+    }
+    if byte_unit || u.theirs.is_none() || u.ours.is_none() {
+        // Nothing to line-merge: Keep mine or Take the new one replaces the unit wholesale
+        // (a byte unit shows a placeholder line; its real bytes ride along).
+        let show = |t: &Option<String>, b: &Option<Vec<u8>>| {
+            if byte_unit {
+                b.as_ref().map(|_| BINARY_UNIT_TEXT.to_owned())
+            } else {
+                t.clone()
+            }
+        };
+        return Ok(UnitPlan {
+            unit: u.unit.clone(),
+            text: None,
+            bytes: None,
+            merge: None,
+            whole: Some(WholeChoice {
+                ours: show(&u.ours, &u.ours_bytes),
+                theirs: show(&u.theirs, &u.theirs_bytes),
+                ours_bytes: u.ours_bytes.clone(),
+                theirs_bytes: u.theirs_bytes.clone(),
+            }),
+            executable: u.executable,
+            ours_executable: u.ours_executable,
+        });
+    }
+    let b = u.base.clone().unwrap_or_default();
+    let o = u.ours.clone().unwrap_or_default();
+    let t = u.theirs.clone().unwrap_or_default();
+    // A merge over the line, edit or step caps (FIX-251) is refused; the caller falls back.
+    let m = merge::merge(&b, &o, &t, budget)?;
+    Ok(match m.text() {
+        Some(text) => decided(Some(text), None, u.executable),
+        None => UnitPlan {
+            unit: u.unit.clone(),
+            text: None,
+            bytes: None,
+            merge: Some(m),
+            whole: None,
+            executable: u.executable,
+            ours_executable: u.ours_executable,
+        },
+    })
+}
+
+/// The merge's hash over the three texts of every unit: what the review showed, echoed by the
+/// apply and re-checked server-side (a stale review is refused with
+/// `template_version_changed`).
+fn merge_sha256(units: &[UnitTexts]) -> String {
+    let mut buf = Vec::new();
+    for u in units {
+        buf.extend_from_slice(u.unit.as_bytes());
+        for t in [&u.base, &u.ours, &u.theirs] {
+            buf.push(0x1f);
+            match t {
+                Some(s) => {
+                    buf.push(b'1');
+                    buf.extend_from_slice(s.as_bytes());
+                }
+                None => buf.push(b'0'),
+            }
+        }
+        buf.push(0x1e);
+    }
+    dto::sha256_hex(&buf)
+}
+
+/// The offer's view of one part's merge, and the plan behind it. CPU work: called through
+/// [`plan_off_runtime`] (FIX-251), with the request's shared pool of merge steps.
+fn plan_part(
+    units: Vec<UnitTexts>,
+    own_files: Vec<aurora_template::TemplateFile>,
+    compose: fn(&[UnitPlan], &[aurora_template::TemplateFile]) -> String,
+    base_present: bool,
+    budget: Budget,
+) -> PlannedPart {
+    if !base_present {
+        return PlannedPart {
+            state: "edited_here",
+            view: None,
+            note: Some(MERGE_NOTE.to_owned()),
+            plan: None,
+        };
+    }
+    // One unit over the merge's caps (FIX-251) makes the whole part today's all-or-nothing
+    // choice, and the remaining units are not merged.
+    let plans: Result<Vec<UnitPlan>, MergeError> =
+        units.iter().map(|u| plan_unit(u, &budget)).collect();
+    let plans = match plans {
+        Ok(plans) => plans,
+        Err(MergeError::TooLarge) => {
+            return PlannedPart {
+                state: "edited_here",
+                view: None,
+                note: Some(MERGE_TOO_LARGE_NOTE.to_owned()),
+                plan: None,
+            };
+        }
+    };
+    let mut conflicts: Vec<dto::MergeConflict> = Vec::new();
+    for u in &plans {
+        if let Some(w) = &u.whole {
+            conflicts.push(dto::MergeConflict {
+                unit: u.unit.clone(),
+                ours: w.ours.clone().unwrap_or_default(),
+                theirs: w.theirs.clone().unwrap_or_default(),
+            });
+        } else if let Some(m) = &u.merge {
+            conflicts.extend(m.conflicts().into_iter().map(|c| dto::MergeConflict {
+                unit: u.unit.clone(),
+                ours: c.ours,
+                theirs: c.theirs,
+            }));
+        }
+    }
+    let state = if conflicts.is_empty() {
+        "merged"
+    } else {
+        "conflict"
+    };
+    let view = dto::PartMerge {
+        state: state.to_owned(),
+        result: conflicts.is_empty().then(|| compose(&plans, &own_files)),
+        conflicts,
+        merge_sha256: merge_sha256(&units),
+    };
+    PlannedPart {
+        state,
+        view: Some(view.clone()),
+        note: None,
+        plan: Some(PartPlan {
+            view,
+            units: plans,
+            own_files,
+        }),
+    }
+}
+
+/// [`plan_part`] off the async runtime (FIX-251): a merge never stalls the worker, and the
+/// part's merges spend from the request's shared step budget.
+async fn plan_off_runtime(
+    units: Vec<UnitTexts>,
+    own_files: Vec<aurora_template::TemplateFile>,
+    compose: fn(&[UnitPlan], &[aurora_template::TemplateFile]) -> String,
+    base_present: bool,
+    budget: &Budget,
+) -> Result<PlannedPart, ApiError> {
+    let budget = budget.clone();
+    tokio::task::spawn_blocking(move || plan_part(units, own_files, compose, base_present, budget))
+        .await
+        .map_err(|e| ApiError::internal(format!("the merge task failed: {e}")))
+}
+
+/// The content of a planned unit: its text when it is text, its bytes when it is a file
+/// whose bytes are not text.
+fn unit_content(u: &UnitPlan) -> Option<Vec<u8>> {
+    u.bytes
+        .clone()
+        .or_else(|| u.text.clone().map(String::into_bytes))
+}
+
+/// The offer's display text of a merged instructions part: its one unit.
+fn compose_instructions(plans: &[UnitPlan], _: &[aurora_template::TemplateFile]) -> String {
+    plans
+        .iter()
+        .find(|u| u.unit == "text")
+        .and_then(unit_content)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default()
+}
+
+/// The offer's display text of a merged skill part: the skill text (C-1112) of the merged
+/// description, body and files.
+fn compose_skill(plans: &[UnitPlan], own: &[aurora_template::TemplateFile]) -> String {
+    let text = |unit: &str| {
+        plans
+            .iter()
+            .find(|u| u.unit == unit)
+            .and_then(unit_content)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default()
+    };
+    let mut files: Vec<(String, usize, bool, String)> = own
+        .iter()
+        .map(|f| {
+            (
+                f.path.clone(),
+                f.bytes.len(),
+                f.executable,
+                dto::sha256_hex(&f.bytes),
+            )
+        })
+        .collect();
+    for u in plans {
+        if let Some(path) = u.unit.strip_prefix("file:")
+            && let Some(bytes) = unit_content(u)
+        {
+            files.push((
+                path.to_owned(),
+                bytes.len(),
+                u.executable,
+                dto::sha256_hex(&bytes),
+            ));
+        }
+    }
+    files.sort();
+    skill_text(&text("description"), &text("body"), &files)
+}
+
+/// The offer's display text of a merged helpers part: the helper text (C-1112) of the merged
+/// files.
+fn compose_helpers(plans: &[UnitPlan], own: &[aurora_template::TemplateFile]) -> String {
+    let mut files: Vec<(String, usize, bool, String, Option<String>)> = own
+        .iter()
+        .map(|f| {
+            (
+                f.path.clone(),
+                f.bytes.len(),
+                f.executable,
+                dto::sha256_hex(&f.bytes),
+                file_text(&f.bytes),
+            )
+        })
+        .collect();
+    for u in plans {
+        if let Some(path) = u.unit.strip_prefix("file:")
+            && let Some(bytes) = unit_content(u)
+        {
+            files.push((
+                path.to_owned(),
+                bytes.len(),
+                u.executable,
+                dto::sha256_hex(&bytes),
+                file_text(&bytes),
+            ));
+        }
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    helpers_text(&files)
+}
+
+/// One file unit: a text unit when every side that has the file has it as text, otherwise a
+/// byte unit — the texts are the digests of the bytes (byte-exact for the comparisons and
+/// the hash) and the bytes ride along for Keep mine / Take the new one.
+fn file_unit(
+    unit: String,
+    base: Option<&[u8]>,
+    ours: Option<(&[u8], bool)>,
+    theirs: Option<(&[u8], bool)>,
+) -> UnitTexts {
+    let as_text = |b: Option<&[u8]>| -> Option<String> {
+        b.and_then(|b| std::str::from_utf8(b).ok().map(str::to_owned))
+    };
+    fn bytes_of(o: Option<(&[u8], bool)>) -> Option<&[u8]> {
+        o.map(|(b, _)| b)
+    }
+    let (tb, to, tt) = (
+        as_text(base),
+        as_text(bytes_of(ours)),
+        as_text(bytes_of(theirs)),
+    );
+    let binary = (base.is_some() && tb.is_none())
+        || (ours.is_some() && to.is_none())
+        || (theirs.is_some() && tt.is_none());
+    let ours_exec = ours.map(|(_, e)| e).unwrap_or(false);
+    let theirs_exec = theirs.map(|(_, e)| e).unwrap_or(false);
+    if binary {
+        UnitTexts {
+            unit,
+            base: base.map(dto::sha256_hex),
+            ours: bytes_of(ours).map(dto::sha256_hex),
+            theirs: bytes_of(theirs).map(dto::sha256_hex),
+            executable: theirs_exec,
+            ours_executable: ours_exec,
+            ours_bytes: bytes_of(ours).map(<[u8]>::to_vec),
+            theirs_bytes: bytes_of(theirs).map(<[u8]>::to_vec),
+        }
+    } else {
+        UnitTexts {
+            unit,
+            base: tb,
+            ours: to,
+            theirs: tt,
+            executable: theirs_exec,
+            ours_executable: ours_exec,
+            ours_bytes: None,
+            theirs_bytes: None,
+        }
+    }
+}
+
+/// The file units of a part: one per path any of the three sides has (sorted by path), plus
+/// the files only the agent has — the person's own, which an apply keeps.
+fn file_units(
+    base: impl IntoIterator<Item = (String, Vec<u8>, bool)>,
+    ours: impl IntoIterator<Item = (String, Vec<u8>, bool)>,
+    theirs: impl IntoIterator<Item = (String, Vec<u8>, bool)>,
+) -> (Vec<UnitTexts>, Vec<aurora_template::TemplateFile>) {
+    type Side = (
+        Option<(Vec<u8>, bool)>,
+        Option<(Vec<u8>, bool)>,
+        Option<(Vec<u8>, bool)>,
+    );
+    let mut sides: BTreeMap<String, Side> = BTreeMap::new();
+    for (path, bytes, exec) in base {
+        sides.entry(path).or_default().0 = Some((bytes, exec));
+    }
+    for (path, bytes, exec) in ours {
+        sides.entry(path).or_default().1 = Some((bytes, exec));
+    }
+    for (path, bytes, exec) in theirs {
+        sides.entry(path).or_default().2 = Some((bytes, exec));
+    }
+    let mut units = Vec::new();
+    let mut own = Vec::new();
+    for (path, (base, ours, theirs)) in sides {
+        if base.is_none()
+            && theirs.is_none()
+            && let Some((bytes, exec)) = ours
+        {
+            // The person's own file, on no template side: an apply keeps it.
+            own.push(aurora_template::TemplateFile {
+                path,
+                bytes,
+                executable: exec,
+            });
+            continue;
+        }
+        units.push(file_unit(
+            format!("file:{path}"),
+            base.as_ref().map(|(b, _)| b.as_slice()),
+            ours.as_ref().map(|(b, e)| (b.as_slice(), *e)),
+            theirs.as_ref().map(|(b, e)| (b.as_slice(), *e)),
+        ));
+    }
+    (units, own)
+}
+
+/// The units of a skill part: the description and the body, then one unit per file path any
+/// of the three sides has, plus the agent's own files (a skill's files are part of its hash,
+/// so they are parts of the merge too).
+fn skill_units(
+    base: &aurora_template::RenderedSkill,
+    row: &skills_repo::SkillRow,
+    row_files: &[skills_repo::FileRow],
+    theirs: &aurora_template::RenderedSkill,
+) -> (Vec<UnitTexts>, Vec<aurora_template::TemplateFile>) {
+    let mut units = vec![
+        UnitTexts {
+            unit: "description".to_owned(),
+            base: Some(base.use_it_when.clone()),
+            ours: Some(row.description.clone()),
+            theirs: Some(theirs.use_it_when.clone()),
+            executable: false,
+            ours_executable: false,
+            ours_bytes: None,
+            theirs_bytes: None,
+        },
+        UnitTexts {
+            unit: "body".to_owned(),
+            base: Some(base.body.clone()),
+            ours: Some(row.body.clone()),
+            theirs: Some(theirs.body.clone()),
+            executable: false,
+            ours_executable: false,
+            ours_bytes: None,
+            theirs_bytes: None,
+        },
+    ];
+    let (files, own) = file_units(
+        base.files
+            .iter()
+            .map(|f| (f.path.clone(), f.bytes.clone(), f.executable)),
+        row_files
+            .iter()
+            .map(|f| (f.path.clone(), f.content.clone(), f.executable)),
+        theirs
+            .files
+            .iter()
+            .map(|f| (f.path.clone(), f.bytes.clone(), f.executable)),
+    );
+    units.extend(files);
+    (units, own)
+}
+
+/// The units of the helpers part: one per file path any of the three sides has, plus the
+/// agent's own helper files.
+fn helper_units(
+    base: &[aurora_template::TemplateFile],
+    ours: &[helpers_repo::HelperRow],
+    theirs: &[aurora_template::TemplateFile],
+) -> (Vec<UnitTexts>, Vec<aurora_template::TemplateFile>) {
+    file_units(
+        base.iter()
+            .map(|f| (f.path.clone(), f.bytes.clone(), f.executable)),
+        ours.iter()
+            .map(|h| (h.path.clone(), h.content.clone(), h.executable)),
+        theirs
+            .iter()
+            .map(|f| (f.path.clone(), f.bytes.clone(), f.executable)),
+    )
 }
 
 /// The `RefJson` of a stored reference (the resolver's input shape).
@@ -357,6 +945,9 @@ struct Diff {
     offer: dto::TemplateUpdateOffer,
     /// `(kind, key)` → state of every listed part; the apply validates its parts against this.
     states: BTreeMap<(String, String), &'static str>,
+    /// `(kind, key)` → the server's own merge of every `merged`/`conflict` part (FIX-251):
+    /// the offer's view and the plan the apply resolves against.
+    plans: BTreeMap<(String, String), PartPlan>,
     rendered: aurora_template::RenderedTemplate,
     /// The stored version's library references with their resolutions: the
     /// `removed_upstream` match base (`key, reference, plan`).
@@ -394,6 +985,17 @@ async fn build_diff_on(
     let stored = stored_inputs(agent);
     let checked = aurora_template::CheckedInputs::from_values(render_inputs);
     let rendered = aurora_template::render(&ctx.new_content, &checked, &agent.name, person);
+    // The merge's own renders (FIX-251), both with the **stored** inputs: the base is the
+    // text the agent started from, and theirs is what the review showed. The merge's hash
+    // pins these texts, so the inputs an apply gives never move them — the offer the person
+    // answered to is the one the apply verifies against.
+    let stored_checked = aurora_template::CheckedInputs::from_values(stored.clone());
+    let merge_base = ctx
+        .old_content
+        .as_ref()
+        .map(|old| aurora_template::render(old, &stored_checked, &agent.name, person));
+    let merge_theirs =
+        aurora_template::render(&ctx.new_content, &stored_checked, &agent.name, person);
 
     let recorded: BTreeMap<(String, String), String> = trepo::parts_of(&mut *conn, agent.id)
         .await?
@@ -439,14 +1041,51 @@ async fn build_diff_on(
     }
     let live_helpers = helpers_repo::list(&mut *conn, agent.id).await?;
 
+    // One pool of merge steps for the whole request (FIX-251): every part's merge spends
+    // from it, wherever it runs.
+    let budget = merge::Budget::new(merge::MERGE_STEPS_MAX);
+
     let mut parts_out: Vec<OfferPart> = Vec::new();
     let mut states: BTreeMap<(String, String), &'static str> = BTreeMap::new();
+    let mut plans: BTreeMap<(String, String), PartPlan> = BTreeMap::new();
 
     // ---- instructions -------------------------------------------------------------------------
     let proposed_hash = instructions_hash(&rendered.instructions);
     let current_hash = instructions_hash(&agent.brief);
     let rec = recorded.get(&("instructions".to_owned(), String::new()));
-    if let Some(st) = listed(rec, Some(&proposed_hash), Some(&current_hash)) {
+    if let Some(mut st) = listed(rec, Some(&proposed_hash), Some(&current_hash)) {
+        let mut merge = None;
+        let mut merge_note = None;
+        if st == "edited_here" {
+            // The agent's own edit meets the new version (FIX-251): the three-way merge of
+            // the starting text (the stored version's), the agent's brief and the new
+            // version's text — or, when the starting text is not stored, the
+            // all-or-nothing edit with a note saying why.
+            let units = vec![UnitTexts {
+                unit: "text".to_owned(),
+                base: merge_base.as_ref().map(|r| r.instructions.clone()),
+                ours: Some(agent.brief.clone()),
+                theirs: Some(merge_theirs.instructions.clone()),
+                executable: false,
+                ours_executable: false,
+                ours_bytes: None,
+                theirs_bytes: None,
+            }];
+            let planned = plan_off_runtime(
+                units,
+                Vec::new(),
+                compose_instructions,
+                merge_base.is_some(),
+                &budget,
+            )
+            .await?;
+            st = planned.state;
+            merge = planned.view;
+            merge_note = planned.note;
+            if let Some(plan) = planned.plan {
+                plans.insert(("instructions".to_owned(), String::new()), plan);
+            }
+        }
         states.insert(("instructions".to_owned(), String::new()), st);
         parts_out.push(OfferPart {
             kind: "instructions".to_owned(),
@@ -454,6 +1093,8 @@ async fn build_diff_on(
             state: st.to_owned(),
             current: Some(agent.brief.clone()),
             proposed: Some(rendered.instructions.clone()),
+            merge,
+            merge_note,
             skill_ref: None,
         });
     }
@@ -522,7 +1163,38 @@ async fn build_diff_on(
             Some(row) => (Some(live_hash(row)), Some(live_text(row))),
             None => (None, None),
         };
-        if let Some(st) = listed(rec, Some(&ph), ch.as_deref()) {
+        if let Some(mut st) = listed(rec, Some(&ph), ch.as_deref()) {
+            let mut merge = None;
+            let mut merge_note = None;
+            if st == "edited_here" {
+                // The skill is merged per text, not per skill (FIX-251, D-488(b)): the
+                // description, the body and every file path any side has are units of their
+                // own. Without the stored version's skill of this name (or the agent's own
+                // row) there is nothing to merge against: the all-or-nothing edit.
+                let base = merge_base
+                    .as_ref()
+                    .and_then(|r| r.skills.iter().find(|x| x.name == s.name));
+                let theirs = merge_theirs.skills.iter().find(|x| x.name == s.name);
+                match (base, theirs, own.as_ref()) {
+                    (Some(base), Some(theirs), Some(row)) => {
+                        let row_files: &[skills_repo::FileRow] = live_files
+                            .get(&row.id)
+                            .map(Vec::as_slice)
+                            .unwrap_or_default();
+                        let (units, own_files) = skill_units(base, row, row_files, theirs);
+                        let planned =
+                            plan_off_runtime(units, own_files, compose_skill, true, &budget)
+                                .await?;
+                        st = planned.state;
+                        merge = planned.view;
+                        merge_note = planned.note;
+                        if let Some(plan) = planned.plan {
+                            plans.insert(("skill".to_owned(), s.name.clone()), plan);
+                        }
+                    }
+                    _ => merge_note = Some(MERGE_NOTE.to_owned()),
+                }
+            }
             states.insert(("skill".to_owned(), s.name.clone()), st);
             parts_out.push(OfferPart {
                 kind: "skill".to_owned(),
@@ -530,6 +1202,8 @@ async fn build_diff_on(
                 state: st.to_owned(),
                 current: cur,
                 proposed: Some(proposed_text(s)),
+                merge,
+                merge_note,
                 skill_ref: None,
             });
         }
@@ -557,6 +1231,8 @@ async fn build_diff_on(
                     state: st.to_owned(),
                     current: cur,
                     proposed: None,
+                    merge: None,
+                    merge_note: None,
                     skill_ref: None,
                 });
             }
@@ -615,7 +1291,29 @@ async fn build_diff_on(
     } else {
         Some(ch.as_str())
     };
-    if let Some(st) = listed(rec, proposed_opt, current_opt) {
+    if let Some(mut st) = listed(rec, proposed_opt, current_opt) {
+        let mut merge = None;
+        let mut merge_note = None;
+        if st == "edited_here" {
+            // The helper files are merged per file (FIX-251, D-488(b)); the person's own
+            // files — on no template side — an apply keeps. Without the stored version's
+            // content there is nothing to merge against.
+            match &merge_base {
+                Some(base) => {
+                    let (units, own_files) =
+                        helper_units(&base.helpers, &live_helpers, &merge_theirs.helpers);
+                    let planned =
+                        plan_off_runtime(units, own_files, compose_helpers, true, &budget).await?;
+                    st = planned.state;
+                    merge = planned.view;
+                    merge_note = planned.note;
+                    if let Some(plan) = planned.plan {
+                        plans.insert(("helpers".to_owned(), String::new()), plan);
+                    }
+                }
+                None => merge_note = Some(MERGE_NOTE.to_owned()),
+            }
+        }
         states.insert(("helpers".to_owned(), String::new()), st);
         parts_out.push(OfferPart {
             kind: "helpers".to_owned(),
@@ -623,6 +1321,8 @@ async fn build_diff_on(
             state: st.to_owned(),
             current: (!live_helpers.is_empty()).then_some(current_helpers_text),
             proposed: (!rendered.helpers.is_empty()).then_some(proposed_helpers_text),
+            merge,
+            merge_note,
             skill_ref: None,
         });
     }
@@ -663,6 +1363,8 @@ async fn build_diff_on(
                     state: st.to_owned(),
                     current: None,
                     proposed: Some(ref_text(plan_ref(&ctx.new_content, index))),
+                    merge: None,
+                    merge_note: None,
                     skill_ref: Some(plan.clone()),
                 });
             }
@@ -698,6 +1400,8 @@ async fn build_diff_on(
                         state: st.to_owned(),
                         current: Some(ref_text(&r)),
                         proposed: None,
+                        merge: None,
+                        merge_note: None,
                         skill_ref: Some(plan.clone()),
                     });
                 }
@@ -795,6 +1499,7 @@ async fn build_diff_on(
     Ok(Diff {
         offer,
         states,
+        plans,
         rendered,
         old_refs,
     })
@@ -806,6 +1511,266 @@ fn plan_ref(
     index: usize,
 ) -> &aurora_template::SkillRef {
     &content.meta.skill_refs[index]
+}
+
+// ---- the resolutions ----------------------------------------------------------------------------
+
+/// The written content of one taken part with a merge: the server's own composition of the
+/// person's choices against the server's own merge (FIX-251).
+enum ResolvedPart {
+    Instructions(String),
+    Skill {
+        description: String,
+        body: String,
+        files: Vec<aurora_template::TemplateFile>,
+    },
+    Helpers(Vec<aurora_template::TemplateFile>),
+}
+
+/// The 422 for resolutions that do not match the offer's conflict hunks (a stale or forged
+/// review).
+fn merge_unresolved() -> ApiError {
+    ApiError::unprocessable(
+        "template_merge_unresolved",
+        "The resolutions do not match this part's conflicts.",
+    )
+}
+
+/// The 422 for a free edit over the resolution size cap.
+fn resolution_too_large() -> ApiError {
+    ApiError::unprocessable("template_resolution_too_large", "This edit is too large.")
+}
+
+/// The 422 for a merged part whose composed text is over the part's own limit (the same
+/// code the all-or-nothing parts are refused with).
+fn part_too_large() -> ApiError {
+    ApiError::unprocessable(
+        "template_too_large",
+        "The merged text is too large for this part.",
+    )
+}
+
+/// The person's choice for one conflict hunk, as the request states it.
+enum Choice {
+    KeepMine,
+    TakeTheirs,
+    Text(String),
+}
+
+fn choice_of(r: &dto::ApplyResolution) -> Result<Choice, ApiError> {
+    match r.choice.as_str() {
+        "keep_mine" => Ok(Choice::KeepMine),
+        "take_theirs" => Ok(Choice::TakeTheirs),
+        "text" => match &r.text {
+            Some(t) if t.chars().count() <= RESOLUTION_TEXT_MAX => Ok(Choice::Text(t.clone())),
+            Some(_) => Err(resolution_too_large()),
+            None => Err(merge_unresolved()),
+        },
+        _ => Err(merge_unresolved()),
+    }
+}
+
+/// How many resolutions one planned unit takes: one for a whole choice, one per conflict
+/// hunk of its merge, none for a unit the merge decided on its own.
+fn unit_resolutions(u: &UnitPlan) -> usize {
+    match (&u.whole, &u.merge) {
+        (Some(_), _) => 1,
+        (None, Some(m)) => m.conflict_count(),
+        (None, None) => 0,
+    }
+}
+
+/// The content and executable bit one planned unit resolves to: `None` is a file the
+/// resolution removes (or one that was never in the merged set).
+fn resolve_unit(
+    u: &UnitPlan,
+    res: &[&dto::ApplyResolution],
+) -> Result<(Option<Vec<u8>>, bool), ApiError> {
+    if let Some(w) = &u.whole {
+        let Some(r) = res.first() else {
+            return Err(merge_unresolved());
+        };
+        return Ok(match choice_of(r)? {
+            Choice::KeepMine => (
+                w.ours_bytes
+                    .clone()
+                    .or_else(|| w.ours.clone().map(String::into_bytes)),
+                u.ours_executable,
+            ),
+            Choice::TakeTheirs => (
+                w.theirs_bytes
+                    .clone()
+                    .or_else(|| w.theirs.clone().map(String::into_bytes)),
+                u.executable,
+            ),
+            Choice::Text(t) => (Some(t.into_bytes()), u.executable),
+        });
+    }
+    if let Some(m) = &u.merge {
+        let rs: Vec<merge::Resolution> = res
+            .iter()
+            .map(|r| match choice_of(r)? {
+                Choice::KeepMine => Ok(merge::Resolution::KeepMine),
+                Choice::TakeTheirs => Ok(merge::Resolution::TakeTheirs),
+                Choice::Text(t) => Ok(merge::Resolution::Text(t)),
+            })
+            .collect::<Result<_, ApiError>>()?;
+        let text = m.resolve(&rs, RESOLUTION_TEXT_MAX).map_err(|e| match e {
+            ResolveError::Count => merge_unresolved(),
+            ResolveError::TooLarge => resolution_too_large(),
+        })?;
+        return Ok((Some(text.into_bytes()), u.executable));
+    }
+    Ok((
+        u.bytes
+            .clone()
+            .or_else(|| u.text.clone().map(String::into_bytes)),
+        u.executable,
+    ))
+}
+
+/// The resolved text of a text unit (the instructions' `text`, a skill's `description` or
+/// `body`): these units are never files, so their resolution is always text.
+fn resolved_text(u: &UnitPlan, res: &[&dto::ApplyResolution]) -> Result<String, ApiError> {
+    match resolve_unit(u, res)?
+        .0
+        .and_then(|b| String::from_utf8(b).ok())
+    {
+        Some(t) => Ok(t),
+        None => Err(merge_unresolved()),
+    }
+}
+
+/// The resolved files of a part: every file unit's content (or its removal) plus the
+/// person's own files, which no merge touches. The description and body units come first in
+/// a skill's units, so the file units start at 2.
+fn resolved_files(
+    units: &[UnitPlan],
+    res: &[Vec<&dto::ApplyResolution>],
+    own: &[aurora_template::TemplateFile],
+) -> Result<Vec<aurora_template::TemplateFile>, ApiError> {
+    let mut files: Vec<aurora_template::TemplateFile> = own.to_vec();
+    for (u, r) in units.iter().zip(res) {
+        let Some(path) = u.unit.strip_prefix("file:") else {
+            return Err(ApiError::internal("merge unit is not a file"));
+        };
+        let (bytes, executable) = resolve_unit(u, r)?;
+        let Some(bytes) = bytes else { continue };
+        files.push(aurora_template::TemplateFile {
+            path: path.to_owned(),
+            bytes,
+            executable,
+        });
+    }
+    Ok(files)
+}
+
+/// A helper set as the one helper writer takes it.
+fn helper_files(
+    files: &[aurora_template::TemplateFile],
+) -> Vec<agent_helpers::service::HelperFile<'_>> {
+    files
+        .iter()
+        .map(|f| agent_helpers::service::HelperFile {
+            path: &f.path,
+            content: &f.bytes,
+            executable: f.executable,
+        })
+        .collect()
+}
+
+/// The written content of every taken part that carries a merge (FIX-251): the offer's merge
+/// hash echoed back, one resolution per conflict hunk in the offer's order, and the part's
+/// own limits on what the choices compose. Anything else is refused before anything is
+/// written; the parts without a merge apply exactly as before.
+fn resolve_parts(
+    diff: &Diff,
+    taken: &[((String, String), &'static str)],
+    req_parts: &[dto::ApplyPart],
+) -> Result<BTreeMap<(String, String), ResolvedPart>, ApiError> {
+    let mut out: BTreeMap<(String, String), ResolvedPart> = BTreeMap::new();
+    for (k, st) in taken {
+        let Some(p) = req_parts.iter().find(|p| p.kind == k.0 && p.key == k.1) else {
+            return Err(ApiError::internal("the request's merge part is missing"));
+        };
+        if !matches!(*st, "merged" | "conflict") {
+            // A reviewed merge that is no longer one (the part grew past the merge's caps
+            // while the review was open, FIX-251) is the stale review: never the wholesale
+            // overwrite in its place.
+            if p.merge_sha256.is_some() || !p.resolutions.is_empty() {
+                return Err(version_changed());
+            }
+            continue;
+        }
+        let plan = diff
+            .plans
+            .get(k)
+            .ok_or_else(|| ApiError::internal("the merge plan of a listed part is missing"))?;
+        // The review's merge is the server's own: a hash the offer did not show is the plain
+        // 409 (C-1112's stale review), never a silent re-merge.
+        if p.merge_sha256.as_deref() != Some(plan.view.merge_sha256.as_str()) {
+            return Err(version_changed());
+        }
+        // The resolutions follow the offer's hunks: same units, same order, none missing,
+        // none extra.
+        let mut it = p.resolutions.iter();
+        let mut per_unit: Vec<Vec<&dto::ApplyResolution>> = Vec::new();
+        for u in &plan.units {
+            let mut mine = Vec::new();
+            for _ in 0..unit_resolutions(u) {
+                let r = it.next().ok_or_else(merge_unresolved)?;
+                if r.unit != u.unit {
+                    return Err(merge_unresolved());
+                }
+                choice_of(r)?;
+                mine.push(r);
+            }
+            per_unit.push(mine);
+        }
+        if it.next().is_some() {
+            return Err(merge_unresolved());
+        }
+        let at = |name: &str| -> Result<usize, ApiError> {
+            plan.units
+                .iter()
+                .position(|u| u.unit == name)
+                .ok_or_else(|| ApiError::internal("merge unit missing"))
+        };
+        let resolved = match k.0.as_str() {
+            "instructions" => {
+                let i = at("text")?;
+                let text = resolved_text(&plan.units[i], &per_unit[i])?;
+                if text.chars().count() > agents::service::BRIEF_MAX {
+                    return Err(part_too_large());
+                }
+                ResolvedPart::Instructions(text)
+            }
+            "skill" => {
+                let di = at("description")?;
+                let bi = at("body")?;
+                let description = resolved_text(&plan.units[di], &per_unit[di])?;
+                let body = resolved_text(&plan.units[bi], &per_unit[bi])?;
+                let files = resolved_files(&plan.units[2..], &per_unit[2..], &plan.own_files)?;
+                // The merged skill keeps the limits of an edit, with the same errors.
+                let contents: Vec<&[u8]> = files.iter().map(|f| f.bytes.as_slice()).collect();
+                skills_domain::service::check_composed(&description, &body, &contents)?;
+                ResolvedPart::Skill {
+                    description,
+                    body,
+                    files,
+                }
+            }
+            "helpers" => {
+                let files = resolved_files(&plan.units, &per_unit, &plan.own_files)?;
+                // The merged set keeps the caps of any helper write, with the same errors.
+                agent_helpers::service::check_set(&helper_files(&files))?;
+                ResolvedPart::Helpers(files)
+            }
+            _ => return Err(ApiError::internal("merge part of an unknown kind")),
+        };
+        out.insert(k.clone(), resolved);
+    }
+    Ok(out)
 }
 
 // ---- the routes' services -----------------------------------------------------------------------
@@ -1005,6 +1970,9 @@ pub async fn apply(
             "The rendered instructions are too large for an agent brief.",
         ));
     }
+    // The merge parts resolve before anything is fetched (FIX-251): the hash echo, the
+    // resolutions and the size limits are checked against the offer's own merge.
+    resolve_parts(&diff, &taken, &req.parts)?;
 
     // The library fetches of the taken library skills happen before the transaction (C-1112,
     // as C-1111): the resolution must be the offer's, the commit the person's to pin.
@@ -1077,8 +2045,10 @@ pub async fn apply(
     // so the re-reads and the writes below see one consistent state.
     memory_repo::lock_agent(&mut tx, agent.id).await?;
     // Re-verify under the lock (SEC-146 A): the agent, the offer and the part states may all
-    // have moved between the pre-check above and this transaction.
-    let agent = agents_repo::get(&mut *tx, agent_id)
+    // have moved between the pre-check above and this transaction. The agent's row is locked
+    // first: the manual writers of the brief, the skills and the helpers take that lock too, so
+    // an edit is either committed before the re-reads (and seen) or waits for the commit.
+    let agent = agents_repo::lock_for_write(&mut *tx, agent_id)
         .await?
         .ok_or_else(not_found)?;
     let Some(ctx) = offer_ctx_on(state, &mut tx, &agent).await? else {
@@ -1111,6 +2081,9 @@ pub async fn apply(
             "The rendered instructions are too large for an agent brief.",
         ));
     }
+    // The merges are re-resolved on the transaction's own diff (SEC-146 A): the person's
+    // choices apply to the server's own hunks, recomputed under the lock.
+    let resolved = resolve_parts(&diff, &taken, &req.parts)?;
     let result = apply_in_tx(
         &mut tx,
         state,
@@ -1118,6 +2091,7 @@ pub async fn apply(
         &agent,
         &diff,
         &taken,
+        &resolved,
         &adds,
         &inputs_json,
     )
@@ -1143,7 +2117,8 @@ pub async fn apply(
 /// The one transaction of [`apply`] (C-1112): every write goes through the existing writer of
 /// its kind. Commits nothing: the notes and the critical events (a taken library skill's
 /// `skill.library.add`) come back; the caller commits — or lets the transaction drop (rollback)
-/// on any error.
+/// on any error. A part with a merge writes [`ResolvedPart`] — the server's own composition of
+/// the person's choices; every other part writes the rendered version as before.
 #[allow(clippy::too_many_arguments)]
 async fn apply_in_tx(
     tx: &mut audit::Tx,
@@ -1152,6 +2127,7 @@ async fn apply_in_tx(
     agent: &agents_repo::AgentRow,
     diff: &Diff,
     taken: &[((String, String), &'static str)],
+    resolved: &BTreeMap<(String, String), ResolvedPart>,
     adds: &[(String, library::PreparedAdd)],
     inputs_json: &Value,
 ) -> Result<(Vec<dto::ApplyNote>, Vec<AuditEvent>), ApiError> {
@@ -1162,13 +2138,17 @@ async fn apply_in_tx(
     for ((kind, key), st) in taken {
         let st: &str = st;
         match (kind.as_str(), st) {
-            // ---- instructions: the rendered brief replaces the agent's -----------------------
+            // ---- instructions: the merged brief, or the rendered one, replaces the agent's --
             ("instructions", _) => {
+                let brief = match resolved.get(&("instructions".to_owned(), String::new())) {
+                    Some(ResolvedPart::Instructions(t)) => t.clone(),
+                    _ => diff.rendered.instructions.clone(),
+                };
                 agents_repo::update(
                     &mut **tx,
                     agent.id,
                     &agents_repo::AgentPatch {
-                        brief: Some(&diff.rendered.instructions),
+                        brief: Some(&brief),
                         ..Default::default()
                     },
                 )
@@ -1177,7 +2157,7 @@ async fn apply_in_tx(
                     agent_id: agent.id,
                     kind: "instructions".into(),
                     key: String::new(),
-                    content_sha256: instructions_hash(&diff.rendered.instructions),
+                    content_sha256: instructions_hash(&brief),
                 });
             }
             // ---- skills ----------------------------------------------------------------------
@@ -1200,13 +2180,27 @@ async fn apply_in_tx(
                     None => {}
                 }
             }
-            // Any other state: the version's skill replaces the agent's own, or creates it
-            // (`new`, `removed_here`) — an ordinary editable skill (C-1112).
+            // Any other state: the merged skill (the person's resolutions composed with the
+            // server's own merge, the person's own files kept), or the version's skill
+            // replacing the agent's own, or creating it (`new`, `removed_here`) — an
+            // ordinary editable skill (C-1112, FIX-251).
             ("skill", _) => {
-                let Some(s) = diff.rendered.skills.iter().find(|s| &s.name == key) else {
-                    continue; // cannot happen: every other state has proposed content
+                let (use_it_when, body, files) = match resolved
+                    .get(&("skill".to_owned(), key.clone()))
+                {
+                    Some(ResolvedPart::Skill {
+                        description,
+                        body,
+                        files,
+                    }) => (description.clone(), body.clone(), files.clone()),
+                    _ => {
+                        let Some(s) = diff.rendered.skills.iter().find(|s| &s.name == key) else {
+                            continue; // cannot happen: every other state has proposed content
+                        };
+                        (s.use_it_when.clone(), s.body.clone(), s.files.clone())
+                    }
                 };
-                let existing = skills_repo::get_agent_named(tx, agent.id, &s.name).await?;
+                let existing = skills_repo::get_agent_named(tx, agent.id, key).await?;
                 let row = match existing {
                     // A library-sourced skill of the same name is never written here (C-1112);
                     // re-checked in the transaction so a race cannot write a read-only skill.
@@ -1219,8 +2213,7 @@ async fn apply_in_tx(
                     Some(row) => {
                         // The apply replaces the skill's text, not the person's on/off
                         // choice (SEC-146 E): the existing row's `enabled` stays.
-                        skills_repo::update(tx, row.id, &s.use_it_when, &s.body, row.enabled)
-                            .await?;
+                        skills_repo::update(tx, row.id, &use_it_when, &body, row.enabled).await?;
                         // The files are replaced as a set.
                         for f in skills_repo::files(tx, &[row.id]).await? {
                             skills_repo::delete_file(tx, row.id, &f.path).await?;
@@ -1236,9 +2229,9 @@ async fn apply_in_tx(
                                 workspace: None,
                             },
                             &NewSkill {
-                                name: &s.name,
-                                description: &s.use_it_when,
-                                body: &s.body,
+                                name: key,
+                                description: &use_it_when,
+                                body: &body,
                                 enabled: true,
                             },
                             "user",
@@ -1247,19 +2240,21 @@ async fn apply_in_tx(
                         .row
                     }
                 };
-                for f in &s.files {
+                for f in &files {
                     skills_repo::upsert_file(tx, row.id, &f.path, &f.bytes, Some(f.executable))
                         .await?;
                 }
                 skills_repo::bump_agent(tx, agent.id).await?;
+                // The recorded hash is the written text's, so the next offer diffs against
+                // what the apply really left behind.
                 recorded.push(trepo::PartRow {
                     agent_id: agent.id,
                     kind: "skill".into(),
-                    key: s.name.clone(),
+                    key: key.clone(),
                     content_sha256: skill_hash(
-                        &s.use_it_when,
-                        &s.body,
-                        &s.files
+                        &use_it_when,
+                        &body,
+                        &files
                             .iter()
                             .map(|f| (f.path.clone(), f.bytes.clone(), f.executable))
                             .collect::<Vec<_>>(),
@@ -1274,21 +2269,18 @@ async fn apply_in_tx(
                     skills_repo::bump_agent(tx, agent.id).await?;
                 }
             }
-            // Any other state: the version's helper files replace the agent's set (C-1143's
-            // one writer, which bumps the home sync itself).
+            // Any other state: the merged helper files (the person's resolutions composed
+            // with the server's own merge, the person's own files kept), or the version's
+            // helper files replacing the agent's set (C-1143's one writer, which bumps the
+            // home sync itself).
             ("helpers", _) => {
-                let files: Vec<agent_helpers::service::HelperFile<'_>> = diff
-                    .rendered
-                    .helpers
-                    .iter()
-                    .map(|f| agent_helpers::service::HelperFile {
-                        path: &f.path,
-                        content: &f.bytes,
-                        executable: f.executable,
-                    })
-                    .collect();
-                agent_helpers::service::replace_all(tx, agent.id, &files).await?;
-                recorded.push(create::helpers_part(agent.id, &diff.rendered.helpers));
+                let written: &[aurora_template::TemplateFile] =
+                    match resolved.get(&("helpers".to_owned(), String::new())) {
+                        Some(ResolvedPart::Helpers(fs)) => fs.as_slice(),
+                        _ => &diff.rendered.helpers,
+                    };
+                agent_helpers::service::replace_all(tx, agent.id, &helper_files(written)).await?;
+                recorded.push(create::helpers_part(agent.id, written));
             }
             // ---- library skills --------------------------------------------------------------
             // `removed_upstream`: the agent's library skill of the reference's name is deleted
@@ -1411,7 +2403,7 @@ pub async fn detach(
     memory_repo::lock_agent(&mut tx, agent.id).await?;
     // Re-read under the lock (SEC-146 A): a concurrent apply or detach may have moved the
     // provenance; a second detach finds it gone and answers 404.
-    let agent = agents_repo::get(&mut *tx, agent_id)
+    let agent = agents_repo::lock_for_write(&mut *tx, agent_id)
         .await?
         .ok_or_else(not_found)?;
     if agent.template_id.is_none() {

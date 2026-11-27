@@ -213,6 +213,23 @@ describe("push service worker", () => {
     expect(named.title).toBe("Aurora — The default secret store changed");
   });
 
+  it("template_update: fixed text, the sentence only when carried, and the agents path it was given (FIX-251, D-488(a))", async () => {
+    const path = "/o/acme/w/main/agents?needs_update=1";
+    const plain = await push(JSON.stringify({ v: 1, type: "template_update", url: path, detail: "SECRET-CANARY" }));
+    expect(plain.title).toBe("Aurora — a template update is available");
+    expect(plain.options.body).toBe("Open the Agents page to review the updates.");
+    expect(plain.options.tag).toBe("aurora-template-update");
+    expect(plain.options.data.url).toBe(path);
+    expect(JSON.stringify(plain)).not.toContain("SECRET-CANARY");
+    const named = await push(
+      JSON.stringify({ v: 1, type: "template_update", url: path, title: "T 1.4.0 is available for 3 agents in Main" }),
+    );
+    expect(named.title).toBe("Aurora — T 1.4.0 is available for 3 agents in Main");
+    expect(named.options.body).toBe("Open the Agents page to review the updates.");
+    const stray = await push(JSON.stringify({ v: 1, type: "template_update", url: "https://evil.example/x" }));
+    expect(stray.options.data.url, "a path outside Aurora becomes the home page").toBe("/");
+  });
+
   it("never shows a field outside the payload contract", async () => {
     const s = await push(
       JSON.stringify({ v: 1, type: "approval.pending", approval_id: "ap-5", title: "SECRET-CANARY", body: "SECRET-CANARY", url: "/o/a/w/b/approvals" }),

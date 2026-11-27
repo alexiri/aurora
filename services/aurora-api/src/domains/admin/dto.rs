@@ -126,6 +126,9 @@ pub enum AttentionKind {
     AgentCannotAnswer,
     /// (C-1080) The caller's own waiting request (`own: true`, never counted).
     MyRequest,
+    /// (FIX-251, D-488(a)) A new agent template version is offered for the workspace's agents;
+    /// shown to the people who can apply the update.
+    TemplateUpdate,
 }
 
 impl AttentionKind {
@@ -138,6 +141,7 @@ impl AttentionKind {
                 | Self::BrokenAccount
                 | Self::AgentCannotAnswer
                 | Self::MyRequest
+                | Self::TemplateUpdate
         )
     }
 }

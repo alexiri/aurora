@@ -29,17 +29,10 @@ fn cap(message: String) -> ApiError {
     ApiError::unprocessable("helpers_limit", message)
 }
 
-/// Replace an agent's whole helper set with `files` (C-1143), inside the caller's transaction:
-/// everything of the agent is removed first, then the files are inserted with their SHA-256
-/// digests, and the agent's home-sync generation is bumped. The C-1141 path rules
-/// ([`helper_path_ok`]) and the per-agent caps (`TEMPLATE_HELPERS_MAX` files,
-/// `TEMPLATE_HELPER_FILE_MAX` per file, `TEMPLATE_HELPERS_TOTAL_MAX` together) are enforced
-/// here, before anything is written.
-pub async fn replace_all(
-    tx: &mut PgConnection,
-    agent: Uuid,
-    files: &[HelperFile<'_>],
-) -> Result<(), ApiError> {
+/// The C-1141 path rules ([`helper_path_ok`]) and the per-agent caps of a whole helper set
+/// (`TEMPLATE_HELPERS_MAX` files, `TEMPLATE_HELPER_FILE_MAX` per file,
+/// `TEMPLATE_HELPERS_TOTAL_MAX` together).
+pub(crate) fn check_set(files: &[HelperFile<'_>]) -> Result<(), ApiError> {
     if files.len() > limits::TEMPLATE_HELPERS_MAX {
         return Err(cap(format!(
             "An agent can have at most {} helper files.",
@@ -80,6 +73,19 @@ pub async fn replace_all(
             return Err(invalid(f.path, "the same path twice"));
         }
     }
+    Ok(())
+}
+
+/// Replace an agent's whole helper set with `files` (C-1143), inside the caller's transaction:
+/// everything of the agent is removed first, then the files are inserted with their SHA-256
+/// digests, and the agent's home-sync generation is bumped. [`check_set`] is enforced here,
+/// before anything is written.
+pub async fn replace_all(
+    tx: &mut PgConnection,
+    agent: Uuid,
+    files: &[HelperFile<'_>],
+) -> Result<(), ApiError> {
+    check_set(files)?;
     repo::delete_all(&mut *tx, agent).await?;
     for f in files {
         let sha256 = hex::encode(Sha256::digest(f.content));

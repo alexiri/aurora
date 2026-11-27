@@ -45,6 +45,11 @@ pub struct Agent {
     /// (P6-TPL-3, C-1112) The template this agent was created from; null otherwise. Plain
     /// text: deleting the source or the template changes no agent.
     pub template: Option<AgentTemplateRef>,
+    /// (FIX-251, D-488(a)) The agent's template offers a semver-newer version than the agent's
+    /// stored one — the **Update available** mark. Computed on the workspace agents list and
+    /// the routes that read one agent fresh (`with_byo`); `false` where it is not computed
+    /// (a fresh create, a default agent), and for an agent without a template.
+    pub needs_update: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -92,6 +97,7 @@ impl From<AgentRow> for Agent {
                 }),
                 _ => None,
             },
+            needs_update: false,
             created_at: a.created_at,
             updated_at: a.updated_at,
         }
