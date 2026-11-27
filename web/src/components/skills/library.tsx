@@ -32,7 +32,7 @@ import {
 } from "@/lib/api/skill-libraries";
 import { TIER_LABEL, useCreateSkill, type Skill, type SkillScope, type SkillTier } from "@/lib/api/skills";
 
-import { Lines } from "@/components/ui/lines";
+import { DiffView as FileDiffView } from "@/components/ui/diff-view";
 
 type Source = NonNullable<Skill["source"]>;
 
@@ -80,17 +80,17 @@ const AUTHORITY: Record<BudgetTier, string> = {
 
 // ---- the whole diff ---------------------------------------------------------------------------
 
-/** The whole stored-versus-proposed content: every line, nothing summarized or truncated. */
+/** The whole stored-versus-proposed content: the folded GitLab-style diff (FIX-250), nothing summarized. */
 export function DiffView({ diff }: { diff: LibraryDiff }) {
   return (
     <div className="space-y-4">
       <section aria-label="Description change" className="space-y-1">
         <h4 className="text-sm font-semibold text-ink">Description{diff.description.changed ? "" : " (unchanged)"}</h4>
-        <Lines old={diff.description.old} next={diff.description.new} label="Description diff" />
+        <FileDiffView old={diff.description.old} next={diff.description.new} label="Description diff" fileName="description" />
       </section>
       <section aria-label="SKILL.md change" className="space-y-1">
         <h4 className="text-sm font-semibold text-ink">SKILL.md{diff.body.changed ? "" : " (unchanged)"}</h4>
-        <Lines old={diff.body.old} next={diff.body.new} label="SKILL.md diff" />
+        <FileDiffView old={diff.body.old} next={diff.body.new} label="SKILL.md diff" fileName="SKILL.md" />
       </section>
       {diff.files.map((f) => (
         <section key={f.path} aria-label={`File ${f.path}`} className="space-y-1">
@@ -104,7 +104,7 @@ export function DiffView({ diff }: { diff: LibraryDiff }) {
           {f.binary ? (
             <p className="text-xs text-muted">Binary file: compared by content, not shown.</p>
           ) : f.change === "unchanged" ? null : (
-            <Lines old={f.old ?? ""} next={f.new ?? ""} label={`Diff of ${f.path}`} />
+            <FileDiffView old={f.old ?? ""} next={f.new ?? ""} label={`Diff of ${f.path}`} fileName={f.path} status={f.change === "added" ? "added" : f.change === "removed" ? "removed" : null} />
           )}
         </section>
       ))}
