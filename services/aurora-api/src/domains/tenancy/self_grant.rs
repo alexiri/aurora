@@ -5,8 +5,9 @@
 //! active org owner. One e-mail and one Web Push per recipient, no content: the fixed sentence
 //! with names and the role, and a link to the workspace's People page.
 //!
-//! The routes that give a person a **direct** binding (add or raise, and restore a suspended one,
-//! D-501) share [`require_session`], [`audit_tx`] and [`notify_committed`].
+//! The routes that give a person access through their **direct** binding (add or raise; restore
+//! or remove a suspended one, D-501) share [`require_session`], [`audit_tx`] and
+//! [`notify_committed`].
 
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
@@ -32,7 +33,7 @@ pub fn require_session(c: &Caller) -> Result<(), ApiError> {
 
 /// The critical `workspace_access.self_grant` row of a caller's own direct binding, in the
 /// change's transaction (which the change's own row commits as critical). `via` says which act
-/// gave the access (`user`, `restore`).
+/// gave the access (`user`, `restore`, `remove`).
 pub async fn audit_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     c: &Caller,

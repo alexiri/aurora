@@ -1016,6 +1016,15 @@ async fn delete_access(
     // removed like anyone's; only a personal workspace's person is protected (above).
     // RFE-021: reassignment and the unbind commit or roll back together.
     let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    // (FIX-261, D-501) Removing a suspended binding lifts the suspension, so group access
+    // applies again: the rules of restoring it. Lock the row first, as `set_access_status` does.
+    let mut self_grant_of = None;
+    if let Some((role, status, _)) = workspaces::lock_binding(&mut tx, ws, user).await?
+        && status == AccessStatus::Suspended.as_str()
+        && service::lifting_suspension(&s, &mut tx, &c, &a, user).await?
+    {
+        self_grant_of = Some(role);
+    }
     if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {
         return Err(crate::domains::admin::service::managed_by_idp());
     }
@@ -1047,7 +1056,24 @@ async fn delete_access(
         .org(a.org_id)
         .workspace(ws)
         .target("user", user);
+    // The self-grant names the access that came back with the removal; when no group gives any,
+    // the role of the binding whose suspension was lifted.
+    let self_grant = match self_grant_of {
+        None => None,
+        Some(removed) => Some(
+            authz::workspace_access(&mut *tx, user, ws)
+                .await?
+                .map_or(removed, |now| now.effective_ws_role.as_str().to_owned()),
+        ),
+    };
+    if let Some(role) = &self_grant {
+        crate::domains::tenancy::self_grant::audit_tx(&mut tx, &c, a.org_id, ws, role, "remove")
+            .await?;
+    }
     audit::commit_critical(tx, &ev).await?;
+    if let Some(role) = &self_grant {
+        crate::domains::tenancy::self_grant::notify_committed(&s, a.org_id, ws, &c, role).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

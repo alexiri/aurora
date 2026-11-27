@@ -638,6 +638,39 @@ pub fn personal_workspace_owner_only(first: &str) -> ApiError {
     )
 }
 
+/// (FIX-261, D-501, SEC-161) The rules of an act that **lifts a suspension** of `target` in the
+/// workspace: restoring the binding, or removing it (the person's group access then applies
+/// again). In a personal workspace only its person may; lifting one's own without own `can_own`
+/// is a self-grant, which needs a session. `Ok(true)` for a self-grant: the caller then writes
+/// the `self_grant` row in `tx` and sends the notice after the commit.
+///
+/// Call it with the binding row already locked in `tx`. The caller's access is read here, not
+/// taken from `a.own`: that was read before the lock, so a suspension committed in between would
+/// still show the caller the access they are about to give back.
+pub async fn lifting_suspension(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    c: &crate::http::auth::Caller,
+    a: &crate::http::auth::AdminAuth,
+    target: Uuid,
+) -> Result<bool, ApiError> {
+    let caller_owns = aurora_db::authz::workspace_access(&mut *tx, c.user_id, a.workspace_id)
+        .await?
+        .is_some_and(|o| o.can_own());
+    if let Some(person) = a.personal_of
+        && (c.user_id != person || !caller_owns)
+    {
+        return Err(personal_workspace_owner_only(
+            &person_first_name(state, person).await?,
+        ));
+    }
+    let self_grant = target == c.user_id && !caller_owns;
+    if self_grant {
+        super::self_grant::require_session(c)?;
+    }
+    Ok(self_grant)
+}
+
 /// The turn end of a workspace suspension (P5-APIGAP-4, C-1051).
 const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
     crate::domains::scim::deprovision::TurnEnd {
@@ -675,22 +708,7 @@ pub async fn set_access_status(
     }
     let mut self_grant = false;
     if status == AccessStatus::Active {
-        // Read after the lock, not `a.own`: that was read before it, so a suspension committed
-        // in between would still show the caller the access they are about to give back.
-        let caller_owns = aurora_db::authz::workspace_access(&mut *tx, caller, ws)
-            .await?
-            .is_some_and(|o| o.can_own());
-        if let Some(person) = personal_of
-            && (caller != person || !caller_owns)
-        {
-            return Err(personal_workspace_owner_only(
-                &person_first_name(state, person).await?,
-            ));
-        }
-        self_grant = target == caller && !caller_owns;
-        if self_grant {
-            super::self_grant::require_session(c)?;
-        }
+        self_grant = lifting_suspension(state, &mut tx, c, a, target).await?;
     } else {
         if target == caller {
             return Err(ApiError::conflict(
