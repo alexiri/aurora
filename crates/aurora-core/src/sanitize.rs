@@ -150,7 +150,7 @@ pub fn reason(s: &str, max: usize) -> String {
         keys.iter()
             .any(|s| k == *s || k.ends_with(&format!("_{s}")) || k.ends_with(&format!("-{s}")))
     }
-    let line = one_line(s, max.saturating_mul(2).max(64));
+    let (line, cut) = whole_words(s, max.saturating_mul(2).max(64));
     // The command families the short flags are read in: the command may appear anywhere
     // (`&& mysql …`, `/usr/bin/curl …`).
     let mut family = Families::default();
@@ -284,7 +284,28 @@ pub fn reason(s: &str, max: usize) -> String {
         }
         out.push(w);
     }
-    clamp(out.join(" "), max)
+    let mut masked = out.join(" ");
+    if cut {
+        masked.push('…');
+    }
+    clamp(masked, max)
+}
+
+/// `s` as one line of at most `cap` characters, ending at the end of a word: the word the cut
+/// falls in is dropped, because the part of it before the cut may be a credential that only its
+/// rest marks as one (`https://user:password` without the `@host`). `true` when it was cut.
+fn whole_words(s: &str, cap: usize) -> (String, bool) {
+    let mut line = one_line(s, usize::MAX);
+    let Some((end, next)) = line.char_indices().nth(cap) else {
+        return (line, false);
+    };
+    let end = if next == ' ' {
+        end
+    } else {
+        line[..end].rfind(' ').unwrap_or(0)
+    };
+    line.truncate(end);
+    (line, true)
 }
 
 /// Where the value begins in a word that is an `Authorization:` header.
@@ -699,6 +720,27 @@ mod tests {
         assert_eq!(
             reason("curl --header=Authorization:abc https://x", 200),
             "curl --header=Authorization:*** https://x"
+        );
+    }
+
+    /// (SEC-165) The input is cut before it is masked; the word the cut falls in is dropped, so
+    /// that no part of a credential loses what marks it as one.
+    #[test]
+    fn reason_never_shows_a_part_of_a_cut_word() {
+        let long = "S".repeat(200);
+        for command in [
+            format!("curl https://bob:{long}@host/x"),
+            format!("echo one https://bob:{long}@host/x"),
+        ] {
+            for max in [10, 32, 60] {
+                let masked = reason(&command, max);
+                assert!(!masked.contains("SS"), "{max}: {masked}");
+            }
+        }
+        // What was whole before the cut stays.
+        assert_eq!(
+            reason(&format!("curl https://bob:{long}@host/x"), 32),
+            "curl…"
         );
     }
 
