@@ -120,11 +120,12 @@ function FoldButtons({ fold, rows, setRows }: { fold: FoldRow; rows: DiffRow[]; 
         <span className="mr-2">
           {n} unchanged line{n === 1 ? "" : "s"}
         </span>
-        <Button size="sm" variant="outline" className="mx-0.5" aria-label={`Show ${more} more lines above (lines ${from(fold.lines[fold.above])} to ${from(fold.lines[aboveTo - 1])})`} onClick={() => setRows(expandAbove(rows, fold.id))}>
-          Show 20 more above
+        {/* The visible text must stay inside the accessible name (axe label-content-name-mismatch). */}
+        <Button size="sm" variant="outline" className="mx-0.5" aria-label={`Show ${more} more line${more === 1 ? "" : "s"} above (lines ${from(fold.lines[fold.above])} to ${from(fold.lines[aboveTo - 1])})`} onClick={() => setRows(expandAbove(rows, fold.id))}>
+          Show {more} more line{more === 1 ? "" : "s"} above
         </Button>
-        <Button size="sm" variant="outline" className="mx-0.5" aria-label={`Show ${more} more lines below (lines ${from(fold.lines[belowFrom])} to ${from(fold.lines[fold.count - fold.below - 1])})`} onClick={() => setRows(expandBelow(rows, fold.id))}>
-          Show 20 more below
+        <Button size="sm" variant="outline" className="mx-0.5" aria-label={`Show ${more} more line${more === 1 ? "" : "s"} below (lines ${from(fold.lines[belowFrom])} to ${from(fold.lines[fold.count - fold.below - 1])})`} onClick={() => setRows(expandBelow(rows, fold.id))}>
+          Show {more} more line{more === 1 ? "" : "s"} below
         </Button>
         <Button size="sm" variant="outline" className="mx-0.5" aria-label={`Show all ${n} unchanged lines (lines ${hidden.from} to ${hidden.to})`} onClick={() => setRows(expandFold(rows, fold.id))}>
           Show all

@@ -109,22 +109,27 @@ for (const width of [1280, 390]) {
         await expect(page.getByRole("heading", { name: "Schedule manager 1.4.0" })).toBeVisible();
         expect(await serious(page)).toEqual([]);
 
-        // The diff comes first, before the full content: summary, the widening changes, the diffs.
+        // The what-changed block is short: the summary and the widening changes, linking to their sections.
         const diff = page.getByRole("region", { name: "What changed since 1.3.0" });
         await expect(diff.getByText("4 changes: Instructions, 1 skill, a new app, a new schedule.")).toBeVisible();
         const attention = diff.getByTestId("diff-attention");
         await expect(attention.getByText("Look at these first")).toBeVisible();
-        await expect(attention.getByText("App slack", { exact: true })).toBeVisible();
-        await expect(attention.getByText("Schedule morning-triage", { exact: true })).toBeVisible();
-        await expect(diff.getByText("- Triage the queue.")).toBeVisible();
-        await expect(diff.getByText("+ Triage carefully.")).toBeVisible();
-        await expect(diff.getByTestId("diff-unchanged")).toContainText("Unchanged: Name, Summary, About this template, Agent name, May message first, Effort, Skills from libraries, Helper files, Memories, Inputs, Minimum Aurora version, Avatar");
-        // The full content stays below the diff.
+        await expect(attention.getByRole("link", { name: "App slack" })).toHaveAttribute("href", "#apps");
+        await expect(attention.getByRole("link", { name: "Schedule morning-triage" })).toHaveAttribute("href", "#automations");
+        await expect(diff.getByTestId("diff-view")).toHaveCount(0);
+        // Each part's diff sits inside its own section (FIX-250); unchanged sections are collapsed.
+        await expect(page.getByLabel("Diff of Instructions")).toContainText("- Triage the queue.");
+        await expect(page.getByLabel("Diff of Instructions")).toContainText("+ Triage carefully.");
+        await expect(page.getByLabel("Diff of Skill code-review body")).toContainText("+ Review every pull request carefully.");
+        const unchanged = page.getByTestId("diff-unchanged");
+        await expect(unchanged).toHaveCount(5);
+        await expect(unchanged.first()).toContainText("Unchanged");
+        // The what-changed block comes first, before the sections.
         expect(
           await page.evaluate(() => {
-            const diff = document.getElementById("what-changed-h")!;
+            const block = document.getElementById("what-changed")!;
             const about = [...document.querySelectorAll<HTMLHeadingElement>("h2")].find((h) => h.textContent === "About this template")!;
-            return !!(diff.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING);
+            return !!(block.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING);
           }),
         ).toBeTruthy();
 
