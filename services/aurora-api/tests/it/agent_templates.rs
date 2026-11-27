@@ -7576,6 +7576,74 @@ async fn an_approval_tells_exactly_the_people_who_can_apply() {
     assert_eq!(rows, 1);
 }
 
+/// The offered version is the highest approved one by semver precedence, whatever order the
+/// versions were stored in: a lower version approved later neither hides nor replaces the
+/// notice, not even after a re-offer.
+#[tokio::test]
+async fn a_lower_version_approved_later_does_not_replace_the_notice() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.4.0");
+    w.git.serve_file("pkg/t-1.4.0.zip", pack("t", "1.4.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    w.check(src["id"].as_str().unwrap().parse().unwrap()).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let (_, owner) = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    agent_from_template(&w, org, ws, "behind", Some("1.0.0")).await;
+    w.approve("t", "1.4.0").await;
+
+    // A check never ingests a version below a stored one, so the later, lower approved
+    // version is stored directly.
+    let stored = sqlx::query(
+        "INSERT INTO agent_template_versions \
+         SELECT (jsonb_populate_record(v, jsonb_build_object( \
+                    'id', gen_random_uuid(), 'version', '1.3.1', \
+                    'created_at', v.created_at + interval '1 hour'))).* \
+         FROM agent_template_versions v WHERE v.version = '1.4.0'",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored.rows_affected(), 1);
+
+    for reoffer in [false, true] {
+        if reoffer {
+            for offered in [false, true] {
+                let (s, v) = w
+                    .call(
+                        Method::PATCH,
+                        "/v1/admin/agent-templates/t",
+                        Some(json!({"offered": offered})),
+                    )
+                    .await;
+                assert_eq!(s, 200, "{v}");
+            }
+        }
+        let (s, v) =
+            w.h.call(
+                &owner,
+                Method::GET,
+                &format!("/v1/workspaces/{ws}/attention"),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        let titles: Vec<&str> = v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["kind"] == "template_update")
+            .map(|i| i["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles.len(), 1, "re-offered {reoffer}: {v}");
+        assert!(
+            titles[0].starts_with("T 1.4.0 is available for 1 agent in "),
+            "re-offered {reoffer}: {v}"
+        );
+        assert_eq!(w.h.mail.sent().len(), 1, "re-offered {reoffer}");
+    }
+}
+
 /// An organization role administers and never uses (D-477): an organization owner or admin
 /// with no access of their own in the workspace cannot apply the update, so they get no
 /// e-mail and no item in the workspace's attention feed.

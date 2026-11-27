@@ -181,6 +181,26 @@ fn newer_than_stored(offered: &str, stored: Option<&str>) -> bool {
     }
 }
 
+/// The offered version of each of the given templates, by template id: the semver-newest
+/// approved one while the template is offered (C-1108), whatever order the versions were
+/// stored in. A withdrawn or unknown template has no entry.
+pub(crate) async fn offered_version_strings(
+    pool: &sqlx::PgPool,
+    template_ids: &[String],
+) -> Result<BTreeMap<String, String>, ApiError> {
+    let strings = trepo::approved_version_strings(pool, template_ids).await?;
+    let mut newest: BTreeMap<String, String> = BTreeMap::new();
+    // The rows come newest stored first, so a tie keeps the newest stored one.
+    for (template_id, version) in strings {
+        let key = aurora_registry::manifest::parse_semver(&version).unwrap_or_default();
+        let best = newest.entry(template_id).or_insert_with(|| version.clone());
+        if key > aurora_registry::manifest::parse_semver(best).unwrap_or_default() {
+            *best = version;
+        }
+    }
+    Ok(newest)
+}
+
 /// (FIX-251, D-488(a)) Which of the listed agents are behind their template: the template's
 /// offered version (the semver-newest approved one, C-1108) is semver-newer than the agent's
 /// stored one — the same rule [`status`] applies to decide `update`, computed for a list from
@@ -197,18 +217,7 @@ pub(crate) async fn behind_map(
             ids.push(id.to_owned());
         }
     }
-    let strings = trepo::approved_version_strings(pool, &ids).await?;
-    let mut newest: BTreeMap<String, &str> = BTreeMap::new();
-    // The rows come newest stored first; the semver-newest wins whatever the storage order.
-    for (template_id, version) in &strings {
-        let key = aurora_registry::manifest::parse_semver(version).unwrap_or_default();
-        let best = newest
-            .entry(template_id.clone())
-            .or_insert(version.as_str());
-        if key > aurora_registry::manifest::parse_semver(best).unwrap_or_default() {
-            *best = version.as_str();
-        }
-    }
+    let newest = offered_version_strings(pool, &ids).await?;
     Ok(rows
         .iter()
         .map(|r| {

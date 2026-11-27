@@ -432,9 +432,7 @@ async fn ws_open(s: &AppState, c: &Caller, auth: &WorkspaceAuth) -> Result<WsOpe
         Vec::new()
     };
     let mine = repo::open_of_asker(&s.pool, auth.org_id, c.user_id).await?;
-    let template_updates =
-        aurora_db::repo::agent_templates::update_notices_for_workspace(&s.pool, ws, FEED_LIMIT)
-            .await?;
+    let template_updates = template_updates_of(s, ws).await?;
     Ok(WsOpen {
         approvals,
         actions,
@@ -444,6 +442,25 @@ async fn ws_open(s: &AppState, c: &Caller, auth: &WorkspaceAuth) -> Result<WsOpe
         mine,
         template_updates,
     })
+}
+
+/// The workspace's template update notices that are for the version offered now.
+async fn template_updates_of(
+    s: &AppState,
+    ws: Uuid,
+) -> Result<Vec<aurora_db::repo::agent_templates::UpdateNoticeRow>, ApiError> {
+    use aurora_db::repo::agent_templates as trepo;
+
+    let told = trepo::update_notice_template_ids(&s.pool, ws).await?;
+    if told.is_empty() {
+        return Ok(Vec::new());
+    }
+    let offered: Vec<(String, String)> =
+        crate::domains::agent_templates::updates::offered_version_strings(&s.pool, &told)
+            .await?
+            .into_iter()
+            .collect();
+    Ok(trepo::update_notices_for_workspace(&s.pool, ws, &offered, FEED_LIMIT).await?)
 }
 
 struct Slugs {

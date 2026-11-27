@@ -1109,15 +1109,37 @@ pub async fn record_update_notice<'e, E: PgExecutor<'e>>(
     Ok(r.rows_affected() > 0)
 }
 
+/// The templates one workspace was ever told an update of: what the caller works out the
+/// offered versions for before [`update_notices_for_workspace`].
+pub async fn update_notice_template_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    workspace_id: Uuid,
+) -> Result<Vec<String>, DbError> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT template_id FROM agent_template_update_notices WHERE workspace_id = $1",
+    )
+    .bind(workspace_id)
+    .fetch_all(exec)
+    .await
+    .map_err(DbError::from)
+}
+
 /// The update notices of one workspace whose offer still stands and that still concern at least
-/// one of its agents (D-488(a)): the template is offered, the version is its newest approved
-/// one, the organization has not turned the template off, and at least one agent made from the
-/// template is behind. Oldest first (the notice's `created_at` is when it was first told).
+/// one of its agents (D-488(a)): the template is offered, the notice is for its offered
+/// version, the organization has not turned the template off, and at least one agent made from
+/// the template is behind. Which version is offered is a semver rule SQL does not have, so the
+/// caller passes it: `offered` is `(template_id, version)`, one pair per offered template.
+/// Oldest first (the notice's `created_at` is when it was first told).
 pub async fn update_notices_for_workspace<'e, E: PgExecutor<'e>>(
     exec: E,
     workspace_id: Uuid,
+    offered: &[(String, String)],
     limit: i64,
 ) -> Result<Vec<UpdateNoticeRow>, DbError> {
+    let (ids, versions): (Vec<&str>, Vec<&str>) = offered
+        .iter()
+        .map(|(id, v)| (id.as_str(), v.as_str()))
+        .unzip();
     sqlx::query_as(
         "SELECT n.workspace_id, n.template_id, t.name AS template_name, n.version, n.created_at, \
                 w.name AS workspace_name, \
@@ -1125,21 +1147,22 @@ pub async fn update_notices_for_workspace<'e, E: PgExecutor<'e>>(
                   WHERE a.workspace_id = n.workspace_id AND a.template_id = n.template_id \
                     AND (a.template_version IS NULL OR a.template_version <> n.version)) AS behind \
          FROM agent_template_update_notices n \
+         JOIN unnest($2::text[], $3::text[]) AS o(template_id, version) \
+              ON o.template_id = n.template_id AND o.version = n.version \
          JOIN agent_templates t ON t.template_id = n.template_id AND t.offered \
          JOIN workspaces w ON w.id = n.workspace_id \
          WHERE n.workspace_id = $1 \
-           AND n.version = (SELECT v.version FROM agent_template_versions v \
-                             WHERE v.agent_template_id = t.id AND v.status = 'approved' \
-                             ORDER BY v.created_at DESC, v.id DESC LIMIT 1) \
            AND NOT EXISTS (SELECT 1 FROM org_disabled_agent_templates d \
                             WHERE d.org_id = (SELECT org_id FROM workspaces WHERE id = n.workspace_id) \
                               AND d.template_id = n.template_id) \
            AND EXISTS (SELECT 1 FROM agents a \
                         WHERE a.workspace_id = n.workspace_id AND a.template_id = n.template_id \
                           AND (a.template_version IS NULL OR a.template_version <> n.version)) \
-         ORDER BY n.created_at, n.template_id, n.version LIMIT $2",
+         ORDER BY n.created_at, n.template_id, n.version LIMIT $4",
     )
     .bind(workspace_id)
+    .bind(ids)
+    .bind(versions)
     .bind(limit)
     .fetch_all(exec)
     .await
