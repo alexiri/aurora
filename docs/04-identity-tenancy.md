@@ -1454,14 +1454,15 @@ personal-workspace owners add people this way.
   compiled rules of its grants. (FIX-244, D-486) The workspace's other own-right owners —
   or, when there is none, the organization's other effective owners — are told after the
   commit (the recipients are read before the cascade removes their rows); the notice names
-  what happened, who (an instance administrator is not named) and when, never the actor.
+  what happened, who (an instance administrator is not named) and when, never the actor,
+  and links to the organization.
 - **Org deletion**: owner only, typed confirmation; hand-written service deletes
   children in dependency order (including directory groups, SCIM tokens and SCIM links,
   which restrict the organization row), enqueues connector deprovisioning, then deletes
   the org; the managed secret values of every secret, connection and OAuth client of
   the org are discarded after the commit and the gateways invalidated (`org` scope).
   (FIX-244, D-486) The organization's other effective owners are told after the commit;
-  the notice never names an instance administrator.
+  the notice never names an instance administrator and carries no link.
   Ledgers (`audit_log`, `request_log`, `runtime_*`) remain.
 - **Deletion by an instance admin** (phase 5, P5-ADMDEL, D-234): `DELETE
   /v1/admin/orgs/{org}` and `DELETE /v1/admin/workspaces/{ws}` (C-733) run **the same

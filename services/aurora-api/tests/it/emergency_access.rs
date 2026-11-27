@@ -485,6 +485,27 @@ async fn opening_notifies_the_people_and_the_other_owners_with_the_banner_set() 
     let mut paths: Vec<&str> = got.iter().map(|r| r.path.as_str()).collect();
     paths.sort_unstable();
     assert_eq!(paths, vec!["/push/owner", "/push/person"], "no opener push");
+    // The click target is the workspace's dashboard path (the service worker ignores anything
+    // else); the e-mail carries the same path behind the external URL.
+    let (org_slug, ws_slug): (String, String) = sqlx::query_as(
+        "SELECT o.slug, w.slug FROM workspaces w JOIN organizations o ON o.id = w.org_id \
+         WHERE w.id = $1",
+    )
+    .bind(w.ws)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    let target = format!("/o/{org_slug}/w/{ws_slug}");
+    for r in &got {
+        let p = r.json().unwrap();
+        assert_eq!(p["type"], "emergency_access", "{p}");
+        assert_eq!(p["url"], target, "{p}");
+    }
+    let base = w.h.state.config.external_url.trim_end_matches('/');
+    assert!(
+        mail.iter().all(|m| m.link == format!("{base}{target}")),
+        "{mail:?}"
+    );
 
     // The banner fields on the workspace (C-1165): the person sees who opened it, why and
     // until; `emergency_reader` is true only for the opener.
