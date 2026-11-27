@@ -676,6 +676,9 @@ async fn result(
 /// activity stopped** notice and closes the request (the abort flag and the in-flight mark are
 /// cleared); a deferral (`ok = false`, a turn was running) keeps the request pending — it is
 /// re-sent after its lease, and the notice is only written once the release really happened.
+/// (FIX-253 fixes2 B) A release that reports failure writes a durable **stopping did not work**
+/// notice (once per turn) while keeping the abort flag set, so the UI re-enables Stop and the
+/// dispatch lease retries the release.
 async fn complete_background_stop(
     tx: &mut PgConnection,
     agent: Uuid,
@@ -683,6 +686,42 @@ async fn complete_background_stop(
     ok: bool,
 ) -> Result<bool, ApiError> {
     if !ok {
+        let Some((turn_id,)) = sqlx::query_as::<_, (Uuid,)>(
+            "SELECT t.id FROM turns t
+              WHERE t.agent_id = $1 AND t.conversation_id = $2 AND t.role = 'turn'
+                AND t.abort_requested_at IS NOT NULL
+              ORDER BY t.created_at LIMIT 1
+              FOR UPDATE OF t",
+        )
+        .bind(agent)
+        .bind(conversation_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(aurora_db::DbError::from)?
+        else {
+            return Ok(false);
+        };
+        let told = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM transcript_events
+              WHERE conversation_id = $1 AND turn_id = $2 AND type = 'notice'
+                AND payload->>'code' = 'background_stop_failed'",
+        )
+        .bind(conversation_id)
+        .bind(turn_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(aurora_db::DbError::from)?;
+        if told == 0 {
+            conv::append_event(
+                tx,
+                conversation_id,
+                Some(turn_id),
+                "notice",
+                &json!({"code": "background_stop_failed", "turn_id": turn_id,
+                    "text": "Stopping did not work: try again."}),
+            )
+            .await?;
+        }
         return Ok(false);
     }
     let Some((turn_id,)) = sqlx::query_as::<_, (Uuid,)>(

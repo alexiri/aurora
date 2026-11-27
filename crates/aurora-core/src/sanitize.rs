@@ -357,12 +357,23 @@ mod tests {
              -H 'Authorization: Basic dXNlcjpwYXNz' && mysql -p hush",
             500,
         );
-        for leaked in ["t0k", "p4ss", "hunter2", "abc123", "key123", "dXNlcjpwYXNz", "hush"] {
+        for leaked in [
+            "t0k",
+            "p4ss",
+            "hunter2",
+            "abc123",
+            "key123",
+            "dXNlcjpwYXNz",
+            "hush",
+        ] {
             assert!(!r.contains(leaked), "{leaked} leaked in {r}");
         }
         assert!(r.contains("https://***@x.example"), "{r}");
         // False positives stay untouched.
-        assert_eq!(reason("ls -p src && cat /var/tokens/list.txt", 200), "ls -p src && cat /var/tokens/list.txt");
+        assert_eq!(
+            reason("ls -p src && cat /var/tokens/list.txt", 200),
+            "ls -p src && cat /var/tokens/list.txt"
+        );
     }
 
     #[test]

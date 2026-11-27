@@ -197,12 +197,15 @@ export function TranscriptView({
                 }
                 // (FIX-253, D-490) Background activity: the Stop button only while nothing stands;
                 // a durable `background_stop_requested` notice disables it until the acknowledged
-                // release, and a later durable `background_stopped` notice mutes the row.
+                // release, and a later durable `background_stopped` notice mutes the row. A later
+                // durable `background_stop_failed` notice (FIX-253 fixes2 B) re-enables Stop so the
+                // request can be tried again.
                 if (s(p.code) === "background_activity") {
                   // The durable `background_stopped` notice is the visible line; the entry row mutes away.
                   const later = (code: string) => state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === code);
                   if (later("background_stopped")) return null;
-                  return <BackgroundActivityNotice key={r.key} text={s(p.text)} turnId={s(p.turn_id)} requested={later("background_stop_requested")} />;
+                  const requested = later("background_stop_requested") && !later("background_stop_failed");
+                  return <BackgroundActivityNotice key={r.key} text={s(p.text)} turnId={s(p.turn_id)} requested={requested} />;
                 }
                 // (FIX-253, D-490) The self-check notice with its **Remind it in 15 minutes**
                 // action; the durable `no_wakeup_set` notice of the same turn disables the button.

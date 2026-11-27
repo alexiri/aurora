@@ -102,6 +102,29 @@ describe("background activity notice (FIX-253, D-490)", () => {
     fireEvent.click(stop);
     expect(calls.some((c) => c.method === "POST" && c.path === "/v1/turns/t1/abort")).toBe(false);
   });
+
+  // (FIX-253 fixes2 B) A release that reports failure writes the durable `background_stop_failed`
+  // notice; Stop becomes available again so the request can be tried.
+  it("re-enables Stop once the durable background_stop_failed notice exists", () => {
+    st.events = [
+      e(1, "turn.finished", { turn_id: "t1", status: "done" }),
+      e(2, "notice", {
+        code: "background_activity",
+        turn_id: "t1",
+        text: "Background activity, still running: `npm run e2e:full`",
+        items: [{ command: "npm run e2e:full", started_at: 1700000000 }],
+      }),
+      e(3, "notice", { code: "background_stop_requested", turn_id: "t1", text: "Stop requested." }),
+      e(4, "notice", { code: "background_stop_failed", turn_id: "t1", text: "Stopping did not work: try again." }),
+    ];
+    mock({ "POST /v1/turns/t1/abort": () => json(202, { id: "t1", abort_requested: true }) });
+    pane();
+    expect(screen.getByText("Stopping did not work: try again.")).toBeTruthy();
+    const row = screen.getByTestId("background-activity");
+    const stop = within(row).getByRole("button", { name: "Stop" }) as HTMLButtonElement;
+    expect(stop.disabled).toBe(false);
+    fireEvent.click(stop);
+  });
 });
 
 // (FIX-253, D-490) The self-check notice with its **Remind it in 15 minutes** action: one press

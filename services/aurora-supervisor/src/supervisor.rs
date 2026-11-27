@@ -400,12 +400,23 @@ impl Supervisor {
         {
             false
         } else {
-            if let Some(e) = self.sessions.remove(&conversation_id)
-                && let Ok(m) = Arc::try_unwrap(e.session)
-            {
-                let _ = m.into_inner().release().await;
+            match self.sessions.remove(&conversation_id) {
+                Some(SessionEntry { session, cred, epoch, reported_ref, _proxy }) => {
+                    // (FIX-253 fixes2) `ok` only when the release really ran and succeeded. A
+                    // session another live clone still holds was not released: the entry goes
+                    // back, so the next Stop can try again.
+                    let (released, back) = release_shared(session).await;
+                    if let Some(session) = back {
+                        self.sessions.insert(
+                            conversation_id,
+                            SessionEntry { session, cred, epoch, reported_ref, _proxy },
+                        );
+                    }
+                    released
+                }
+                // Nothing to release: the background work is already gone.
+                None => true,
             }
-            true
         };
         self.send(SupervisorToRunner::SessionReleased(SessionReleased {
             conversation_id,
@@ -1212,5 +1223,94 @@ impl TurnTask {
                 _ = deadline => return out(n, TurnStatus::Aborted, None, None, None),
             }
         }
+    }
+}
+
+/// (FIX-253 fixes2) One shared session's release: `true` only when the release really ran and
+/// succeeded. A session another live clone still holds was not released — the clone comes back,
+/// so the caller can keep the entry and the next Stop can try again.
+async fn release_shared(session: SharedSession) -> (bool, Option<SharedSession>) {
+    match Arc::try_unwrap(session) {
+        Ok(m) => (m.into_inner().release().await.is_ok(), None),
+        Err(arc) => (false, Some(arc)),
+    }
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+    use crate::harness::{BackgroundWork, HarnessError, HarnessEventStream};
+    use aurora_protocol::runner::SendNowOutcome;
+    use std::path::Path;
+
+    /// A session whose release fails, and one whose release succeeds: the two failure and the
+    /// success paths of [`release_shared`].
+    struct StubSession {
+        fails: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessSession for StubSession {
+        fn session_ref(&self) -> Option<String> {
+            None
+        }
+        async fn run_turn(&mut self, _: TurnInput) -> Result<HarnessEventStream, HarnessError> {
+            Err(HarnessError::new("stub", "no turns"))
+        }
+        async fn steer(&mut self, _: SteerInput) -> Result<SteerAck, HarnessError> {
+            Ok(SteerAck::Refused)
+        }
+        async fn background_running_tool(&mut self) -> Result<SendNowOutcome, HarnessError> {
+            Ok(SendNowOutcome::Unsupported)
+        }
+        async fn abort(&mut self) -> Result<(), HarnessError> {
+            Ok(())
+        }
+        async fn release(self: Box<Self>) -> Result<(), HarnessError> {
+            if self.fails {
+                Err(HarnessError::new("stub", "release failed"))
+            } else {
+                Ok(())
+            }
+        }
+        fn background_work(&self) -> Vec<BackgroundWork> {
+            Vec::new()
+        }
+    }
+
+    fn stub(fails: bool) -> SharedSession {
+        Arc::new(Mutex::new(Box::new(StubSession { fails }) as Box<dyn HarnessSession>))
+    }
+
+    fn _unused(_: &Path) {}
+
+    /// A release that failed is not an acknowledgement: `ok` stays false.
+    #[tokio::test]
+    async fn a_failed_release_is_not_reported_as_released() {
+        let (ok, back) = release_shared(stub(true)).await;
+        assert!(!ok, "a release that errored must not report ok");
+        assert!(back.is_none());
+    }
+
+    /// A session another clone still holds was not released: the clone comes back for the entry.
+    #[tokio::test]
+    async fn a_session_still_held_by_another_clone_is_not_released_and_comes_back() {
+        let session = stub(false);
+        let held = Arc::clone(&session);
+        let (ok, back) = release_shared(session).await;
+        assert!(!ok, "an unreleased session must not report ok");
+        let Some(back) = back else {
+            panic!("the still-held session must come back");
+        };
+        // The returned session is the same live one, not a fresh failure.
+        assert!(Arc::ptr_eq(&held, &back));
+    }
+
+    /// The success path: the release ran and succeeded.
+    #[tokio::test]
+    async fn a_successful_release_is_reported() {
+        let (ok, back) = release_shared(stub(false)).await;
+        assert!(ok);
+        assert!(back.is_none());
     }
 }
