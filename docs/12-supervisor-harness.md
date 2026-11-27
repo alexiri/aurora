@@ -20,9 +20,12 @@ platform's agent inside the agent's computer. It:
 
 1. Runs as PID 1 (uid 1000), reaps children, forwards SIGTERM to process groups.
    (FIX-114) Tokio reaps the children it spawned; a SIGCHLD/1 s loop reaps the zombie
-   children of PID 1 that are still there on the next scan (orphans reparented to it:
-   tool subprocesses of an aborted turn, `sh -c 'server &'`), so they cannot eat the
-   sandbox's pid budget; shutdown (the runner's `shutdown` frame or SIGTERM) sends
+   children of PID 1 that nobody owns (orphans reparented to it: tool subprocesses of
+   an aborted turn, `sh -c 'server &'`), so they cannot eat the sandbox's pid budget.
+   (FIX-265) Every child is started through `spawn::spawn`, which marks it as owned
+   for as long as its handle lives (clippy refuses tokio's own `spawn`); the loop
+   never waits for an owned child, however late its owner does, and reaps any other
+   zombie child once it has been one for 1 s of real time; shutdown (the runner's `shutdown` frame or SIGTERM) sends
    SIGTERM to every registered process group first.
 2. Reads `AURORA_BOOT`, makes the process non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`) so
    `/proc/<pid>/environ` is unreadable to the agent, and never passes the variable to a
@@ -165,16 +168,23 @@ pub trait HarnessSession: Send {
   environment (the sandbox has no delegated cgroup). A kill takes every process
   that is in the child's process group, carries that value
   (`/proc/<pid>/environ`) or descends from such a process, whatever its parent
-  is now, each pinned by its start time; the supervisor itself is never
-  signalled: HUP to the group, up to 2 s of grace, then KILL, repeated until
-  two scans in a row find nothing (5 s at most). Only then does `release`
-  succeed and `session.released { ok: true }` leave; otherwise it is
-  `ok: false`, the session is kept and the next `session.release` tries again.
-  A supervisor that is not PID 1 makes itself the child subreaper, so orphans
-  are still reaped. **Limit:** a process that left the group and the parent
-  tree **and** dropped the variable (`env -i`, an overwritten environment, or a
-  process that hides its environment, like `ssh-agent`) is not found; the end
-  of the sandbox ends it.
+  is now, each signalled through a pidfd (where the kernel has them) and only
+  while its pid still has the start time the scan saw; the supervisor itself is
+  never signalled: HUP to the group, up to 2 s of grace, then KILL, repeated
+  until two scans in a row find nothing. The whole end has one deadline of
+  7 s; scans run on a blocking thread and read at most 128 KiB of a process's
+  environment. Only then does `release` succeed and
+  `session.released { ok: true }` leave. One release request waits at most
+  4 s (`release_deadline`) for all the conversation's sessions together, which
+  are released at once; what is not released by then goes on in its own task,
+  the answer is `ok: false`, and the next `session.release` goes on with it (a
+  failed one is tried again). While such a session exists, a newer session's
+  empty background list is not reported. A supervisor that is not PID 1 makes
+  itself the child subreaper, so orphans are still reaped. **Limit:** a process
+  that left the group and the parent tree **and** dropped the variable
+  (`env -i`, an overwritten environment, a process that hides its environment,
+  like `ssh-agent`, or one whose environment holds the variable only past the
+  first 128 KiB) is not found; the end of the sandbox ends it.
 - (FIX-253, part B) **The idle reader.** After a turn that leaves background
   work, the supervisor starts the session's idle reader
   (`HarnessSession::start_idle_reader`): while the work lasts, the adapter
