@@ -647,7 +647,8 @@ async fn post_report(
 }
 
 /// Close a task (locking link, then task) and promote the next queued task of the pair when an
-/// `open` task ended. Returns the closed row, or `None` when it was already closed.
+/// task that held the pair's slot (`open` or `waiting`) ended. Returns the closed row, or `None`
+/// when it was already closed.
 pub async fn close_with_promotion(
     conn: &mut PgConnection,
     task: &PeerTaskRow,
@@ -657,11 +658,11 @@ pub async fn close_with_promotion(
     let Some(cur) = repo::get_for_update(&mut *conn, task.id).await? else {
         return Ok(None);
     };
-    let was_open = cur.status == "open";
+    let held_slot = matches!(cur.status.as_str(), "open" | "waiting");
     let Some(closed) = close_inner(conn, &cur, how).await? else {
         return Ok(None);
     };
-    if was_open {
+    if held_slot {
         promote_next(conn, closed.from_agent_id, closed.to_agent_id).await?;
     }
     Ok(Some(closed))
@@ -1167,41 +1168,24 @@ pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Resu
         return Ok(Wake::Cancelled);
     }
     let from = agent(conn, task.from_agent_id).await?;
-    if !requester_can_use(conn, task.requester_user_id, from.workspace_id).await? {
-        close_inner(
-            conn,
-            &task,
-            &Close::Cancelled(Some(&format!(
-                "could not continue: the person who asked can no longer use {}",
-                agent_label(&from)
-            ))),
-        )
-        .await?;
-        return Ok(Wake::Cancelled);
-    }
-    if aurora_db::repo::freeze::is_agent_frozen(&mut *conn, task.to_agent_id).await? {
-        close_inner(
-            conn,
-            &task,
-            &Close::Cancelled(Some(
-                "could not continue: the receiving agent is paused by an administrator",
-            )),
-        )
-        .await?;
-        return Ok(Wake::Cancelled);
-    }
-    if convs::get(&mut *conn, task.task_conversation_id)
+    let refusal = if !requester_can_use(conn, task.requester_user_id, from.workspace_id).await? {
+        Some(format!(
+            "could not continue: the person who asked can no longer use {}",
+            agent_label(&from)
+        ))
+    } else if aurora_db::repo::freeze::is_agent_frozen(&mut *conn, task.to_agent_id).await? {
+        Some("could not continue: the receiving agent is paused by an administrator".to_owned())
+    } else if convs::get(&mut *conn, task.task_conversation_id)
         .await?
         .is_none()
     {
-        close_inner(
-            conn,
-            &task,
-            &Close::Cancelled(Some(
-                "could not continue: its conversation no longer exists",
-            )),
-        )
-        .await?;
+        Some("could not continue: its conversation no longer exists".to_owned())
+    } else {
+        None
+    };
+    if let Some(why) = refusal {
+        // Through the promoting close: the slot the waiting task held is free again.
+        close_with_promotion(conn, &task, &Close::Cancelled(Some(&why))).await?;
         return Ok(Wake::Cancelled);
     }
     repo::resume(conn, conversation).await?;

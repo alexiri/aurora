@@ -296,12 +296,12 @@ pub async fn delete(conn: &mut PgConnection, id: Uuid) -> Result<bool, DbError> 
         == 1)
 }
 
-/// Queued, then open, peer tasks of a link (the order a delete closes them in, so that closing
-/// an open task never promotes a queued one).
+/// Queued, then open or waiting, peer tasks of a link (the order a delete closes them in, so
+/// that closing the task that holds a slot never promotes a queued one).
 pub async fn active_task_ids(conn: &mut PgConnection, link: Uuid) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT id FROM peer_tasks WHERE link_id = $1 AND status IN ('queued', 'open')
-         ORDER BY (status = 'open'), created_at, id",
+        "SELECT id FROM peer_tasks WHERE link_id = $1 AND status IN ('queued', 'open', 'waiting')
+         ORDER BY (status <> 'queued'), created_at, id",
     )
     .bind(link)
     .fetch_all(conn)

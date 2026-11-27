@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! BE-065: peer tasks, tools, queueing, budget/TTL close, fire-time authority, app-turn cap.
 
+use crate::common::ORIGIN;
 use crate::peers_rig::{Rig, rig};
 use aurora_api::domains::peer_tasks::service as peers;
 use serde_json::{Value, json};
@@ -1615,6 +1616,65 @@ async fn a_registration_removed_before_the_turn_ends_cancels_the_task() {
             .as_str()
             .unwrap()
             .contains("without sending a report")
+    );
+}
+
+/// (FIX-253 review, high) A `waiting` task holds the pair's slot, so ending it frees the slot:
+/// the queued task behind it opens, exactly as behind an `open` one.
+#[tokio::test]
+async fn closing_a_waiting_task_promotes_the_queued_one() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    let next = Rig::id(&d.send("then deploy").await["peer_task_id"]);
+    assert_eq!(d.rig.task_status(next).await, "queued");
+
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    peers::cancel(&mut conn, d.a, task).await.unwrap().unwrap();
+    assert_eq!(d.rig.task_status(next).await, "open");
+    let pc = d.rig.peer_conversation(next).await;
+    assert!(d.rig.running_turn(pc).await.is_some(), "its turn starts");
+}
+
+/// (FIX-253 review, high) Everything that lists a pair's or a person's live tasks counts a
+/// `waiting` one: the offboarding view shows it, and deleting the link closes it with its report
+/// instead of cascading it away unreported.
+#[tokio::test]
+async fn offboarding_and_unlinking_see_a_waiting_task() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+
+    let listed =
+        aurora_db::repo::automations::peer_tasks(d.rig.h.pool(), d.rig.org, None, d.rig.p.id)
+            .await
+            .unwrap();
+    assert_eq!(listed.iter().map(|r| r.id).collect::<Vec<_>>(), [task]);
+
+    let link: Uuid = sqlx::query_scalar("SELECT link_id FROM peer_tasks WHERE id = $1")
+        .bind(task)
+        .fetch_one(d.rig.h.pool())
+        .await
+        .unwrap();
+    let (status, _, body) = d
+        .rig
+        .h
+        .send(
+            http::Method::DELETE,
+            &format!("/v1/agent-links/{link}"),
+            &[("cookie", d.rig.p.cookie.as_str()), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(status.as_u16(), 204, "{body}");
+    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
+    assert_eq!(
+        closed.len(),
+        1,
+        "the waiting task is closed with its report"
     );
 }
 
