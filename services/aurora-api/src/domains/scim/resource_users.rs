@@ -1022,7 +1022,8 @@ fn apply_leaf(target: &mut UserInput, lower_path: &str, v: &serde_json::Value) -
 ///   holds it (membership or link in any state); otherwise — the address belongs to another
 ///   user, or the placeholder is shared — the link moves exactly like a `POST` would link
 ///   it ([`move_link`]): to that user, or to a new pre-provisioned one. The placeholder's
-///   membership in this org is removed; the `users` row is never deleted (SEC-73).
+///   membership in this org is removed (unless an administrator suspended it, D-492); the
+///   `users` row is never deleted (SEC-73).
 async fn apply_update(
     state: &AppState,
     caller: ScimToken,
@@ -1306,9 +1307,11 @@ async fn apply_update(
 /// of the new e-mail would do (adopt `to`'s membership as it is, or insert one under the
 /// seat cap; `active: false` suspends through the C-474 path), plus what keeps the IdP's
 /// view whole: the placeholder's membership in this org is removed (audited, its bindings
-/// cascade) and its SCIM-group memberships follow the link (the group resources reference
-/// the link, not the account; `GROUPS_PER_USER` applies). The placeholder's `users` row is
-/// never touched or deleted (SEC-73). Returns the turns to flush after commit.
+/// cascade; one an administrator suspended is kept, suspended, D-492,
+/// [`deprovision::leave_org`]) and its SCIM-group memberships follow the link (the group
+/// resources reference the link, not the account; `GROUPS_PER_USER` applies). The
+/// placeholder's `users` row is never touched or deleted (SEC-73). Returns the turns to flush
+/// after commit.
 async fn move_link(
     tx: &mut sqlx::PgConnection,
     actor: &crate::audit::AuditActor,
@@ -1345,7 +1348,10 @@ async fn move_link(
     .await
     .map_err(sq)?;
     // The placeholder leaves this org (it never signed in: no session, key or turn to end).
-    deprovision::remove_membership(&mut *tx, org, from, actor)
+    // (FIX-256, D-492) A suspension an administrator made stays with it, so a link moved
+    // back finds the account still suspended. `link` still has the flag: only the attributes
+    // were written so far.
+    deprovision::leave_org(&mut *tx, org, from, link.suspended_by_scim, actor)
         .await
         .map_err(scim_of_api)?;
     for g in &moved_groups {
@@ -1559,18 +1565,17 @@ pub async fn delete_user(
         pending::remove(&mut tx, org.org_id, row.user_id, &row.user_name, &actor)
             .await
             .map_err(scim_of_api)?;
-    } else if let Some(m) = &member {
-        // (FIX-256, D-492) A suspension the directory did not make is not its to lift: its
-        // membership stays, suspended. (`row` was read before the tombstone was written.)
-        if m.status == "suspended" && !row.suspended_by_scim {
-            deprovision::remove_keeping_suspension(&mut tx, org.org_id, row.user_id, &actor)
-                .await
-                .map_err(scim_of_api)?;
-        } else {
-            deprovision::remove_membership(&mut tx, org.org_id, row.user_id, &actor)
-                .await
-                .map_err(scim_of_api)?;
-        }
+    } else if member.is_some() {
+        // (`row` was read before the tombstone was written, so it still has the flag.)
+        deprovision::leave_org(
+            &mut tx,
+            org.org_id,
+            row.user_id,
+            row.suspended_by_scim,
+            &actor,
+        )
+        .await
+        .map_err(scim_of_api)?;
         flush = deprovision::abort_turns(&mut tx, org.org_id, row.user_id)
             .await
             .map_err(scim_of_api)?;

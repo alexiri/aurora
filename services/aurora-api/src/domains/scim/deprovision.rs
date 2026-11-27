@@ -118,10 +118,30 @@ pub async fn remove_membership(
     Ok(())
 }
 
-/// (FIX-256, D-492) The directory removes a person whose suspension a **person** made: the
-/// membership row stays, suspended, so that a later `POST` does not bring them back active.
-/// Everything else goes as in [`remove_membership`].
-pub async fn remove_keeping_suspension(
+/// (FIX-256, D-492) The directory takes `user`'s account out of `org` (`DELETE /Users`, or a
+/// link moved to another account). The membership goes, except when it is suspended and SCIM
+/// did not make the suspension (`suspended_by_scim` is the link's flag): only a person lifts
+/// that one. The row is held while this is decided.
+pub async fn leave_org(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+    suspended_by_scim: bool,
+    actor: &AuditActor,
+) -> Result<(), ApiError> {
+    let kept = aurora_db::repo::idp_roles::org_row(&mut *conn, org, user)
+        .await?
+        .is_some_and(|m| m.status == "suspended" && !suspended_by_scim);
+    if kept {
+        remove_keeping_suspension(conn, org, user, actor).await
+    } else {
+        remove_membership(conn, org, user, actor).await
+    }
+}
+
+/// The membership row stays, suspended, so that neither a later `POST` nor a link moved back
+/// brings the account back active. Everything else goes as in [`remove_membership`].
+async fn remove_keeping_suspension(
     conn: &mut PgConnection,
     org: Uuid,
     user: Uuid,
@@ -130,7 +150,7 @@ pub async fn remove_keeping_suspension(
     tracing::info!(
         org = %org,
         user = %user,
-        "the directory removed a suspended member; the suspended membership is kept"
+        "the directory dropped a suspended member; the suspended membership is kept"
     );
     members::strip_keeping_membership(&mut *conn, org, user).await?;
     // (FIX-262, C-1164) As in [`suspend_membership`].

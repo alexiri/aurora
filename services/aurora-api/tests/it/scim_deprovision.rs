@@ -826,6 +826,99 @@ async fn scim_delete_removes_a_suspension_scim_made() {
     assert_eq!(standing(&fx, user).await.0.as_deref(), Some("active"));
 }
 
+/// `PUT` of link `sid` with `user_name`, `active: true`.
+async fn rename(fx: &ScimFx, sid: &str, user_name: &str) {
+    let (s, _, v) = fx
+        .scim(
+            Method::PUT,
+            &format!("{USERS}/{sid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "userName": user_name,
+                "active": true,
+            })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+}
+
+/// (FIX-256, D-492) Moving a link to another account and back does not lift a suspension an
+/// administrator made: the old account keeps its membership, suspended.
+#[tokio::test]
+async fn moving_a_link_away_and_back_keeps_an_admins_suspension() {
+    let fx = ScimFx::new().await;
+    // A pre-provisioned person who never signed in, so the directory may move their link.
+    let u = fx.provision_ok("first@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let first = fx.aurora_user(&sid).await;
+    let second = fx.h.user("second@x.io", false).await;
+    let plain = fx.h.workspace(fx.org).await;
+    let cut_off = fx.h.workspace(fx.org).await;
+    fx.h.bind_ws(plain, first, "member").await;
+    fx.h.bind_ws(cut_off, first, "member").await;
+    sqlx::query(
+        "UPDATE workspace_access SET status = 'suspended' \
+         WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(cut_off)
+    .bind(first)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            "/scim/v2/Groups",
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+                "displayName": "moved-g",
+                "members": [{"value": sid}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = fx
+        .mgmt(
+            Method::PATCH,
+            &format!("/v1/orgs/{}/members/{first}", fx.org),
+            Some(json!({"status": "suspended"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    rename(&fx, &sid, "second@x.io").await;
+    assert_eq!(fx.aurora_user(&sid).await, second, "the link moved");
+    assert_eq!(
+        standing(&fx, first).await,
+        (
+            Some("suspended".to_owned()),
+            0,
+            vec![(cut_off, "suspended".to_owned())]
+        )
+    );
+    assert_eq!(standing(&fx, second).await.1, 1, "the group followed");
+
+    rename(&fx, &sid, "first@x.io").await;
+    assert_eq!(fx.aurora_user(&sid).await, first, "the link moved back");
+    let (status, _, bindings) = standing(&fx, first).await;
+    assert_eq!(status.as_deref(), Some("suspended"));
+    assert_eq!(bindings, vec![(cut_off, "suspended".to_owned())]);
+}
+
+/// A suspension the directory made itself still leaves with a moved link.
+#[tokio::test]
+async fn moving_a_link_drops_a_suspension_scim_made() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("one@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let one = fx.aurora_user(&sid).await;
+    fx.h.user("two@x.io", false).await;
+    let (s, v) = deactivate(&fx, &sid).await;
+    assert_eq!(s, 200, "{v}");
+    rename(&fx, &sid, "two@x.io").await;
+    assert_eq!(standing(&fx, one).await.0, None);
+}
+
 #[tokio::test]
 async fn jit_and_invitation_gates() {
     // The dev provider JITs into the fixture org, so sign-ins hit the SCIM admission gate.

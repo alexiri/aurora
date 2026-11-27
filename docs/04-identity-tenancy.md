@@ -593,8 +593,8 @@ unknown binding (FIX-256, D-492).
 **The same rule for the organization** (FIX-256, D-492). A suspended org membership is
 lifted only by a person through the API's rules, never by the identity provider's sync:
 the sign-in claim sync neither removes nor reactivates it (*OIDC role claims*, step 1),
-and a SCIM `DELETE` of a person whose suspension SCIM did not make keeps the membership,
-suspended (*SCIM*, Deprovisioning). An administrator can still restore or remove such a
+and a SCIM `DELETE`, or a SCIM link moved to another account, keeps a membership whose
+suspension SCIM did not make, suspended (*SCIM*, Deprovisioning). An administrator can still restore or remove such a
 member.
 
 **Current behaviour at the edges** of both rules:
@@ -602,8 +602,9 @@ member.
   grants nothing until someone restores it, and the restore then gives the raised role);
   a suspended org membership's role is not changed by a returning or stronger claim;
 - a suspension does not follow a person to a **new user row** (the account deleted and
-  made again, or a SCIM link moved to another user: the move removes the old membership,
-  suspended or not);
+  made again, or a SCIM link moved to another user). The **old** account keeps it: a move
+  leaves a membership SCIM did not suspend in place, suspended, as a `DELETE` does, so a
+  link moved back finds it still suspended;
 - account deletion's "sole personal workspace" check counts a kept binding like any other
   person's binding.
 
