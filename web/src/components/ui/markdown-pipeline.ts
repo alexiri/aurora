@@ -26,7 +26,17 @@ export const sanitizeSchema: SanitizeOptions = {
   },
 };
 
-export type AlertKind = "note" | "tip" | "important" | "warning" | "caution";
+/**
+ * The same list for text that must make the browser fetch nothing (`<Markdown images={false}>`): without `source` and
+ * `picture`, whose `srcset` loads a file with no `img` to answer for it. `img` stays in the list so that the renderer
+ * can say its alt text in its place; these are the only elements of the list that load anything by being shown.
+ */
+export const textOnlySchema: SanitizeOptions = {
+  ...sanitizeSchema,
+  tagNames: (sanitizeSchema.tagNames ?? []).filter((t) => t !== "source" && t !== "picture"),
+};
+
+export type AlertKind= "note" | "tip" | "important" | "warning" | "caution";
 export const ALERT_TITLE: Record<AlertKind, string> = {
   note: "Note",
   tip: "Tip",

@@ -83,6 +83,14 @@ export function isLibrary(skill: SkillBody): boolean {
   return !!skill.source && !skill.source.detached;
 }
 
+/**
+ * Text an outsider wrote: an app's, or a library's (also after its updates were stopped, which keeps the text). Showing
+ * it must fetch nothing. A skill written in Aurora shows its pictures as chat and Memory do.
+ */
+export function isOutsideText(skill: SkillBody): boolean {
+  return skill.tier === "app" || !!skill.source;
+}
+
 export function libraryLabel(skill: SkillBody): string {
   return skill.source?.label ?? skill.source?.repo ?? "a library";
 }

@@ -293,8 +293,19 @@ and `skill-3-library-…` ↔ the two frames of `skill-3`, `skill-4-…`, `-file
 
 No SEC row. No new request type: the per-agent off, file and skill routes decide who may; the buttons only follow the
 roles in `/v1/me`. A conversation is named only from the API's `ConversationRef`, else "in a conversation". Names,
-descriptions and files from libraries and apps are React text. **For the reviewer:** the panel renders library and app
-`SKILL.md` instructions with the shared sanitizing `Markdown` (scope 2), where they were plain text before. Scripts and
-handlers are stripped, an outside link or image is a link that opens only when pressed, but a **same-origin** image
-path is loaded, as in chat and memory, so opening such a skill can make the viewer's browser `GET` a path of this
-origin.
+descriptions and files from libraries and apps are React text.
+
+**Text from outside fetches nothing (review, item 1).** The panel renders library and app `SKILL.md` instructions as
+Markdown (scope 2), where they were plain text before. For them (`isOutsideText`: an app skill, or any skill with a
+library `source`, also after its updates were stopped; the panel and the editor's preview) `Markdown` gets
+`images={false}`: every picture is the words "image: <alt>", and `source` and `picture` leave the sanitize list
+(`<picture><source srcset>` loads a file with no `img`). No other element of the list loads anything by being shown;
+KaTeX keeps `trust: false`. Links render as everywhere (`rel="noopener noreferrer nofollow"`, new tab, pressed only).
+`tests/skills-page.test.tsx` ("text from a library or an app fetches nothing") covers a relative and an outside image,
+raw `img`, `srcset`, a linked and an alt-less picture; the four cases failed first with seven fetching elements.
+
+**Skills written in Aurora (agent, workspace, organization) are unchanged:** the shared Markdown shows same-origin
+images inline in chat and Memory (D-227(a)), and these skills follow it; an outside image is already a link and CSP
+`img-src 'self' data:` blocks it. Two ways outside text can lose its mark, for the owner to weigh: **Duplicate as
+<Agent>'s own** (and a skill made from a template, or one an agent writes with `skill_create`) is stored without a
+`source`, so its same-origin pictures load.

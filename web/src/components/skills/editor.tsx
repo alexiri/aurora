@@ -33,7 +33,7 @@ import { formatCount } from "@/lib/format-date";
 import { newSkillName, skillDisplayName } from "@/lib/skill-name";
 
 import { EditorFiles, TOTAL_TOO_LARGE, type EditorFile } from "./files";
-import type { SkillBody } from "./model";
+import { isOutsideText, type SkillBody } from "./model";
 
 const BODY_ID = "skill-body";
 
@@ -281,6 +281,7 @@ export function SkillEditor({
       </Field>
       <MarkdownEditor
         id={BODY_ID}
+        images={!(skill && isOutsideText(skill))}
         label="Instructions"
         value={body}
         onChange={setBody}

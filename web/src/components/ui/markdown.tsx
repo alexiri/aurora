@@ -11,7 +11,7 @@ import remarkGfm from "remark-gfm";
 import { useCopy, copyLabel } from "@/lib/use-copy";
 
 import { rehypeMarks, rehypeTightTasks } from "./markdown-marks";
-import { rehypeAlerts, rehypeFragmentLinks, sanitizeSchema } from "./markdown-pipeline";
+import { rehypeAlerts, rehypeFragmentLinks, sanitizeSchema, textOnlySchema } from "./markdown-pipeline";
 
 type Plugins = NonNullable<Options["remarkPlugins"]>;
 
@@ -124,6 +124,12 @@ function MdImg({ src, alt }: ComponentProps<"img"> & { node?: unknown }) {
   return <span>🖼 {label}</span>;
 }
 
+/** `images={false}`: no picture is shown or linked to, only what it was said to be. */
+function MdImgAsText({ alt }: ComponentProps<"img"> & { node?: unknown }) {
+  const label = alt?.trim();
+  return <span>{label ? `image: ${label}` : "image"}</span>;
+}
+
 function CopyButton({ text }: { text: string }) {
   const { state, copy } = useCopy(1500);
   return (
@@ -174,6 +180,7 @@ function MdLi({ node: _node, className, children, ...rest }: ComponentProps<"li"
 }
 
 const COMPONENTS: Components = { a: MdLink, img: MdImg, pre: MdPre, table: MdTable, li: MdLi };
+const TEXT_ONLY_COMPONENTS: Components = { ...COMPONENTS, img: MdImgAsText };
 
 type Extra = { remark: Plugins; rehype: Plugins };
 const LOADERS = {
@@ -229,7 +236,9 @@ export function holdBackPartial(source: string): string {
 
 const BASE_REMARK: Plugins = [remarkGfm];
 const BASE_REMARK_BREAKS: Plugins = [remarkGfm, remarkBreaks];
-const BASE_REHYPE: Plugins = [rehypeRaw, rehypeSlug, [rehypeSanitize, sanitizeSchema], rehypeFragmentLinks, rehypeAlerts];
+const baseRehype = (schema: typeof sanitizeSchema): Plugins => [rehypeRaw, rehypeSlug, [rehypeSanitize, schema], rehypeFragmentLinks, rehypeAlerts];
+const BASE_REHYPE = baseRehype(sanitizeSchema);
+const TEXT_ONLY_REHYPE = baseRehype(textOnlySchema);
 const REMARK_REHYPE = { allowDangerousHtml: true } as const;
 
 /**
@@ -249,10 +258,16 @@ export const Markdown = memo(function Markdown({
   streaming = false,
   marks,
   reading = false,
+  images = true,
 }: {
   source: string;
   breaks?: boolean;
   streaming?: boolean;
+  /**
+   * `false` for text an outsider wrote (a library's or an app's skill): showing it fetches nothing, not even from this
+   * origin with the reader's session. Each picture is the words "image: <alt>"; links are as everywhere.
+   */
+  images?: boolean;
   /** A document read at length (a memory): the larger size, with ticked checklist items struck through. */
   reading?: boolean;
   /** Words to mark in the rendered text (a search), with the line of the first one set off (`md-match-line`). */
@@ -266,12 +281,12 @@ export const Markdown = memo(function Markdown({
   const marked = marks?.join("\u0000") ?? "";
   const rehype = useMemo<Plugins>(
     () => [
-      ...BASE_REHYPE,
+      ...(images ? BASE_REHYPE : TEXT_ONLY_REHYPE),
       ...extras.flatMap((e) => e.rehype),
       ...(reading ? [rehypeTightTasks] : []),
       ...(marked ? [rehypeMarks(marked.split("\u0000"))] : []),
     ],
-    [extras, marked, reading],
+    [extras, images, marked, reading],
   );
   const text = (streaming ? holdBackPartial(source) : source).replace(/\r\n/g, "\n");
   return (
@@ -280,7 +295,7 @@ export const Markdown = memo(function Markdown({
         remarkPlugins={remark}
         rehypePlugins={rehype}
         remarkRehypeOptions={REMARK_REHYPE}
-        components={COMPONENTS}
+        components={images ? COMPONENTS : TEXT_ONLY_COMPONENTS}
         urlTransform={(u) => u}
       >
         {text}

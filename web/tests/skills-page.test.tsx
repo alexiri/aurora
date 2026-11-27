@@ -436,6 +436,60 @@ describe("read-only skills say so (skill-3)", () => {
   });
 });
 
+// A library's or an app's SKILL.md is text an outsider wrote: showing it must not make the reader's browser fetch
+// anything, from this origin (with the reader's session) or from anywhere else.
+describe("text from a library or an app fetches nothing", () => {
+  const BODY = [
+    "![relative pixel](/v1/orgs/o1/skills)",
+    "![outside pixel](https://tracker.example/pixel)",
+    '<img src="/v1/me" alt="raw tag">',
+    '<picture><source srcset="/v1/from-source 1x"><img src="/v1/in-picture" alt="in a picture"></picture>',
+    "[![linked pixel](/v1/linked)](https://example.org/page)",
+    "![](/v1/no-alt)",
+  ].join("\n\n");
+  const fetchers = "img, source, picture, video, audio, iframe, object, embed, [srcset], input[type=image]";
+
+  const check = (container: HTMLElement) => {
+    expect([...container.querySelectorAll(fetchers)].map((e) => e.outerHTML)).toEqual([]);
+    for (const alt of ["relative pixel", "outside pixel", "raw tag", "in a picture", "linked pixel"]) {
+      expect(container.textContent).toContain(`image: ${alt}`);
+    }
+    // a link stays a link, opened only when pressed
+    expect(within(container).getByRole("link", { name: /image: linked pixel/ })).toHaveAttribute("rel", "noopener noreferrer nofollow");
+  };
+
+  const app = { app_id: "git", name: "Git", version: "1.2.0" };
+  it.each([
+    ["a library skill", { source: librarySource() }, {}],
+    ["a library skill whose updates were stopped", { source: librarySource({ detached: true, library_id: null }) }, {}],
+    ["an app skill", { id: null, org_id: null, tier: "app", scope: "app" }, { app }],
+  ])("%s renders no image, only its alt text", async (_what, over, extra) => {
+    const foreign = skill({ name: "foreign", body: BODY, ...over });
+    routes(base({ "GET /v1/agents/a1/skills/effective": effective([applied(foreign, extra)]) }));
+    wrap(<AgentSkills />);
+    await open("foreign");
+    check(within(await panel("foreign")).getByRole("region", { name: "Instructions" }));
+  });
+
+  it("nor in the editor's preview of a library skill whose updates were stopped", async () => {
+    const stopped = skill({ name: "foreign", body: BODY, source: librarySource({ detached: true, library_id: null }) });
+    routes(base({ "GET /v1/agents/a1/skills/effective": effective([applied(stopped)]) }));
+    wrap(<AgentSkills />);
+    await open("foreign");
+    fireEvent.click(within(await panel("foreign")).getByRole("button", { name: "Edit" }));
+    const form = await screen.findByRole("form", { name: "Edit foreign" });
+    fireEvent.click(within(form).getByRole("tab", { name: "Preview" }));
+    check(within(form).getByRole("tabpanel", { name: "Preview" }));
+  });
+
+  it("a skill written in Aurora shows a same-origin picture, as chat and Memory do", async () => {
+    routes(base({ "GET /v1/agents/a1/skills/effective": effective([applied(skill({ name: "mine", body: "![chart](/v1/files/chart)" }))]) }));
+    wrap(<AgentSkills />);
+    await open("mine");
+    expect(within(await panel("mine")).getByRole("img", { name: "chart" })).toHaveAttribute("src", "/v1/files/chart");
+  });
+});
+
 describe("app skills (D-455, C-1133)", () => {
   const body = (name: string) => ({ ...skill({ name, tier: "app", description: "d", body: '# x\n\n<img src=x onerror="window.__pwned=1">' }), id: null, org_id: null, used_by_agents: null });
   const jira = { app_id: "jira", name: "Jira", version: "1.0.0" };

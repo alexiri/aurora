@@ -19,7 +19,7 @@ import { useItToLine } from "@/lib/skill-name";
 import { SkillFileTree } from "./files";
 import { UpdateReviewDialog } from "./library";
 import { SkillSwitch, SourceChip } from "./list";
-import { isLibrary, libraryLabel, managers, pageScope, pageSubject, pageTier, usageWords, type SkillPage, type SkillRow } from "./model";
+import { isLibrary, isOutsideText, libraryLabel,managers, pageScope, pageSubject, pageTier, usageWords, type SkillPage, type SkillRow } from "./model";
 
 /** What the viewer may do with a skill on this page. */
 export function skillRights(page: SkillPage, row: SkillRow) {
@@ -252,7 +252,7 @@ export function SkillPanel({
       </header>
       <section aria-label="Instructions" className="space-y-2 border-t border-line pt-4">
         <p className="text-label font-semibold uppercase tracking-label text-muted">Instructions</p>
-        {skill.body.trim() ? <Markdown source={skill.body} /> : <p className="text-sm text-muted">No instructions.</p>}
+        {skill.body.trim() ? <Markdown source={skill.body} images={!isOutsideText(skill)} /> : <p className="text-sm text-muted">No instructions.</p>}
       </section>
       <SkillFileTree key={skill.updated_at ?? ""} skillId={skill.id} version={skill.updated_at} body={skill.body} files={skill.files} />
       {usage ? (

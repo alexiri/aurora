@@ -37,7 +37,10 @@ Phase: **0**. App: `web/` (Next.js App Router, TypeScript strict). Port 4100.
   shortcodes, highlighted code with a language label and Copy, math, heading
   anchors and GitHub's raw-HTML allowlist — **except**: an image from another
   origin is a link ("🖼 alt"), never loaded (same-origin attachments are
-  inline); only `http`, `https`, `mailto` and same-origin relative links are
+  inline); (P5-SKILLS-3) `images={false}`, for text an outsider wrote (a
+  library's or an app's skill, also in the editor's preview after its updates
+  were stopped), loads nothing from any origin: every picture is the words
+  "image: <alt>", and `source` and `picture` are not allowed; only `http`, `https`, `mailto` and same-origin relative links are
   links (any other scheme is its label as text); a link whose label looks like
   a URL or domain of another host gets "→ host"; raw HTML outside the
   allowlist is dropped (its text kept; a `<script>`'s content goes with it);
@@ -1997,9 +2000,9 @@ every other topic is owners/admins and is not listed for a member.)
     invalid), budget impact, **Approve** and **Reject**. The same flow on the workspace Skills page
     (`can_own` to add or approve) and the org Skills page (org owners/admins); repository text is
     shown as data, never as HTML or markdown with links that auto-open. That holds in this browser and in the update
-    review; the panel of an added skill renders its instructions with the sanitizing `Markdown` (P5-SKILLS-3: no
-    scripts or handlers, an outside link opens only when pressed and shows its address, an outside image is a link),
-    and its files, names and descriptions stay plain text.
+    review; the panel of an added skill renders its instructions with the sanitizing `Markdown` and `images={false}`
+    (P5-SKILLS-3: no scripts or handlers, nothing is fetched by showing it, a picture is "image: <alt>", an outside
+    link opens only when pressed and shows its address), and its files, names and descriptions stay plain text.
   - **Schedules**, **Webhooks** (URL shown once on create/rotate; phase 2,
     RFE-021: each item shows its owner — a person or "Workspace" — with
     **Reassign…** (picker of members who can use the workspace; re-enable option

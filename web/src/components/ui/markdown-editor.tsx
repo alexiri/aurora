@@ -31,7 +31,10 @@ export function MarkdownEditor({
   error,
   hint = MARKDOWN_HINT,
   className,
+  images = true,
 }: {
+  /** `false` when the text came from outside (`Markdown`'s own option): the preview fetches nothing. */
+  images?: boolean;
   id: string;
   label: string;
   value: string;
@@ -89,7 +92,7 @@ export function MarkdownEditor({
           tabIndex={0}
           className="min-h-100 px-3 py-3"
         >
-          {mode !== "preview" ? null : value.trim() ? <Markdown source={value} /> : <p className="text-sm text-muted">Nothing to preview yet.</p>}
+          {mode !== "preview" ? null : value.trim() ? <Markdown source={value} images={images} /> : <p className="text-sm text-muted">Nothing to preview yet.</p>}
         </div>
       </div>
       {error ? (
