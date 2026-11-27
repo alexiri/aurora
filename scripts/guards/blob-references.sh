@@ -53,11 +53,11 @@ while read -r table col; do
 done <<< "$pairs"
 
 # The list and the query must agree: every listed column is compared with b.key in the SQL.
-for col in $(grep -oE '\("[a-z_]+", "[a-z_]*blob_key"\)' "$SWEEP" | sed -E 's/.*, "([a-z_]*blob_key)".*/\1/' | sort -u); do
+while read -r col; do
   if ! grep -qE "\.${col} = b\.key" "$SWEEP"; then
     echo "blob-references guard: $col is listed in BLOB_REFERENCE_COLUMNS but the sweep's query does not compare it with b.key" >&2
     fail=1
   fi
-done
+done < <(grep -oE '\("[a-z_]+", "[a-z_]*blob_key"\)' "$SWEEP" | sed -E 's/.*, "([a-z_]*blob_key)".*/\1/' | sort -u)
 
 exit "$fail"

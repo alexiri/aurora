@@ -141,8 +141,9 @@ check_threads() {
   case "$1" in
     ''|*[!0-9]*) refuse "the number of test threads must be a whole number from 1 to $MAX_THREADS, got '$1'." ;;
   esac
-  [ "${#1}" -le 3 ] && [ "$1" -ge 1 ] && [ "$1" -le "$MAX_THREADS" ] \
-    || refuse "$1 test threads is outside 1 to $MAX_THREADS, the cap on this machine."
+  if ! { [ "${#1}" -le 3 ] && [ "$1" -ge 1 ] && [ "$1" -le "$MAX_THREADS" ]; }; then
+    refuse "$1 test threads is outside 1 to $MAX_THREADS, the cap on this machine."
+  fi
 }
 
 run_rust() {

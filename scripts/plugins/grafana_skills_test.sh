@@ -135,6 +135,7 @@ expect_has "datasources: --account is passed through" "--account B" "$(cat "$STU
 # --- panels ---------------------------------------------------------------------------------------------
 out=$(G panels api-overview)
 expect_has "panels: variable data source resolved" "[1] Request rate (timeseries) datasource: prom-main (variable datasource) prometheus" "$out"
+# shellcheck disable=SC2016  # $job is a Grafana variable, expected verbatim
 expect_has "panels: expr" 'A: expr=sum(rate(http_requests_total{job="$job"}[5m]))' "$out"
 expect_has "panels: a panel inside a row, OpenSearch target" "[3] Errors by host (table) datasource: os-logs grafana-opensearch-datasource" "$out"
 expect_has "panels: metrics, bucket aggregations and time field" "query=level:error | metrics=count: | bucketAggs=terms:host.keyword,date_histogram:@timestamp | timeField=@timestamp" "$out"

@@ -65,8 +65,10 @@ grep -Eq "^  image: docker\.io/library/postgres:[A-Za-z0-9._-]+${DIGEST}" deploy
 # --- self-test: a planted unpinned FROM, and a planted unpinned ARG default, must be reported ---
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
+# shellcheck disable=SC2016  # a literal Containerfile ${B}
 printf 'ARG B=docker.io/library/rust:1\nFROM ${B} AS chef\nFROM docker.io/library/node:22\nFROM chef AS x\n' >"$tmp"
 [ "$(check_file "$tmp" | wc -l)" -eq 2 ] || fail "self-test: the scan did not report exactly the two planted unpinned FROMs"
+# shellcheck disable=SC2016  # a literal Containerfile ${B}
 printf 'ARG B=docker.io/library/rust:1@sha256:%064d\nFROM ${B} AS chef\nFROM chef AS x\n' 0 >"$tmp"
 [ -z "$(check_file "$tmp")" ] || fail "self-test: a pinned ARG default and a stage reference were reported"
 

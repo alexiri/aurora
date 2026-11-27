@@ -62,6 +62,7 @@ if [ -f scripts/guards/fixture-keys.allow ]; then
 fi
 
 for p in "${patterns[@]}"; do
+  # shellcheck disable=SC2086  # SCAN_DIRS is a space-separated list: it must split
   if hits="$(grep -rInE --exclude='*.png' --exclude=no-live-tokens.sh --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=target -e "$p" $SCAN_DIRS 2>/dev/null)"; then
     if [ "$p" = "$KEY_PATTERN" ] && [ "${#allowed[@]}" -gt 0 ]; then
       kept=""

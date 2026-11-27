@@ -30,7 +30,7 @@ done
 WT="$(cd "$WT" && pwd -P)"
 
 # Only linked worktrees (.git is a file); never the primary checkout, / or $HOME.
-[ "$WT" != "/" ] && [ "$WT" != "$HOME" ] || { echo "refusing to clean $WT" >&2; exit 2; }
+if [ "$WT" = "/" ] || [ "$WT" = "$HOME" ]; then echo "refusing to clean $WT" >&2; exit 2; fi
 [ -e "$WT/.git" ] || { echo "$WT has no .git (not a worktree); refusing" >&2; exit 2; }
 if [ -d "$WT/.git" ]; then
   echo "$WT is a primary checkout (.git is a directory), not a linked worktree; refusing" >&2; exit 2
