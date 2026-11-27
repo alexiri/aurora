@@ -79,9 +79,13 @@ export function AgentsView() {
     router.push(base);
   };
 
-  if (resolved.isPending) return <Loading />;
+  // (FIX-277) The workspace answer first: it says whether the viewer only reads.
+  if (resolved.isPending || (wsId && workspace.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   if (!wsId) return <ErrorState error={{ code: "not_found" }} />;
+  // (FIX-277, C-1165) Emergency read access: the list, with nothing to start or change, and no card summaries —
+  // they read the workspace's accounts, which the grant doesn't cover.
+  const emergency = workspace.data?.emergency_reader === true;
   return (
     <AltitudeScope>
     <div className="space-y-4">
@@ -89,7 +93,7 @@ export function AgentsView() {
         title="Agents"
         description="The agents in this workspace."
         actions={
-          workspace.data ? (
+          workspace.data && !emergency ? (
             <div className="flex flex-wrap items-center justify-end gap-2">
               <StartFromTemplate wsId={wsId} org={org} ws={ws} />
               <MainAction canAct={workspace.data.my_role === "owner"} whoCan={whoCanFromContacts("workspace_owner", workspace.data.contacts, "add_agent")}>
@@ -102,7 +106,7 @@ export function AgentsView() {
       />
       {agents.isPending ? <Loading /> : null}
       {agents.isError ? <ErrorState error={agents.error} onRetry={() => agents.refetch()} /> : null}
-      {agents.data && (needsUpdateFilter || behind.length > 0) ? (
+      {!emergency && agents.data && (needsUpdateFilter || behind.length > 0) ? (
         <section className="space-y-2 rounded-card border border-line bg-surface p-4" data-testid="needs-update">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <p className="text-sm text-ink-2">
@@ -137,8 +141,9 @@ export function AgentsView() {
           base={base}
           showTokenBadges={workspace.data?.my_role === "owner"}
           needs={needs.counts}
-          wsId={wsId}
-          orgId={resolved.data?.org.id}
+          wsId={emergency ? undefined : wsId}
+          orgId={emergency ? undefined : resolved.data?.org.id}
+          chat={!emergency}
         />
       ) : null}
       {reviewing ? (

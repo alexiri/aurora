@@ -1741,7 +1741,12 @@ every other topic is owners/admins and is not listed for a member.)
   workspace call shows the same notice with a link to it. While the viewer's
   own emergency read access is open, the notice drops "open its chats or",
   and in place of the offer to open it says "Emergency read access is open
-  until <time>."
+  until <time>." with the link **Read the workspace's agents** to
+  `/o/<org>/w/<ws>/agents` (the organization's lists lead the reader to the
+  manage page). Without a grant of the viewer's own there is no such link.
+  On that list the reader has no **New agent**, **Start from a template** or
+  update review, and the cards have no summary (it reads accounts, which the
+  grant doesn't cover) and no **Chat** button.
 - **Chat platforms** (`/o/<org>/chat-platforms`, P5-REFINE-17 org-1): "Let people talk to agents from the chat tools <org>
   already uses." One row per connectable platform (icon, name, "Ready · connector running", the **Ready** status line
   and **Connect**: the same readiness as Administration, a running host that serves the type means connectable). Under

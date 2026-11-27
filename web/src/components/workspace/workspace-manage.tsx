@@ -4,6 +4,7 @@
 // (`/o/<org>/workspaces/<ws>`): people, agents, pause and delete — everything an organization
 // admin may do from the outside, and nothing that opens the workspace's chats or agents.
 
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -22,21 +23,30 @@ import { Section } from "@/components/ui/section";
 import { useAgents, useMe, useOrg, useResolve, useWorkspace, type Agent } from "@/lib/api/queries";
 import { usePutAccess } from "@/lib/api/account";
 import { emergencyOpenText } from "@/lib/emergency";
-import { orgRoutes } from "@/lib/routes";
+import { orgRoutes, wsRoutes } from "@/lib/routes";
 import { personName } from "@/lib/workspace-name";
 
 /**
  * The notice at the top of the manage page (FIX-235): why this page is here, not the workspace. While the viewer's own
  * emergency read access is open (`emergency`, FIX-277) they can open the chats, so it says that it is open and until
- * when instead of offering it.
+ * when instead of offering it, with the way in: the organization's lists lead the reader to this page.
  */
-function ManageNotice({ personal, personFirstName, orgOwner, emergency }: { personal: boolean; personFirstName: string | null; orgOwner: boolean; emergency: { until: string | null } | null }) {
+function ManageNotice({ personal, personFirstName, orgOwner, emergency }: { personal: boolean; personFirstName: string | null; orgOwner: boolean; emergency: { until: string | null; agentsPath: string } | null }) {
   return (
     <Notice role="note" data-testid="manage-notice">
       <div className="space-y-1 text-sm">
         <p>You manage this workspace as an organization admin. You&rsquo;re not one of its people, so you can&rsquo;t {emergency ? "" : "open its chats or "}use its agents.</p>
         {personal && personFirstName ? <p>Only {personFirstName} can add people to it.</p> : null}
-        {emergency ? <p>{emergencyOpenText(emergency.until)}</p> : orgOwner ? <p>In an emergency you can open read access.</p> : null}
+        {emergency ? (
+          <p>
+            {emergencyOpenText(emergency.until)}{" "}
+            <Link href={emergency.agentsPath} className="font-medium text-link underline">
+              Read the workspace&rsquo;s agents
+            </Link>
+          </p>
+        ) : orgOwner ? (
+          <p>In an emergency you can open read access.</p>
+        ) : null}
       </div>
     </Notice>
   );
@@ -128,7 +138,7 @@ export function WorkspaceManage() {
         breadcrumb={[{ label: "Overview", href: orgRoutes(org).home() }]}
         actions={personal ? <Badge tone="neutral">Personal</Badge> : undefined}
       />
-      {w.my_role == null ? <ManageNotice personal={personal} personFirstName={personFirstName} orgOwner={orgOwner} emergency={w.emergency_reader ? { until: w.emergency_reader_expires_at ?? null } : null} /> : null}
+      {w.my_role == null ? <ManageNotice personal={personal} personFirstName={personFirstName} orgOwner={orgOwner} emergency={w.emergency_reader ? { until: w.emergency_reader_expires_at ?? null, agentsPath: wsRoutes(org, ws).agents() } : null} /> : null}
 
       <Section id="manage-people" title="People" description="Who can use this workspace.">
         <div className="space-y-4">

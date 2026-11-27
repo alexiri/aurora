@@ -2,7 +2,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { AGENT_ROUTE, ANN_DIRECT, MINE, mockChat } from "./support/chat-mock";
 import { mockMemories } from "./support/memory";
-import { id, mockApi, now, ws } from "./support/mock-api";
+import { agent, id, mockApi, now, ws } from "./support/mock-api";
 import { openThemed, overflow, titled } from "./support/open";
 
 // FIX-236 (D-478, C-1164, C-1165): an organization owner opens emergency read access from the
@@ -208,6 +208,39 @@ test.describe("an emergency reader reaches the workspace's agents (FIX-277)", ()
     await expect(notice).not.toContainText("In an emergency you can open read access.");
     await page.waitForLoadState("networkidle");
     await expect(page.getByTestId("open-emergency")).toHaveCount(0);
+  });
+
+  // The organization's lists lead a returning reader to the manage page: it is their way back in.
+  test("the manage page links into the workspace, and the agents list there is read-only", async ({ page }) => {
+    await readerMock(page);
+    // As the real API answers a reader: an agent behind its template, and no accounts (the grant doesn't cover them).
+    await page.route("**/v1/workspaces/" + ws.id + "/agents", (route: Route) => route.fulfill({ ...json({ items: [{ ...agent, needs_update: true }] }) }));
+    await page.route(/\/v1\/workspaces\/[^/]+\/accounts(\?.*)?$/, (route: Route) =>
+      route.fulfill({ ...json({ error: { code: "workspace_access_required", message: "You don't have access to this workspace." } }, 403) }),
+    );
+    await openThemed(page, "/o/acme/workspaces/main", "light");
+    const link = page.getByTestId("manage-notice").getByRole("link", { name: "Read the workspace’s agents" });
+    await link.click();
+    await page.waitForURL("**/o/acme/w/main/agents");
+    const list = page.getByRole("list", { name: "Agents" });
+    await expect(list.getByRole("link", { name: agent.name, exact: true })).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    expect(new URL(page.url()).pathname).toBe("/o/acme/w/main/agents");
+    for (const name of ["New agent", "Start from a template", "Review updates", "Needs update"]) {
+      await expect(page.getByRole("button", { name }), name).toHaveCount(0);
+    }
+    await expect(list.getByRole("link", { name: `Chat with ${agent.name}` })).toHaveCount(0);
+    await expect(page.locator("main").getByRole("alert")).toHaveCount(0);
+    expect(await overflow(page), "no sideways scroll").toBe(0);
+  });
+
+  test("without a grant the manage page has no link into the workspace", async ({ page }) => {
+    await ownerMock(page);
+    await openThemed(page, "/o/acme/workspaces/main", "light");
+    await expect(page.getByTestId("open-emergency")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Read the workspace’s agents" })).toHaveCount(0);
+    // (The manage frame has its own "Back to <where you were>"; the notice itself offers nothing.)
+    await expect(page.getByTestId("manage-notice").getByRole("link")).toHaveCount(0);
   });
 });
 

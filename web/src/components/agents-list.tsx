@@ -15,6 +15,7 @@ export function AgentsList({
   needs,
   wsId,
   orgId,
+  chat = true,
 }: {
   agents: readonly Agent[];
   base?: string;
@@ -23,6 +24,8 @@ export function AgentsList({
   needs?: Readonly<Record<string, number>>;
   wsId?: string;
   orgId?: string;
+  /** **Chat** at the foot of each card; off for a viewer who only reads. */
+  chat?: boolean;
 }) {
   if (agents.length === 0) return <EmptyState title="No agents yet" />;
   return (
@@ -36,7 +39,7 @@ export function AgentsList({
           showTokenBadges={showTokenBadges}
           wsId={wsId}
           orgId={orgId}
-          chat
+          chat={chat}
         />
       ))}
     </CardGrid>

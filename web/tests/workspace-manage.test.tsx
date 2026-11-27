@@ -140,6 +140,17 @@ describe("Workspace manage page (FIX-235, D-477)", () => {
     expect(notice).not.toHaveTextContent("In an emergency you can open read access.");
     expect(notice).not.toHaveTextContent("open its chats");
     expect(notice).toHaveTextContent("You’re not one of its people, so you can’t use its agents.");
+    // The way into what the grant lets them read.
+    expect(within(notice).getByRole("link", { name: "Read the workspace’s agents" })).toHaveAttribute("href", "/o/acme/w/lab/agents");
+  });
+
+  it("an administrator without a grant gets no link into the workspace", async () => {
+    serve({}, { emergency_reader: false });
+    wrap(<WorkspaceManage />);
+    const notice = await screen.findByTestId("manage-notice");
+    await screen.findByText("Carol");
+    expect(within(notice).queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Read the workspace’s agents" })).toBeNull();
   });
 
   it("Add yourself asks first, says what it does, and PUTs the chosen role", async () => {
