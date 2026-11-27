@@ -98,3 +98,15 @@ Sonnet `sonnet-integration-reviewer` with a browser (comparison and precise chan
 
 Passes run, verdict counts per pass, report paths, what was sent back and merged, owner-accepted differences, the
 cluster torn down.
+
+**Pass 1 (2026-11-27, on `ae473292`): not clean — 17 Match, 3 Minor difference, 1 Needs changes.**
+
+- Report: `docs/design/skills-memory/verify/MEMORY-REPORT-pass1.md`; captures in `…/verify/memory-pass1/`.
+- To send back: C-1 (broken, FIX-235/FIX-236: the workspace layout redirects an emergency reader, so the read-only
+  Memory view is unreachable), C-2 and C-3 (rough, P5-MEMORY-2: Markdown marks in an untitled memory's title; bullets
+  lost in a mixed checklist, a shared style), C-4 (rough, P5-MEMORY-3: the wrapped diff line).
+- Merged fixes: none yet. Owner-accepted differences: none recorded.
+- No direct fixes and no product code changed, so no tests, builds or fail-first evidence of this lane's own; CI on
+  `ae473292` passed. Mockup comparison and SEC-157 notes are in the report.
+- Cluster `aurora-mem5` (:4530) torn down; cache volumes kept. PROGRESS and FEATURES not edited (the dispatch limited
+  the commit to the report and captures); `P5/14§memory-polish` is not done.
