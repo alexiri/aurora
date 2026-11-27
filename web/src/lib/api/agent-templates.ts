@@ -284,6 +284,7 @@ export type AgentTemplateRefView = components["schemas"]["AgentTemplateRefView"]
 export type TemplateUpdateOffer = components["schemas"]["TemplateUpdateOffer"];
 export type OfferPart = components["schemas"]["OfferPart"];
 export type ApplyTemplateRequest = components["schemas"]["ApplyTemplateRequest"];
+export type ApplyResolution = components["schemas"]["ApplyResolution"];
 export type InputNeededView = components["schemas"]["InputNeededView"];
 export type UpdateAppEntry = components["schemas"]["UpdateAppEntry"];
 export type HelperFile = components["schemas"]["HelperFile"];
