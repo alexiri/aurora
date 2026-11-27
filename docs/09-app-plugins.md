@@ -331,11 +331,15 @@ tool is withheld the same way — its body never passed the projection — and i
 short fixed note carrying the upstream status (`tool_error_withheld`). Only the body is replaced: the
 account's health and the request log take the upstream status as for any tool. The agent CLI reduces what it saves
 and prints the same way. **Where it applies** (FIX-274, FIX-259): on every HTTP forwarding path of the gateway (a
-connection, a granted secret on the app's host, no credential). The LDAP lane and the secret-link lane (read and
-`send` mode) apply no projection: the linter refuses `project` on any tool of an app with an `ldap` or `secret_link`
-section (`tool_project_lane`), and the gateway refuses such a tool of a package stored before that rule with `403
-tool_projection_unsupported`, before any approval, rate-limit take or dry run, and so before the directory is
-searched or the stored URL is opened. An LDAP app limits what it returns with its `attributes` list. Absent = the answer is forwarded as it arrived (and no change to the
+connection, a granted secret on the app's host, no credential). The LDAP lane, the secret-link lane (read and `send`
+mode) and the database lane apply no projection: the linter refuses `project` on any tool of an app with an `ldap`,
+`secret_link` or `database` section (`tool_project_lane`), and the gateway refuses such a tool of a package stored
+before that rule with `403 tool_projection_unsupported`, before any approval or rate-limit take (and a webhook's dry
+run), and so before the directory is searched, the stored URL is opened or the statement reaches the database. On
+the database lane the refusal is per statement (SQLSTATE `42501` to the client, the 403 in the request log). An
+LDAP app limits what it returns with its `attributes` list; a database connection, with its role's privileges. The
+open lane is an uninspected tunnel with no injected credential: no tool is matched there and no projection applies.
+Absent = the answer is forwarded as it arrived (and no change to the
 package's snapshot hash). Built-in user: `grafana` (1.8.0: `list_contact_points`, whose answer
 keeps only each contact point's name and type, so the endpoint's settings and secrets reach no
 caller, raw send or CLI call alike).

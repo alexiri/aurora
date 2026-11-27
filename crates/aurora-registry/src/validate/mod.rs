@@ -1453,6 +1453,16 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         ),
                     );
                 }
+                if it.project.is_some() && app.database.is_some() {
+                    cx.v(
+                        "tool_project_lane",
+                        &format!("/tools/{gname}/items/{j}/project"),
+                        format!(
+                            "tool `{}`: `project` is not applied to the rows a database app returns; remove it",
+                            it.id
+                        ),
+                    );
+                }
                 // A `body_check` only ever refuses, and its key names are quoted in the
                 // refusal message, so they are plain identifiers and the lists stay small.
                 if let Some(bc) = &it.body_check {

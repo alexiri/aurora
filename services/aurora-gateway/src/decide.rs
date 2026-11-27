@@ -2946,6 +2946,13 @@ impl DbSession {
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
+        // The database lane relays the server's rows and applies no response projection (see the
+        // LDAP check in `handle_with`): the statement is refused before any rule or approval.
+        if tool.is_some_and(|t| t.project.is_some()) {
+            let err = lane_projection_refusal();
+            h.refuse(ctx, &err, "blocked");
+            return DbVerdict::Deny(err);
+        }
         let facts = RequestFacts {
             host: self.host.clone(),
             port: 443,
