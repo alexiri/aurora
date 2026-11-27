@@ -460,7 +460,7 @@ async fn idle_events(
     sorted.sort_by_key(|e| e.n);
     for e in sorted.into_iter().take(AFTER_TURN_MAX) {
         let d = &e.event.data;
-        let (ty, p) = match e.event.kind.as_str() {
+        let (ty, mut p) = match e.event.kind.as_str() {
             "tool.started" => (
                 "after_turn.tool",
                 json!({"turn_id": turn,
@@ -498,6 +498,10 @@ async fn idle_events(
         } else {
             "call_id"
         };
+        // An event without an id of its own is known by its place in the anchor's watch.
+        if p[key].as_str().is_none_or(str::is_empty) {
+            p[key] = json!(format!("{turn}:{}", e.n));
+        }
         if already_recorded(tx, cid, ty, p[key].as_str().unwrap_or("")).await? {
             continue;
         }
@@ -575,9 +579,6 @@ async fn already_recorded(
     ty: &str,
     key: &str,
 ) -> Result<bool, ApiError> {
-    if key.is_empty() {
-        return Ok(false);
-    }
     let key_col = if ty == "after_turn.text" {
         "message_id"
     } else {

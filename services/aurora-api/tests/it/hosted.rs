@@ -886,6 +886,28 @@ async fn idle_events_are_capped_per_conversation() {
     assert_eq!(capped.len(), 1, "{capped:?}");
 }
 
+/// (FIX-253 review, low 8) An idle event without a call or message id is still recorded once:
+/// its place in the watch's numbering is its key, so a redelivery adds nothing and a later
+/// event does.
+#[tokio::test]
+async fn idle_events_without_ids_are_deduplicated_by_their_number() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlenoid").await;
+    let batch = |from: u64| {
+        json!({"kind": "turn.idle.events", "turn_id": turn, "events": [
+            ev(from, "text.delta", json!({"message_id": "", "delta": "still watching"})),
+            ev(from + 1, "tool.started", json!({"call_id": "", "name": "Bash",
+                "summary": "Bash: true"})),
+            ev(from + 2, "tool.finished", json!({"call_id": "", "ok": true})),
+        ]})
+    };
+    r.report(&lv, batch(1)).await;
+    r.report(&lv, batch(1)).await;
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 3, "redelivery");
+    r.report(&lv, batch(4)).await;
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 6, "later events");
+}
+
 /// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
 /// `background` turn event: one visible **Background activity** notice (deduped while it keeps
 /// running), and Stop on a finished turn records **Stop requested** and dispatches one

@@ -132,8 +132,9 @@ pub struct Supervisor {
     reported_ports: BTreeSet<u16>,
     /// (FIX-253, part B) Conversations whose idle child is being watched, with the turn the
     /// watch follows: `conversation -> anchor turn`. The drain reports the watch's events
-    /// against that anchor (`turn.idle.events`); the entry goes when the watch is done.
-    idle_turns: Arc<StdMutex<HashMap<Uuid, Uuid>>>,
+    /// against that anchor (`turn.idle.events`); the entry goes when the watch is done. With
+    /// the turn: the number of the watch's next event.
+    idle_turns: Arc<StdMutex<HashMap<Uuid, (Uuid, u64)>>>,
 }
 
 /// One share of the in-memory allow-list.
@@ -371,12 +372,12 @@ impl Supervisor {
     /// `turn.idle.events` anchored on the turn each watch follows. A watch whose background
     /// work is gone and that has nothing left to report is dropped: the reader stopped itself.
     async fn drain_idle(&mut self) {
-        let anchors: Vec<(Uuid, Uuid)> = self
+        let anchors: Vec<(Uuid, (Uuid, u64))> = self
             .idle_turns
             .lock()
-            .map(|m| m.iter().map(|(c, t)| (*c, *t)).collect())
+            .map(|m| m.iter().map(|(c, w)| (*c, *w)).collect())
             .unwrap_or_default();
-        for (conversation_id, turn_id) in anchors {
+        for (conversation_id, (turn_id, mut next)) in anchors {
             let Some(entry) = self.sessions.get(&conversation_id) else {
                 if let Ok(mut m) = self.idle_turns.lock() {
                     m.remove(&conversation_id);
@@ -393,17 +394,14 @@ impl Supervisor {
                 }
                 continue;
             }
-            let wire: Vec<NumberedEvent> = events
-                .iter()
-                .enumerate()
-                .filter_map(|(i, e)| {
-                    e.to_wire().map(|event| NumberedEvent {
-                        n: i as u64 + 1,
-                        event,
-                    })
-                })
-                .collect();
+            let wire = number_idle(&events, &mut next);
             drop(s);
+            if let Ok(mut m) = self.idle_turns.lock()
+                && let Some(watch) = m.get_mut(&conversation_id)
+                && watch.0 == turn_id
+            {
+                watch.1 = next;
+            }
             if !wire.is_empty() {
                 self.send(SupervisorToRunner::TurnIdleEvents(TurnEvents {
                     turn_id,
@@ -1107,7 +1105,7 @@ struct TurnTask {
     db_turns: Arc<crate::pgrelay::DbTurns>,
     /// (FIX-253, part B) The supervisor's `idle_turns` map, so the watch started here is known
     /// to the drain.
-    idle_turns: Arc<StdMutex<HashMap<Uuid, Uuid>>>,
+    idle_turns: Arc<StdMutex<HashMap<Uuid, (Uuid, u64)>>>,
 }
 
 impl TurnTask {
@@ -1205,7 +1203,7 @@ impl TurnTask {
             s.start_idle_reader();
             drop(s);
             if let Ok(mut m) = self.idle_turns.lock() {
-                m.insert(self.conversation_id, self.turn_id);
+                m.insert(self.conversation_id, (self.turn_id, 1));
             }
         }
         self.cred.set_context(None);
@@ -1321,6 +1319,36 @@ async fn release_shared(session: SharedSession) -> (bool, Option<SharedSession>)
     match Arc::try_unwrap(session) {
         Ok(m) => (m.into_inner().release().await.is_ok(), None),
         Err(arc) => (false, Some(arc)),
+    }
+}
+
+/// (FIX-253) Numbers one drain of a watched idle child's events from `next`, which it advances:
+/// the numbers are the events' places in the whole watch, so the API can tell a redelivered
+/// event from a new one even when it carries no id of its own.
+fn number_idle(events: &[HarnessEvent], next: &mut u64) -> Vec<NumberedEvent> {
+    events
+        .iter()
+        .filter_map(HarnessEvent::to_wire)
+        .map(|event| {
+            let n = *next;
+            *next += 1;
+            NumberedEvent { n, event }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+
+    #[test]
+    fn idle_numbers_run_on_across_drains() {
+        let activity = || HarnessEvent::Activity { line: "x".into() };
+        let mut next = 1;
+        let first = number_idle(&[activity(), activity()], &mut next);
+        let second = number_idle(&[activity()], &mut next);
+        let ns: Vec<u64> = first.iter().chain(&second).map(|e| e.n).collect();
+        assert_eq!(ns, [1, 2, 3]);
     }
 }
 
