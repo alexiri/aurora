@@ -2647,6 +2647,37 @@ async fn two_deliveries_of_one_decision_wake_the_task_once() {
     assert_eq!(wakes, 1, "one wake turn");
 }
 
+/// (FIX-253 review 2, item 5) A decision held by a freeze is the held-decision pass's business:
+/// it is no candidate of the "nothing left to wake it" pass, whose batch it would fill for as
+/// long as the freeze lasts.
+#[tokio::test]
+async fn a_held_decision_is_no_candidate_for_nothing_left_to_wake() {
+    use aurora_db::repo::peer_tasks as repo;
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    d.report_approval(id).await;
+    d.finish_receiving_turn(task).await;
+    d.set_receiver_frozen(true).await;
+    sqlx::query(
+        "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
+            decided_at=now() WHERE id=$1",
+    )
+    .bind(id)
+    .bind(d.rig.p.id)
+    .execute(pool)
+    .await
+    .unwrap();
+    d.report_approval(id).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    assert_eq!(repo::held_decision_ids(pool, 100).await.unwrap(), [id]);
+    assert_eq!(
+        repo::waiting_without_wake_ids(pool, 100).await.unwrap(),
+        Vec::<Uuid>::new()
+    );
+}
+
 /// (FIX-253, D-490(b)) With no registration the task is cancelled as today, and the FIX-252
 /// pending approval is the third waiting cause (no extra notice beyond FIX-252's own).
 #[tokio::test]

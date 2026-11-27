@@ -294,8 +294,10 @@ pub async fn overdue_ids<'e, E: PgExecutor<'e>>(exec: E, limit: i64) -> Result<V
 }
 
 /// (FIX-253) `waiting` tasks that look as if nothing is left to wake them: no armed watch, no
-/// open one-time wake-up and no pending approval in the task conversation. Candidates only: the
-/// caller re-checks each under its lock.
+/// open one-time wake-up, no pending approval in the task conversation and no decision still to
+/// be delivered (those, held by a freeze for as long as it lasts, are [`held_decision_ids`]'s;
+/// listed here they would fill the batch and starve the rest). Candidates only: the caller
+/// re-checks each under its lock.
 pub async fn waiting_without_wake_ids<'e, E: PgExecutor<'e>>(
     exec: E,
     limit: i64,
@@ -310,6 +312,13 @@ pub async fn waiting_without_wake_ids<'e, E: PgExecutor<'e>>(
                   AND s.agent_id = t.to_agent_id AND s.ends_at IS NOT NULL)
            AND NOT EXISTS (SELECT 1 FROM approvals a
                 WHERE a.conversation_id = t.task_conversation_id AND a.status = 'pending')
+           AND NOT EXISTS (SELECT 1 FROM approvals a
+                WHERE a.conversation_id = t.task_conversation_id
+                  AND a.status IN ('approved', 'denied', 'expired')
+                  AND NOT EXISTS (SELECT 1 FROM transcript_events e
+                       WHERE e.conversation_id = t.origin_conversation_id AND e.type = 'notice'
+                         AND e.payload->>'code' = 'peer_approval_decided'
+                         AND e.payload->>'approval_id' = a.id::text))
          ORDER BY t.updated_at, t.id LIMIT $1",
     )
     .bind(limit)
