@@ -348,11 +348,13 @@ pub fn lifecycle_message(
     if sub.show_details {
         v["title"] = json!(sanitize::one_line(title, 2 * NAME_MAX));
     }
+    // The kind is part of the subject: a deleted organization and a changed default store both
+    // open "/", and one must not replace the other while it waits at the push service.
     finish_message(
         v,
         PUSH_TTL_MAX.as_secs(),
         "normal",
-        topic(sub.id, href.as_bytes()),
+        topic(sub.id, format!("{}\n{href}", kind.type_str()).as_bytes()),
     )
 }
 

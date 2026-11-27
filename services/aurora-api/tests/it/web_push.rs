@@ -583,6 +583,65 @@ async fn org_slug(w: &W) -> String {
         .unwrap()
 }
 
+/// (FIX-244, D-486) A lifecycle notice's push opens a dashboard **path** (the service worker
+/// ignores anything else), a deleted organization's opens nothing but the home page, and the
+/// sentence travels only to a device that turned names on.
+#[tokio::test]
+async fn a_lifecycle_push_carries_a_dashboard_path_and_the_sentence_only_with_details() {
+    let w = world().await;
+    let actor = person(&w, "boss@x.io", "member").await;
+    let peer = person(&w, "peer@x.io", "member").await;
+    for id in [actor.id, peer.id] {
+        sqlx::query("UPDATE org_members SET role = 'owner' WHERE org_id = $1 AND user_id = $2")
+            .bind(w.f.org)
+            .bind(id)
+            .execute(w.h.pool())
+            .await
+            .unwrap();
+    }
+    register(&w, &peer, "/push/plain", false).await;
+    register(&w, &peer, "/push/detail", true).await;
+    let slug = org_slug(&w).await;
+    let lifecycle = |w: &W| -> Vec<(String, Value)> {
+        w.mock
+            .received()
+            .iter()
+            .map(|r| (r.path.clone(), r.json().unwrap()))
+            .filter(|(_, v)| v["type"] == "org_lifecycle")
+            .collect()
+    };
+
+    let (s, _, v) = call(
+        &w,
+        &actor,
+        Method::POST,
+        &format!("/v1/orgs/{}/freeze", w.f.org),
+        Some(json!({"reason": "incident 42"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let frozen = lifecycle(&w);
+    assert_eq!(frozen.len(), 2, "one push per device: {frozen:?}");
+    for (device, p) in &frozen {
+        assert_eq!(p["url"], format!("/o/{slug}"), "{p}");
+        assert_eq!(p.get("title").is_some(), device == "/push/detail", "{p}");
+        assert!(!p.to_string().contains('@'), "{p}");
+    }
+
+    let (s, _, v) = call(
+        &w,
+        &actor,
+        Method::DELETE,
+        &format!("/v1/orgs/{}", w.f.org),
+        Some(json!({"confirm": slug})),
+    )
+    .await;
+    assert_eq!(s, 204, "{v}");
+    let all = lifecycle(&w);
+    assert_eq!(all.len(), 4, "{all:?}");
+    assert!(all[2..].iter().all(|(_, p)| p["url"] == "/"), "{all:?}");
+}
+
 #[tokio::test]
 async fn delivery_follows_the_decider_the_watcher_and_the_session_at_send_time() {
     let w = world().await;
