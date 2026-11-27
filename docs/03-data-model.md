@@ -1065,7 +1065,7 @@ The gateway role gets nothing on these tables. (`created_at` is implicit, 03 §C
 | send_now_requested_at | timestamptz null | |
 | error_code | text null | open vocabulary |
 | error_message | text null | |
-| idle_usage_n | bigint not null default 0 | (FIX-253, migration `20261201000287`) number of the last idle usage event after this turn that was added to `usage_daily` (a redelivery counts nothing twice) |
+| idle_usage_n | bigint not null default 0 | (FIX-253, migration `20261201000287`) **unused since FIX-257** (`idle_usage_events` replaces it): neither read nor written, kept for replicas of the previous release (`15`, expand → contract) |
 | usage | jsonb null | `{ input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, provider }`. (phase 5, P4-LLM) It also holds `endpoint_id`. (phase 5, P5-MODELS-2, D-304, C-879) It also holds `by_model: [{ model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens }]` and an optional `unverified_models: true`. The totals are the sum of `by_model`, and `model` is the default (`10 §Usage and metering`) |
 | model_basis | jsonb null | (phase 5, P5-MODELS-2, D-304) what the dispatcher chose: `{ provider, endpoint_id, model, roles?, key_id? }` (`roles` = the resolved role model ids; (C-1100) `key_id` = the secret the selection chose, never returned by a route). The trust rule at turn end reads the default and the roles from here, never from the harness. Null before the migration and never read for a turn that is not `role = 'turn'` |
 | dispatched_at, started_at, finished_at | timestamptz null | |
@@ -1084,6 +1084,16 @@ The gateway role gets nothing on these tables. (`created_at` is implicit, 03 §C
 | index | (agent_id, created_at desc, id desc) WHERE role=`turn` | (phase 5, P5-REFINE-9, C-1083) the agent timeline's turn source; migration `20261201000267`, which also adds `(agent_id, created_at desc, id desc)` on `approvals`, `action_approvals` and `agent_access_requests`, `(from_agent_id, …)` and `(to_agent_id, …)` on `peer_tasks`, and on `request_log` `(turn_id) WHERE turn_id IS NOT NULL` and `(agent_id, ts desc) WHERE turn_id IS NULL` |
 | trace_context | text null CHECK (trace_context ~ `'^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'`) | (phase 5, FIX-146, D-232, C-732) the W3C `traceparent` of the span that inserted the turn (`repo/turns.rs`; NULL when there is no valid one). Written only by the API at insert and never updated; never taken from a sandbox or supervisor (SEC-88). Read by the runner plane (work items carry it, `16 §W5`), the API's supervisor-report and channel-event handling, and copied onto the turn's context credential at mint (`gateway_credentials.trace_context`) for the gateway, so their spans are children of the turn's context. A follow-up promoted to a turn keeps the follow-up's value. Migration `20261201000150_turn_trace_context.sql` |
 
+### `idle_usage_events`
+(FIX-257, migration `20261201000291`) Which idle usage events of a turn (`turn.idle.events`,
+`16 §W5`) were added to `usage_daily`: one row per event, so a report that arrives after a later
+one is still counted and a redelivery counts nothing twice.
+
+| Column | Type | Notes |
+|---|---|---|
+| turn_id | uuid FK→turns (cascade) | pk part; the anchor turn |
+| n | bigint | pk part; the event's number in the idle watch |
+
 ### `turn_answer_buffers`
 | Column | Type | Notes |
 |---|---|---|
@@ -1101,6 +1111,7 @@ The gateway role gets nothing on these tables. (`created_at` is implicit, 03 §C
 | redacted_at | timestamptz null | set when the payload was replaced by the redaction marker `{ "redacted": true, "redacted_at", "redacted_by", "reason"? }` (≤64 KiB bound unchanged); phase 2, RFE-010 |
 | redacted_by_user_id | uuid null FK→users (set null) | phase 2, RFE-010 |
 | index | (turn_id, seq) WHERE turn_id IS NOT NULL | (phase 5, P5-REFINE-9) a turn's events without scanning its conversation (the agent timeline); migration `20261201000267` |
+| index | (conversation_id, (payload->>'event')) WHERE type = `notice` AND payload->>'event' IS NOT NULL | (FIX-257) the duplicate check of an idle background list (`16 §W5` `turn.idle.events`); migration `20261201000291` |
 
 ### `transcript_search`
 (phase 5, P5-CHAT-4, D-229) One row per searchable durable event, written in the transaction that appends it (`transcript::append_durable_event` is the only insert path). Migration `20261201000172_transcript_search.sql`.

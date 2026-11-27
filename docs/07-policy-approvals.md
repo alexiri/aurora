@@ -1033,6 +1033,11 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   each may pass a bound by at most one task per other one in flight.
   A wake that fires while the receiving turn is still running queues its turn:
   the task stays `open` and that turn's end decides.
+  (FIX-257) **A person's own turn in the task conversation** ends with the same
+  check but never closes the task, however the turn ended: with a wake
+  registered it goes `waiting` (and the wake resumes it as above); with none,
+  or over a waiting bound, it stays `open` with its expiry. A wake-up a person
+  asked for in such a turn is the person's own and does not count.
   **Nothing left to wait for.** When the last wake-up of a waiting task ends
   without firing (the schedule is deleted or switched off; the watch is lost
   with its sandbox) and no approval is outstanding, the task is cancelled with

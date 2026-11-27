@@ -116,6 +116,48 @@ pub async fn by_task_conversation<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-257) The conversations that closing task `id` may write into and that are task
+/// conversations themselves: its origin, and the origins of its pair's queued tasks (the
+/// promotion after the close may end one of those). Newest first, so a task conversation comes
+/// before the one it was opened from.
+pub async fn task_origins<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT DISTINCT t.origin_conversation_id FROM peer_tasks c
+           JOIN peer_tasks t ON t.id = c.id
+             OR (t.from_agent_id = c.from_agent_id AND t.to_agent_id = c.to_agent_id
+                 AND t.status = 'queued')
+          WHERE c.id = $1
+            AND EXISTS (SELECT 1 FROM peer_tasks p
+                 WHERE p.task_conversation_id = t.origin_conversation_id)
+          ORDER BY 1 DESC",
+    )
+    .bind(id)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (FIX-257) The same for everything that unlinking a pair writes into: the origins of its live
+/// tasks, and the conversations its pending `message_agent` approvals were asked in.
+pub async fn link_origins<'e, E: PgExecutor<'e>>(
+    exec: E,
+    link: Uuid,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT o.id FROM (
+            SELECT origin_conversation_id AS id FROM peer_tasks
+             WHERE link_id = $1 AND status IN ('queued', 'open', 'waiting')
+            UNION
+            SELECT conversation_id FROM action_approvals
+             WHERE action_key = 'message_agent' AND status = 'pending'
+               AND payload->>'link_id' = $1::text) o
+          WHERE EXISTS (SELECT 1 FROM peer_tasks p WHERE p.task_conversation_id = o.id)
+          ORDER BY 1 DESC",
+    )
+    .bind(link)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Queued tasks of the ordered pair (FIX-110 cap; call under the link lock).
 pub async fn queued_count<'e, E: PgExecutor<'e>>(
     exec: E,
