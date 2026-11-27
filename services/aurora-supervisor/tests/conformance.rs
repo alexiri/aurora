@@ -212,7 +212,7 @@ async fn suite_with(
     );
     s.release().await.unwrap();
     if caps.resume {
-        let s2 = a.start_session(opts("say", r.clone())).await.unwrap();
+        let mut s2 = a.start_session(opts("say", r.clone())).await.unwrap();
         assert_eq!(s2.session_ref(), r);
         s2.release().await.unwrap();
     }

@@ -179,7 +179,7 @@ describe("transcript", () => {
     expect(screen.getByRole("status", { name: "" }).textContent).toContain("Waiting for approval");
   });
 
-  it("folds tool calls into one row: open while the turn runs, collapsed after, DENY in the summary", () => {
+  it("folds tool calls into one row: open while the turn runs, collapsed after, Failed in the summary", () => {
     const calls = [
       e(1, "turn.queued", { turn_id: "t1", speaker_label: "Ann", text: "go" }, MINUTE(0)),
       e(2, "tool.started", { turn_id: "t1", call_id: "c1", name: "github", summary: "GET /repos/acme/web" }, MINUTE(0, 1)),
@@ -193,11 +193,27 @@ describe("transcript", () => {
     const details = () => document.querySelector("details") as HTMLDetailsElement;
     expect(screen.getByText("Used 2 tools · 3.0 s")).toBeTruthy();
     expect(details().open).toBe(true); // turn t1 has no turn.finished
-    expect(within(details()).getByText("Deny")).toBeTruthy();
+    const summary = () => details().querySelector("summary") as HTMLElement;
+    expect(within(summary()).getByText("Failed")).toBeTruthy();
+    // The call failed; nobody denied it.
+    expect(within(details()).queryByText(/deny/i)).toBeNull();
     unmount();
     st.events = [...calls, e(6, "turn.finished", { turn_id: "t1", status: "done" }, MINUTE(0, 6))];
     pane();
     expect(details().open).toBe(false);
+  });
+
+  it("says Deny only for a call a policy denied", () => {
+    st.events = [
+      e(1, "tool.started", { turn_id: "t1", call_id: "c1", name: "linear", summary: "POST /issues", decision: "deny" }, MINUTE(0, 1)),
+      e(2, "tool.finished", { turn_id: "t1", call_id: "c1", ok: false, summary: "blocked by policy" }, MINUTE(0, 2)),
+    ];
+    mock();
+    pane();
+    const summary = document.querySelector("details summary") as HTMLElement;
+    expect(within(summary).getByText("Deny")).toBeTruthy();
+    expect(within(summary).queryByText("Failed")).toBeNull();
+    expect(screen.getByText("DENY")).toBeTruthy();
   });
 
   it("maps no_model_key to a danger alert with the LLM keys link and the reason counts", () => {

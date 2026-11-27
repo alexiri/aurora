@@ -783,6 +783,9 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   "skill.delete": named("deleted", "the skill", "a skill", "important"),
   "skill.file.put": plain("saved a file in a skill"),
   "skill.file.delete": plain("deleted a file from a skill"),
+  // The per-agent switch: the row carries the skill's name and the agent's id, not the agent's name.
+  "skill.agent_off": { sentence: (actor, t) => `${actor} turned off ${t ? `the skill ${t}` : "a skill"} for an agent`, weight: "routine" },
+  "skill.agent_on": { sentence: (actor, t) => `${actor} turned ${t ? `the skill ${t}` : "a skill"} back on for an agent`, weight: "routine" },
   "skill_library.create": named("added", "the skill library", "a skill library"),
   "skill_library.update": named("changed", "the skill library", "a skill library"),
   "skill_library.delete": named("removed", "the skill library", "a skill library", "important"),

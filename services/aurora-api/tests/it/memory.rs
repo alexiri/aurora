@@ -1419,7 +1419,7 @@ async fn last_use_is_written_by_the_agent_only_and_at_most_hourly() {
     assert_eq!(used().await, first);
 
     // Another conversation writes once; back in the first one, still within its hour, nothing.
-    let other = r.booted("used-elsewhere").await;
+    r.booted("used-elsewhere").await;
     let conv2 = Uuid::now_v7();
     sqlx::query(
         "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
@@ -1431,7 +1431,6 @@ async fn last_use_is_written_by_the_agent_only_and_at_most_hourly() {
     .execute(r.h.pool())
     .await
     .unwrap();
-    drop(other);
     let id: Uuid = sqlx::query_scalar("SELECT id FROM memories WHERE agent_id = $1")
         .bind(a)
         .fetch_one(r.h.pool())

@@ -189,6 +189,15 @@ async fn lane_with_approval(paths: &[String], pool: aurora_db::PgPool) -> Lane {
 }
 
 async fn lane_in(paths: &[String], approval_pool: Option<aurora_db::PgPool>) -> Lane {
+    lane_snap(paths, approval_pool, link_snapshot()).await
+}
+
+/// [`lane_in`] over the compiled snapshot `snap`.
+async fn lane_snap(
+    paths: &[String],
+    approval_pool: Option<aurora_db::PgPool>,
+    snap: Value,
+) -> Lane {
     let (port, ca_pem, seen) = server().await;
     let approval = approval_pool.is_some();
     let ids: Arc<Mutex<Vec<Uuid>>> = Arc::default();
@@ -214,7 +223,7 @@ async fn lane_in(paths: &[String], approval_pool: Option<aurora_db::PgPool>) -> 
     };
     let (env, src, _) = start_in(
         w,
-        link_snapshot(),
+        snap,
         &cred_refs,
         move |w| {
             let mut r = Rows::default();
@@ -372,6 +381,31 @@ async fn the_stored_url_is_fetched_exactly_and_the_agent_steers_nothing() {
     assert_eq!(rows[0].app_id.as_deref(), Some("ics-calendar"));
     assert_eq!(rows[0].tool_id.as_deref(), Some("read_calendar"));
     clean("log row", &format!("{:?}", rows[0]));
+}
+
+// A package stored before the linter refused it: this lane applies no response projection, so a
+// projected tool is refused and the link is never read.
+#[tokio::test]
+async fn a_projected_tool_is_refused_and_the_link_is_never_read() {
+    let mut snap = link_snapshot();
+    snap["apps"][0]["tools"]["read"]["items"][0]["project"] = json!(["$.name"]);
+    let l = lane_snap(&[pq()], None, snap).await;
+    for method in ["GET", "HEAD"] {
+        let r = l.call(0, method, "/", "").await;
+        assert_eq!(r.status, 403, "{method}: {} {}", r.head, r.body);
+        assert!(!r.body.contains("VCALENDAR"), "{method}: {}", r.body);
+        if method == "GET" {
+            assert_eq!(r.code(), "tool_projection_unsupported", "{}", r.body);
+        }
+        clean("refusal", &format!("{} {}", r.head, r.body));
+    }
+    assert_eq!(l.upstream_count(), 0);
+    let rows = l.rows().await;
+    assert!(
+        rows.iter()
+            .all(|r| r.error_code.as_deref() == Some("tool_projection_unsupported")),
+        "{rows:?}"
+    );
 }
 
 #[tokio::test]

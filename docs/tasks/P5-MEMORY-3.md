@@ -179,12 +179,20 @@ both themes (mocked data). Not committed; `MEMORY_SHOTS=<dir> … web playwright
 ### Drift guards (gate addition, after the first commit)
 
 `audit-actions`, `arbitrary-values`, `ui-text`, `labels`:
-- `arbitrary-values` failed on `border-l-[3px]`, in the History rows **and in `memory-list.tsx`, merged with
-  P5-MEMORY-2, so master fails this guard today**. Both are `border-l-3` now (same 3 px), in a second commit; after it
-  `memory-history` **8/8** and `memory` **14/14** mocked (on web ports 4143/4144: another lane held 4100).
-- `audit-actions` still fails, **not from this lane and not changed here**: `skill.agent_off` and `skill.agent_on`
-  (P5-SKILLS-1, `domains/skills/routes.rs`, on master) are missing from `tests/fixtures/audit-actions.json` and
-  `lib/labels.ts`. `ui-text` and `labels` pass. No Rust touched, so no clippy.
+- `arbitrary-values` failed on `border-l-[3px]`, in the History rows and in `memory-list.tsx` (merged with
+  P5-MEMORY-2). Master had meanwhile fixed its own with the `row-rail` utility; after merging master both places use
+  `row-rail`.
+- `audit-actions` failed before that merge on `skill.agent_off` and `skill.agent_on` (P5-SKILLS-1, not this lane's);
+  the result after the merge is below. `ui-text` and `labels` pass. No Rust touched, so no clippy.
+
+### Merge of master (P5-MEMORY-4, before handing over)
+
+Conflicts in `memory-list.tsx` (the row class, master's `row-rail` taken) and the PROGRESS and FEATURES rows (both
+lanes' states kept). `memory-tab.tsx` and `memory-editor.tsx` merged cleanly: P5-MEMORY-4's chat-draft mount step and
+`draft` prop are as merged, beside History's branch of the detail column. After the merge: vitest
+(the four drift guards, the Memory and chat-memory files, `diff-view`, design and copy guards, 13 files) **152/152**,
+`audit-actions` included (fixed on master meanwhile); mocked Playwright `memory-history`, `memory` and
+`chat-memory-cards` **38/38**; `pnpm typecheck` and eslint clean.
 
 ### Security notes
 

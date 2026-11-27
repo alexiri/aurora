@@ -163,6 +163,12 @@
   grid-template-columns: 18rem 1fr;
 }
 
+/* The 3 px rail on a list row's left edge that marks the selected one; colour it with `border-l-*`. */
+@utility row-rail {
+  border-left-style: var(--tw-border-style, solid);
+  border-left-width: 3px;
+}
+
 /*
  * (P5-POLISH-1, D-393) Element rules live in `@layer base`: Tailwind's utilities are layered, and an unlayered rule beats
  * every layered one (an unlayered `a { color: inherit }` blanked `text-on-primary` links).

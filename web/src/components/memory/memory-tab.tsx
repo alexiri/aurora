@@ -12,6 +12,7 @@ import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { SkeletonRows } from "@/components/ui/skeleton";
 import { useMemories, useMemorySearch, type MemorySearchHit } from "@/lib/api/memory";
 import { useMe } from "@/lib/api/queries";
+import { clearMemoryDraft, peekMemoryDraft } from "@/lib/chat/memory-draft";
 
 import { MemoryEditor } from "./memory-editor";
 import { MemoryHistory } from "./memory-history";
@@ -98,7 +99,12 @@ export function MemoryTab({
     writeAddress(key, history);
   };
 
-  const [form, setForm] = useState<Form>(null);
+  // (P5-MEMORY-4) What the chat's **Save it yourself** hands over: the form opens with it, not saved.
+  const [draft, setDraft] = useState(() => (readOnly ? null : peekMemoryDraft(agentId)));
+  useEffect(() => {
+    if (draft) clearMemoryDraft();
+  }, [draft]);
+  const [form, setForm] = useState<Form>(() => (draft ? (draft.kind === "edit" ? { kind: "edit", key: draft.key } : { kind: "new" }) : null));
   const [dirty, setDirty] = useState(false);
   const [filter, setFilter] = useState<MemoryFilter>("all");
   const [sort, setSort] = useState<MemorySort>("recent");
@@ -127,12 +133,15 @@ export function MemoryTab({
   const match: MemoryMatch | null =
     searching && hitAt >= 0 ? { terms: matchedTerms(hits[hitAt]!), index: hitAt + 1, total: hits.length } : null;
 
-  const editing = form?.kind === "edit" ? current : null;
-  const creating = form?.kind === "new";
+  // A draft for a memory that is gone starts a new one.
+  const orphaned = draft?.kind === "edit" && form?.kind === "edit" && list.data !== undefined && !items.some((m) => m.key === form.key);
+  const editing = form?.kind === "edit" && !orphaned ? current : null;
+  const creating = form?.kind === "new" || orphaned;
   // On a narrow screen the memory (or the form) is its own screen once it was opened.
   const detailOpen = creating || editing !== null || (known && chosen !== null);
 
   const leaveForm = useCallback(() => {
+    setDraft(null);
     setForm(null);
     setDirty(false);
   }, []);
@@ -149,6 +158,7 @@ export function MemoryTab({
     leave.ask(() => {
       saved.clear();
       setDirty(false);
+      setDraft(null);
       setForm({ kind: "new" });
     });
   const back = () =>
@@ -251,6 +261,7 @@ export function MemoryTab({
   const detail = creating ? (
     <MemoryEditor
       key="new"
+      draft={draft ?? undefined}
       agentId={agentId}
       agentName={agentName}
       taken={items.map((m) => m.key)}
@@ -263,6 +274,7 @@ export function MemoryTab({
   ) : editing && !readOnly ? (
     <MemoryEditor
       key={editing.key}
+      draft={draft?.kind === "edit" && draft.key === editing.key ? draft : undefined}
       agentId={agentId}
       agentName={agentName}
       memory={editing}

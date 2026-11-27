@@ -241,6 +241,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     // (FIX-114) PID 1 reaps orphans, and forwards SIGTERM to registered process groups.
+    // (FIX-265) Not PID 1 (an init in front of it): orphans still come here to be reaped.
+    if std::process::id() != 1
+        && let Err(e) = rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
+    {
+        tracing::warn!(error = %e, "cannot become the child subreaper");
+    }
     let _reaper = aurora_supervisor::process::spawn_reaper(std::time::Duration::from_secs(1));
     let procs = sup.process_manager();
     tokio::select! {

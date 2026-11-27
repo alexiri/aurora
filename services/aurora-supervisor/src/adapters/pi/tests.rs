@@ -471,8 +471,8 @@ async fn purge_removes_exactly_one_sessions_directory_and_is_idempotent() {
         keep_opts.conversation_id.to_string(),
         gone_opts.conversation_id.to_string(),
     );
-    let s1 = a.start_session(keep_opts).await.unwrap();
-    let s2 = a.start_session(gone_opts).await.unwrap();
+    let mut s1 = a.start_session(keep_opts).await.unwrap();
+    let mut s2 = a.start_session(gone_opts).await.unwrap();
     launches.recv().await.unwrap();
     launches.recv().await.unwrap();
     s1.release().await.unwrap();

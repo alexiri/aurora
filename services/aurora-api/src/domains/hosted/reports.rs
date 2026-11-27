@@ -476,6 +476,15 @@ async fn idle_events(
     if turns::latest_finished(&mut *tx, cid).await? != Some(turn) {
         return Ok(res(r, ReportStatus::Invalid, Some("stale_anchor")));
     }
+    // (FIX-265) A changed background list is the entry itself, not an after-the-turn item: no
+    // cap or budget holds it back.
+    let (lists, sorted): (Vec<&NumberedEvent>, Vec<&NumberedEvent>) = sorted
+        .into_iter()
+        .partition(|e| e.event.kind.as_str() == "background");
+    for e in lists {
+        let event = format!("{turn}:{}", e.n);
+        background_report(tx, cid, turn, &e.event.data, Some(event)).await?;
+    }
     let out_of_budget = aurora_db::repo::peer_tasks::by_task_conversation(&mut *tx, cid)
         .await?
         .is_some_and(|task| task.messages_used >= task.message_budget);
@@ -554,6 +563,159 @@ async fn idle_events(
         note_not_recorded(tx, cid, turn, "turn", CAPPED).await?;
     }
     Ok(res(r, ReportStatus::Applied, None))
+}
+
+/// The newest of the conversation's background notices that says what stands: an entry, its
+/// end, or a Stop in flight.
+#[derive(sqlx::FromRow)]
+struct BackgroundMark {
+    code: String,
+    turn_id: Uuid,
+    items: Option<Value>,
+}
+
+async fn background_mark(
+    tx: &mut PgConnection,
+    cid: Uuid,
+) -> Result<Option<BackgroundMark>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT payload->>'code' AS code, turn_id, payload->'items' AS items
+         FROM transcript_events
+         WHERE conversation_id = $1 AND type = 'notice' AND turn_id IS NOT NULL
+           AND payload->>'code' IN
+             ('background_activity', 'background_stop_requested', 'background_stopped')
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(cid)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(aurora_db::DbError::from)?)
+}
+
+async fn background_ended(
+    tx: &mut PgConnection,
+    cid: Uuid,
+    turn: Uuid,
+    text: &str,
+    event: Option<&str>,
+) -> Result<(), ApiError> {
+    let mut p = json!({"code": "background_stopped", "turn_id": turn, "text": text});
+    if let Some(event) = event {
+        p["event"] = json!(event);
+    }
+    conv::append_event(tx, cid, Some(turn), "notice", &p).await?;
+    Ok(())
+}
+
+/// (FIX-253, D-490; FIX-265) What the supervisor says still runs in the background. One
+/// **Background activity** entry shows it: the same list adds nothing, a different one adds an
+/// entry that replaces the old one, an empty one records that it ended. While a Stop is in
+/// flight only the supervisor's acknowledgement ends the entry — unless the report comes from
+/// another boot than the Stop's turn ran on (that child is gone, and its release is never
+/// answered). `event` names an idle event, so that a redelivered one records nothing again.
+async fn background_report(
+    tx: &mut PgConnection,
+    cid: Uuid,
+    turn: Uuid,
+    d: &serde_json::Map<String, Value>,
+    event: Option<String>,
+) -> Result<(), ApiError> {
+    let Some(raw) = d.get("items").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let items: Vec<Value> = raw
+        .iter()
+        .filter_map(|i| {
+            // (FIX-253 review) The command is displayed text: masked like a start-failure
+            // reason (tokens, `Authorization:`, `KEY=value` env assignments), capped.
+            let command = sanitize::reason(i.get("command")?.as_str()?, 200);
+            (!command.is_empty()).then(|| {
+                json!({"command": command,
+                    "started_at": i.get("started_at").and_then(Value::as_u64).unwrap_or(0)})
+            })
+        })
+        .take(10)
+        .collect();
+    if items.is_empty() && !raw.is_empty() {
+        return Ok(()); // nothing readable: that does not say that nothing runs
+    }
+    if let Some(event) = &event {
+        let seen: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM transcript_events
+              WHERE conversation_id = $1 AND type = 'notice' AND payload->>'event' = $2)",
+        )
+        .bind(cid)
+        .bind(event)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(aurora_db::DbError::from)?;
+        if seen {
+            return Ok(());
+        }
+    }
+    let mark = background_mark(tx, cid).await?;
+    if let Some(m) = &mark
+        && m.code == "background_stop_requested"
+    {
+        if hosted::turn_boot(tx, m.turn_id).await? == hosted::turn_boot(tx, turn).await? {
+            return Ok(());
+        }
+        disarm_background_stop(tx, cid).await?;
+    }
+    let live = mark.filter(|m| m.code != "background_stopped");
+    if items.is_empty() {
+        if live.is_some() {
+            background_ended(
+                tx,
+                cid,
+                turn,
+                "Background activity finished.",
+                event.as_deref(),
+            )
+            .await?;
+        }
+        return Ok(());
+    }
+    if live.is_some_and(|m| {
+        m.code == "background_activity"
+            && m.items.and_then(|v| v.as_array().cloned()) == Some(items.clone())
+    }) {
+        return Ok(());
+    }
+    let list: Vec<String> = items
+        .iter()
+        .map(|i| format!("`{}`", i["command"].as_str().unwrap_or_default()))
+        .collect();
+    let mut p = json!({
+        "code": "background_activity",
+        "turn_id": turn,
+        "items": items,
+        "text": format!("Background activity, still running: {}", list.join(", ")),
+    });
+    if let Some(event) = event {
+        p["event"] = json!(event);
+    }
+    conv::append_event(tx, cid, Some(turn), "notice", &p).await?;
+    Ok(())
+}
+
+/// Clears a background Stop's request from the conversation's finished turns.
+async fn disarm_background_stop(tx: &mut PgConnection, cid: Uuid) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE turns t SET abort_requested_at = NULL, steer_delivered_at = NULL,
+                updated_at = now()
+         WHERE t.conversation_id = $1 AND t.role = 'turn'
+           AND t.status NOT IN ('queued', 'dispatched', 'running')
+           AND t.abort_requested_at IS NOT NULL
+           AND EXISTS (SELECT 1 FROM transcript_events e
+             WHERE e.conversation_id = t.conversation_id AND e.turn_id = t.id
+               AND e.type = 'notice' AND e.payload->>'code' = 'background_activity')",
+    )
+    .bind(cid)
+    .execute(&mut *tx)
+    .await
+    .map_err(aurora_db::DbError::from)?;
+    Ok(())
 }
 
 /// How many after-the-turn entries exist: `(of the anchor turn, of the conversation)`.
@@ -803,62 +965,8 @@ async fn one_event(
             .await?;
         }
         // (FIX-253, D-490) The harness child's own background work, listed by the supervisor at
-        // turn end: one visible **Background activity** entry in the conversation while nothing
-        // else stands, so the reader can see what keeps running and stop it.
-        "background" => {
-            let Some(items) = d.get("items").and_then(Value::as_array) else {
-                return Ok(());
-            };
-            let items: Vec<Value> = items
-                .iter()
-                .filter_map(|i| {
-                    // (FIX-253 review) The command is displayed text: masked like a start-failure
-                    // reason (tokens, `Authorization:`, `KEY=value` env assignments), capped.
-                    let command = sanitize::reason(i.get("command")?.as_str()?, 200);
-                    (!command.is_empty()).then(|| {
-                        json!({"command": command,
-                            "started_at": i.get("started_at").and_then(Value::as_u64).unwrap_or(0)})
-                    })
-                })
-                .take(10)
-                .collect();
-            if items.is_empty() {
-                return Ok(());
-            }
-            let live = sqlx::query_scalar::<_, i64>(
-                "SELECT count(*) FROM transcript_events e
-                 WHERE e.conversation_id = $1 AND e.type = 'notice'
-                   AND e.payload->>'code' = 'background_activity'
-                   AND NOT EXISTS (
-                     SELECT 1 FROM transcript_events e2
-                     WHERE e2.conversation_id = e.conversation_id AND e2.seq > e.seq
-                       AND e2.type = 'notice' AND e2.payload->>'code' = 'background_stopped')",
-            )
-            .bind(cid)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(aurora_db::DbError::from)?;
-            if live > 0 {
-                return Ok(());
-            }
-            let list: Vec<String> = items
-                .iter()
-                .map(|i| format!("`{}`", i["command"].as_str().unwrap_or_default()))
-                .collect();
-            conv::append_event(
-                tx,
-                cid,
-                Some(turn),
-                "notice",
-                &json!({
-                    "code": "background_activity",
-                    "turn_id": turn,
-                    "items": items,
-                    "text": format!("Background activity, still running: {}", list.join(", ")),
-                }),
-            )
-            .await?;
-        }
+        // turn end.
+        "background" => background_report(tx, cid, turn, d, None).await?,
         "usage" => {
             if let Some(u) = d.get("usage").filter(|u| u.is_object()) {
                 // (P5-USAGE-1, C-1001, D-359(d)) Reduced by the trust rule when it is stored, so a turn
@@ -941,8 +1049,8 @@ async fn result(
 }
 
 /// (FIX-253 review) `session.released`: an acknowledged release writes the durable **Background
-/// activity stopped** notice and closes the request (the abort flag and the in-flight mark are
-/// cleared); a deferral (`ok = false`, a turn was running) keeps the request pending — it is
+/// activity stopped** notice while an entry stands, and closes a Stop's request (the abort flag
+/// and the in-flight mark are cleared); a deferral (`ok = false`, a turn was running) keeps the request pending — it is
 /// re-sent after its lease, and the notice is only written once the release really happened.
 /// (FIX-253 fixes2 B) A release that reports failure writes a durable **stopping did not work**
 /// notice (once per turn) while keeping the abort flag set, so the UI re-enables Stop and the
@@ -992,43 +1100,33 @@ async fn complete_background_stop(
         }
         return Ok(false);
     }
-    let Some((turn_id,)) = sqlx::query_as::<_, (Uuid,)>(
-        "SELECT t.id FROM turns t
-          WHERE t.agent_id = $1 AND t.conversation_id = $2 AND t.role = 'turn'
-            AND t.status NOT IN ('dispatched', 'running')
-            AND t.abort_requested_at IS NOT NULL
-            AND EXISTS (SELECT 1 FROM transcript_events e
-              WHERE e.conversation_id = t.conversation_id AND e.turn_id = t.id
-                AND e.type = 'notice' AND e.payload->>'code' = 'background_activity'
-                AND NOT EXISTS (SELECT 1 FROM transcript_events e2
-                  WHERE e2.conversation_id = e.conversation_id AND e2.seq > e.seq
-                    AND e2.type = 'notice' AND e2.payload->>'code' = 'background_stopped'))
-          ORDER BY t.created_at LIMIT 1
-          FOR UPDATE OF t",
+    // (FIX-265) With or without a Stop: an acknowledged release says that nothing the
+    // conversation's harness started is left.
+    let mine: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM turns WHERE agent_id = $1 AND conversation_id = $2)",
     )
     .bind(agent)
     .bind(conversation_id)
-    .fetch_optional(&mut *tx)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(aurora_db::DbError::from)?
+    .map_err(aurora_db::DbError::from)?;
+    if !mine {
+        return Ok(false);
+    }
+    convs::lock(tx, conversation_id).await?;
+    let Some(mark) = background_mark(tx, conversation_id)
+        .await?
+        .filter(|m| m.code != "background_stopped")
     else {
         return Ok(false);
     };
-    sqlx::query(
-        "UPDATE turns SET abort_requested_at = NULL, steer_delivered_at = NULL, updated_at = now()
-         WHERE id = $1",
-    )
-    .bind(turn_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(aurora_db::DbError::from)?;
-    conv::append_event(
+    disarm_background_stop(tx, conversation_id).await?;
+    background_ended(
         tx,
         conversation_id,
-        Some(turn_id),
-        "notice",
-        &json!({"code": "background_stopped", "turn_id": turn_id,
-            "text": "Background activity stopped."}),
+        mark.turn_id,
+        "Background activity stopped.",
+        None,
     )
     .await?;
     Ok(true)

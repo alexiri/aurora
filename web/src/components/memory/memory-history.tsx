@@ -121,7 +121,7 @@ export function MemoryHistory({
                     restore.reset();
                     setChosen(v.revision);
                   }}
-                  className="flex w-full min-w-0 items-start gap-2.5 border-l-3 border-l-transparent px-3 py-2.5 text-left hover:bg-subtle aria-[current=true]:border-l-accent aria-[current=true]:bg-subtle"
+                  className="flex w-full min-w-0 items-start gap-2.5 row-rail border-l-transparent px-3 py-2.5 text-left hover:bg-subtle aria-[current=true]:border-l-accent aria-[current=true]:bg-subtle"
                 >
                   <Avatar name={who} size={28} />
                   <span className="min-w-0 flex-1">

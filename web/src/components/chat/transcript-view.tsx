@@ -199,11 +199,11 @@ export function TranscriptView({
                 // a durable `background_stop_requested` notice disables it until the acknowledged
                 // release, and a later durable `background_stopped` notice mutes the row. A later
                 // durable `background_stop_failed` notice (FIX-253 fixes2 B) re-enables Stop so the
-                // request can be tried again.
+                // request can be tried again. (FIX-265) A newer entry replaces the row.
                 if (s(p.code) === "background_activity") {
                   // The durable `background_stopped` notice is the visible line; the entry row mutes away.
                   const later = (code: string) => state.events.some((e) => (e.seq ?? 0) > (r.ev.seq ?? 0) && e.type === "notice" && s(e.payload.code) === code);
-                  if (later("background_stopped")) return null;
+                  if (later("background_stopped") || later("background_activity")) return null;
                   const requested = later("background_stop_requested") && !later("background_stop_failed");
                   return <BackgroundActivityNotice key={r.key} text={s(p.text)} turnId={s(p.turn_id)} requested={requested} />;
                 }

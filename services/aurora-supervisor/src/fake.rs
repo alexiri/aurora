@@ -264,7 +264,7 @@ impl HarnessSession for FakeSession {
         Ok(())
     }
 
-    async fn release(self: Box<Self>) -> Result<(), HarnessError> {
+    async fn release(&mut self) -> Result<(), HarnessError> {
         if let Some(t) = &self.turn {
             let _ = t.cancel.send(true);
         }
@@ -306,7 +306,7 @@ impl Script {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        let child = match c.spawn() {
+        let child = match crate::spawn::spawn(&mut c) {
             Ok(c) => c,
             Err(e) => return format!("shell: cannot start: {e}"),
         };
