@@ -1,0 +1,147 @@
+package:
+  id: microsoft-365
+  version: 1.7.0
+  contract: 1
+  min_core: 0.1.0
+  publisher: aurora
+  name: Microsoft 365
+  description: Outlook mail and calendar through Microsoft Graph, with Microsoft Entra ID sign-in
+  homepage: https://www.microsoft.com/microsoft-365
+permissions:
+  # The OAuth sign-in and token endpoints (FIX-107, SEC-17).
+  token_hosts: [login.microsoftonline.com]
+oauth_clients:
+  - id: microsoft
+    # (FIX-233, D-476) The registration's directory goes in the path: a single-tenant
+    # registration signs in at its own tenant, a multitenant one at `common`.
+    authorize_url: https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/authorize
+    token_url: https://login.microsoftonline.com/{client.tenant}/oauth2/v2.0/token
+    pkce: true
+    client_auth: body
+    body_format: form
+    fields:
+      - { name: client_id, label: Application (client) ID }
+      - { name: client_secret, label: Client secret value, secret: true }
+      - { name: tenant, label: Directory (tenant) ID, default: common }
+    setup_note: "In the Microsoft Entra admin center open App registrations, add a Web registration, register the Aurora redirect URI, add a client secret, and grant only the delegated Graph permissions you will offer. For a registration limited to your own directory (single tenant), enter its Directory (tenant) ID from the Overview page; leave it empty for a multitenant registration."
+apps:
+  - about:
+      id: microsoft-365
+      name: Microsoft 365
+      description: Read Outlook mail and calendar events through Microsoft Graph, and send mail and create events when you allow it
+      summary: Outlook mail and calendar.
+      first_prompt: "What's on my calendar this week?"
+      category: productivity
+      api_docs: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
+      web_hosts: [outlook.office.com, outlook.live.com]
+      connect_note:
+        text: "Sign-in uses the directory set on the sign-in app: its own tenant for a single-tenant registration, or the multitenant endpoint (common) when none is set. Your organization may require an administrator to consent to the app before anyone can sign in."
+        url: https://learn.microsoft.com/en-us/entra/identity-platform/permissions-consent-overview
+      label_hint: Microsoft account name
+    credentials:
+      - { name: access_token, secret: true }
+      - { name: refresh_token, secret: true, optional: true }
+    metadata:
+      - { name: account }
+    connect:
+      - id: oauth
+        kind: oauth2
+        label: Sign in with Microsoft
+        description: "You sign in with a Microsoft work or school account and Aurora gets a token that renews itself. Needs an app registered in Microsoft Entra first."
+        client: microsoft
+        scopes:
+          - { scope: offline_access, name: Stay connected (refresh the sign-in without asking again), access: read }
+          - { scope: User.Read, name: Read your profile, access: read }
+          - { scope: Mail.Read, name: Read your mail, access: read }
+          - { scope: Calendars.Read, name: Read your calendars, access: read }
+          - { scope: Mail.Send, name: Send mail as you, access: write }
+          - { scope: Calendars.ReadWrite, name: Create and change calendar events, access: write }
+        # (D-482) Mail and calendar only: no Files.* (OneDrive, uploads) and no Sites.* (SharePoint).
+        scope_presets:
+          read: [offline_access, User.Read, Mail.Read, Calendars.Read]
+          write: [offline_access, User.Read, Mail.Read, Calendars.Read, Mail.Send, Calendars.ReadWrite]
+        default_scopes: [offline_access, User.Read, Mail.Read, Calendars.Read]
+        callback: query
+        token_response:
+          access_token: /access_token
+          refresh_token: /refresh_token
+          expires_in: /expires_in
+          scope: /scope
+        probe:
+          method: GET
+          url: "https://graph.microsoft.com/v1.0/me"
+          expect_status: [200]
+          label: /userPrincipalName
+          metadata: { account: /userPrincipalName }
+    hosts:
+      - match: { host: graph.microsoft.com, path_prefix: /v1.0 }
+        inject:
+          - bearer: "{credentials.access_token}"
+    token:
+      kind: oauth2_refresh
+      client: microsoft
+      refresh_field: refresh_token
+      rotate_refresh_token: true
+      max_lifetime_secs: 3600
+      stale_codes:
+        - { status: 401, body_contains: InvalidAuthenticationToken }
+      reauth_codes: [invalid_grant, interaction_required]
+    tools:
+      read:
+        items:
+          - { id: get_me, description: "Shows the Microsoft account Aurora is connected as.", name: Get the connected profile, host: graph.microsoft.com, path: /v1.0/me, methods: [GET] }
+          - { id: list_mail_folders, description: "Lists the folders of your mailbox.", name: List mail folders, host: graph.microsoft.com, path: /v1.0/me/mailFolders, methods: [GET] }
+          - { id: list_folder_messages, description: "Lists the messages in one mail folder.", name: List messages in a mail folder, host: graph.microsoft.com, path: "/v1.0/me/mailFolders/*/messages", methods: [GET] }
+          - { id: list_messages, description: "Lists your mail messages.", name: List mail messages, host: graph.microsoft.com, path: /v1.0/me/messages, methods: [GET] }
+          - { id: get_message, description: "Reads one mail message.", name: Read a mail message, host: graph.microsoft.com, path: "/v1.0/me/messages/*", methods: [GET] }
+          - { id: list_message_attachments, description: "Lists the attachments of a mail message.", name: List mail attachments, host: graph.microsoft.com, path: "/v1.0/me/messages/*/attachments", methods: [GET] }
+          - { id: list_calendars, description: "Lists your calendars.", name: List calendars, host: graph.microsoft.com, path: /v1.0/me/calendars, methods: [GET] }
+          - { id: list_events, description: "Lists your calendar events.", name: List calendar events, host: graph.microsoft.com, path: /v1.0/me/events, methods: [GET] }
+          - { id: get_event, description: "Reads one calendar event.", name: Get a calendar event, host: graph.microsoft.com, path: "/v1.0/me/events/*", methods: [GET] }
+          - { id: list_calendar_events, description: "Lists the events of one calendar.", name: List events of one calendar, host: graph.microsoft.com, path: "/v1.0/me/calendars/*/events", methods: [GET] }
+          - { id: get_calendar_view, description: "Lists the events in a time range.", name: List events in a time range, host: graph.microsoft.com, path: /v1.0/me/calendarView, methods: [GET] }
+          - { id: get_calendar_view_of_calendar, description: "Lists the events of one calendar in a time range.", name: List events of one calendar in a time range, host: graph.microsoft.com, path: "/v1.0/me/calendars/*/calendarView", methods: [GET] }
+      write:
+        items:
+          - { id: send_mail, description: "Sends an email.", name: Send mail, host: graph.microsoft.com, path: /v1.0/me/sendMail, methods: [POST], approval: ask }
+          - { id: create_event, description: "Creates an event in your default calendar.", name: Create a calendar event, host: graph.microsoft.com, path: /v1.0/me/events, methods: [POST], approval: ask }
+          - { id: create_calendar_event, description: "Creates an event in one calendar.", name: Create an event in one calendar, host: graph.microsoft.com, path: "/v1.0/me/calendars/*/events", methods: [POST], approval: ask }
+    approvals:
+      send_mail:
+        title: send an email
+        fields:
+          # Every recipient, a clamped body preview and the attachment count: the approval is the
+          # only control on outbound mail (FIX-118, 09 §approvals).
+          - { label: To, source: body, steps: [ { json: "/message/toRecipients/*/emailAddress/address" } ] }
+          - { label: Cc, source: body, steps: [ { json: "/message/ccRecipients/*/emailAddress/address" } ] }
+          - { label: Bcc, source: body, steps: [ { json: "/message/bccRecipients/*/emailAddress/address" } ] }
+          - { label: Subject, source: body, steps: [ { json: /message/subject } ] }
+          - { label: Message, source: body, steps: [ { json: /message/body/content } ] }
+          - { label: Attachments, source: body, steps: [ { json_count: /message/attachments } ] }
+        link: "https://outlook.office.com/mail/"
+      create_event:
+        title: create a calendar event
+        fields:
+          - { label: Subject, source: body, steps: [ { json: /subject } ] }
+          - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
+          - { label: Attendees, source: body, steps: [ { json: "/attendees/*/emailAddress/address" } ] }
+        link: "https://outlook.office.com/calendar/"
+      create_calendar_event:
+        title: create a calendar event
+        fields:
+          - { label: Calendar, source: path, segment: 4 }
+          - { label: Subject, source: body, steps: [ { json: /subject } ] }
+          - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
+          - { label: Attendees, source: body, steps: [ { json: "/attendees/*/emailAddress/address" } ] }
+    agent:
+      summary: "Mail and calendar through Microsoft Graph: read and send mail, find a free slot and schedule a meeting."
+      instructions: |
+        Microsoft Graph at https://graph.microsoft.com/v1.0. Aurora adds the credentials; never ask
+        for or write a token. Use only the signed-in user's mail, calendar and profile (/me/...);
+        files (OneDrive, SharePoint) are not available. Send JSON
+        bodies with content-type application/json so approvals can show what a change does. Use
+        $select, $top and $filter to keep responses small. Read the microsoft-365-graph-conventions
+        skill before the first request, and microsoft-365-send-mail before sending.
+      operations: operations.json
+      env:
+        - { name: MICROSOFT_GRAPH_URL, value: "https://graph.microsoft.com/v1.0" }

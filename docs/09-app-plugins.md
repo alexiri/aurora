@@ -821,7 +821,10 @@ must change. For apps whose credential is far broader than their catalogue (Indi
   no hand-written rule can allow it. With `custom_only` it is implied; the flag matters
   for packages that keep `full` available but want it to cover
   *catalogued* tools only (a `full` grant then means "every tool the catalogue names,
-  including future ones", never "anything the token can do").
+  including future ones", never "anything the token can do"). Built-in `microsoft-365` sets it
+  (1.8.0, D-504, SEC-168): a draft and its send, reply, reply all, forward and event changes or
+  cancellations match no tool and are blocked, so mail and invitations leave only through
+  `send_mail` and the event tools, which ask first (`§A package's default of Ask`, `07`).
 - **The one credentialed request outside the tools** is the skill-library fetch (D-148,
   `§3.4 library`): the gateway's own request for a package's declared `library` templates,
   bounded by those approved templates (exact host, path and method); policy and grants do not

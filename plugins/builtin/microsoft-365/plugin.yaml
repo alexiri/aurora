@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.7.0
+  version: 1.8.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -77,6 +77,10 @@ apps:
       - match: { host: graph.microsoft.com, path_prefix: /v1.0 }
         inject:
           - bearer: "{credentials.access_token}"
+    # (D-504) Tools only: a request that matches no tool below is refused under every grant, so a
+    # `full` grant means "every tool", not "anything the token allows". Without this, a draft could
+    # be created and sent, or a mail replied to or forwarded, with no approval card.
+    grants: { block_untooled: true }
     token:
       kind: oauth2_refresh
       client: microsoft
@@ -111,7 +115,8 @@ apps:
         title: send an email
         fields:
           # Every recipient, a clamped body preview and the attachment count: the approval is the
-          # only control on outbound mail (FIX-118, 09 §approvals).
+          # only control on outbound mail (FIX-118, 09 §approvals). It is the only way mail leaves
+          # (`grants` above, D-504); a person can lift the ask by setting this tool to Allowed.
           - { label: To, source: body, steps: [ { json: "/message/toRecipients/*/emailAddress/address" } ] }
           - { label: Cc, source: body, steps: [ { json: "/message/ccRecipients/*/emailAddress/address" } ] }
           - { label: Bcc, source: body, steps: [ { json: "/message/bccRecipients/*/emailAddress/address" } ] }
@@ -138,10 +143,12 @@ apps:
       instructions: |
         Microsoft Graph at https://graph.microsoft.com/v1.0. Aurora adds the credentials; never ask
         for or write a token. Use only the signed-in user's mail, calendar and profile (/me/...);
-        files (OneDrive, SharePoint) are not available. Send JSON
-        bodies with content-type application/json so approvals can show what a change does. Use
-        $select, $top and $filter to keep responses small. Read the microsoft-365-graph-conventions
-        skill before the first request, and microsoft-365-send-mail before sending.
+        files (OneDrive, SharePoint) are not available. Only the listed operations work: every other
+        request is blocked, whatever access you have. Mail goes out only through send_mail: drafts,
+        reply and forward are blocked. Send JSON bodies with content-type application/json so
+        approvals can show what a change does. Use $select, $top and $filter to keep responses
+        small. Read the microsoft-365-graph-conventions skill before the first request, and
+        microsoft-365-send-mail before sending.
       operations: operations.json
       env:
         - { name: MICROSOFT_GRAPH_URL, value: "https://graph.microsoft.com/v1.0" }

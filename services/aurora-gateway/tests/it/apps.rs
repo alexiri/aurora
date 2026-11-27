@@ -2272,6 +2272,84 @@ async fn grafana_full_grant_blocks_untooled_proxy_requests() {
     }
 }
 
+/// (FIX-273, D-504, SEC-168) The shipped microsoft-365 package, compiled as the API does: under a
+/// `full` grant its `grants.block_untooled` refuses every request that is no catalogue tool, so a
+/// draft cannot be created and then sent, nor a mail replied to or forwarded, nor an event changed
+/// or cancelled, without a card; and `send_mail` and the event tools are still held (their package
+/// default of Ask: this world has no approval store, so a hold fails closed).
+#[tokio::test]
+async fn microsoft_365_full_grant_sends_nothing_outside_the_asking_tools() {
+    let path = format!(
+        "{}/../../plugins/builtin/microsoft-365/plugin.yaml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    // Only the claimed Graph host is moved to the test upstream; the sign-in hosts stay.
+    let yaml = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("host: graph.microsoft.com", "host: localhost");
+    let mut m = aurora_registry::Manifest::parse(&yaml, "9.9.9").unwrap();
+    // The agent files are digested from the stored archive; the gateway never reads them.
+    m.apps[0].agent = None;
+    let p = aurora_registry::snapshot::ActivePackage {
+        manifest: m,
+        digest: "d".into(),
+        publisher: "aurora".into(),
+        hooks_digest: None,
+    };
+    let compiled = aurora_registry::snapshot::compile(&[p], &[], &[], 1).unwrap();
+    let snap: Value = serde_json::from_slice(&compiled.json).unwrap();
+    let (env, ..) = start(snap, &[("m1", r#"{"access_token":"GRAPHTOKEN"}"#)], |w| {
+        // A full grant: the strongest one a person can give.
+        granted(conn(w, "microsoft-365", "m1", None))(w)
+    })
+    .await;
+    // A catalogued read: injected.
+    let r = get_host(&env, "localhost", "/v1.0/me/messages").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(has_token(&r, "GRAPHTOKEN"), "{}", r.body);
+    // Untooled: every way to put mail or an invitation on the wire that no tool names.
+    for (method, p) in [
+        ("POST", "/v1.0/me/messages"),
+        ("POST", "/v1.0/me/messages/x/send"),
+        ("POST", "/v1.0/me/messages/x/forward"),
+        ("POST", "/v1.0/me/messages/x/reply"),
+        ("POST", "/v1.0/me/messages/x/replyAll"),
+        ("POST", "/v1.0/me/messages/x/createForward"),
+        ("POST", "/v1.0/me/mailFolders/drafts/messages"),
+        ("PATCH", "/v1.0/me/messages/x"),
+        ("PATCH", "/v1.0/me/events/x"),
+        ("DELETE", "/v1.0/me/events/x"),
+        ("POST", "/v1.0/me/events/x/cancel"),
+        ("POST", "/v1.0/me/events/x/forward"),
+        ("POST", "/v1.0/me/events/x/accept"),
+        ("POST", "/v1.0/me/calendars/c/events/x/cancel"),
+        ("POST", "/v1.0/users/someone/sendMail"),
+        ("POST", "/v1.0/me/microsoft.graph.sendMail"),
+        ("POST", "/v1.0/$batch"),
+    ] {
+        let r = send_host(&env, method, "localhost", p).await;
+        assert_eq!(r.status, 403, "{method} {p}: {}", r.body);
+        assert_eq!(r.code(), "blocked_by_policy", "{method} {p}");
+        let v: Value = serde_json::from_str(&r.body).unwrap();
+        assert_eq!(
+            v["error"]["details"]["reason"], "app_untooled_blocked",
+            "{method} {p}: {}",
+            r.body
+        );
+        assert!(!r.body.contains("GRAPHTOKEN"), "{method} {p}: {}", r.body);
+    }
+    // The tools that send: held for a person even under the full grant, never forwarded.
+    for p in [
+        "/v1.0/me/sendMail",
+        "/v1.0/me/events",
+        "/v1.0/me/calendars/c/events",
+    ] {
+        let r = send_host(&env, "POST", "localhost", p).await;
+        assert_eq!(r.status, 503, "{p}: {}", r.body);
+        assert!(!r.body.contains("GRAPHTOKEN"), "{p}: {}", r.body);
+    }
+}
+
 /// (FIX-215, SEC-04/SEC-59) A host entry's `path_prefix` covers whole path segments: the
 /// credential of a `/rest` entry is injected under `/rest/`, never on the sibling `/restricted`.
 #[tokio::test]
