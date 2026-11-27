@@ -59865,6 +59865,17 @@
               "null"
             ]
           },
+          "reason_code": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillInvalidReason",
+                "description": "Non-null exactly when the skill is not valid."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "size": {
             "type": "integer",
             "description": "Characters of body and files (binary as base64 length): the budget unit.",
@@ -59928,10 +59939,24 @@
             ],
             "description": "Why an invalid skill cannot be added (sanitized fixed texts)."
           },
+          "reason_code": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillInvalidReason",
+                "description": "The same as a code; non-null exactly when the skill is not valid."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "size": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64",
-            "description": "Characters of body and files (an estimate before the files are read).",
+            "description": "Characters of body and files (binary as base64 length), what an add counts; null only\nfor a skill that could not be judged (`unknown_size`).",
             "minimum": 0
           },
           "valid": {
@@ -60025,6 +60050,17 @@
               "null"
             ],
             "description": "Why an `invalid` proposal cannot be applied (repository text: untrusted)."
+          },
+          "reason_code": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillInvalidReason",
+                "description": "The same as a code; non-null exactly for an `invalid` proposal."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -67350,6 +67386,13 @@
                     "null"
                   ],
                   "format": "date-time"
+                },
+                "default_branch": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The name of the repository's default branch, for a library that sets no branch (null with\na `ref`, before the first read that learned it, and for members)."
                 },
                 "id": {
                   "type": "string",
@@ -75811,6 +75854,21 @@
           }
         }
       },
+      "SkillInvalidReason": {
+        "type": "string",
+        "description": "Why a skill of a repository cannot be added, as a stable code (the free-text `reason` beside\nit is for logs and older clients).",
+        "enum": [
+          "too_large",
+          "body_too_large",
+          "file_too_large",
+          "too_many_files",
+          "unsupported_path",
+          "unsupported_entry",
+          "skill_md",
+          "bad_name",
+          "unknown_size"
+        ]
+      },
       "SkillLastUse": {
         "type": "object",
         "required": [
@@ -75850,6 +75908,13 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "default_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name of the repository's default branch, for a library that sets no branch (null with\na `ref`, before the first read that learned it, and for members)."
           },
           "id": {
             "type": "string",

@@ -429,12 +429,18 @@ async fn browse_library(
             description: i.description.clone(),
             valid: i.valid,
             reason: i.reason.clone(),
+            reason_code: i.reason_code,
             size: i.size,
             files: i.files,
             added: added.get(&i.path).cloned().unwrap_or_default(),
-            blocked: room
-                .as_ref()
-                .and_then(|r| r.blocked(&i.name, i.valid, i.reason.as_deref(), i.size)),
+            blocked: room.as_ref().and_then(|r| {
+                r.blocked(
+                    &i.name,
+                    i.valid,
+                    i.reason.as_deref(),
+                    i.size.unwrap_or_default(),
+                )
+            }),
         })
         .collect();
     let next = (start + BROWSE_PAGE < matching.len()).then(|| (start + BROWSE_PAGE).to_string());

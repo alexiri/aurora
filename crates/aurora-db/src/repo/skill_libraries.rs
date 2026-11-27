@@ -12,7 +12,8 @@ use uuid::Uuid;
 const LIB_COLS: &str = "id, org_id, label, url, repo, ref, path, status, \
     last_head_sha, last_refresh_at, next_refresh_at, refresh_failures, last_error, \
     refresh_lease_until, lease_owner, check_requested_at, created_by_user_id, created_at, \
-    updated_at, head_epoch, token_ref, token_updated_at, skills_offered, skills_unavailable";
+    updated_at, head_epoch, token_ref, token_updated_at, skills_offered, skills_unavailable, \
+    default_branch, source_epoch";
 
 #[derive(Clone, sqlx::FromRow)]
 pub struct LibraryRow {
@@ -51,6 +52,11 @@ pub struct LibraryRow {
     /// (P5-SKILLS-1, C-1176) Valid and invalid skill folders at the last read.
     pub skills_offered: Option<i32>,
     pub skills_unavailable: Option<i32>,
+    /// The name of the repository's default branch, learnt by a read of a library without a ref.
+    pub default_branch: Option<String>,
+    /// Bumped whenever the address, ref or folder changes: a read of an older source writes
+    /// nothing.
+    pub source_epoch: i32,
 }
 
 impl std::fmt::Debug for LibraryRow {
@@ -78,6 +84,7 @@ pub struct NewLibrary<'a> {
     pub path: &'a str,
     pub token_ref: Option<&'a str>,
     pub head_sha: &'a str,
+    pub default_branch: Option<&'a str>,
     pub created_by: Uuid,
     pub next_refresh_in_secs: f64,
 }
@@ -88,9 +95,10 @@ pub async fn insert_library(
 ) -> Result<LibraryRow, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO skill_libraries (id, org_id, label, url, repo, ref, path, token_ref,
-            token_updated_at, last_head_sha, last_refresh_at, next_refresh_at, created_by_user_id)
+            token_updated_at, last_head_sha, last_refresh_at, next_refresh_at, created_by_user_id,
+            default_branch)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $8::text IS NULL THEN NULL ELSE now() END,
-                 $9, now(), now() + make_interval(secs => $10), $11)
+                 $9, now(), now() + make_interval(secs => $10), $11, $12)
          RETURNING {LIB_COLS}"
     )))
     .bind(n.id)
@@ -104,6 +112,7 @@ pub async fn insert_library(
     .bind(n.head_sha)
     .bind(n.next_refresh_in_secs)
     .bind(n.created_by)
+    .bind(n.default_branch)
     .fetch_one(conn)
     .await?)
 }
@@ -296,8 +305,11 @@ pub struct LibraryPatch<'a> {
     pub path: Option<&'a str>,
     /// A new sealed token (`Some(Some)`) or its removal (`Some(None)`).
     pub token_ref: Option<Option<&'a str>>,
-    /// Set with a re-read (url, ref, path or token change): the new head and a clean state.
+    /// Set with a re-read (url, ref, path or token change): a clean state, due now. The head
+    /// is **not** stored as compared, so the next refresh compares it.
     pub head_sha: Option<&'a str>,
+    /// With `head_sha`: the default branch's name of that read (null when a ref is set).
+    pub default_branch: Option<&'a str>,
 }
 
 pub async fn patch_library(
@@ -325,7 +337,9 @@ pub async fn patch_library(
             token_ref = CASE WHEN $10 THEN $11 ELSE token_ref END,
             token_updated_at = CASE WHEN $10 THEN (CASE WHEN $11::text IS NULL THEN NULL ELSE now() END)
                                     ELSE token_updated_at END,
-            last_head_sha = COALESCE($8, last_head_sha),
+            last_head_sha = CASE WHEN $8 IS NULL THEN last_head_sha ELSE NULL END,
+            head_epoch = CASE WHEN $8 IS NULL THEN head_epoch ELSE head_epoch + 1 END,
+            default_branch = CASE WHEN $8 IS NULL THEN default_branch ELSE $12 END,
             last_error = CASE WHEN $8 IS NOT NULL OR $3 = 'active' THEN NULL ELSE last_error END,
             refresh_failures = CASE WHEN $8 IS NOT NULL OR $3 = 'active' THEN 0
                                     ELSE refresh_failures END,
@@ -345,8 +359,75 @@ pub async fn patch_library(
     .bind(p.path)
     .bind(set_token)
     .bind(token_val)
+    .bind(p.default_branch)
     .fetch_one(conn)
     .await?)
+}
+
+/// Locks the library's row for share and returns its `source_epoch`: a reader of the source
+/// writes only while it is still the one it read. The lock keeps a change of source out until
+/// the writing transaction ends.
+pub async fn lock_source(conn: &mut PgConnection, id: Uuid) -> Result<Option<i32>, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT source_epoch FROM skill_libraries WHERE id = $1 FOR SHARE")
+            .bind(id)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
+
+/// The library now reads another source (the caller holds its row lock): passes over the old one
+/// can write nothing more, and the old source's heads are no longer accepted.
+pub async fn mark_source_changed(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("UPDATE skill_libraries SET source_epoch = source_epoch + 1 WHERE id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM skill_library_heads WHERE library_id = $1")
+        .bind(id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// A pending proposal that was dropped, with the organization of its skill.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DroppedUpdate {
+    pub update_id: Uuid,
+    pub skill_id: Uuid,
+    pub org_id: Uuid,
+}
+
+/// Supersedes every pending proposal of the library (its source changed). Each update row is
+/// locked by this statement, so an approval of one of them is either finished first or sees it
+/// superseded.
+pub async fn drop_pending(
+    conn: &mut PgConnection,
+    library: Uuid,
+) -> Result<Vec<DroppedUpdate>, DbError> {
+    Ok(sqlx::query_as(
+        "UPDATE skill_library_updates u SET status = 'superseded', decided_at = now()
+         FROM skills s
+         WHERE s.id = u.skill_id AND u.library_id = $1 AND u.status = 'pending'
+         RETURNING u.id AS update_id, u.skill_id, s.org_id",
+    )
+    .bind(library)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Stores the default branch's name a read learnt (null when the library sets a ref).
+pub async fn set_default_branch(
+    conn: &mut PgConnection,
+    id: Uuid,
+    name: Option<&str>,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE skill_libraries SET default_branch = $2 WHERE id = $1")
+        .bind(id)
+        .bind(name)
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 /// Stores what a read of the library found (C-1176). `updated_at` stays: this is the
@@ -607,7 +688,7 @@ pub async fn detach_all(conn: &mut PgConnection, library: Uuid) -> Result<u64, D
 // ---- proposed updates ------------------------------------------------------------------------
 
 const UPD_COLS: &str = "id, skill_id, library_id, kind, status, commit_sha, proposed, \
-    content_sha256, reason, bytes, created_at, decided_at, decided_by_user_id";
+    content_sha256, reason, reason_code, bytes, created_at, decided_at, decided_by_user_id";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct UpdateRow {
@@ -620,6 +701,8 @@ pub struct UpdateRow {
     pub proposed: Option<serde_json::Value>,
     pub content_sha256: Option<Vec<u8>>,
     pub reason: Option<String>,
+    /// The code of an `invalid` proposal's reason.
+    pub reason_code: Option<String>,
     pub bytes: i32,
     pub created_at: DateTime<Utc>,
     pub decided_at: Option<DateTime<Utc>>,
@@ -634,6 +717,7 @@ pub struct NewUpdate<'a> {
     pub proposed: Option<&'a serde_json::Value>,
     pub content_sha256: &'a [u8],
     pub reason: Option<&'a str>,
+    pub reason_code: Option<&'a str>,
     pub bytes: i32,
 }
 
@@ -651,8 +735,8 @@ pub async fn insert_update(
     .await?;
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO skill_library_updates (id, skill_id, library_id, kind, status, commit_sha,
-            proposed, content_sha256, reason, bytes)
-         VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9) RETURNING {UPD_COLS}"
+            proposed, content_sha256, reason, bytes, reason_code)
+         VALUES ($1,$2,$3,$4,'pending',$5,$6,$7,$8,$9,$10) RETURNING {UPD_COLS}"
     )))
     .bind(Uuid::now_v7())
     .bind(n.skill_id)
@@ -663,6 +747,7 @@ pub async fn insert_update(
     .bind(n.content_sha256)
     .bind(n.reason)
     .bind(n.bytes)
+    .bind(n.reason_code)
     .fetch_one(conn)
     .await?)
 }
@@ -935,6 +1020,10 @@ pub struct RefreshDone<'a> {
     /// The library's `head_epoch` when the pass was claimed: the head is written only if no add
     /// cleared it since (compare-and-set).
     pub head_epoch: i32,
+    /// The library's `source_epoch` when the pass was claimed: after a change of source the
+    /// pass only releases its lease (the outcome of the old source says nothing now, and the
+    /// change is compared at once).
+    pub source_epoch: i32,
     /// `active` or `error` (the budget is per organization, `skill_library_org_state`; the library's own
     /// status never becomes `over_budget` since P5-SKLIB-2).
     pub status: &'a str,
@@ -945,11 +1034,15 @@ pub struct RefreshDone<'a> {
 
 pub async fn finish_refresh(conn: &mut PgConnection, d: &RefreshDone<'_>) -> Result<bool, DbError> {
     Ok(sqlx::query(
-        "UPDATE skill_libraries SET status = $3, last_error = $4, refresh_failures = $5,
-            last_head_sha = CASE WHEN head_epoch <> $8 THEN last_head_sha
+        "UPDATE skill_libraries SET
+            status = CASE WHEN source_epoch <> $9 THEN status ELSE $3 END,
+            last_error = CASE WHEN source_epoch <> $9 THEN last_error ELSE $4 END,
+            refresh_failures = CASE WHEN source_epoch <> $9 THEN refresh_failures ELSE $5 END,
+            last_head_sha = CASE WHEN head_epoch <> $8 OR source_epoch <> $9 THEN last_head_sha
                                  ELSE COALESCE($6, last_head_sha) END,
             last_refresh_at = now(),
-            next_refresh_at = now() + make_interval(secs => $7),
+            next_refresh_at = CASE WHEN source_epoch <> $9 THEN next_refresh_at
+                                   ELSE now() + make_interval(secs => $7) END,
             refresh_lease_until = NULL, lease_owner = NULL, updated_at = now()
          WHERE id = $1 AND lease_owner = $2 AND status <> 'paused'",
     )
@@ -961,6 +1054,7 @@ pub async fn finish_refresh(conn: &mut PgConnection, d: &RefreshDone<'_>) -> Res
     .bind(d.head_sha)
     .bind(d.next_in_secs)
     .bind(d.head_epoch)
+    .bind(d.source_epoch)
     .execute(conn)
     .await?
     .rows_affected()

@@ -1319,6 +1319,8 @@ Pruned after `SKILL_USE_RETENTION_DAYS` (90) by the daily retention pass.
 | repo | text null CHECK null or 1..500 chars | the display form `host/path` derived from `url` (was `owner/name`) |
 | ref | text null | validated ref; null = the repository's default branch |
 | path | text not null default `` | directory holding the skill directories, ≤ 4 segments |
+| default_branch | text null CHECK null or 1..200 chars | the repository's default branch name as the last read learnt it, for a library without a `ref` (the DTO shows it only then) |
+| source_epoch | integer not null default 0 | bumped when `url`, `ref` or `path` change; a refresh or browse writes only while it is the one it read, under `FOR SHARE` on the row (migration `20261201000292`, which also superseded every then-pending proposal, cleared `last_head_sha` and the counts, and made every library due) |
 | status | text not null default `active` CHECK in (`active`,`paused`,`error`,`over_budget`) | `paused` = an admin stopped refreshing; `error` is still refreshed (the job re-checks it). `over_budget` is **no longer written** (P5-SKLIB-2: the budget is per organization, `skill_library_org_state`); the CHECK keeps the value for one release |
 | last_head_sha, last_refresh_at, next_refresh_at | text null, timestamptz null, timestamptz | churn columns; `next_refresh_at` includes jitter and error backoff (15 min → 1 h → 6 h). `last_head_sha` is the head the last refresh *compared* (an add of a commit other than that head clears it) |
 | refresh_failures | integer not null default 0 | consecutive failed refreshes: drives the backoff (reset by a success) (D-154) |
@@ -1344,7 +1346,7 @@ Pruned after `SKILL_USE_RETENTION_DAYS` (90) by the daily retention pass.
 |---|---|---|
 | library_id | uuid FK→skill_libraries (cascade) | pk part |
 | commit_sha | text | pk part; a commit the library's ref pointed at (recorded by refresh, browse, create, patch) |
-| seen_at | timestamptz not null default now() | the newest 20 per library are kept (`HEADS_KEPT`) |
+| seen_at | timestamptz not null default now() | the newest 20 per library are kept (`HEADS_KEPT`); all are deleted when `url`, `ref` or `path` change |
 | index | (library_id, seen_at desc) | |
 
 ### `skill_library_updates` (phase 4, P4-GSL, D-148; proposed updates)
@@ -1359,6 +1361,7 @@ Pruned after `SKILL_USE_RETENTION_DAYS` (90) by the daily retention pass.
 | proposed | jsonb null | for `changed`: `{ body, description, files: [{ path, content_b64, executable }], blobs }` validated; bounded by the skill limits; null for `removed`/`invalid` |
 | content_sha256 | bytea null | what an approval must quote: SHA-256 of the canonical proposed state (`changed`), or of the marker (`removed`) or of the blob set and reason (`invalid`): the same repository state hashes the same, which is also how a rejection is remembered |
 | reason | text null | sanitized validation failure for `invalid` |
+| reason_code | text null CHECK in the `SkillInvalidReason` values | the same failure as a code (`05 §Skill libraries`); set with `reason` |
 | bytes | integer not null default 0 | size of `proposed` in bytes, summed for the per-org open-proposal budget `LIBRARY_PENDING_BYTES_PER_ORG` (D-154) |
 | decided_at, decided_by_user_id | timestamptz null, uuid null FK→users (set null) | |
 | unique | (skill_id) where status = `pending` (`skill_library_updates_pending_uq`) | |

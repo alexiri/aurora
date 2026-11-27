@@ -424,7 +424,7 @@ async fn the_check_stores_nothing_is_limited_and_only_admins_may_use_it() {
     assert_eq!(v["repo"], "git.example/acme/skills");
     assert_eq!(v["commit_sha"], head);
     assert_eq!(v["resolved"]["default"], true);
-    assert_eq!(v["suggested_label"], "skills");
+    assert_eq!(v["suggested_label"], "acme/skills");
     assert_eq!(v["path"], "");
     assert_eq!(v["truncated"], false);
     assert_eq!(v["skills"]["names"], json!(["alpha", "beta"]));

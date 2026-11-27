@@ -14,6 +14,78 @@ pub struct SkillCounts {
     pub org: i64,
 }
 
+/// Why a skill of a repository cannot be added, as a stable code (the free-text `reason` beside
+/// it is for logs and older clients).
+#[derive(Serialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillInvalidReason {
+    /// Body plus files are over the skill's total size.
+    TooLarge,
+    BodyTooLarge,
+    /// `SKILL.md` or another file is over the per-file limit.
+    FileTooLarge,
+    TooManyFiles,
+    /// A file path or its characters.
+    UnsupportedPath,
+    /// A symlink, submodule, unusual file mode or entry type.
+    UnsupportedEntry,
+    /// `SKILL.md` is missing or misnamed, or its front matter, description or body is wrong.
+    SkillMd,
+    /// The folder name is not a valid skill name.
+    BadName,
+    /// It could not be judged within the limits of one read of the repository.
+    UnknownSize,
+}
+
+impl SkillInvalidReason {
+    pub const ALL: [Self; 9] = [
+        Self::TooLarge,
+        Self::BodyTooLarge,
+        Self::FileTooLarge,
+        Self::TooManyFiles,
+        Self::UnsupportedPath,
+        Self::UnsupportedEntry,
+        Self::SkillMd,
+        Self::BadName,
+        Self::UnknownSize,
+    ];
+
+    /// The stored and wire form.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TooLarge => "too_large",
+            Self::BodyTooLarge => "body_too_large",
+            Self::FileTooLarge => "file_too_large",
+            Self::TooManyFiles => "too_many_files",
+            Self::UnsupportedPath => "unsupported_path",
+            Self::UnsupportedEntry => "unsupported_entry",
+            Self::SkillMd => "skill_md",
+            Self::BadName => "bad_name",
+            Self::UnknownSize => "unknown_size",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|r| r.as_str() == s)
+    }
+}
+
+impl From<aurora_registry::skill_format::Kind> for SkillInvalidReason {
+    fn from(k: aurora_registry::skill_format::Kind) -> Self {
+        use aurora_registry::skill_format::Kind;
+        match k {
+            Kind::Frontmatter => Self::SkillMd,
+            Kind::BodyTooLarge => Self::BodyTooLarge,
+            Kind::Path => Self::UnsupportedPath,
+            Kind::TooManyFiles => Self::TooManyFiles,
+            Kind::FileTooLarge => Self::FileTooLarge,
+            Kind::TooLarge => Self::TooLarge,
+        }
+    }
+}
+
 /// A skill library (C-1122). Managers see every field; other members who can use a workspace of
 /// the org get `id`, `label`, `status` and `scope` of the active libraries (the browse picker).
 /// The access token is never returned: only whether one is set and when.
@@ -33,6 +105,9 @@ pub struct SkillLibrary {
     pub repo: Option<String>,
     #[serde(rename = "ref")]
     pub reference: Option<String>,
+    /// The name of the repository's default branch, for a library that sets no branch (null with
+    /// a `ref`, before the first read that learned it, and for members).
+    pub default_branch: Option<String>,
     pub path: Option<String>,
     /// Whether an access token is saved (never the token).
     pub token_set: Option<bool>,
@@ -161,8 +236,12 @@ pub struct LibrarySkillItem {
     pub valid: bool,
     /// Why an invalid skill cannot be added (sanitized fixed texts).
     pub reason: Option<String>,
-    /// Characters of body and files (an estimate before the files are read).
-    pub size: u64,
+    /// The same as a code; non-null exactly when the skill is not valid.
+    pub reason_code: Option<SkillInvalidReason>,
+    /// Characters of body and files (binary as base64 length), what an add counts; null only
+    /// for a skill that could not be judged (`unknown_size`).
+    #[schema(required)]
+    pub size: Option<u64>,
     pub files: usize,
     /// Where this library's version of the skill is already added.
     pub added: Vec<TierRef>,
@@ -228,6 +307,8 @@ pub struct LibrarySkillContent {
     pub name: String,
     pub valid: bool,
     pub reason: Option<String>,
+    /// Non-null exactly when the skill is not valid.
+    pub reason_code: Option<SkillInvalidReason>,
     pub description: Option<String>,
     pub body: Option<String>,
     pub files: Vec<LibraryFile>,

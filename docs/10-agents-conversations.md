@@ -1120,7 +1120,8 @@ resolve the ref, list the folder) and fails with a fixed reason if it cannot (42
 "The repository needs an access token", "The access token was refused", "The repository was not found, or the
 token cannot read it", "The branch or tag was not found", the redirect, size, timeout and address reasons of C-1125);
 nothing is stored. `POST /v1/orgs/{org}/skill-libraries/check` (C-1124) does the same read and answers
-what it found (`repo`, resolved ref, `commit_sha`, how many skills are valid, the first names, a suggested label)
+what it found (`repo`, resolved ref, `commit_sha`, how many skills are valid, the first names, a suggested label:
+`<owner>/<repo>`, plus the folder when another folder of the repository also holds two or more skills)
 and stores nothing, so the dashboard can show it before **Add library**. The same url, ref and folder in
 one organization is 409 `library_exists`. Up to `LIBRARIES_PER_ORG` (10) libraries.
 
@@ -1146,8 +1147,14 @@ shows "The repository needs an access token" until an organization admin adds on
 working.
 
 **Catalogue (browse).** `GET …/skills` reads the library's current head live (resolve → recursive
-tree → each `SKILL.md` for name and description, at most `LIBRARY_BROWSE_MAX` (200) entries,
-cached in memory for 5 minutes). A skill is a directory directly under `path` (depth 1) that
+tree → each skill folder's files, at most `LIBRARY_BROWSE_MAX` (200) entries,
+cached in memory for 5 minutes; after that, a head that has not moved reuses the judgement made for that
+commit). Each folder is judged by **the add's own rules on its real content** (total, body and per-file
+limits, file names, entry types): what the list calls valid, the add accepts. The cost is bounded: one tree
+read, one request for the `SKILL.md` files, then at most `LIBRARY_JUDGE_REQUESTS_MAX` requests for the other
+files, none started once `LIBRARY_JUDGE_BYTES_MAX` is held, each under the add's caps (a request over a size
+cap is split in two). A skill left unread is `unknown_size`: no size, not counted as addable. Every invalid
+skill carries a `reason_code`. A skill is a directory directly under `path` (depth 1) that
 contains `SKILL.md`; its name is the directory name and must be a valid skill name (`[a-z0-9]+(-[a-z0-9]+)*`
 ≤ 64, not `aurora-*`); a directory that fails validation is listed as `invalid` with the reason.
 Browsing **stores nothing**. Who may browse: any person who can use a workspace of the org (names and
@@ -1199,7 +1206,10 @@ A skill whose files changed, or whose directory vanished, gets a **proposed upda
 (`skill_library_updates`, `03`): the proposed content (`changed`), or a marker (`removed`), or the
 validation failure (`invalid`), with the new commit sha and `content_sha256`. **Nothing is applied.**
 The skill keeps its pinned content and commit, projection is untouched, no home sync is triggered.
-A newer proposal for the same skill supersedes the older one. At most one open proposal per skill;
+A newer proposal for the same skill supersedes the older one. **A change of what a library reads** (address,
+ref or folder) supersedes all its open proposals in the change's own transaction, makes the next refresh compare
+whatever the head is, and forgets the old source's recorded heads, so a proposal of a source the library no
+longer follows can never be approved (it could otherwise downgrade a skill). At most one open proposal per skill;
 open proposals are bounded by `LIBRARY_PENDING_BYTES_PER_ORG` (4 MiB; beyond it the job records the
 fact (`status = over_budget`) and stops proposing for that library until space is freed).
 **Applying** a proposal is a human act by the tier's write authority (agent: `can_use`; workspace:
