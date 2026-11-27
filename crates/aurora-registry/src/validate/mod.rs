@@ -1440,6 +1440,19 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         }
                     }
                 }
+                // The LDAP and secret-link lanes apply no response projection, and each such
+                // app is served by its lane alone: a `project` there would promise a narrower
+                // answer than the caller gets.
+                if it.project.is_some() && (app.ldap.is_some() || app.secret_link.is_some()) {
+                    cx.v(
+                        "tool_project_lane",
+                        &format!("/tools/{gname}/items/{j}/project"),
+                        format!(
+                            "tool `{}`: `project` is not applied to the answers of an LDAP or secret-link app; remove it",
+                            it.id
+                        ),
+                    );
+                }
                 // A `body_check` only ever refuses, and its key names are quoted in the
                 // refusal message, so they are plain identifiers and the lists stay small.
                 if let Some(bc) = &it.body_check {

@@ -231,6 +231,11 @@ impl PolicyHandler {
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
+        // This lane relays the receiver's answer without any response projection (see the LDAP
+        // check in `handle_with`): refused before the dry run, the approval and the send.
+        if tool.is_some_and(|t| t.project.is_some()) {
+            return self.wh_refuse(ctx, &lane_projection_refusal(), "blocked");
+        }
         let facts = RequestFacts {
             host: host.clone(),
             port: 443,
