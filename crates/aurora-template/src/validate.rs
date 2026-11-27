@@ -91,6 +91,38 @@ pub(crate) fn rel_path_problem(rel: &str) -> Option<TemplateProblem> {
     None
 }
 
+/// The one path rule of both forms (C-1104): `path` is `<root>/<below>`, and the grammar
+/// ([`rel_path_problem`]) is about the part below the root, never the root's own segment or
+/// length. `Ok(Some(below))` is a content file.
+///
+/// With `skip_github` (the zip form), a name with a `.github` segment below the root is
+/// `Ok(None)`: not content, whatever else its names look like, as the git reader and the CLI
+/// skip it. A name that climbs or has an empty segment is never skipped: the grammar refuses
+/// it.
+pub(crate) fn path_below_root<'a>(
+    root: &str,
+    path: &'a str,
+    skip_github: bool,
+) -> Result<Option<&'a str>, TemplateProblem> {
+    let Some(below) = path.strip_prefix(root).and_then(|r| r.strip_prefix('/')) else {
+        return Err(TemplateProblem::new(
+            ProblemCode::TemplateDirName,
+            path,
+            "every file must be under the template's own directory",
+        ));
+    };
+    if skip_github
+        && aurora_core::meta_paths::has_github_segment(below)
+        && !below.split('/').any(|s| matches!(s, "" | "." | ".."))
+    {
+        return Ok(None);
+    }
+    match rel_path_problem(below) {
+        Some(p) => Err(p),
+        None => Ok(Some(below)),
+    }
+}
+
 /// The only git/zip modes accepted: a regular file, executable or not (C-1141).
 pub(crate) fn mode_problem(path: &str, mode: u32) -> Option<TemplateProblem> {
     match mode {
@@ -121,30 +153,18 @@ pub(crate) fn read_files(
     let mut total = 0usize;
     let mut structural = Vec::new();
     for f in files {
-        let rest = f
-            .path
-            .strip_prefix(root_name)
-            .and_then(|r| r.strip_prefix('/'));
-        let Some(rel) = rest else {
-            structural.push(TemplateProblem::new(
-                ProblemCode::TemplateDirName,
-                &f.path,
-                "every file must be under the template's own directory",
-            ));
+        // No `.github` skip here: the callers (the zip reader, the git reader, the CLI walk)
+        // leave those folders out before this, so one that arrives is a hidden segment like any
+        // other. A template folder that sits under the repository's own `.github` carries that
+        // prefix in the root name, never below it — its files are checked as any other.
+        if let Err(p) = path_below_root(root_name, &f.path, false) {
+            structural.push(p);
             continue;
-        };
+        }
         if let Some(p) = mode_problem(&f.path, f.mode) {
             structural.push(p);
             continue;
         }
-        if let Some(p) = rel_path_problem(rel) {
-            structural.push(p);
-            continue;
-        }
-        // No `.github` skip here: a `.github` segment in `rel` is a hidden segment, refused just
-        // above (a `.github` folder inside the template is refused, not silently dropped), and a
-        // template folder that sits under the repository's own `.github` carries that prefix in
-        // the root name, never in `rel` — the files of such a folder are checked as any other.
         if !seen.insert(f.path.clone()) {
             structural.push(name_problem(&f.path, "the same path appears twice"));
             continue;

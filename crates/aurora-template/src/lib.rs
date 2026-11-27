@@ -45,6 +45,7 @@ pub use skill_rules::{
     FILES_PER_SKILL_MAX, PATH_MAX_DEPTH, PATH_MAX_LEN, check_name, is_text, path_ok,
 };
 pub use validate::{file_folder_clash, helper_path_ok, read_tree};
+pub use yaml::{clean_text, has_anchor_alias_or_tag};
 
 /// Reads a packed template (a zip whose only top-level directory is `<id>/`, stored or deflate).
 /// Every C-1141 check runs; all problems (at most 20) come back when it is refused.

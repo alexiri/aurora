@@ -221,6 +221,11 @@ pub fn helpers_hash(files: &[(String, Vec<u8>, bool)]) -> String {
 /// The `library_skill` part key (C-1112): the normalized reference that identifies the part.
 /// `library|<url>|<ref>|<path>|<skill>`, with an empty string for an absent ref or path; an
 /// organization reference is not a library skill and has no part key.
+///
+/// The key is unambiguous: the format refuses `|` in a `ref` (the shared ref grammar), the
+/// address grammar and the skill name grammar have none, so the url and the ref end at the
+/// first two separators after `library|`, the skill starts after the last one, and the path is
+/// all that is between. The spelling is stored with an agent's parts: keep it.
 #[must_use]
 pub fn skill_ref_key(r: &SkillRef) -> String {
     match r {

@@ -1,6 +1,6 @@
-# The GitLab sketch of the reference CI (docs/25 §Publishing a version,
-# C-1144). The same two jobs as the GitHub workflow: check on merge requests
-# and pushes, publish on the default branch only.
+# The GitLab sketch of the reference CI. The same two jobs as the GitHub
+# workflow: check on merge requests and pushes, publish on the default branch
+# only.
 #
 # The publish job uploads to the generic package registry with CI_JOB_TOKEN,
 # after comparing against an existing package. Set the project setting
@@ -36,8 +36,13 @@ publish:
     # For each template: pack, and compare against an existing package when
     # there is one. A published version is never replaced; a mismatch fails
     # the job.
+    # The list goes to a file first, so that a failing `list` fails the job
+    # instead of publishing nothing.
     - |
-      aurora template list . --json | jq -c '.[]' | while IFS= read -r item; do
+      set -e
+      aurora template list . --json >/tmp/templates.json
+      jq -c '.[]' /tmp/templates.json >/tmp/templates.items
+      while IFS= read -r item; do
         id=$(printf '%s' "$item" | jq -r '.id')
         version=$(printf '%s' "$item" | jq -r '.version')
         dir=$(printf '%s' "$item" | jq -r '.dir')
@@ -61,4 +66,4 @@ publish:
           printf 'unexpected status %s for %s\n' "$code" "$url" >&2
           exit 1
         fi
-      done
+      done </tmp/templates.items

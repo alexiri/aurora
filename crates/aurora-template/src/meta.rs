@@ -136,7 +136,9 @@ pub fn id_ok(s: &str) -> bool {
         })
 }
 
-/// Semver without build metadata (`1.2.3` or `1.2.3-rc.1`).
+/// Semver without build metadata (`1.2.3` or `1.2.3-rc.1`), with no leading zeros in a number
+/// of the core or of the pre-release (semver §2, §9): the version comparison could not order
+/// such a version.
 #[must_use]
 pub fn semver_ok(s: &str) -> bool {
     let Some((core, pre)) = s.split_once('-') else {
@@ -146,17 +148,33 @@ pub fn semver_ok(s: &str) -> bool {
         && !pre.is_empty()
         && pre.split('.').all(|p| {
             !p.is_empty()
-                && p.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+                && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && !(p.bytes().all(|b| b.is_ascii_digit()) && has_leading_zero(p))
         })
+}
+
+/// A skill reference's `ref`, by the platform's own ref grammar: what the library's add
+/// would refuse, the format refuses.
+fn ref_ok(r: &str) -> bool {
+    aurora_core::git_ref::check_ref(r).is_ok()
+}
+
+const REF_RULE: &str = "the ref must be a branch, tag or commit name: letters, digits, . _ / -, \
+                        at most 200 characters, not starting with - or /, without ..";
+
+fn has_leading_zero(number: &str) -> bool {
+    number.len() > 1 && number.starts_with('0')
 }
 
 fn core_semver(s: &str) -> bool {
     let parts: Vec<&str> = s.split('.').collect();
     parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && p.len() <= 10)
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.bytes().all(|b| b.is_ascii_digit())
+                && p.len() <= 10
+                && !has_leading_zero(p)
+        })
 }
 
 /// Compiles a `pattern` with the 64 KiB size limit; used by the field check and by
@@ -670,17 +688,28 @@ fn validate_skill_refs(
                 });
                 let ref_ = r.ref_.and_then(|r| {
                     let t = r.trim();
-                    if t.is_empty() || t.len() > 200 || t.starts_with('.') || t.contains("..") {
+                    if !ref_ok(t) {
                         problems.push(TemplateProblem::new(
                             ProblemCode::TemplateSkillRefInvalid,
                             format!("{at}/ref"),
-                            "the ref must be a branch, tag or commit name",
+                            REF_RULE,
                         ));
                         return None;
                     }
                     Some(t.to_owned())
                 });
                 match git_url::parse(&library) {
+                    // A page address brings its own ref, held to the same grammar.
+                    Ok(address)
+                        if ref_.is_none()
+                            && address.ref_hint.as_deref().is_some_and(|h| !ref_ok(h)) =>
+                    {
+                        problems.push(TemplateProblem::new(
+                            ProblemCode::TemplateSkillRefInvalid,
+                            format!("{at}/library"),
+                            REF_RULE,
+                        ));
+                    }
                     Ok(address) => {
                         // A page URL fills ref and path when the reference does not give them.
                         let ref_ = ref_.or(address.ref_hint.clone());
@@ -778,6 +807,21 @@ mod tests {
         assert!(semver_ok("1.2.3-rc.1"));
         assert!(!semver_ok("1.2"));
         assert!(!semver_ok("1.2.3+build"));
+        // Leading zeros are not semver (the version comparison cannot order them).
+        for bad in ["1.02.0", "01.2.3", "1.2.03", "1.0.0-rc.01", "1.0.0-00"] {
+            assert!(!semver_ok(bad), "{bad}");
+        }
+        for good in [
+            "0.0.0",
+            "10.0.0",
+            "1.0.0-0",
+            "1.0.0-rc.0",
+            "1.0.0-rc.10",
+            "1.0.0-0a",
+            "1.0.0-01-x",
+        ] {
+            assert!(semver_ok(good), "{good}");
+        }
         for (id, ok) in crate::test_fixtures::DESK_INPUT_IDS {
             assert_eq!(input_id_ok(id), *ok, "{id}");
         }
@@ -871,6 +915,56 @@ mod tests {
         assert!(
             err.iter()
                 .any(|p| p.code == ProblemCode::TemplateField && p.path.contains("pattern"))
+        );
+    }
+
+    /// A library reference's `ref` follows the platform's ref grammar, typed in the entry or
+    /// taken from a page address.
+    #[test]
+    fn a_skill_ref_follows_the_platform_ref_grammar() {
+        let base = "format: 1\nid: t\nversion: 1.0.0\nname: N\nsummary: S\n";
+        let with_ref = |r: &str| {
+            format!(
+                "{base}skills:\n  - library: https://example.org/a/b.git\n    skill: x\n    \
+                 ref: \"{r}\"\n    why: y\n"
+            )
+        };
+        for bad in [
+            "-x",
+            "a b",
+            "a|b",
+            "a\\u0007b",
+            "a\\u202Eb",
+            "a//b",
+            "/a",
+            "a/",
+            "a/./b",
+            "a..b",
+        ] {
+            let err = match parse_meta(with_ref(bad).as_bytes()) {
+                Ok(_) => panic!("ref {bad:?} was accepted"),
+                Err(e) => e,
+            };
+            assert!(
+                err.iter()
+                    .any(|p| p.code == ProblemCode::TemplateSkillRefInvalid
+                        && p.path.ends_with("/skills/0/ref")),
+                "{bad:?}: {err:?}"
+            );
+        }
+        for good in ["main", "v1.2.0", "feature/x_y-z", "0123abcd"] {
+            assert!(parse_meta(with_ref(good).as_bytes()).is_ok(), "{good}");
+        }
+        // The page address's own ref (percent-escapes decoded) is held to the same grammar.
+        let hinted = format!(
+            "{base}skills:\n  - library: https://git.example.org/a/b/tree/-x\n    skill: x\n    why: y\n"
+        );
+        assert!(
+            parse_meta(hinted.as_bytes())
+                .unwrap_err()
+                .iter()
+                .any(|p| p.code == ProblemCode::TemplateSkillRefInvalid
+                    && p.path.ends_with("/skills/0/library"))
         );
     }
 

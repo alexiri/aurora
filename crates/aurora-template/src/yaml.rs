@@ -21,53 +21,11 @@ pub fn strip_bom(s: &str) -> &str {
     s.strip_prefix('\u{feff}').unwrap_or(s)
 }
 
-/// Whether any YAML token starts with `&` (anchor), `*` (alias) or `!` (tag): at the start of a
-/// line (after block-sequence dashes), after `:`/`,`/`[`/`{` and spaces. Conservative on
-/// purpose: a plain scalar that merely *contains* `*emphasis*` is fine, one that *starts* with
-/// `*` is an alias.
+/// Whether any YAML token starts with `&` (anchor), `*` (alias) or `!` (tag); the shared
+/// pre-check ([`aurora_core::yaml_guard`]) with this format's three indicators.
 #[must_use]
 pub fn has_anchor_alias_or_tag(yaml: &str) -> bool {
-    yaml.lines().any(|line| {
-        let mut l = line.trim_start();
-        while let Some(r) = l.strip_prefix("- ") {
-            l = r.trim_start();
-        }
-        let chars: Vec<char> = l.chars().collect();
-        let mut quote: Option<char> = None;
-        let mut token_start = true;
-        let mut flow = false;
-        for (i, &ch) in chars.iter().enumerate() {
-            if let Some(q) = quote {
-                if ch == q {
-                    quote = None;
-                }
-                continue;
-            }
-            let next_blank = chars.get(i + 1).is_none_or(|n| matches!(n, ' ' | '\t'));
-            match ch {
-                '&' | '*' | '!' if token_start => return true,
-                '"' | '\'' if token_start => quote = Some(ch),
-                ' ' | '\t' => continue,
-                '[' | '{' if token_start => flow = true,
-                '[' | '{' => {}
-                ':' | '?' if next_blank => {
-                    token_start = true;
-                    continue;
-                }
-                ',' if flow => {
-                    token_start = true;
-                    continue;
-                }
-                _ => {}
-            }
-            token_start = false;
-            if matches!(ch, '[' | '{') {
-                // a flow collection opens a value position
-                token_start = true;
-            }
-        }
-        false
-    })
+    aurora_core::yaml_guard::has_indicator_token(yaml, &['&', '*', '!'])
 }
 
 /// The strict pre-checks every template YAML file runs before the parser sees it, then the
@@ -150,6 +108,9 @@ mod tests {
             "&anchor\na: 1",
             "- &a 1",
             "a:\n  - *b",
+            // A flow collection that goes on over further lines.
+            "a: [x,\n  y, &z w]",
+            "[x,\n  y, *z]",
         ] {
             assert!(has_anchor_alias_or_tag(bad), "{bad}");
         }
