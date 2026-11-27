@@ -854,9 +854,10 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | status | text CHECK in (`queued`,`open`,`waiting`,`completed`,`cancelled`,`expired`) | `waiting` (FIX-253, D-490(b)): a wake is registered (an armed `process_watch` or a one-time schedule created from the task conversation, or a pending approval); the wake resumes the task to `open` |
 | messages_used | int not null default 0 | |
 | message_budget | int not null | |
+| wakes_used | int not null default 0 CHECK (>= 0) | (FIX-253) wake-ups so far; each is also counted in `messages_used` |
 | report | text null | |
 | expires_at | timestamptz not null | |
-| partial unique | (from_agent_id, to_agent_id) WHERE status=`open` | |
+| partial unique | (from_agent_id, to_agent_id) WHERE status in (`open`,`waiting`) | a waiting task holds the pair's slot (FIX-253, migration `20261201000287`) |
 
 ---
 

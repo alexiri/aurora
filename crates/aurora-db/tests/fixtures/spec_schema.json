@@ -879,7 +879,8 @@
       "requester_user_id",
       "status",
       "task_conversation_id",
-      "to_agent_id"
+      "to_agent_id",
+      "wakes_used"
     ],
     "plugin_blobs": [
       "content",
@@ -2593,7 +2594,8 @@
       "requester_user_id": "uuid null",
       "status": "text",
       "task_conversation_id": "uuid",
-      "to_agent_id": "uuid"
+      "to_agent_id": "uuid",
+      "wakes_used": "int not null"
     },
     "plugin_blobs": {
       "content": "bytea not null",

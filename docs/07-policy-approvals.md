@@ -1007,9 +1007,20 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   sandbox — it is a state in the database. **The wake resumes the task**: the
   watch firing, the schedule firing and the approval decision (or deadline)
   each give the task conversation its own turn and return the task to `open`,
-  with the same grants and policy it had — a wake never extends rights. A
-  waiting task still ends by `complete_task`, Cancel, or its overall
-  expiry/budget (the expiry report reaches the requester as today).
+  with the same grants and policy it had — a wake never extends rights. Every
+  wake that starts a turn (also one that arrives while the task is still
+  `open`) first re-checks that the requester can still use the sending agent
+  and that the receiver is not paused; a failed check cancels the task with a
+  "could not continue" line and starts no turn. A `waiting` task holds the
+  pair's slot like an `open` one: a second task queues behind it, and ending it
+  promotes the queued one. A waiting task still ends by `complete_task`,
+  Cancel, or its overall expiry/budget (the expiry report reaches the requester
+  as today).
+  **Bounds.** Each wake turn is charged to `PEER_TASK_BUDGET` like a task
+  message; one task is woken at most `PEER_TASK_WAKES_MAX` times without its
+  report; at most `PEER_TASK_WAITING_PER_REQUESTER_MAX` tasks of one requester
+  and `PEER_TASK_WAITING_PER_RECEIVER_MAX` tasks of one receiving agent wait at
+  once. A task that would exceed a bound is closed with a line saying which.
 - **App-turn cap**: turns whose speaker is a bot or agent increment
   `conversations.app_turn_streak`; any person-authored turn resets it. When the
   streak reaches `APP_TURN_CAP` further bot/agent turns are refused with a

@@ -20,6 +20,8 @@ pub struct PeerTaskRow {
     pub status: String,
     pub messages_used: i32,
     pub message_budget: i32,
+    /// Wake-ups so far (each one is also counted in `messages_used`).
+    pub wakes_used: i32,
     pub report: Option<String>,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
@@ -28,8 +30,8 @@ pub struct PeerTaskRow {
 
 const SELECT: &str = "SELECT t.id, t.link_id, t.from_agent_id, t.to_agent_id, \
     t.requester_user_id, u.display_name AS requester_name, t.origin_conversation_id, \
-    t.task_conversation_id, t.status, t.messages_used, t.message_budget, t.report, \
-    t.expires_at, t.created_at, t.updated_at \
+    t.task_conversation_id, t.status, t.messages_used, t.message_budget, t.wakes_used, \
+    t.report, t.expires_at, t.created_at, t.updated_at \
     FROM peer_tasks t LEFT JOIN users u ON u.id = t.requester_user_id";
 
 pub struct NewPeerTask {
@@ -312,14 +314,46 @@ pub async fn set_waiting(
 }
 
 /// (FIX-253, D-490(b)) The wake (the watch firing, the schedule firing, the approval decision)
-/// resumes a `waiting` task of this conversation back to `open` — the task keeps the grants and
-/// policy it had: a wake never extends rights. Returns the task id, if one was resumed.
+/// resumes a `waiting` task of this conversation back to `open` (an `open` one stays open) — the
+/// task keeps the grants and policy it had: a wake never extends rights. The wake turn is charged
+/// to the message budget and counted. Returns the task id, if a live task was charged. The caller
+/// holds the task's row lock and has checked both limits.
 pub async fn resume(conn: &mut PgConnection, conversation: Uuid) -> Result<Option<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
-        "UPDATE peer_tasks SET status = 'open', updated_at = now()
-         WHERE task_conversation_id = $1 AND status = 'waiting' RETURNING id",
+        "UPDATE peer_tasks SET status = 'open', messages_used = messages_used + 1,
+             wakes_used = wakes_used + 1, updated_at = now()
+         WHERE task_conversation_id = $1 AND status IN ('open', 'waiting') RETURNING id",
     )
     .bind(conversation)
     .fetch_optional(&mut *conn)
+    .await?)
+}
+
+/// Lock out concurrent "go waiting" transitions of this requester and receiver until the
+/// transaction ends (always in this order), then count the tasks already waiting:
+/// `(of the requester, on the receiving agent)`.
+pub async fn lock_waiting_counts(
+    conn: &mut PgConnection,
+    requester: Option<Uuid>,
+    receiver: Uuid,
+) -> Result<(i64, i64), DbError> {
+    for key in [
+        format!("peer-waiting:user:{}", requester.unwrap_or_default()),
+        format!("peer-waiting:agent:{receiver}"),
+    ] {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(key)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE requester_user_id = $1),
+                count(*) FILTER (WHERE to_agent_id = $2)
+           FROM peer_tasks
+          WHERE status = 'waiting' AND (requester_user_id = $1 OR to_agent_id = $2)",
+    )
+    .bind(requester)
+    .bind(receiver)
+    .fetch_one(&mut *conn)
     .await?)
 }

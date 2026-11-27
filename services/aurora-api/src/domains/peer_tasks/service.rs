@@ -964,8 +964,8 @@ pub async fn approval_notice(
         // rights and the freeze — a refused wake cancels the task with its close report and no
         // turn starts. A task that was not waiting (the decision landed mid-turn) gets no wake
         // turn: the gateway unblocks the tool call the agent is already running.
-        let wake = resume_on_wake(conn, task.task_conversation_id).await?;
-        if wake == Wake::Resumed
+        if task.status == "waiting"
+            && resume_on_wake(conn, task.task_conversation_id).await? == Wake::Resumed
             && let Some(pc) = convs::get(&mut *conn, task.task_conversation_id).await?
         {
             let outcome = match row.status.as_str() {
@@ -1028,6 +1028,12 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
         aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, t.conversation_id)
             .await?;
     let wake_registered = has_pending_approval || wake_registered(conn, t.conversation_id).await?;
+    // (FIX-253 review, medium 3) The number of waiting tasks is bounded: the task that would
+    // exceed a bound is cancelled with a line saying why, instead of waiting.
+    if wake_registered && let Some(why) = waiting_cap(conn, &task).await? {
+        close_with_promotion(conn, &task, &Close::Cancelled(Some(&why))).await?;
+        return Ok(());
+    }
     let waiting = if wake_registered {
         repo::set_waiting(&mut *conn, task.id).await?
     } else {
@@ -1064,6 +1070,31 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
         post_notice(conn, &waiting, "peer_task_waiting", &what, None).await?;
     }
     Ok(())
+}
+
+/// (FIX-253 review, medium 3) Why `task` may not start waiting: the requester or the receiving
+/// agent already has as many waiting tasks as allowed. Serialized until the transaction ends.
+async fn waiting_cap(
+    conn: &mut PgConnection,
+    task: &PeerTaskRow,
+) -> Result<Option<String>, ApiError> {
+    let (of_requester, on_receiver) =
+        repo::lock_waiting_counts(conn, task.requester_user_id, task.to_agent_id).await?;
+    if on_receiver >= limits::PEER_TASK_WAITING_PER_RECEIVER_MAX {
+        let to = agent(conn, task.to_agent_id).await?;
+        return Ok(Some(format!(
+            "it could not wait: {} already has {} tasks waiting",
+            agent_label(&to),
+            limits::PEER_TASK_WAITING_PER_RECEIVER_MAX
+        )));
+    }
+    if of_requester >= limits::PEER_TASK_WAITING_PER_REQUESTER_MAX {
+        return Ok(Some(format!(
+            "it could not wait: the person who asked already has {} tasks waiting",
+            limits::PEER_TASK_WAITING_PER_REQUESTER_MAX
+        )));
+    }
+    Ok(None)
 }
 
 /// (FIX-253, D-490(b)) Whether a wake is registered for this conversation: an armed watch of it
@@ -1124,16 +1155,16 @@ async fn next_wake(
         }))
 }
 
-/// (FIX-253, D-490(b); security review, medium 2) What a wake did to the `waiting` task behind
-/// `conversation`.
+/// (FIX-253, D-490(b); security review, medium 2) What a wake did to the live (`open` or
+/// `waiting`) task behind `conversation`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Wake {
-    /// The task was `waiting` and is `open` again: the caller starts the wake turn.
+    /// The task is `open` and the wake turn is charged: the caller starts it.
     Resumed,
-    /// No `waiting` task sits behind this conversation (no task at all, or it was not waiting):
+    /// No live task sits behind this conversation (no task at all, or it had ended before):
     /// the caller proceeds exactly as without a wake.
-    NotWaiting,
-    /// The task was cancelled at the wake (the rights or freeze re-check failed): no turn starts.
+    NoLiveTask,
+    /// The task was closed at the wake (a re-check or a limit refused it): no turn starts.
     Cancelled,
 }
 
@@ -1143,20 +1174,22 @@ impl Wake {
     }
 }
 
-/// (FIX-253, D-490(b)) The wake of a `waiting` task of this conversation (the watch firing, the
-/// schedule firing, the approval decision) — the ONE helper all three wakes go through. The task
-/// is back to `open` and the conversation gets its turn as the task's own. Same grants and policy
-/// it had: a wake never extends rights, so the wake re-checks what the task's own turn checks at
-/// every start (`start_turn`): the requester still holds `can_use` on the *sending* agent's
-/// workspace (fire-time authority, 04), and neither the receiving agent nor its workspace/org is
-/// frozen. A failed check cancels the task with the platform's close report — which is its one
+/// (FIX-253, D-490(b)) A wake that is about to start a turn in this conversation (the watch
+/// firing, the schedule firing, the decision a `waiting` task waited for) — the ONE helper all
+/// three go through. A live task is `open` afterwards and the conversation gets its turn as the
+/// task's own. Same grants and policy it had: a wake never extends rights, so it re-checks what
+/// the task's own turn checks at every start (`start_turn`): the requester still holds `can_use`
+/// on the *sending* agent's workspace (fire-time authority, 04), and neither the receiving agent
+/// nor its workspace/org is frozen. The wake turn is charged to the message budget like a task
+/// turn, and a task is woken at most `PEER_TASK_WAKES_MAX` times without a report. A failed
+/// check or a reached limit closes the task with the platform's close report — which is its one
 /// report — and no turn starts.
 pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Result<Wake, ApiError> {
     let Some(found) = repo::by_task_conversation(&mut *conn, conversation).await? else {
-        return Ok(Wake::NotWaiting);
+        return Ok(Wake::NoLiveTask);
     };
-    if found.status != "waiting" {
-        return Ok(Wake::NotWaiting);
+    if !matches!(found.status.as_str(), "open" | "waiting") {
+        return Ok(Wake::NoLiveTask);
     }
     // Lock order link -> task, then re-read: a concurrent cancel or expiry must not be followed
     // by a wake turn.
@@ -1164,7 +1197,7 @@ pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Resu
     let Some(task) = repo::get_for_update(&mut *conn, found.id).await? else {
         return Ok(Wake::Cancelled);
     };
-    if task.status != "waiting" {
+    if !matches!(task.status.as_str(), "open" | "waiting") {
         return Ok(Wake::Cancelled);
     }
     let from = agent(conn, task.from_agent_id).await?;
@@ -1183,8 +1216,20 @@ pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Resu
     } else {
         None
     };
+    // The promoting close: the slot the task held is free again.
     if let Some(why) = refusal {
-        // Through the promoting close: the slot the waiting task held is free again.
+        close_with_promotion(conn, &task, &Close::Cancelled(Some(&why))).await?;
+        return Ok(Wake::Cancelled);
+    }
+    if task.messages_used >= task.message_budget {
+        close_with_promotion(conn, &task, &Close::Budget(task.message_budget)).await?;
+        return Ok(Wake::Cancelled);
+    }
+    if task.wakes_used >= limits::PEER_TASK_WAKES_MAX {
+        let why = format!(
+            "it was woken {} times without sending a report",
+            limits::PEER_TASK_WAKES_MAX
+        );
         close_with_promotion(conn, &task, &Close::Cancelled(Some(&why))).await?;
         return Ok(Wake::Cancelled);
     }

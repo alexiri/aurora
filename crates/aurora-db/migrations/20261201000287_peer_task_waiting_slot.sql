@@ -7,3 +7,6 @@
 DROP INDEX peer_tasks_one_open_uq;
 CREATE UNIQUE INDEX peer_tasks_one_open_uq ON peer_tasks (from_agent_id, to_agent_id)
     WHERE status IN ('open', 'waiting');
+-- FIX-253 (security review, medium 3): how many times the task was woken. A task is woken a
+-- bounded number of times without a report, so an agent cannot chain waits until its expiry.
+ALTER TABLE peer_tasks ADD COLUMN wakes_used integer NOT NULL DEFAULT 0 CHECK (wakes_used >= 0);

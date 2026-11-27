@@ -318,6 +318,8 @@ overridden by the named configuration key (`15`).
 | `ACTION_TOKEN_TTL` | approval deadline, else 24 h | — | 13 |
 | `APP_TURN_CAP` | 5 consecutive bot-authored turns | — | 07 |
 | `PEER_TASK_BUDGET` / `PEER_TASK_TTL` | 20 messages / 24 h | — | 07 |
+| `PEER_TASK_WAITING_PER_REQUESTER_MAX` / `PEER_TASK_WAITING_PER_RECEIVER_MAX` | 10 / 5 tasks waiting at once; one more is cancelled (FIX-253) | — | 07 |
+| `PEER_TASK_WAKES_MAX` | 20 wake-ups of one task without its report (FIX-253) | — | 07 |
 | `SESSION_IDLE` / `SESSION_ABSOLUTE` | 14 days / 30 days | `auth.session_*` | 04 |
 | `HOOK_MEMORY` / `HOOK_OUTPUT` | 64 MiB / 256 KiB | — | 09 |
 | `HOOK_WALL` | 15 s (connect, mint) / 1 s (`approval.summarize`) | — | 09 |

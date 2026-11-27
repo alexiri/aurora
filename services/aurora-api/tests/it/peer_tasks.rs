@@ -2110,6 +2110,180 @@ async fn the_wake_never_widens_rights() {
     assert_eq!((from, to), (d.a, d.b), "the pair is unchanged");
 }
 
+impl Duo {
+    async fn budget_used(&self, task: Uuid) -> i32 {
+        sqlx::query_scalar("SELECT messages_used FROM peer_tasks WHERE id = $1")
+            .bind(task)
+            .fetch_one(self.rig.h.pool())
+            .await
+            .unwrap()
+    }
+
+    /// `sender` opens a task to `@receiver` for the requester, in a fresh chat.
+    async fn send_from(&self, sender: Uuid, receiver: &str) -> Uuid {
+        let (conv, turn) = self.rig.person_turn(sender, self.rig.p.id).await;
+        let r = self
+            .rig
+            .tool(
+                sender,
+                conv,
+                Some(turn),
+                "message_agent",
+                json!({"agent": receiver, "text": "wait for it"}),
+            )
+            .await;
+        Rig::id(&Rig::ok(&r)["peer_task_id"])
+    }
+
+    /// Open a task, give its receiver a one-time wake-up and end the receiving turn.
+    async fn send_and_wait(&self, sender: Uuid, receiver: Uuid, handle: &str) -> Uuid {
+        let task = self.send_from(sender, handle).await;
+        let pc = self.rig.peer_conversation(task).await;
+        sqlx::query(
+            "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, enabled,
+                anchor, creator_user_id, origin_conversation_id, next_fire_at, run_at)
+             VALUES ($1,$2,'Check','look again',NULL,'UTC',true,'creator',$3,$4,
+                now() + interval '15 minutes', now() + interval '15 minutes')",
+        )
+        .bind(Uuid::now_v7())
+        .bind(receiver)
+        .bind(self.rig.p.id)
+        .bind(pc)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+        self.finish_receiving_turn(task).await;
+        task
+    }
+
+    async fn last_close_line(&self, conv: Uuid) -> String {
+        let closed = self.rig.notices(conv, "peer_task_closed").await;
+        closed.last().unwrap()["text"].as_str().unwrap().to_owned()
+    }
+
+    async fn origin_of(&self, task: Uuid) -> Uuid {
+        sqlx::query_scalar("SELECT origin_conversation_id FROM peer_tasks WHERE id = $1")
+            .bind(task)
+            .fetch_one(self.rig.h.pool())
+            .await
+            .unwrap()
+    }
+}
+
+/// (FIX-253 review, medium 3) Every wake turn is charged to the task's message budget like a
+/// task turn, also when the watch fires while the task is still open; with the budget used up
+/// the wake closes the task with the budget report and starts no turn.
+#[tokio::test]
+async fn every_wake_turn_is_charged_to_the_message_budget() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    assert_eq!(d.budget_used(task).await, 1);
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    d.fire_watch(task, &w).await;
+    assert_eq!(d.budget_used(task).await, 2, "the watch wake is charged");
+
+    // A watch that fires while the task is open starts a wake turn too.
+    let w = d.arm_watch(task).await;
+    d.fire_watch(task, &w).await;
+    assert_eq!(
+        d.budget_used(task).await,
+        3,
+        "a wake of an open task is charged"
+    );
+
+    // The budget is used up: the next wake starts nothing.
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    sqlx::query("UPDATE peer_tasks SET messages_used = message_budget WHERE id = $1")
+        .bind(task)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    let (_, pc) = d.fire_watch(task, &w).await;
+    assert_eq!(d.rig.task_status(task).await, "expired");
+    assert!(d.rig.running_turn(pc).await.is_none(), "no turn starts");
+    let line = d.last_close_line(d.conv).await;
+    assert!(line.contains("budget"), "{line}");
+}
+
+/// (FIX-253 review, medium 3) A task is woken at most 20 times without a report, whatever its
+/// message budget: the next wake cancels it and starts no turn.
+#[tokio::test]
+async fn a_task_is_woken_at_most_twenty_times_without_a_report() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("poll it").await["peer_task_id"]);
+    sqlx::query("UPDATE peer_tasks SET message_budget = 1000 WHERE id = $1")
+        .bind(task)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    for wake in 1..=20 {
+        let w = d.arm_watch(task).await;
+        d.finish_receiving_turn(task).await;
+        d.fire_watch(task, &w).await;
+        assert_eq!(d.rig.task_status(task).await, "open", "wake {wake}");
+    }
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    let (_, pc) = d.fire_watch(task, &w).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    assert!(d.rig.running_turn(pc).await.is_none(), "no turn starts");
+    let line = d.last_close_line(d.conv).await;
+    assert!(line.contains("woken 20 times"), "{line}");
+}
+
+/// (FIX-253 review, medium 3) At most 5 tasks wait on one receiving agent: the task that would
+/// be the sixth is cancelled with a line saying why instead of waiting.
+#[tokio::test]
+async fn a_receiving_agent_has_at_most_five_waiting_tasks() {
+    let d = duo().await;
+    let mut senders = vec![d.a];
+    for i in 0..5 {
+        senders.push(d.rig.agent(d.rig.ws1, &format!("sender{i}")).await);
+    }
+    let mut tasks = Vec::new();
+    for s in senders {
+        tasks.push(d.send_and_wait(s, d.b, "@bravo").await);
+    }
+    for t in &tasks[..5] {
+        assert_eq!(d.rig.task_status(*t).await, "waiting");
+    }
+    assert_eq!(d.rig.task_status(tasks[5]).await, "cancelled");
+    let line = d.last_close_line(d.origin_of(tasks[5]).await).await;
+    assert!(line.contains("already has 5 tasks waiting"), "{line}");
+}
+
+/// (FIX-253 review, medium 3) At most 10 tasks of one requester wait at once.
+#[tokio::test]
+async fn a_requester_has_at_most_ten_waiting_tasks() {
+    let d = duo().await;
+    let c = d.rig.agent(d.rig.ws1, "charlie").await;
+    let e = d.rig.agent(d.rig.ws1, "delta").await;
+    let mut senders = vec![d.a];
+    for i in 0..4 {
+        senders.push(d.rig.agent(d.rig.ws1, &format!("sender{i}")).await);
+    }
+    let mut tasks = Vec::new();
+    for (receiver, handle) in [(d.b, "@bravo"), (c, "@charlie")] {
+        for s in &senders {
+            tasks.push(d.send_and_wait(*s, receiver, handle).await);
+        }
+    }
+    for t in &tasks {
+        assert_eq!(d.rig.task_status(*t).await, "waiting");
+    }
+    let eleventh = d.send_and_wait(d.a, e, "@delta").await;
+    assert_eq!(d.rig.task_status(eleventh).await, "cancelled");
+    let line = d.last_close_line(d.origin_of(eleventh).await).await;
+    assert!(
+        line.contains("the person who asked already has 10 tasks waiting"),
+        "{line}"
+    );
+}
+
 /// (FIX-253, D-490(b)) With no registration the task is cancelled as today, and the FIX-252
 /// pending approval is the third waiting cause (no extra notice beyond FIX-252's own).
 #[tokio::test]
