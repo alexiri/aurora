@@ -2,7 +2,6 @@ import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ChatPane } from "@/components/agents/chat-tab";
-import { resetStopped } from "@/lib/chat/stopped";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
 
