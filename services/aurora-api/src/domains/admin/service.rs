@@ -50,6 +50,12 @@ pub async fn patch_user(
         if let Some(m) = ev.metadata.as_object_mut() {
             m.insert("push_subscriptions_removed".to_owned(), json!(push));
         }
+        // (FIX-262, C-1164) A disabled account is no longer an active owner anywhere: its
+        // emergency read access ends here, so enabling it again brings none back.
+        crate::domains::emergency_access::service::end_lost_for_account_in_tx(
+            &mut tx, &ev.actor, id,
+        )
+        .await?;
     }
     let ev = &ev;
     // (FIX-108) The cached caller carries `is_instance_admin`: whenever it (or the disabled

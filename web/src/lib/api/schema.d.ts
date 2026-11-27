@@ -25626,6 +25626,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     deleteAgent: {
@@ -26255,6 +26264,15 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28551,6 +28569,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     createMemory: {
@@ -28729,6 +28756,15 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -29953,6 +29989,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     createSchedule: {
@@ -30179,6 +30224,15 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -31009,6 +31063,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     streamAgentTimeline: {
@@ -31222,6 +31285,15 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -43941,6 +44013,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     deleteSchedule: {
@@ -44227,6 +44308,15 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -45505,6 +45595,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     deleteSkill: {
@@ -46647,6 +46746,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     deleteWebhook: {
@@ -46868,6 +46976,15 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -48038,6 +48155,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     listWorkspaceTemplates: {
@@ -48333,6 +48459,15 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -50604,6 +50739,15 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

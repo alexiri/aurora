@@ -757,6 +757,7 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
   // Conversations, memory, skills, schedules, evals
   "conversation.delete": plain("deleted a conversation", "important"),
   "conversation.emergency_view": plain("read a conversation through emergency access", "important"),
+  "workspace.emergency_read": plain("read something in a workspace through emergency access", "important"),
   "conversation.export": plain("exported a conversation", "important"),
   "conversation.rename": plain("renamed a conversation"),
   "conversation.owner_view": plain("read someone else's conversation", "important"),

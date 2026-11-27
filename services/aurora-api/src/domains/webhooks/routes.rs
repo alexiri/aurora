@@ -6,6 +6,7 @@ use crate::domains::automations::{
     dto::ReassignCreatorRequest,
     service::{self as auto, Acting, To},
 };
+use crate::domains::emergency_access::service::{ReadKind, record_read};
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -53,17 +54,17 @@ async fn authorized(
 }
 
 /// [`visible_agent`] for a *read* (C-1165): the emergency reader of the workspace lists the
-/// webhooks. Never for a write.
+/// webhooks. Never for a write. The caller records what it returns ([`record_read`] with this
+/// authority).
 async fn visible_agent_read(
     c: &Caller,
     s: &AppState,
     id: Uuid,
-) -> Result<agents::AgentRow, ApiError> {
+) -> Result<aurora_db::authz::ReadAuth, ApiError> {
     let row = agents::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    c.workspace_read(s, row.workspace_id).await?;
-    Ok(row)
+    c.workspace_read(s, row.workspace_id).await
 }
 
 /// [`authorized`] for a *read* (C-1165).
@@ -71,10 +72,10 @@ async fn authorized_read(
     c: &Caller,
     s: &AppState,
     id: Uuid,
-) -> Result<(WebhookRow, agents::AgentRow), ApiError> {
+) -> Result<(WebhookRow, aurora_db::authz::ReadAuth), ApiError> {
     let row = service::get(s, id).await?;
-    let agent = visible_agent_read(c, s, row.agent_id).await?;
-    Ok((row, agent))
+    let read = visible_agent_read(c, s, row.agent_id).await?;
+    Ok((row, read))
 }
 
 fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &WebhookRow, action: &str) {
@@ -91,15 +92,24 @@ fn record(c: &Caller, s: &AppState, a: &agents::AgentRow, r: &WebhookRow, action
 /// List an agent's webhooks.
 #[utoipa::path(get, path = "/agents/{agent}/webhooks", operation_id = "listWebhooks",
     tag = "webhooks", params(("agent" = Uuid, Path, description = "Agent id")),
-    responses((status = 200, body = Page<Webhook>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<Webhook>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_webhooks(
     c: Caller,
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Webhook>>, ApiError> {
-    visible_agent_read(&c, &s, agent).await?;
+    let read = visible_agent_read(&c, &s, agent).await?;
     let items = service::list(&s, agent).await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Webhook,
+        None,
+    )
+    .await?;
     Ok(Json(Page {
         items: items.into_iter().map(Webhook::from).collect(),
         next_cursor: None,
@@ -175,14 +185,23 @@ async fn rotate_webhook_secret(
 /// Get one webhook (never includes the URL token or the verification secret).
 #[utoipa::path(get, path = "/webhooks/{id}", operation_id = "getWebhook", tag = "webhooks",
     params(("id" = Uuid, Path, description = "Webhook id")),
-    responses((status = 200, body = Webhook), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Webhook), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn get_webhook(
     c: Caller,
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Webhook>, ApiError> {
-    let (row, _) = authorized_read(&c, &s, id).await?;
+    let (row, read) = authorized_read(&c, &s, id).await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Webhook,
+        Some(id),
+    )
+    .await?;
     Ok(Json(row.into()))
 }
 
@@ -293,7 +312,8 @@ struct DeliveriesQuery {
 /// Recent deliveries, newest first.
 #[utoipa::path(get, path = "/webhooks/{id}/deliveries", operation_id = "listWebhookDeliveries",
     tag = "webhooks", params(("id" = Uuid, Path, description = "Webhook id"), DeliveriesQuery),
-    responses((status = 200, body = Page<WebhookDelivery>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<WebhookDelivery>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_deliveries(
     c: Caller,
@@ -301,11 +321,19 @@ async fn list_deliveries(
     Path(id): Path<Uuid>,
     Query(q): Query<DeliveriesQuery>,
 ) -> Result<Json<Page<WebhookDelivery>>, ApiError> {
-    authorized_read(&c, &s, id).await?;
+    let (_, read) = authorized_read(&c, &s, id).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows =
         aurora_db::repo::webhooks::deliveries_with_results(&s.pool, id, p.after_key(), p.fetch())
             .await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Webhook,
+        Some(id),
+    )
+    .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));
     Ok(Json(page.map(WebhookDelivery::from)))
 }

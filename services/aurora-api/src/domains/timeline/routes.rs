@@ -46,7 +46,8 @@ async fn resolve(s: &AppState, c: &Caller, agent: Uuid) -> Result<(Viewer, Agent
 #[utoipa::path(get, path = "/agents/{agent}/timeline", operation_id = "getAgentTimeline", tag = "timeline",
     params(("agent" = Uuid, Path, description = "Agent id"), TimelineQuery),
     responses((status = 200, body = TimelinePage), (status = 400, body = ErrorEnvelope),
-        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope)),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn timeline(
     c: Caller,

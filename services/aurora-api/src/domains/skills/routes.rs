@@ -2,12 +2,14 @@ use super::app_skills;
 use super::dto::*;
 use super::service::{self, NewSkill, Owner, Patch};
 use crate::app::AppState;
-use crate::audit::{self, AuditEvent};
+use crate::audit::{self, AuditActor, AuditEvent};
+use crate::domains::emergency_access::service::{ReadKind, record_read};
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
 use aurora_core::ApiError;
+use aurora_db::authz::ReadAuth;
 use aurora_db::repo::{agents, skills::SkillRow};
 use axum::body::Bytes;
 use axum::extract::State;
@@ -76,31 +78,32 @@ pub(super) async fn authorize(
 /// [`authorize`] for a *read* (C-1165): the emergency reader of the workspace reads the agent's
 /// and the workspace's skills. Never for a write. Org-tier skills are unchanged: an emergency
 /// reader is an active org owner, so the org read already passes.
-async fn authorize_read(c: &Caller, s: &AppState, sk: &SkillRow) -> Result<(), ApiError> {
+///
+/// Returns the workspace read authority, which the caller records with the content it returns
+/// ([`record_read`]); `None` for an org-tier skill, which membership reads, not the grant.
+async fn authorize_read(
+    c: &Caller,
+    s: &AppState,
+    sk: &SkillRow,
+) -> Result<Option<ReadAuth>, ApiError> {
     if let Some(ws) = sk.workspace_id {
-        c.workspace_read(s, ws).await?;
-        return Ok(());
+        return c.workspace_read(s, ws).await.map(Some);
     }
     match sk.agent_id {
-        Some(a) => visible_agent_read(c, s, a).await.map(|_| ()),
+        Some(a) => visible_agent_read(c, s, a).await.map(Some),
         None => {
             c.org(s, sk.org_id).await?;
-            Ok(())
+            Ok(None)
         }
     }
 }
 
 /// [`visible_agent`] for a *read* (C-1165).
-async fn visible_agent_read(
-    c: &Caller,
-    s: &AppState,
-    id: Uuid,
-) -> Result<agents::AgentRow, ApiError> {
+async fn visible_agent_read(c: &Caller, s: &AppState, id: Uuid) -> Result<ReadAuth, ApiError> {
     let row = agents::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    c.workspace_read(s, row.workspace_id).await?;
-    Ok(row)
+    c.workspace_read(s, row.workspace_id).await
 }
 
 fn record(c: &Caller, s: &AppState, sk: &SkillRow, action: &str, ws: Option<Uuid>) {
@@ -138,15 +141,25 @@ async fn page(s: &AppState, items: Vec<service::SkillView>) -> Result<Json<Page<
 /// List an agent's own skills.
 #[utoipa::path(get, path = "/agents/{agent}/skills", operation_id = "listAgentSkills",
     tag = "skills", params(("agent" = Uuid, Path, description = "Agent id")),
-    responses((status = 200, body = Page<Skill>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<Skill>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_agent_skills(
     c: Caller,
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Skill>>, ApiError> {
-    visible_agent_read(&c, &s, agent).await?;
-    page(&s, service::list_agent(&s.pool, agent).await?).await
+    let read = visible_agent_read(&c, &s, agent).await?;
+    let out = page(&s, service::list_agent(&s.pool, agent).await?).await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Skill,
+        None,
+    )
+    .await?;
+    Ok(out)
 }
 
 /// Create an agent-tier skill; 409 `skill_exists`.
@@ -235,15 +248,25 @@ async fn create_org_skill(
 #[utoipa::path(get, path = "/workspaces/{ws}/skills", operation_id = "listWorkspaceSkills",
     tag = "skills", params(("ws" = Uuid, Path, description = "Workspace id")),
     responses((status = 200, body = Page<Skill>), (status = 403, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope)),
+        (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_workspace_skills(
     c: Caller,
     State(s): State<AppState>,
     Path(ws): Path<Uuid>,
 ) -> Result<Json<Page<Skill>>, ApiError> {
-    c.workspace_read(&s, ws).await?;
-    page(&s, service::list_workspace(&s.pool, ws).await?).await
+    let read = c.workspace_read(&s, ws).await?;
+    let out = page(&s, service::list_workspace(&s.pool, ws).await?).await?;
+    record_read(
+        &s,
+        &AuditActor::from_caller(&c),
+        &read,
+        ReadKind::Skill,
+        None,
+    )
+    .await?;
+    Ok(out)
 }
 
 /// Create a workspace-tier skill (`can_own`, org owners/admins included); 409 `skill_exists`.
@@ -413,7 +436,8 @@ async fn effective_agent_skills(
 /// Get one skill with its file metadata.
 #[utoipa::path(get, path = "/skills/{id}", operation_id = "getSkill", tag = "skills",
     params(("id" = Uuid, Path, description = "Skill id")),
-    responses((status = 200, body = Skill), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Skill), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn get_skill(
     c: Caller,
@@ -421,8 +445,13 @@ async fn get_skill(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Skill>, ApiError> {
     let v = service::get(&s.pool, id).await?;
-    authorize_read(&c, &s, &v.row).await?;
-    Ok(Json(service::dto(&s.pool, v).await?))
+    let read = authorize_read(&c, &s, &v.row).await?;
+    let out = service::dto(&s.pool, v).await?;
+    if let Some(read) = &read {
+        let actor = AuditActor::from_caller(&c);
+        record_read(&s, &actor, read, ReadKind::Skill, Some(id)).await?;
+    }
+    Ok(Json(out))
 }
 
 /// Update description, body or enabled. The name is immutable.

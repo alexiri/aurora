@@ -41,6 +41,9 @@ pub async fn suspend_membership(
         return Ok(()); // idempotent
     }
     members::update(&mut *conn, org, user, None, Some("suspended")).await?;
+    // (FIX-262, C-1164) Emergency read access ends with the ownership, in this transaction (a
+    // no-op without an open grant), so a reactivation never brings one back.
+    crate::domains::emergency_access::service::end_lost_in_tx(&mut *conn, actor, org, user).await?;
     // (FIX-083) Access the IdP's group claim granted ends with the suspension and is not
     // restored by a reactivation; the next sign-in re-syncs.
     crate::domains::groups::sync::drop_idp_memberships(
@@ -102,6 +105,8 @@ pub async fn remove_membership(
         return Ok(()); // idempotent
     }
     members::remove(&mut *conn, org, user).await?;
+    // (FIX-262, C-1164) As in [`suspend_membership`].
+    crate::domains::emergency_access::service::end_lost_in_tx(&mut *conn, actor, org, user).await?;
     notify(conn, org, user).await?;
     let ev = AuditEvent::new(actor.clone(), "member.remove", Outcome::Success)
         .org(org)

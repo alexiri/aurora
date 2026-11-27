@@ -44,6 +44,6 @@
     "user.update", "webhook.create", "webhook.delete", "webhook.rotate", "webhook.rotate_secret", "webhook.test_sent", "webhook.update",
     "workspace.access.grant", "workspace.access.pending_apply", "workspace.access.pending_create", "workspace.access.pending_delete",
     "workspace_access.personal_owner", "workspace_access.remove", "workspace_access.restore", "workspace_access.set", "workspace_access.suspend", "workspace.byo_posture.update",
-    "workspace.create", "workspace.delete", "workspace.emergency_access.end", "workspace.emergency_access.expire", "workspace.emergency_access.open", "workspace.freeze", "workspace.unfreeze", "workspace.update"
+    "workspace.create", "workspace.delete", "workspace.emergency_access.end", "workspace.emergency_access.expire", "workspace.emergency_access.open", "workspace.emergency_read", "workspace.freeze", "workspace.unfreeze", "workspace.update"
   ]
 }

@@ -66,7 +66,9 @@ const ADMINISTER: &[(&str, &[&str])] = &[
 const READAUTH: &[(&str, &[&str])] = &[
     // The workspace's people (the administer path keeps working through its fallback).
     ("/workspaces/{ws}/access", &["get"]),
-    // The workspace's agents and the request log (metadata, no recording needed).
+    // The workspace's agents and the request log. Every content route below records what an
+    // emergency reader reads (conversations as `conversation.emergency_view`, the rest as
+    // `workspace.emergency_read`, FIX-262); the people list is metadata and records nothing.
     ("/workspaces/{ws}/activity", &["get"]),
     ("/workspaces/{ws}/agents", &["get"]),
     ("/workspaces/{ws}/messages/search", &["get"]),

@@ -3,6 +3,7 @@ use super::dto::*;
 use super::service;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::emergency_access::service::{ReadKind, record_read};
 use crate::http::auth::{AgentCaller, Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -300,6 +301,7 @@ mod org_agent_state_tests {
     responses(
         (status = 200, description = "Agents", body = Page<Agent>),
         (status = 404, description = "Not found", body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope),
     ),
     security(("session" = []), ("api_key" = []))
 )]
@@ -332,6 +334,7 @@ async fn list_agents(
         None => vec![None; page.items.len()],
     };
     let administer_only = read.is_none();
+    let actor = AuditActor::from_caller(&caller);
     // (FIX-251, D-488(a)) The Update available mark, before the rows are consumed: which
     // agents' templates offer a semver-newer version than the agent's stored one.
     let behind =
@@ -360,6 +363,10 @@ async fn list_agents(
                     .unwrap_or_default();
         }
     }
+    // (FIX-262) The rows carry each agent's brief: an emergency reader's read is recorded.
+    if let Some(read) = &read {
+        record_read(&state, &actor, read, ReadKind::Agent, None).await?;
+    }
     Ok(Json(Page {
         items,
         next_cursor: page.next_cursor,
@@ -376,6 +383,7 @@ async fn list_agents(
     responses(
         (status = 200, description = "Agent", body = Agent),
         (status = 404, description = "Not found", body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope),
     ),
     security(("session" = []), ("api_key" = []))
 )]
@@ -388,8 +396,11 @@ async fn get_agent(
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
     // (FIX-236, C-1165) A read route: own access, or an active emergency grant.
-    caller.workspace_read(&state, row.workspace_id).await?;
-    Ok(Json(with_byo(&state, row).await?))
+    let read = caller.workspace_read(&state, row.workspace_id).await?;
+    let out = with_byo(&state, row).await?;
+    let actor = AuditActor::from_caller(&caller);
+    record_read(&state, &actor, &read, ReadKind::Agent, Some(id)).await?;
+    Ok(Json(out))
 }
 
 /// The agent DTO with its `byo` view loaded (BYO agents).

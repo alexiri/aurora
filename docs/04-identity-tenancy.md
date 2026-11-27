@@ -1375,14 +1375,18 @@ legal and incident work sometimes needs the content.
   files, preview and grants route refuses it. The reader sees every
   conversation of the workspace, direct ones included.
 - **Every read is recorded.** Each response carrying a conversation's content
-  writes `conversation.emergency_view` before the body is sent; a failed
-  write refuses the read (503). The open, list and end responses carry
-  metadata only.
+  writes `conversation.emergency_view` before the body is sent; every other
+  read of workspace content under the grant (memory, schedules, webhooks,
+  skills, agents, activity, the timeline) writes `workspace.emergency_read`
+  (FIX-262, D-502, C-1165); a failed write refuses the read (503). The open,
+  list and end responses carry metadata only.
 - **It ends.** At `expires_at`, evaluated on every use (never only by the
   sweep); early, by the opener or any active org owner (critical audit row,
   idempotent); with `access_lost` when the opener stops being an active org
-  owner, in the same transaction as that change. Rows are kept 400 days for
-  the history views, then the nightly sweep deletes them.
+  owner (a person's, a claim's or SCIM's change) or their account is
+  disabled, in the same transaction as that change. An ended grant never
+  comes back. Rows are kept 400 days for the history views, then the nightly
+  sweep deletes them.
 
 ## Invitations
 
