@@ -10,10 +10,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
+use aurora_protocol::runner::SendNowOutcome;
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use aurora_supervisor::adapters::claude_code::ClaudeCodeAdapter;
 use aurora_supervisor::adapters::claude_code::launcher::ProcessLauncher;
 use aurora_supervisor::channel::ChannelSender;
+use aurora_supervisor::fake::FakeHarness;
+use aurora_supervisor::harness::{
+    HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEventStream, HarnessSession,
+    SessionOptions, SteerAck, SteerInput, TurnInput,
+};
 use aurora_supervisor::process::ProcessConfig;
 use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
 use serde_json::{Value, json};
@@ -90,8 +97,13 @@ fn write_child(ws: &Path, turns: &[String]) -> PathBuf {
 
 async fn rig(turns: &[String]) -> Rig {
     let ws = TempDir::new().keep();
-    fs::create_dir_all(ws.join(".aurora")).unwrap();
     let program = write_child(&ws, turns);
+    let adapter = ClaudeCodeAdapter::with_launcher(Arc::new(ProcessLauncher { program }));
+    rig_with(ws, Arc::new(adapter)).await
+}
+
+async fn rig_with(ws: PathBuf, adapter: Arc<dyn HarnessAdapter>) -> Rig {
+    fs::create_dir_all(ws.join(".aurora")).unwrap();
     let (out_tx, out_rx) = mpsc::channel(256);
     let (in_tx, in_rx) = mpsc::channel(256);
     let mut cfg = SupervisorConfig::new(crate::common::dead_upstream(), "aub_x");
@@ -102,9 +114,7 @@ async fn rig(turns: &[String]) -> Rig {
     let sup = Supervisor::new(
         cfg,
         ChannelSender::from_mpsc(out_tx),
-        Arc::new(ClaudeCodeAdapter::with_launcher(Arc::new(
-            ProcessLauncher { program },
-        ))),
+        adapter,
         aurora_supervisor::streams::StreamsHandle::noop(),
         aurora_supervisor::pty::PtyHandle::noop(),
     );
@@ -396,4 +406,136 @@ async fn released_is_reported_only_after_the_processes_are_gone() {
         "released was reported while {immune} still runs"
     );
     gone(immune).await;
+}
+
+const STUCK_CONV: &str = "00000000-0000-0000-0000-0000000000ca";
+
+/// The fake harness, but a session of [`STUCK_CONV`] never finishes its release.
+struct Stuck;
+
+struct StuckSession(Box<dyn HarnessSession>, bool);
+
+#[async_trait]
+impl HarnessAdapter for Stuck {
+    fn id(&self) -> &'static str {
+        "fake"
+    }
+    fn capabilities(&self) -> HarnessCapabilities {
+        FakeHarness.capabilities()
+    }
+    async fn start_session(
+        &self,
+        opts: SessionOptions,
+    ) -> Result<Box<dyn HarnessSession>, HarnessError> {
+        let stuck = opts.conversation_id.to_string() == STUCK_CONV;
+        let s = FakeHarness.start_session(opts).await?;
+        Ok(Box::new(StuckSession(s, stuck)))
+    }
+    async fn purge_session(&self, dir: &Path, session_ref: &str) -> Result<(), HarnessError> {
+        FakeHarness.purge_session(dir, session_ref).await
+    }
+}
+
+#[async_trait]
+impl HarnessSession for StuckSession {
+    fn session_ref(&self) -> Option<String> {
+        self.0.session_ref()
+    }
+    async fn run_turn(&mut self, input: TurnInput) -> Result<HarnessEventStream, HarnessError> {
+        self.0.run_turn(input).await
+    }
+    async fn steer(&mut self, input: SteerInput) -> Result<SteerAck, HarnessError> {
+        self.0.steer(input).await
+    }
+    async fn background_running_tool(&mut self) -> Result<SendNowOutcome, HarnessError> {
+        self.0.background_running_tool().await
+    }
+    async fn abort(&mut self) -> Result<(), HarnessError> {
+        self.0.abort().await
+    }
+    async fn release(&mut self) -> Result<(), HarnessError> {
+        if self.1 {
+            std::future::pending::<()>().await;
+        }
+        self.0.release().await
+    }
+}
+
+impl Rig {
+    async fn deliver(&self, conversation: &str, turn: Uuid, epoch: u64, text: &str) {
+        self.send(
+            "turn.deliver",
+            json!({
+                "conversation_id": conversation, "turn_id": turn, "session": {"epoch": epoch},
+                "model": {"provider": "p", "endpoint_id": "e", "base_url": "http://x",
+                          "dialect": "anthropic_messages", "model": "m", "effort": "low", "client_env": []},
+                "context_credential": "auc_turn",
+                "input": {"text": text, "speaker_label": "Ann", "door": "web",
+                          "recall": {"index": "", "snippets": []}, "notices": []},
+                "attachments": [],
+            }),
+        )
+        .await;
+    }
+
+    /// The bodies of the first frames that `wanted` names, in any order, all within `limit`.
+    async fn within(
+        &mut self,
+        limit: Duration,
+        what: &str,
+        wanted: &[(&str, &str, Value)],
+    ) -> Vec<Value> {
+        let mut found: Vec<Option<Value>> = vec![None; wanted.len()];
+        let got = timeout(limit, async {
+            while found.iter().any(Option::is_none) {
+                let m = self.from_sup.recv().await.unwrap();
+                let v = serde_json::to_value(&m).unwrap();
+                for (slot, (kind, key, value)) in found.iter_mut().zip(wanted) {
+                    if m.kind() == *kind && v["body"][key] == *value {
+                        *slot = Some(v["body"].clone());
+                    }
+                }
+            }
+        })
+        .await;
+        assert!(got.is_ok(), "{what}: the supervisor stalled");
+        found.into_iter().flatten().collect()
+    }
+}
+
+/// (SEC-165) Releases that do not finish hold the supervisor's loop no longer than one
+/// deadline, however many a conversation has: it reports that they did not stop, and another
+/// conversation's abort is handled meanwhile.
+#[tokio::test]
+async fn stuck_releases_do_not_stall_the_other_conversations() {
+    let mut r = rig_with(TempDir::new().keep(), Arc::new(Stuck)).await;
+    // Longer than the one deadline, far shorter than for ever.
+    let limit = Duration::from_secs(10);
+    let busy = Uuid::now_v7();
+    r.deliver(CONV, busy, 1, "[[sleep: 120s]]").await;
+    r.within(limit, "start", &[("turn.started", "turn_id", json!(busy))])
+        .await;
+    // A new session epoch replaces the first session, whose release is stuck.
+    for epoch in [1, 2] {
+        let turn = Uuid::now_v7();
+        r.deliver(STUCK_CONV, turn, epoch, "hello").await;
+        r.within(limit, "turn", &[("turn.result", "turn_id", json!(turn))])
+            .await;
+    }
+    // Both of the conversation's sessions are stuck now.
+    r.send("session.release", json!({"conversation_id": STUCK_CONV}))
+        .await;
+    r.send("turn.abort", json!({"turn_id": busy})).await;
+    let got = r
+        .within(
+            limit,
+            "release and abort",
+            &[
+                ("session.released", "conversation_id", json!(STUCK_CONV)),
+                ("turn.result", "turn_id", json!(busy)),
+            ],
+        )
+        .await;
+    assert_eq!(got[0]["ok"], false, "{got:?}");
+    assert_eq!(got[1]["status"], "aborted", "{got:?}");
 }

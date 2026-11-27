@@ -668,16 +668,20 @@ impl HarnessSession for ClaudeSession {
         {
             a.notify_one();
         }
-        let mut failed = None;
         if let Some(l) = &self.live {
             l.dead.store(true, Ordering::SeqCst);
-            if let Err(e) = l.procs.end().await {
-                failed = Some(e);
-            }
         }
+        // All at once, so that one child that will not end does not hold up the others.
+        let live = self.live.as_ref().map(|l| l.procs.clone());
+        let ends = live.iter().chain(&self.unended).map(|p| p.end());
+        let mut results = futures::future::join_all(ends).await.into_iter();
+        let mut failed = live
+            .as_ref()
+            .and_then(|_| results.next())
+            .and_then(Result::err);
         let mut left = Vec::new();
-        for p in std::mem::take(&mut self.unended) {
-            if let Err(e) = p.end().await {
+        for (p, result) in std::mem::take(&mut self.unended).into_iter().zip(results) {
+            if let Err(e) = result {
                 left.push(p);
                 failed = Some(e);
             }
