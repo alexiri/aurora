@@ -8,7 +8,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 
 | Layer | Scope | Tooling | Runs |
 |-------|-------|---------|------|
-| **Unit** | pure logic per crate (matchers, evaluator, sanitizers, templates, envelopes, cron, state machines) | `cargo test`, `cargo nextest` (the documented fast path, `just test-nextest`), `proptest`, `insta` | every PR |
+| **Unit** | pure logic per crate (matchers, evaluator, sanitizers, templates, envelopes, cron, state machines) | `cargo test`, `cargo nextest` (on a development machine only through `scripts/dev/test.sh`), `proptest`, `insta` | every PR |
 | **Database** | repositories, claims, partial-unique races, migrations up from empty and from the previous release's schema | ephemeral Postgres from `aurora-testkit` (podman), one database per test | every PR |
 | **Service** | one service in-process with real Postgres and mocks for its neighbours (API with fake runner/connector clients; gateway with mock upstreams and a stub hook host) | `aurora-testkit`, `wiremock` | every PR |
 | **Contract** | OpenAPI document vs handlers; JSON Schemas of every wire type vs checked-in schemas; dashboard client regenerated without drift | schema diff | every PR |
@@ -1104,11 +1104,53 @@ personal access token, against the live server; the dashboard is `web/tests/user
   scoped tracing subscriber, which must not race other tests' callsite registration), `services/aurora-supervisor/tests/conformance.rs`
   (live-gated), and the e2e crates (`tests/e2e-gateway`, `tests/e2e-hosted`, `tests/conformance/connector`).
 - **Test ids**: a test in `tests/it/foo.rs` is `foo::name`. Run one with
-  `cargo test -p aurora-api --test it -- foo::name`, a file with `-- foo::`, the schema check with
-  `cargo test -p aurora-db --test it schema_matches_spec`. `docs/tests/*-coverage.md` refer to files as `api/it/foo.rs::name`.
-- **Whole workspace without the gated e2e crates**: `just test` (= `cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted`).
-  `just test-nextest` runs the same set under cargo-nextest when installed (`.config/nextest.toml`; no retries; 10 min per-test kill).
+  `scripts/dev/test.sh <lane> rust -p aurora-api --test it foo::name`, a file with the filter `foo::`, the schema
+  check with `scripts/dev/test.sh <lane> rust -p aurora-db --test it schema_matches_spec`.
+  `docs/tests/*-coverage.md` refer to files as `api/it/foo.rs::name`.
+- **How to run tests** on a development machine: see §[Running tests](#running-tests-on-a-development-machine-fix-255-d-491).
+  The whole workspace is CI's job.
 - **Build speed and disk**: see `docs/ops/build-performance.md` (linker, `dev-fast` profile, optional sccache, lane clean-up).
+
+## Running tests on a development machine (FIX-255, D-491)
+
+The development machine is shared by many lanes, so tests run only through one script, which does the safe thing
+by itself. CI does not use it (CI has its own Postgres service and runners).
+
+```sh
+scripts/dev/test.sh <lane> rust -p aurora-db [nextest filters/args]   # one crate
+scripts/dev/test.sh <lane> rust --crates aurora-db,aurora-api         # one after another (--keep-going)
+scripts/dev/test.sh <lane> rust --all-crates                          # every member but the two e2e crates, one at a time
+scripts/dev/test.sh <lane> web vitest [files]
+scripts/dev/test.sh <lane> web playwright e2e/<spec> --project=mocked # the spec before the flags
+```
+
+- **One shared test Postgres** for the whole machine: the container `aurora-test-pg` (`postgres:16`, data on a
+  tmpfs, no volume, `127.0.0.1:55990`, `AURORA_TEST_PG_PORT` to change it, `max_connections` 300), managed by
+  `scripts/dev/test-pg.sh up|url|status|down` and started on first use. Every test makes its own scratch database
+  on it, so lanes do not collide. Don't run `down` while others may be testing, and never `podman run` a database
+  for tests.
+- **`aurora-testkit` fails closed.** It uses `AURORA_TEST_DATABASE_URL`, then `DATABASE_URL` (environment, then the
+  repo-root `.env`), and otherwise the shared server; it never starts a container per test process. It refuses a URL
+  on port 55432 (the owner's dev database). `test.sh` sets both variables on the command itself, so a `.env` has no
+  say there.
+- **Tests take their database from the test kit:** `let (_db, pool) = TestDb::with_pool().await;` (a fresh migrated
+  database, dropped when `_db` goes out of scope), or `TestDb::unmigrated_with_pool()` for an empty one.
+  **`#[sqlx::test]` is banned** (`scripts/guards/no-sqlx-test.py`): it reads `DATABASE_URL` and `.env` itself, past
+  the rules above, so it could run a test against the owner's dev database.
+- **e2e scripts** (`scripts/e2e/*.sh`) are not run by `test.sh`: run them through `scripts/dev/heavy.sh`. Naming an
+  e2e crate (`-p aurora-e2e-gateway`) works, with a warning that it starts its own stack.
+- **Slots and load.** Each crate or suite runs in its own slot of `scripts/dev/heavy.sh` (two slots for the whole
+  machine, given out first come, first served; don't wrap `test.sh` in it). Before it starts one, `test.sh` waits while the 1-minute load is above
+  2 × cores or more than 10 podman containers are running, and gives up after 30 minutes (exit 3).
+- **Caps.** Rust: `AURORA_TEST_THREADS` test threads (default 4, at most 8). vitest: 4 workers. Playwright: 2.
+- **Refused** (exit 2): no crate named, `--workspace`, a crate glob, more threads than the cap, a URL on port 55432
+  in the environment or the arguments, watch/UI modes.
+- Never run `cargo test` or `cargo nextest run` across the workspace by hand. `just test` (every crate but the e2e
+  ones, then doctests) and `just test-nextest` (no doctests) go through `test.sh --all-crates`. Other heavy commands (build, clippy, e2e scripts, `podman build`) go through
+  `scripts/dev/heavy.sh <lane> <command>`.
+- nextest skips doctests: `scripts/dev/heavy.sh <lane> cargo test -p <crate> --doc` runs them (no database).
+- The scripts have their own test, `bash scripts/dev/test_test-runner.sh` (stubbed podman and cargo), run by
+  `scripts/guards/run-all.sh`.
 
 ## Velocity: fast local commands (VTL-001)
 
@@ -1119,7 +1161,7 @@ starts a container or binds fixed host addresses belongs in the excluded e2e
 crates (`tests/e2e-gateway`, `tests/e2e-hosted`) and runs in CI's serial jobs,
 env-gated so a bare local invocation skips gracefully
 (`AURORA_E2E_DB_TARGET` pattern). When a spec adds tests, it names the tier
-and the measured wall-clock delta for `just test`. Applied by TEST-021
+and the measured wall-clock delta for the crates' test runs. Applied by TEST-021
 (gateway wire conformance: tier-1 oracles < 5 s local; nginx/haproxy
 front-door containers CI-only).
 
@@ -1131,11 +1173,10 @@ lanes, so absolute times vary):
    excepted, as always with nextest); each test runs in its own process with
    its own `aurora-testkit` database, so parallel processes are isolated.
    Install once (`cargo install cargo-nextest --locked`, or the prebuilt
-   binary from <https://nexte.st>), then `just test-nextest` / `cargo nextest
-   run`. `.config/nextest.toml` caps parallelism at 8 processes (the shared
-   dev Postgres has `max_connections = 100` and every lane's tests share it;
-   16 parallel processes hit "too many clients"), keeps `retries = 0` — a
-   flaky test is a bug, not noise — and kills a hung test at 10 minutes.
+   binary from <https://nexte.st>), then run it through
+   `scripts/dev/test.sh` (4 test threads by default, at most 8; one shared
+   test Postgres). `.config/nextest.toml` keeps `retries = 0` — a flaky
+   test is a bug, not noise — and kills a hung test at 10 minutes.
 2. **Keep sccache warm.** `scripts/dev/rustc-wrapper.sh` routes every rustc
    call through sccache when it is installed; a fresh worktree with a warm
    cache compiles its dependency graph in roughly half the time. Leave the
@@ -1177,7 +1218,8 @@ it detects which crates a change touches (working tree + index + untracked
 files vs HEAD; on a clean lane, the commits since the merge-base with
 `origin/master`), prints a plan, and runs only what that scope needs —
 `cargo fmt --all --check`, `cargo clippy -p <crate> --all-targets
---all-features -- -D warnings` and `cargo test -p <crate>` per affected crate,
+--all-features -- -D warnings` and the affected crates' tests (through
+`scripts/dev/test.sh`, one crate at a time),
 plus `npx tsc --noEmit` and `npx vitest` for `web/` changes. Workspace-wide
 files (`Cargo.lock`, toolchain, lint config) widen clippy and tests to the
 whole workspace minus the e2e crates; a data-model change adds the schema
@@ -1187,12 +1229,13 @@ master) still runs a core set — clippy on `aurora-db` and `aurora-protocol`
 pre-commit suite: workspace clippy, all non-e2e cargo tests, web lint +
 typecheck + full vitest, architecture guards), `--clippy-only`,
 `--tests-only`, `--web`; `AURORA_QUICK_GATE_VERBOSE=1` lists every changed
-file before running. Tests and clippy find Postgres through the repo
-convention (I-05: `.env`, else the environment, else the documented
-aurora-dev-pg URL); sqlx::test uses scratch databases only. Every cargo
+file before running. Tests run through `scripts/dev/test.sh` (§[Running
+tests](#running-tests-on-a-development-machine-fix-255-d-491)); the gate
+neither sets nor guesses a database URL. Every cargo
 command runs from the repo root (no `--manifest-path`), so
 `.cargo/config.toml` — the lld linker and the sccache rustc-wrapper — stays
-in effect, and heavy commands run under `nice -10` with a load gate for the
+in effect, and heavy commands take a `scripts/dev/heavy.sh` slot (don't wrap
+the gate itself in one) with a load gate for the
 shared host. This vitest is 4.x, where `related` is a subcommand
 (`vitest related <files>`), not a `--related` flag; changed test files run
 directly. When the test scope includes `aurora-api` (or the whole workspace)
@@ -1217,9 +1260,10 @@ everywhere); `plugins/**` and `scripts/fixtures/**` select `aurora-api` (the
 `connect::` tests run against built fixtures); a change under `deploy/`,
 `images/`, `.github/`, `scripts/` or `justfile` runs
 `bash scripts/guards/run-all.sh` (the guards read the chart, the images and the
-workflows; FIX-103). Tests run under `cargo nextest` when it is installed
-(same tests as `cargo test`, one process each; **doctests are skipped** —
-run `cargo test --doc -p <crate>` or `just test` for them), else `cargo test`.
+workflows; FIX-103). Tests run under `cargo nextest` through `test.sh`
+(it must be installed; same tests as `cargo test`, one process each;
+**doctests are skipped** — `--all` runs them, or
+`scripts/dev/heavy.sh <lane> cargo test -p <crate> --doc`).
 Inner-loop clippy drops `--all-features` unless a touched crate defines
 feature flags; `--all` and workspace-wide changes keep it. Not CI-parity:
 code behind features of an *untouched* dependent crate is not linted, and

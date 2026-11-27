@@ -6,6 +6,7 @@
 //! app, a GitLab library whose connection is gone) becomes an `error` row asking for an address.
 //! The unique index exists and the token columns keep both-or-neither.
 use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
 
@@ -86,10 +87,9 @@ async fn row(pool: &PgPool, id: Uuid) -> (Option<String>, Option<String>, String
         .unwrap()
 }
 
-#[sqlx::test(migrations = false)]
-async fn libraries_are_backfilled_with_their_git_url_and_the_rest_asks_for_an_address(
-    pool: PgPool,
-) {
+#[tokio::test]
+async fn libraries_are_backfilled_with_their_git_url_and_the_rest_asks_for_an_address() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version < VERSION)
