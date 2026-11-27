@@ -26,12 +26,12 @@ export function label<Key extends string>(table: Record<Key, LabelEntry<never>>,
   return entry.label;
 }
 
-/** (P5-SKLIB-3, D-450(e)) A skill library's status (`SkillLibrary.status`); "Can't be read" carries the reason beside it. */
+/** (D-450(e), D-506) A skill library's status (`SkillLibrary.status`); "Needs attention" carries the reason on the card. */
 export const LIBRARY_STATUS = {
-  active: { label: "Active" },
+  active: { label: "Up to date" },
   paused: { label: "Paused" },
-  error: { label: "Can't be read" },
-  over_budget: { label: "Pending updates over budget" },
+  error: { label: "Needs attention" },
+  over_budget: { label: "Over budget" },
 } satisfies LabelTable;
 
 /** (C-1114) An agent template source's last read (`AgentTemplateSource.status`); the reason sits beside "Can't be read". */

@@ -323,7 +323,7 @@ describe("Administration rail", () => {
     const rail = screen.getByRole("navigation", { name: "Administration" });
     const groups = within(rail).getAllByRole("group");
     expect(groups.map((g) => g.getAttribute("aria-labelledby") && g.querySelector("p")?.textContent)).toEqual(["Policy for everyone", "This installation"]);
-    expect(within(groups[0]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["What agents may do", "Apps", "Chat platforms", "People & sign-in", "Data"]);
+    expect(within(groups[0]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["What agents may do", "Apps", "Skills", "Chat platforms", "People & sign-in", "Data"]);
     expect(within(groups[1]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["Health & runners", "AI endpoints", "Set in Helm", "All settings"]);
     // "Administration" is said once: the header's "You're in Administration"; the footer entry is only outside Administration.
     const shell = screen.getByRole("complementary", { name: "Sidebar" });

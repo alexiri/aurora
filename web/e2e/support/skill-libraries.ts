@@ -7,7 +7,7 @@ import type { Scheme } from "./open";
 // The data uses the real built-in GitHub package; the repository text is deliberately hostile
 // (markup, a javascript: link, a very long unbroken word) to prove it renders as inert data.
 
-export const LIBRARY_SCREENS = ["libraries", "add", "found", "edit", "add-list", "add-preview", "review", "instance-libraries", "instance-add"] as const;
+export const LIBRARY_SCREENS = ["skills", "ws-skills", "libraries","add", "found", "edit", "add-list", "add-preview", "review", "instance-libraries", "instance-add"] as const;
 export type LibraryScreen = (typeof LIBRARY_SCREENS)[number];
 
 const SHA_A = "0123456789abcdef0123456789abcdef01234567";
@@ -198,12 +198,13 @@ export async function openLibraryScreen(page: Page, screen: LibraryScreen, schem
   page.on("pageerror", (e) => errors.push(e.message));
   const mock = await mockLibraries(page);
   await page.emulateMedia({ colorScheme: scheme });
-  await page.goto(instancePages.includes(screen) ? "/admin/skill-libraries" : screen === "libraries" || screen === "add" || screen === "found" || screen === "edit" ? "/o/acme/skills/libraries" : "/o/acme/skills");
+  const onLibraries = screen === "libraries" || screen === "add" || screen === "found" || screen === "edit";
+  await page.goto(instancePages.includes(screen) ? "/admin/skills" : screen === "ws-skills" ? "/o/acme/w/main/skills" : onLibraries ? "/o/acme/skills?tab=libraries" : "/o/acme/skills");
   await page.locator("h1").first().waitFor();
   await page.waitForLoadState("networkidle");
   await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
   expect(errors, "the skill library screen threw").toEqual([]);
-  if (screen === "libraries" || screen === "instance-libraries") return mock;
+  if (screen === "libraries" || screen === "instance-libraries" || screen === "skills" || screen === "ws-skills") return mock;
   if (screen === "add" || screen === "found" || screen === "instance-add") {
     await page.getByRole("button", { name: "Add a library" }).first().click();
     await page.getByLabel("Repository address", { exact: true }).waitFor();

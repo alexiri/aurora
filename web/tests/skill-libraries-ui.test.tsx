@@ -1,8 +1,9 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { InstanceLibrariesPage } from "@/components/skills/libraries/instance-libraries-page";
-import { SkillLibrariesPage } from "@/components/skills/libraries-page";
+import { AdminSkillsPage } from "@/components/admin/admin-topics";
+import { SkillLibrariesTab } from "@/components/skills/libraries-page";
+import { OrgSkills } from "@/components/skills/org-skills";
 import { SkillsEditor } from "@/components/skills/skills-view";
 import { json, type Handler } from "./support/api";
 import { wrap } from "./support/render";
@@ -50,35 +51,45 @@ const found = (over: Record<string, unknown> = {}) => ({
   commit_sha: SHA_B, path: "skills", skills: { found: 3, valid: 2, names: ["code-review", "release-notes"] }, truncated: false, suggested_label: "skills", ...over,
 });
 
-/** The row whose Label cell is exactly `label`. */
-const row = (table: HTMLElement, label: string) => within(table).getAllByRole("row").find((r) => r.querySelector("td")?.textContent === label) as HTMLElement;
+/** The card of the library whose heading is exactly `label`. */
+const card = (list: HTMLElement, label: string) => within(list).getByRole("heading", { name: label }).closest("li") as HTMLElement;
+/** Radix opens a dropdown on keydown Enter (jsdom has no pointer capture). */
+const openMenu = (label: string) => fireEvent.keyDown(screen.getByRole("button", { name: `More actions for ${label}` }), { key: "Enter" });
+const LibrariesTab = () => <SkillLibrariesTab slug="acme" orgId="o1" orgName="Acme" />;
+/** The words of a card's facts line, in order. */
+const facts = (c: HTMLElement) => within(within(c).getByRole("list")).getAllByRole("listitem").map((i) => i.textContent);
 
 // ---- the organization's page ---------------------------------------------------------------------
 
-describe("organization Libraries page", () => {
+describe("organization Libraries tab", () => {
   const withLibs = (items: unknown[], extra: Record<string, Handler> = {}) =>
-    mockFetch({ ...orgRoutes, "GET /v1/orgs/o1/skill-libraries": () => json(200, { items }), ...extra });
+    mockFetch({
+      ...orgRoutes,
+      "GET /v1/orgs/o1/skill-libraries": () => json(200, { items }),
+      "GET /v1/orgs/o1/skills": () => json(200, { items: [], next_cursor: null }),
+      ...extra,
+    });
 
-  it("has two sections: the organization's own and the ones shared with every organization", async () => {
+  it("lists the organization's own and the ones shared with every organization as cards, never a table", async () => {
     withLibs([library(), shared()]);
-    wrap(<SkillLibrariesPage />);
-    expect(await screen.findByRole("heading", { name: "Your organization's libraries" })).toBeTruthy();
+    wrap(<LibrariesTab />);
+    const own = await screen.findByRole("list", { name: "Your organization's libraries" });
     expect(screen.getByRole("heading", { name: "Shared with every organization" })).toBeTruthy();
-    const own = screen.getByRole("table", { name: "Your organization's libraries" });
-    const theirs = screen.getByRole("table", { name: "Libraries shared with every organization" });
-    expect(within(own).getByText("Team skills")).toBeTruthy();
+    const theirs = screen.getByRole("list", { name: "Libraries shared with every organization" });
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByText("Libraries are git repositories of skills. Add one, then pick the skills Acme should use.")).toBeTruthy();
+    expect(within(own).getByRole("heading", { name: "Team skills" })).toBeTruthy();
     expect(within(own).queryByText("Company skills")).toBeNull();
-    expect(within(theirs).getByText("Company skills")).toBeTruthy();
-    // read-only: the status and this organization's counts, and Browse; no Pause, Edit or Delete
-    const r = row(theirs, "Company skills");
-    expect(within(r).getByText("0 agent · 0 workspace · 1 org")).toBeTruthy();
-    expect(within(r).getByRole("button", { name: "Browse Company skills" })).toBeTruthy();
-    for (const name of [/^Pause/, /^Edit/, /^Delete/, /^Check now/]) expect(within(r).queryByRole("button", { name })).toBeNull();
+    // read-only: the state and this organization's count, and Browse skills; no menu, no Check now, no Edit
+    const c = card(theirs, "Company skills");
+    expect(within(c).getByText("1 used by Acme")).toBeTruthy();
+    expect(within(c).getByRole("button", { name: "Browse skills of Company skills" })).toBeTruthy();
+    for (const name of [/^More actions/, /^Edit/, /^Check now/]) expect(within(c).queryByRole("button", { name })).toBeNull();
   });
 
   it("hides the shared section when the instance shares nothing, and says what a library is when there are none", async () => {
     withLibs([]);
-    wrap(<SkillLibrariesPage />);
+    wrap(<LibrariesTab />);
     expect(await screen.findByText("No libraries yet")).toBeTruthy();
     expect(screen.getByText(/Add a git repository of skills; people then add the skills they want/)).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Shared with every organization" })).toBeNull();
@@ -86,51 +97,64 @@ describe("organization Libraries page", () => {
     expect(screen.queryByText(/Connect a repository/)).toBeNull();
   });
 
-  it("shows the columns in words: default branch, repository root, last checked and the commit, the repository's address to copy", async () => {
-    withLibs([library({ path: "", pending_updates: 0 }), library({ id: "l2", label: "Pinned", ref: "v1.2", path: "skills/ai", pending_updates: 1 })]);
-    wrap(<SkillLibrariesPage />);
-    const table = await screen.findByRole("table", { name: "Your organization's libraries" });
-    const heads = within(table).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(heads).toEqual(["Label", "Repository", "Branch or tag", "Folder", "Status", "Last checked", "Skills in use", "Pending updates", "Actions"]);
-    const a = row(table, "Team skills");
+  it("a card says the branch, when it was checked, how many skills the organization uses and what they are pinned to", async () => {
+    const orgSkill = (id: string, lib: string, sha: string) => ({ id, name: id, tier: "org", source: { kind: "library", library_id: lib, commit_sha: sha, detached: false } });
+    withLibs(
+      [
+        library({ ref: "main", pending_updates: 0 }),
+        library({ id: "l2", label: "Two commits", ref: null, pending_updates: 0, skills_offered: 17, last_refresh_at: null }),
+        library({ id: "l3", label: "Unused", skill_counts: { agent: 0, workspace: 0, org: 0 }, skills_offered: 5, pending_updates: 0 }),
+        library({ id: "l4", label: "Unused, no offer count", skill_counts: { agent: 0, workspace: 0, org: 0 }, pending_updates: 0 }),
+      ],
+      { "GET /v1/orgs/o1/skills": () => json(200, { items: [orgSkill("a", "l1", SHA_A), orgSkill("b", "l1", SHA_A), orgSkill("c", "l2", SHA_A), orgSkill("d", "l2", SHA_B)], next_cursor: null }) },
+    );
+    wrap(<LibrariesTab />);
+    const list = await screen.findByRole("list", { name: "Your organization's libraries" });
+    await waitFor(() => expect(within(card(list, "Team skills")).getByText("0123456")).toBeTruthy());
+    const a = card(list, "Team skills");
     expect(within(a).getByText("git.example.org/acme/agent-skills")).toBeTruthy();
-    expect(within(a).getByText("Default branch")).toBeTruthy();
-    expect(within(a).getByText("Repository root")).toBeTruthy();
-    expect(within(a).getByText("89abcde")).toBeTruthy();
-    expect(within(a).getByRole("button", { name: "Copy address of Team skills" })).toBeTruthy();
+    expect(facts(a)).toEqual(["Branch main", expect.stringMatching(/^Checked /), "6 used by Acme", "Pinned 0123456"]);
     // the repository is plain text, never a link
     expect(within(a).queryByRole("link", { name: /git\.example\.org/ })).toBeNull();
-    const b = row(table, "Pinned");
-    expect(within(b).getByText("v1.2")).toBeTruthy();
-    expect(within(b).getByText("skills/ai")).toBeTruthy();
-    // pending updates link to the review list only when there are some
-    expect(within(b).getByRole("link", { name: /1 pending update of Pinned/ }).getAttribute("href")).toBe("/o/acme/agents?tab=skills");
     expect(within(a).queryByRole("link")).toBeNull();
+    expect(facts(card(list, "Two commits"))).toEqual(["Default branch", "Not checked yet", "17 skills · 6 used by Acme", "Pinned at 2 commits"]);
+    expect(facts(card(list, "Unused")).slice(2)).toEqual(["5 skills · none used yet"]);
+    expect(facts(card(list, "Unused, no offer count")).slice(2)).toEqual(["None used yet"]);
   });
 
-  it("says each status in words", async () => {
+  it("shows one state chip per card; an update links to the review on the Skills tab", async () => {
     withLibs([
-      library({ id: "a", label: "A" }),
+      library({ id: "a", label: "A", pending_updates: 0 }),
+      library({ id: "u", label: "U", pending_updates: 1 }),
       library({ id: "b", label: "B", status: "paused" }),
       library({ id: "c", label: "C", status: "error", last_error: "The branch or tag was not found" }),
-      library({ id: "d", label: "D", status: "error", last_error: "The repository needs an access token" }),
+      library({ id: "d", label: "D", status: "error", last_error: "git said: The repository needs an access token" }),
       library({ id: "e", label: "E", status: "over_budget" }),
       library({ id: "f", label: "F", status: "error", url: null, repo: null, last_error: "Enter the repository's git address" }),
     ]);
-    wrap(<SkillLibrariesPage />);
-    const table = await screen.findByRole("table", { name: "Your organization's libraries" });
-    expect(within(row(table, "A")).getByText("Active")).toBeTruthy();
-    expect(within(row(table, "B")).getByText("Paused")).toBeTruthy();
-    const c = row(table, "C");
-    expect(within(c).getByText("Can't be read")).toBeTruthy();
+    wrap(<LibrariesTab />);
+    const list = await screen.findByRole("list", { name: "Your organization's libraries" });
+    expect(within(card(list, "A")).getByText("Up to date")).toBeTruthy();
+    const u = card(list, "U");
+    expect(within(u).getByText("Update available")).toBeTruthy();
+    expect(within(u).queryByText("Up to date")).toBeNull();
+    expect(within(u).getByRole("link", { name: /1 pending update of U/ }).getAttribute("href")).toBe("/o/acme/skills");
+    // a paused library has no update chip and cannot be checked
+    const b = card(list, "B");
+    expect(within(b).getByText("Paused")).toBeTruthy();
+    expect(within(b).queryByText("Update available")).toBeNull();
+    expect((within(b).getByRole("button", { name: "Check now B" }) as HTMLButtonElement).disabled).toBe(true);
+    const c = card(list, "C");
+    expect(within(c).getByText("Needs attention")).toBeTruthy();
     expect(within(c).getByText("The branch or tag was not found")).toBeTruthy();
-    const d = within(table).getAllByRole("row").find((r) => within(r).queryByText("Needs an access token")) as HTMLElement;
-    expect(d).toBeTruthy();
-    expect(within(d).queryByText("Can't be read")).toBeNull();
-    expect(within(row(table, "E")).getByText("Pending updates over budget")).toBeTruthy();
-    // a migrated row without an address says what to enter and offers Set address instead of Check now
-    const f = within(table).getAllByRole("row").find((r) => within(r).queryByText("Enter the repository's git address")) as HTMLElement;
-    expect(within(f).getByRole("button", { name: "Set the address of F" })).toBeTruthy();
+    const d = card(list, "D");
+    expect(within(d).getByText("Needs attention")).toBeTruthy();
+    expect(within(d).getByText("The repository needs an access token")).toBeTruthy();
+    expect(within(card(list, "E")).getByText("Over budget")).toBeTruthy();
+    // a migrated library without an address says what to enter and offers Set address instead of Check now
+    const f = card(list, "F");
+    expect(within(f).getByText("Enter the repository's git address")).toBeTruthy();
+    expect(within(f).getByRole("button", { name: "Set address of F" })).toBeTruthy();
     expect(within(f).queryByRole("button", { name: /^Check now/ })).toBeNull();
   });
 
@@ -150,13 +174,26 @@ describe("organization Libraries page", () => {
         return json(204, null);
       },
     });
-    wrap(<SkillLibrariesPage />);
+    wrap(<LibrariesTab />);
     fireEvent.click(await screen.findByRole("button", { name: "Check now Team skills" }));
-    fireEvent.click(screen.getByRole("button", { name: "Pause Team skills" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete Team skills" }));
+    openMenu("Team skills");
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Browse skills", "Pause", "Delete…"]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pause" }));
+    await waitFor(() => expect(calls).toHaveLength(2));
+    openMenu("Team skills");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
     expect(await screen.findByText("6 skills keep their content and become editable skills.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Delete library" }));
     await waitFor(() => expect(calls).toEqual(["refresh", 'patch {"status":"paused"}', "delete"]));
+  });
+
+  it("a paused library offers Resume, and cannot be browsed", async () => {
+    withLibs([library({ status: "paused" })]);
+    wrap(<LibrariesTab />);
+    await screen.findByRole("button", { name: "More actions for Team skills" });
+    openMenu("Team skills");
+    expect(screen.getByRole("menuitem", { name: "Resume" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Browse skills" }).getAttribute("aria-disabled")).toBe("true");
   });
 
   it("Browse opens the shared library in read mode: its skills and the preview, no Add", async () => {
@@ -168,8 +205,8 @@ describe("organization Libraries page", () => {
       "GET /v1/skill-libraries/l9/skills/triage": () =>
         json(200, { commit_sha: SHA_B, path: "triage", name: "triage", valid: true, reason: null, description: "Sort issues", body: "Sort them.\n", files: [], size: 40, content_sha256: "a".repeat(64) }),
     });
-    wrap(<SkillLibrariesPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Browse Company skills" }));
+    wrap(<LibrariesTab />);
+    fireEvent.click(await screen.findByRole("button", { name: "Browse skills of Company skills" }));
     const dlg = await screen.findByRole("dialog", { name: "Browse a library" });
     fireEvent.click(await within(dlg).findByRole("button", { name: /^triage/ }));
     expect(await within(dlg).findByLabelText("Preview of what will be stored")).toBeTruthy();
@@ -180,7 +217,7 @@ describe("organization Libraries page", () => {
 
   it("is a calm empty state when the feature is switched off", async () => {
     mockFetch({ ...orgRoutes, "GET /v1/orgs/o1/skill-libraries": () => json(404, { error: { code: "skill_libraries_disabled", message: "off" } }) });
-    wrap(<SkillLibrariesPage />);
+    wrap(<LibrariesTab />);
     expect(await screen.findByText("Skill libraries are turned off on this instance")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Add a library" })).toBeNull();
   });
@@ -191,7 +228,7 @@ describe("organization Libraries page", () => {
 describe("Add a library", () => {
   const open = async (extra: Record<string, Handler> = {}) => {
     mockFetch({ ...orgRoutes, "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [] }), ...extra });
-    wrap(<SkillLibrariesPage />);
+    wrap(<LibrariesTab />);
     fireEvent.click((await screen.findAllByRole("button", { name: "Add a library" }))[0]);
     return screen.findByRole("dialog", { name: "Add a library" });
   };
@@ -383,7 +420,7 @@ describe("Add a library", () => {
 describe("Edit a library", () => {
   const edit = async (lib: Record<string, unknown>, extra: Record<string, Handler> = {}) => {
     mockFetch({ ...orgRoutes, "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [lib] }), ...extra });
-    wrap(<SkillLibrariesPage />);
+    wrap(<LibrariesTab />);
     fireEvent.click(await screen.findByRole("button", { name: `Edit ${lib.label as string}` }));
     return screen.findByRole("dialog", { name: `Edit ${lib.label as string}` });
   };
@@ -451,8 +488,8 @@ describe("Edit a library", () => {
       "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [library({ label: "Old", url: null, repo: null, status: "error", last_error: "Enter the repository's git address" })] }),
       "PATCH /v1/skill-libraries/l1": p.handler,
     });
-    wrap(<SkillLibrariesPage />);
-    fireEvent.click(await screen.findByRole("button", { name: "Set the address of Old" }));
+    wrap(<LibrariesTab />);
+    fireEvent.click(await screen.findByRole("button", { name: "Set address of Old" }));
     const dlg = await screen.findByRole("dialog", { name: "Edit Old" });
     expect(within(dlg).queryByTestId("library-address")).toBeNull();
     fireEvent.change(within(dlg).getByLabelText("Set address"), { target: { value: "https://git.example.org/acme/old" } });
@@ -471,23 +508,68 @@ describe("Edit a library", () => {
   });
 });
 
-// ---- the instance's page -------------------------------------------------------------------------
+// ---- Manage <org> › Skills -----------------------------------------------------------------------
 
-describe("Administration › Skill libraries", () => {
+describe("Manage <org> › Skills", () => {
+  const routes = (role = "owner") => ({
+    ...orgRoutes,
+    "GET /v1/orgs/o1": () => json(200, { ...org, my_role: role }),
+    "GET /v1/orgs/o1/skills": () => json(200, { items: [], next_cursor: null }),
+    "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [] }),
+    "GET /v1/orgs/o1/skill-library-updates": () => json(200, { items: [] }),
+  });
+
+  it("has the page's heading and lead, and the tabs Skills and Libraries, with Skills first", async () => {
+    mockFetch(routes());
+    wrap(<OrgSkills />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Skills" })).toBeTruthy();
+    expect(screen.getByText("What every agent in Acme can do, and where it comes from.")).toBeTruthy();
+    expect(screen.getAllByRole("tab").map((t) => [t.textContent, t.getAttribute("aria-selected")])).toEqual([["Skills", "true"], ["Libraries", "false"]]);
+    expect(await screen.findByText("No skills yet")).toBeTruthy();
+    // the header's Add skill opens the create form; the editor draws no second button for it
+    expect(screen.queryByRole("button", { name: "New skill" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Add skill" }));
+    expect(screen.getByLabelText("Use it when…")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByLabelText("Use it when…")).toBeNull());
+    // with no library yet, the way to add one leads to the Libraries tab
+    expect((await screen.findByRole("link", { name: "Add a library" })).getAttribute("href")).toBe("/o/acme/skills?tab=libraries");
+    fireEvent.click(screen.getByRole("tab", { name: "Libraries" }));
+    expect(await screen.findByText("No libraries yet")).toBeTruthy();
+    // Add skill belongs to the Skills tab (the router's search parameters do not follow a tab click)
+    expect(screen.queryByRole("button", { name: "Add skill" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+    expect(screen.getByRole("button", { name: "Add skill" })).toBeTruthy();
+  });
+
+  it("is not for members", async () => {
+    mockFetch(routes("member"));
+    wrap(<OrgSkills />);
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Libraries" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Add a library" })).toBeNull();
+  });
+});
+
+// ---- Administration › Skills ---------------------------------------------------------------------
+
+describe("Administration › Skills", () => {
   const admin = (extra: Record<string, Handler> = {}) =>
     mockFetch({ "GET /v1/me": () => json(200, { user: { id: "u1", is_instance_admin: true, display_name: "Ada", email: "a@x" } }), ...extra });
 
-  it("lists the instance's libraries with Organizations using it, and a breadcrumb back to What agents may do", async () => {
-    admin({ "GET /v1/admin/skill-libraries": () => json(200, { items: [shared({ orgs_using: 3 })], next_cursor: null }) });
-    wrap(<InstanceLibrariesPage />);
-    const table = await screen.findByRole("table", { name: "Skill libraries of this instance" });
-    const heads = within(table).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(heads).toContain("Organizations using it");
-    const r = row(table, "Company skills");
-    expect(within(r).getByText("3")).toBeTruthy();
-    expect(within(r).getByRole("button", { name: "Edit Company skills" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "What agents may do" }).getAttribute("href")).toBe("/admin/internet-access?tab=defaults");
+  it("lists the instance's libraries as cards with how many organizations use each", async () => {
+    admin({ "GET /v1/admin/skill-libraries": () => json(200, { items: [shared({ orgs_using: 3 }), shared({ id: "l8", label: "Unused", orgs_using: 0 })], next_cursor: null }) });
+    wrap(<AdminSkillsPage />);
+    const list = await screen.findByRole("list", { name: "Skill libraries of this instance" });
+    expect(screen.getByRole("heading", { level: 1, name: "Skills" })).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    const c = card(list, "Company skills");
+    expect(within(c).getByText("used by 3 organizations", { exact: false })).toBeTruthy();
+    expect(within(c).getByRole("button", { name: "Edit Company skills" })).toBeTruthy();
+    expect(within(card(list, "Unused")).getByText("None used yet")).toBeTruthy();
     expect(screen.getByText(/Libraries here are offered to every organization/)).toBeTruthy();
+    // browsing a library is an organization's act: the instance's own page has no Browse skills
+    openMenu("Company skills");
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["Pause", "Delete…"]);
   });
 
   it("says there are none and adds through the admin routes", async () => {
@@ -500,7 +582,7 @@ describe("Administration › Skill libraries", () => {
         return json(201, shared());
       },
     });
-    wrap(<InstanceLibrariesPage />);
+    wrap(<AdminSkillsPage />);
     expect(await screen.findByText("No libraries yet")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Add a library" })[0]);
     const dlg = await screen.findByRole("dialog", { name: "Add a library" });
@@ -513,9 +595,9 @@ describe("Administration › Skill libraries", () => {
 
   it("someone who is not an instance admin gets the admin guard's answer", async () => {
     mockFetch({ "GET /v1/me": () => json(200, { user: { id: "u2", is_instance_admin: false, display_name: "Bo", email: "b@x" } }) });
-    wrap(<InstanceLibrariesPage />);
+    wrap(<AdminSkillsPage />);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Add a library" })).toBeNull());
-    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Skill libraries of this instance" })).toBeNull();
   });
 });
 

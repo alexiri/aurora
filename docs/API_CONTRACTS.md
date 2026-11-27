@@ -2967,7 +2967,10 @@ names, and copy the route rows into `05`, the tables into `03`, the rules into `
   (Manage <org> › Skills); `/admin/skills` (Administration › Skills: instance libraries and library settings); the
   agent's memory deep link `…/agents/<handle>?tab=memory&memory=<key>` (opens that memory's reading view; `&history=1`
   its history). Old routes redirect: `/o/<org>/agents?tab=skills` and `/o/<org>/agents/skills/libraries` →
-  `/o/<org>/skills[?tab=libraries]`, `/admin/skill-libraries` → `/admin/skills`.
+  `/o/<org>/skills[?tab=libraries]`, `/admin/skill-libraries` → `/admin/skills`. (As built for skills, P5-SKILLS-2:
+  `/o/<org>/skills/libraries` also goes to `?tab=libraries`; `/admin/agents?tab=skills` and
+  `/admin/settings/skills` go to `/admin/skills`. The redirects with a fixed destination are answered by
+  `next.config.ts`; the `?tab=` ones by the dashboard before the old page renders.)
 
 ## Shared schemas
 

@@ -23,8 +23,9 @@ import { TrustedKeysView } from "@/components/admin/trusted-keys-view";
 import { InstancesView } from "@/components/apps/instances-view";
 import { OAuthClientsPanel } from "@/components/apps/oauth-clients-panel";
 import { ConnectorsAdminView } from "@/components/connectors/connectors-admin-view";
+import { InstanceLibraries } from "@/components/skills/libraries/instance-libraries-page";
 import { TopicPage } from "@/components/topic-page";
-import { EmbeddedPage } from "@/components/ui/page-header";
+import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { UsageView } from "@/components/usage/usage-view";
 import { OutgoingWebhooksAdminSection } from "@/components/webhook/admin-webhook-section";
@@ -117,19 +118,25 @@ export function AdminInternetAccessPage() {
           { id: "internet-access", label: "Internet access", content: <AdminInternet /> },
           { id: "ai-keys", label: "AI keys and rules", content: <GovernanceRulesFields /> },
           { id: "byo", label: "Bring your own", content: <GovernanceFields part="byo" /> },
-          {
-            id: "defaults",
-            label: "Defaults",
-            content: (
-              <div className="space-y-10">
-                <AgentsDefaultsView />
-                <SkillsSettingsView bare />
-              </div>
-            ),
-          },
+          { id: "defaults", label: "Defaults", content: <AgentsDefaultsView /> },
           { id: "templates", label: "Agent templates", content: <AdminTemplates /> },
         ]}
       />
+    </AdminGuard>
+  );
+}
+
+/** (D-506(c)) Administration › Skills: the libraries every organization gets, and the library settings with their Save bar. */
+export function AdminSkillsPage() {
+  return (
+    <AdminGuard>
+      <div>
+        <PageHeader title="Skills" description="The skill libraries this instance offers, and the settings for all skill libraries." />
+        <div className="space-y-10">
+          <InstanceLibraries />
+          <SkillsSettingsView bare />
+        </div>
+      </div>
     </AdminGuard>
   );
 }

@@ -25,13 +25,13 @@ const meAs = (orgRole: string, wsRole: string) => ({
 });
 
 /** The mock with the switch's server state kept across requests: GET answers it, PATCH stores it. */
-async function open(page: Page, path: string, scheme: "light" | "dark", orgRole: string, wsRole: string, more: boolean) {
+async function open(page: Page, path: string, scheme: "light" | "dark", orgRole: string, wsRole: string, more: boolean, who = meAs(orgRole, wsRole)) {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (m) => {
     if (m.type() === "error" && !/^Failed to load resource/.test(m.text())) errors.push(m.text());
   });
-  await mockApi(page, meAs(orgRole, wsRole));
+  await mockApi(page, who);
   let stored = more;
   const patches: unknown[] = [];
   await page.route("**/v1/me/onboarding", async (route) => {
@@ -97,6 +97,33 @@ for (const scheme of ["light", "dark"] as const) {
           const nav = page.getByRole("navigation", { name: "Workspace" });
           await expect.poll(() => navLabels(nav)).toContain("Skills");
         }
+      });
+
+      // (D-506(b)) Skills is listed to the people who own it with the switch off.
+      test("the owner of a personal workspace has Skills in the rail at Use", async ({ page }) => {
+        const personal = meAs("member", "owner");
+        personal["/v1/me"].memberships[0]!.workspaces[0]!.personal = true;
+        personal[`/v1/workspaces/${id(2)}`] = { ...personal[`/v1/workspaces/${id(2)}`]!, personal_of: { id: user.id, name: user.display_name } } as never;
+        await open(page, "/o/acme/w/main/skills", scheme, "member", "owner", false, personal);
+        await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Add skill" })).toBeVisible();
+        if (width >= 768) {
+          const nav = page.getByRole("navigation", { name: "Workspace" });
+          await expect.poll(() => navLabels(nav)).toEqual(["Overview", "Agents", "Skills", "Approvals"]);
+        }
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await serious(page)).toEqual([]);
+      });
+
+      test("the organization's owner reaches Manage › Skills with the switch off", async ({ page }) => {
+        await open(page, "/o/acme/skills", scheme, "owner", "member", false);
+        await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+        if (width >= 768) {
+          const nav = page.getByRole("navigation", { name: "Manage Acme Labs" });
+          await expect.poll(() => navLabels(nav)).toContain("Skills");
+        }
+        expect(await overflow(page)).toBeLessThanOrEqual(0);
+        expect(await serious(page)).toEqual([]);
       });
 
       test("a member with the switch on does not get People or Settings", async ({ page }) => {

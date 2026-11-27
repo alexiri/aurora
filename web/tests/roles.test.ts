@@ -42,7 +42,8 @@ describe("visibleTopics by altitude", () => {
     const use = { floor: "use", more: false } as const;
     expect(visibleTopics("workspace", member, use)).toEqual(["overview", "agents"]);
     expect(visibleTopics("workspace", approver, use)).toEqual(["overview", "agents", "approvals"]);
-    expect(visibleTopics("workspace", personalOwner, use)).toEqual(["overview", "agents", "approvals"]);
+    // (D-506(b)) A workspace's owner, team or personal, also has Skills.
+    expect(visibleTopics("workspace", personalOwner, use)).toEqual(["overview", "agents", "skills", "approvals"]);
   });
   it("lists the rest at Set up, with role caps kept", () => {
     const setup = { floor: "setup", more: false } as const;
@@ -71,7 +72,7 @@ describe("visibleTopics by altitude", () => {
     expect(visibleTopics("org", m, { floor: "use", more: true })).toEqual(["overview", "ai-models", "internet-access"]);
   });
   it("lists every Administration topic to an instance admin, and none to others", () => {
-    expect(visibleTopics("admin", { instanceAdmin: true }, { floor: "expert", more: false })).toHaveLength(10);
+    expect(visibleTopics("admin", { instanceAdmin: true }, { floor: "expert", more: false })).toHaveLength(11);
     expect(visibleTopics("admin", member)).toEqual([]);
   });
   it("without an altitude lists what the role may see (unchanged)", () => {
