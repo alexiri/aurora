@@ -7337,12 +7337,14 @@ async fn agent_from_template(
     version: Option<&str>,
 ) -> Uuid {
     let id = w.h.hosted_agent(org, ws, handle).await;
-    sqlx::query("UPDATE agents SET template_id = 't', template_version = $2 WHERE id = $1")
-        .bind(id)
-        .bind(version)
-        .execute(w.h.pool())
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE agents SET template_id = 't', template_name = 'T', template_version = $2 WHERE id = $1",
+    )
+    .bind(id)
+    .bind(version)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
     id
 }
 
@@ -7581,4 +7583,99 @@ async fn a_failing_notice_does_not_fail_the_approval() {
         .await
         .unwrap();
     assert_eq!(rows, 1, "the in-app notice is there");
+}
+
+// ---------------------------------------------------------------------------------------------
+// (FIX-251, D-488(a)) The Update available mark on the agents list and the agent read.
+// ---------------------------------------------------------------------------------------------
+
+fn needs_update_of(v: &Value, id: Uuid) -> bool {
+    v["items"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|a| a["id"].as_str() == Some(id.to_string().as_str()))
+                .map(|a| a["needs_update"].as_bool().unwrap())
+        })
+        .unwrap_or_else(|| panic!("agent {id} not in the list: {v}"))
+}
+
+/// The workspace agents list and the single-agent read mark the agents whose template offers a
+/// semver-newer version than the stored one (`needs_update`): behind at 0.9.0 against an
+/// approved 1.0.0, an agent already on it is not, an agent without a template never is; a newer
+/// approval marks both; a withdrawn offer marks nobody.
+#[tokio::test]
+async fn the_agents_list_marks_the_ones_behind() {
+    let w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let (_, cookie) = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    let behind = agent_from_template(&w, org, ws, "behind", Some("0.9.0")).await;
+    let current = agent_from_template(&w, org, ws, "current", Some("1.0.0")).await;
+    let plain = w.h.hosted_agent(org, ws, "plain").await;
+
+    w.approve("t", "1.0.0").await;
+
+    let (s, v) = w
+        .h
+        .call(
+            &cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/agents"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(needs_update_of(&v, behind), "{v}");
+    assert!(!needs_update_of(&v, current), "{v}");
+    assert!(!needs_update_of(&v, plain), "{v}");
+    let (s, v) = w.h.call(&cookie, Method::GET, &format!("/v1/agents/{behind}"), None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["needs_update"], json!(true), "{v}");
+
+    // A newer approved version marks the stored one behind too.
+    w.seed("acme/tpl", "t", "1.1.0");
+    w.git.serve_file("pkg/t-1.1.0.zip", pack("t", "1.1.0"));
+    let sid: Uuid = sqlx::query_scalar("SELECT id FROM agent_template_sources LIMIT 1")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    w.check(sid).await;
+    w.approve("t", "1.1.0").await;
+    let (s, v) = w
+        .h
+        .call(
+            &cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/agents"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(needs_update_of(&v, behind), "{v}");
+    assert!(needs_update_of(&v, current), "{v}");
+
+    // The offer withdrawn: nobody is behind.
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .h
+        .call(
+            &cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/agents"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(!needs_update_of(&v, behind), "{v}");
+    assert!(!needs_update_of(&v, current), "{v}");
 }

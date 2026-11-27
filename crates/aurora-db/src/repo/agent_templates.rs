@@ -869,6 +869,30 @@ pub async fn approved_versions_share<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// (FIX-251, D-488(a)) The approved version strings of the given templates (the templates'
+/// business id as `agents.template_id` stores it, and the version), newest stored first: one
+/// small read the agents list marks every agent whose template offers a semver-newer version
+/// than the agent's stored one with (the offered version is the semver-newest approved one,
+/// C-1108 — the caller picks it, not the row order).
+pub async fn approved_version_strings<'e, E: PgExecutor<'e>>(
+    exec: E,
+    template_ids: &[String],
+) -> Result<Vec<(String, String)>, DbError> {
+    if template_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(
+        "SELECT t.template_id, v.version \
+         FROM agent_template_versions v \
+         JOIN agent_templates t ON t.id = v.agent_template_id \
+         WHERE t.offered AND v.status = 'approved' AND t.template_id = ANY($1) \
+         ORDER BY v.created_at DESC, v.id DESC",
+    )
+    .bind(template_ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Approve a version (C-1108): only from `pending_approval` and only when `content_sha256`
 /// is still the stored one. `Ok(false)` means the row did not match (the caller has already
 /// read it and answers 409 `template_content_changed`).

@@ -7988,6 +7988,13 @@ export interface components {
              *     edit messages; default `false`.
              */
             narration_cards: boolean;
+            /**
+             * @description (FIX-251, D-488(a)) The agent's template offers a semver-newer version than the agent's
+             *     stored one — the **Update available** mark. Computed on the workspace agents list and
+             *     the routes that read one agent fresh (`with_byo`); `false` where it is not computed
+             *     (a fresh create, a default agent), and for an agent without a template.
+             */
+            needs_update: boolean;
             /** Format: uuid */
             org_id: string;
             /** @description `ask` | `allow` | `off`. */
@@ -13161,6 +13168,13 @@ export interface components {
                  *     edit messages; default `false`.
                  */
                 narration_cards: boolean;
+                /**
+                 * @description (FIX-251, D-488(a)) The agent's template offers a semver-newer version than the agent's
+                 *     stored one — the **Update available** mark. Computed on the workspace agents list and
+                 *     the routes that read one agent fresh (`with_byo`); `false` where it is not computed
+                 *     (a fresh create, a default agent), and for an agent without a template.
+                 */
+                needs_update: boolean;
                 /** Format: uuid */
                 org_id: string;
                 /** @description `ask` | `allow` | `off`. */

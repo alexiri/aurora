@@ -23,6 +23,7 @@ const agent = (kind: "byo" | "hosted", harness: string | null = "claude-code") =
   is_default: false, harness, model_provider: null, model_endpoint_id: null, model_id: null,
   effort: null, proactive_messaging: "ask", brief: "", effective_frozen: false,
   created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", subagent_model: "inherit", narration_cards: false,
+  needs_update: false,
 });
 
 const claude = { id: "claude-code", display_name: "Claude Code", dialects: ["anthropic_messages"], available: true, model_roles: ["large", "medium", "small"] };

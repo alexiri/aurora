@@ -46951,6 +46951,7 @@
           "proactive_messaging",
           "brief",
           "effective_frozen",
+          "needs_update",
           "created_at",
           "updated_at"
         ],
@@ -47057,6 +47058,10 @@
           "narration_cards": {
             "type": "boolean",
             "description": "(P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can\nedit messages; default `false`."
+          },
+          "needs_update": {
+            "type": "boolean",
+            "description": "(FIX-251, D-488(a)) The agent's template offers a semver-newer version than the agent's\nstored one — the **Update available** mark. Computed on the workspace agents list and\nthe routes that read one agent fresh (`with_byo`); `false` where it is not computed\n(a fresh create, a default agent), and for an agent without a template."
           },
           "org_id": {
             "type": "string",
@@ -62897,6 +62902,7 @@
                 "proactive_messaging",
                 "brief",
                 "effective_frozen",
+                "needs_update",
                 "created_at",
                 "updated_at"
               ],
@@ -63003,6 +63009,10 @@
                 "narration_cards": {
                   "type": "boolean",
                   "description": "(P4-NARR, C-846) Show a live steps card for this agent's turns on chat platforms that can\nedit messages; default `false`."
+                },
+                "needs_update": {
+                  "type": "boolean",
+                  "description": "(FIX-251, D-488(a)) The agent's template offers a semver-newer version than the agent's\nstored one — the **Update available** mark. Computed on the workspace agents list and\nthe routes that read one agent fresh (`with_byo`); `false` where it is not computed\n(a fresh create, a default agent), and for an agent without a template."
                 },
                 "org_id": {
                   "type": "string",

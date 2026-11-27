@@ -179,6 +179,49 @@ fn newer_than_stored(offered: &str, stored: Option<&str>) -> bool {
     }
 }
 
+/// (FIX-251, D-488(a)) Which of the listed agents are behind their template: the template's
+/// offered version (the semver-newest approved one, C-1108) is semver-newer than the agent's
+/// stored one — the same rule [`status`] applies to decide `update`, computed for a list from
+/// one read of the approved version strings. An agent without a template, or whose template is
+/// withdrawn or turned off for the organization, is never behind. Keyed by agent id; absent
+/// means not behind.
+pub(crate) async fn behind_map(
+    pool: &sqlx::PgPool,
+    rows: &[agents_repo::AgentRow],
+) -> Result<BTreeMap<Uuid, bool>, ApiError> {
+    let mut ids: Vec<String> = Vec::new();
+    for id in rows.iter().filter_map(|r| r.template_id.as_deref()) {
+        if !ids.iter().any(|x| x == id) {
+            ids.push(id.to_owned());
+        }
+    }
+    let strings = trepo::approved_version_strings(pool, &ids).await?;
+    let mut newest: BTreeMap<String, &str> = BTreeMap::new();
+    // The rows come newest stored first; the semver-newest wins whatever the storage order.
+    for (template_id, version) in &strings {
+        let key = aurora_registry::manifest::parse_semver(version).unwrap_or_default();
+        let best = newest.entry(template_id.clone()).or_insert(version.as_str());
+        if key > aurora_registry::manifest::parse_semver(best).unwrap_or_default() {
+            *best = version.as_str();
+        }
+    }
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let behind = r
+                .template_id
+                .as_deref()
+                .and_then(|t| {
+                    newest
+                        .get(t)
+                        .map(|v| newer_than_stored(v, r.template_version.as_deref()))
+                })
+                .unwrap_or(false);
+            (r.id, behind)
+        })
+        .collect())
+}
+
 // ---- the part states ----------------------------------------------------------------------------
 
 /// Which of the offer's states a part gets, from its recorded hash, the offered content's hash
