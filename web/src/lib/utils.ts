@@ -1,7 +1,14 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
 
 import { formatWhen } from "./format-date";
+
+// The theme's own font sizes and tracking: the `--text-*` and `--tracking-*` variables in `src/app/globals.css`. Name
+// a new one here too (`tests/cn.test.tsx` fails otherwise): tailwind-merge reads an unknown `text-label` as a colour and
+// drops it next to a real one.
+const twMerge = extendTailwindMerge({
+  extend: { theme: { text: ["label", "micro"], tracking: ["label", "brand"] } },
+});
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
