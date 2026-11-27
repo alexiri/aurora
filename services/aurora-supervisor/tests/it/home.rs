@@ -1400,3 +1400,307 @@ fn make_writable(p: &Path) {
     }
     walk(p);
 }
+
+// ---- links the agent plants under the helpers root and the memory folder
+
+/// A directory outside the home with a known mode and one file in it.
+fn outside_dir() -> TempDir {
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = TempDir::new();
+    fs::write(d.path().join("victim"), "untouched").unwrap();
+    fs::set_permissions(d.path().join("victim"), fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(d.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    d
+}
+
+fn assert_untouched(out: &Path) {
+    let names: Vec<_> = fs::read_dir(out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        names,
+        ["victim"],
+        "something was written or removed outside"
+    );
+    assert_eq!(fs::read_to_string(out.join("victim")).unwrap(), "untouched");
+    assert_eq!(mode(&out.join("victim")), 0o600, "outside file chmodded");
+    assert_eq!(mode(out), 0o700, "outside directory chmodded");
+}
+
+fn helper_link_attack(link: &str) {
+    let d = TempDir::new();
+    let outside = outside_dir();
+    let root = d.path();
+    let mut p = projector(root);
+    let helpers = [
+        (".aurora/helpers/run.sh", "v1", true),
+        (".aurora/helpers/sub/x.sh", "v1", false),
+    ];
+    apply_all(&mut p, &helpers_generation(1, &helpers, true));
+    p.commit(1).unwrap();
+    let target = root.join(link);
+    make_writable(&root.join(".aurora/helpers"));
+    fs::remove_dir_all(&target).unwrap();
+    std::os::unix::fs::symlink(outside.path(), &target).unwrap();
+    let helpers = [
+        (".aurora/helpers/run.sh", "v2", true),
+        (".aurora/helpers/sub/x.sh", "v2", false),
+    ];
+    apply_all(&mut p, &helpers_generation(2, &helpers, true));
+    p.commit(2).unwrap();
+    assert_untouched(outside.path());
+    assert!(fs::symlink_metadata(&target).unwrap().file_type().is_dir());
+    assert_eq!(
+        fs::read_to_string(root.join(".aurora/helpers/sub/x.sh")).unwrap(),
+        "v2"
+    );
+}
+
+#[test]
+fn the_helpers_root_replaced_by_a_symlink_is_not_written_through() {
+    helper_link_attack(".aurora/helpers");
+}
+
+#[test]
+fn a_helper_subfolder_replaced_by_a_symlink_is_not_written_through() {
+    helper_link_attack(".aurora/helpers/sub");
+}
+
+#[test]
+fn an_edited_or_deleted_helper_is_restored_by_the_next_generation() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let helpers = [
+        (".aurora/helpers/run.sh", "original run", true),
+        (".aurora/helpers/lib.sh", "original lib", false),
+    ];
+    apply_all(&mut p, &helpers_generation(1, &helpers, true));
+    p.commit(1).unwrap();
+    make_writable(&root.join(".aurora/helpers"));
+    let run = root.join(".aurora/helpers/run.sh");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&run, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(&run, "the agent's edit").unwrap();
+    fs::remove_file(root.join(".aurora/helpers/lib.sh")).unwrap();
+    apply_all(&mut p, &helpers_generation(2, &helpers, true));
+    p.commit(2).unwrap();
+    assert_eq!(fs::read_to_string(&run).unwrap(), "original run");
+    assert_eq!(mode(&run), 0o555);
+    assert_eq!(
+        fs::read_to_string(root.join(".aurora/helpers/lib.sh")).unwrap(),
+        "original lib"
+    );
+    assert_eq!(mode(&root.join(".aurora/helpers/lib.sh")), 0o444);
+}
+
+/// A writer for the `tracing` output of one closure.
+#[derive(Clone, Default)]
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn warnings_of<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let captured = Captured::default();
+    let sink = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_ansi(false)
+        .with_writer(move || sink.clone())
+        .finish();
+    let out = tracing::subscriber::with_default(subscriber, f);
+    let text = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+    (out, text.lines().map(str::to_owned).collect())
+}
+
+/// One helper the sandbox cannot hold (a file that is also a folder) is skipped with a warning:
+/// the generation still commits, with everything else in it.
+#[test]
+fn a_helper_that_cannot_be_written_does_not_stall_the_sync() {
+    for pair in [
+        [".aurora/helpers/run", ".aurora/helpers/run/x.sh"],
+        [".aurora/helpers/run/x.sh", ".aurora/helpers/run"],
+    ] {
+        let d = TempDir::new();
+        let root = d.path();
+        let mut p = projector(root);
+        let helpers = [
+            (pair[0], "first", true),
+            (pair[1], "second", true),
+            (".aurora/helpers/ok.sh", "ok", true),
+        ];
+        let parts = helpers_generation(1, &helpers, true);
+        let (outcome, warnings) = warnings_of(|| {
+            let mut last = None;
+            for s in &parts {
+                last = Some(p.apply_part(s));
+            }
+            last.unwrap()
+        });
+        assert_eq!(outcome.unwrap(), PartOutcome::ReadyToCommit(1), "{pair:?}");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        p.commit(1).unwrap();
+        assert_eq!(fs::read_to_string(root.join(pair[0])).unwrap(), "first");
+        assert_eq!(
+            fs::read_to_string(root.join(".aurora/helpers/ok.sh")).unwrap(),
+            "ok"
+        );
+    }
+}
+
+/// A helper may turn from a file into a folder (or back) between two generations: the old one is
+/// pruned before the new one is installed.
+#[test]
+fn a_helper_can_change_between_a_file_and_a_folder() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    for (g, path) in [
+        (1, ".aurora/helpers/run"),
+        (2, ".aurora/helpers/run/x.sh"),
+        (3, ".aurora/helpers/run"),
+    ] {
+        apply_all(
+            &mut p,
+            &helpers_generation(g, &[(path, "body", true)], true),
+        );
+        p.commit(g).unwrap();
+        assert_eq!(fs::read_to_string(root.join(path)).unwrap(), "body");
+    }
+}
+
+/// A home with one locked memory installed, its sealed bytes, and the harvester over it.
+fn locked_home() -> (TempDir, HomeProjector, Vec<u8>, Harvester) {
+    let d = TempDir::new();
+    let mut p = projector(d.path());
+    let mut parts = generation(1, &[], &[("pinned", "the person's text")]);
+    parts[1] = part(
+        1,
+        1,
+        6,
+        "memory",
+        json!([{"path": "memory/pinned.md", "content": "the person's text", "locked": true}]),
+    );
+    apply_all(&mut p, &parts);
+    p.commit(1).unwrap();
+    let sealed = fs::read(d.path().join("memory/pinned.md")).unwrap();
+    let h = Harvester::new(d.path());
+    (d, p, sealed, h)
+}
+
+fn assert_restored(root: &Path, sealed: &[u8]) {
+    let path = root.join("memory/pinned.md");
+    assert!(fs::symlink_metadata(&path).unwrap().file_type().is_file());
+    assert_eq!(fs::read(&path).unwrap(), sealed);
+    assert_eq!(mode(&path), 0o444);
+}
+
+#[test]
+fn a_link_at_the_restore_temp_file_is_not_written_through() {
+    let (d, p, sealed, mut h) = locked_home();
+    let outside = outside_dir();
+    let path = d.path().join("memory/pinned.md");
+    std::os::unix::fs::symlink(
+        outside.path().join("victim"),
+        d.path().join("memory/.pinned.md.aurora-tmp"),
+    )
+    .unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, "the agent's edit").unwrap();
+    assert!(h.scan(&p.locked_memories()).is_empty());
+    assert_untouched(outside.path());
+    assert_restored(d.path(), &sealed);
+}
+
+#[test]
+fn a_locked_file_replaced_by_a_link_is_restored_and_the_target_left_alone() {
+    // Once with other bytes, once with the very bytes Aurora installed (nothing to restore by
+    // content, but the link must not be chmodded through).
+    for same_bytes in [false, true] {
+        let (d, p, sealed, mut h) = locked_home();
+        let outside = outside_dir();
+        let victim = outside.path().join("victim");
+        if same_bytes {
+            fs::write(&victim, &sealed).unwrap();
+        }
+        let path = d.path().join("memory/pinned.md");
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&victim, &path).unwrap();
+        assert!(h.scan(&p.locked_memories()).is_empty());
+        assert_eq!(mode(&victim), 0o600, "outside file chmodded");
+        assert_eq!(
+            fs::read(&victim).unwrap(),
+            if same_bytes {
+                sealed.clone()
+            } else {
+                b"untouched".to_vec()
+            }
+        );
+        assert_restored(d.path(), &sealed);
+    }
+}
+
+/// A FIFO in place of a locked file must not hang the harvest.
+#[test]
+fn a_fifo_in_place_of_a_locked_file_does_not_block_the_harvest() {
+    let (d, p, sealed, mut h) = locked_home();
+    let path = d.path().join("memory/pinned.md");
+    fs::remove_file(&path).unwrap();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let locked = p.locked_memories();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = h.scan(&locked);
+        let _ = tx.send(());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the harvest blocked on the FIFO");
+    assert_restored(d.path(), &sealed);
+}
+
+#[test]
+fn a_memory_folder_replaced_by_a_link_is_not_written_through() {
+    let (d, p, sealed, mut h) = locked_home();
+    let outside = outside_dir();
+    fs::remove_dir_all(d.path().join("memory")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), d.path().join("memory")).unwrap();
+    assert!(h.scan(&p.locked_memories()).is_empty());
+    assert_untouched(outside.path());
+    assert!(
+        fs::symlink_metadata(d.path().join("memory"))
+            .unwrap()
+            .file_type()
+            .is_dir()
+    );
+    assert_restored(d.path(), &sealed);
+}
+
+/// The commit prunes `memory/` too: a link there must not let it remove files elsewhere.
+#[test]
+fn the_commit_does_not_prune_through_a_linked_memory_folder() {
+    let d = TempDir::new();
+    let outside = TempDir::new();
+    let mut p = projector(d.path());
+    fs::write(outside.path().join("other.md"), seal("someone else's")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), d.path().join("memory")).unwrap();
+    apply_all(&mut p, &generation(1, &[], &[]));
+    p.commit(1).unwrap();
+    assert!(outside.path().join("other.md").exists());
+}

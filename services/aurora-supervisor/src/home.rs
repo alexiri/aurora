@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::io::Write as _;
+use std::io::Read as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -33,6 +33,7 @@ use serde_json::{Map, Value};
 
 use crate::harvest::{INDEX_FILE, MEMORY_DIR, seal, verify};
 use crate::instructions::{RenderInputs, render_with};
+use crate::nofollow;
 use crate::pg::PgDatabase;
 
 /// The `databases` of an installed `render_inputs.json`.
@@ -129,18 +130,8 @@ fn clean_rel(p: &str) -> Option<PathBuf> {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(parent)?;
-    let name = path
-        .file_name()
-        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let tmp = parent.join(format!(".{name}.aurora-tmp"));
-    let _ = fs::remove_file(&tmp);
-    let mut f = fs::File::create(&tmp)?;
-    f.write_all(bytes)?;
-    f.set_permissions(fs::Permissions::from_mode(mode))?;
-    f.sync_all()?;
-    fs::rename(&tmp, path)
+    fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
+    nofollow::write_atomic(path, bytes, mode)
 }
 
 /// (C-643) Root of the app folders in the home.
@@ -214,6 +205,29 @@ fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
             out.push(e.path());
         }
     }
+}
+
+/// Removes every file under `dir` that `keep` (paths relative to `root`) does not name, then
+/// every folder that is left empty.
+fn prune_to(root: &Path, dir: &Path, keep: &BTreeSet<PathBuf>) {
+    let mut files = Vec::new();
+    walk_files(dir, &mut files);
+    for f in files {
+        if f.strip_prefix(root).is_ok_and(|r| !keep.contains(r)) {
+            let _ = fs::remove_file(&f);
+        }
+    }
+    let mut dirs = Vec::new();
+    walk_dirs(dir, &mut dirs);
+    for d in dirs {
+        let _ = fs::remove_dir(&d); // only succeeds when empty
+    }
+}
+
+fn read_all(file: &mut fs::File) -> std::io::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 fn walk_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -375,11 +389,19 @@ impl HomeProjector {
                     match clean_rel(&e.path) {
                         Some(r) if is_helper_path(&r) => {
                             let staged_mode = if e.exec { 0o700 } else { 0o600 };
-                            write_atomic(
+                            // One helper the home cannot hold (a file that is also a folder)
+                            // is skipped: it must not stall the whole sync.
+                            if let Err(error) = write_atomic(
                                 &self.staged_files().join(&r),
                                 e.content.as_bytes(),
                                 staged_mode,
-                            )?;
+                            ) {
+                                tracing::warn!(
+                                    path = %e.path.escape_debug(),
+                                    %error,
+                                    "helper file not written; skipped"
+                                );
+                            }
                         }
                         _ => {
                             tracing::warn!(
@@ -465,6 +487,9 @@ impl HomeProjector {
         clear_link_chain(&root, Path::new(HELPERS_DIR));
         unlink_tree_symlinks(&helpers_root);
         set_dirs(&helpers_root, 0o755);
+        // The helpers are pruned before the install, so that a name can turn from a file into a
+        // folder (or back) between two generations.
+        prune_to(&root, &helpers_root, &keep);
 
         // Install.
         let mut staged = Vec::new();
@@ -477,6 +502,15 @@ impl HomeProjector {
             };
             let rel = rel.to_path_buf();
             let dst = root.join(&rel);
+            // The staging area is in the agent's home too: only a regular file is installed, and
+            // its mode is read and set on the open descriptor.
+            let mut file = match nofollow::open_regular(&src) {
+                Ok(f) => f,
+                Err(error) => {
+                    tracing::warn!(path = %rel.display(), %error, "staged file refused");
+                    continue;
+                }
+            };
             let locked = self.locked_keys.contains(&rel);
             let mode = if rel.starts_with(MEMORY_DIR) {
                 if rel.file_name().is_some_and(|n| n == INDEX_FILE) || locked {
@@ -485,7 +519,7 @@ impl HomeProjector {
                 } else {
                     0o644
                 }
-            } else if fs::metadata(&src)?.permissions().mode() & 0o100 != 0 {
+            } else if file.metadata()?.permissions().mode() & 0o100 != 0 {
                 0o555
             } else {
                 0o444
@@ -493,7 +527,7 @@ impl HomeProjector {
             if locked {
                 // The harvest restores these exact (sealed) bytes instead of uploading an edit.
                 match rel.file_name().and_then(|n| n.to_str()) {
-                    Some(n) => match fs::read(&src) {
+                    Some(n) => match read_all(&mut file) {
                         Ok(b) => {
                             locked_bytes.insert(n.trim_end_matches(".md").to_owned(), b);
                         }
@@ -506,15 +540,24 @@ impl HomeProjector {
                     }
                 }
             }
-            if let Some(p) = dst.parent() {
-                // Every managed destination: no link in the chain from the home down.
-                if let Ok(rp) = p.strip_prefix(&root) {
-                    clear_link_chain(&root, rp);
+            let installed = (|| -> std::io::Result<()> {
+                if let Some(p) = dst.parent() {
+                    // Every managed destination: no link in the chain from the home down.
+                    if let Ok(rp) = p.strip_prefix(&root) {
+                        clear_link_chain(&root, rp);
+                    }
+                    fs::create_dir_all(p)?;
                 }
-                fs::create_dir_all(p)?;
+                nofollow::set_mode(&file, mode)?;
+                fs::rename(&src, &dst)
+            })();
+            if let Err(error) = installed {
+                if !is_helper_path(&rel) {
+                    return Err(error.into());
+                }
+                tracing::warn!(path = %rel.display(), %error, "helper file not installed; skipped");
+                continue;
             }
-            fs::set_permissions(&src, fs::Permissions::from_mode(mode))?;
-            fs::rename(&src, &dst)?;
             keep.insert(rel);
         }
 
@@ -533,6 +576,8 @@ impl HomeProjector {
                 let _ = fs::remove_dir(&d); // only succeeds when empty
             }
         }
+        // A link at `memory` must not let the prune remove files elsewhere.
+        clear_link_chain(&root, Path::new(MEMORY_DIR));
         if let Ok(rd) = fs::read_dir(root.join(MEMORY_DIR)) {
             for e in rd.filter_map(Result::ok) {
                 let p = e.path();
@@ -577,24 +622,10 @@ impl HomeProjector {
                 lock_tree(&apps_root);
             }
         }
-        // (P6-TPL-6, C-1143) The helper files: pruned to the manifest like the app folders, so a
-        // removed helper disappears, then locked read-only (0555/0444 files, 0555 dirs).
-        {
-            let mut files = Vec::new();
-            walk_files(&helpers_root, &mut files);
-            for f in files {
-                if f.strip_prefix(&root).is_ok_and(|r| !keep.contains(r)) {
-                    let _ = fs::remove_file(&f);
-                }
-            }
-            let mut dirs = Vec::new();
-            walk_dirs(&helpers_root, &mut dirs);
-            for d in dirs {
-                let _ = fs::remove_dir(&d);
-            }
-            if helpers_root.is_dir() {
-                lock_tree(&helpers_root);
-            }
+        // (P6-TPL-6, C-1143) The helper files (pruned to the manifest before the install, so a
+        // removed helper is gone): locked read-only (0555/0444 files, 0555 dirs).
+        if helpers_root.is_dir() {
+            lock_tree(&helpers_root);
         }
 
         // .aurora cache + instruction files.

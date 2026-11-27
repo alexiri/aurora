@@ -117,28 +117,6 @@ fn clamp(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
-/// `key: line`, the line being the description, else title, else first content line (<=120 chars).
-/// (P6-MEMLOCK, C-1149) A locked memory's line ends with ` (locked)` after the clamped line —
-/// the same rule as the home sync's index, so `memory_list` and `memory/index.md` agree.
-pub fn index_line(
-    key: &str,
-    title: Option<&str>,
-    description: Option<&str>,
-    content: &str,
-    locked: bool,
-) -> String {
-    let line = blank_none(description)
-        .or_else(|| blank_none(title))
-        .or_else(|| content.lines().find(|l| !l.trim().is_empty()))
-        .unwrap_or("");
-    let one = line.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut out = format!("{key}: {}", clamp(&one, 120));
-    if locked {
-        out.push_str(" (locked)");
-    }
-    out
-}
-
 /// Validates a write with no IO (the checks [`save`] and [`save_in_tx`] callers share).
 pub fn check(w: &Write<'_>) -> Result<(), ApiError> {
     validate_key(w.key)?;

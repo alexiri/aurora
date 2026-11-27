@@ -2265,7 +2265,7 @@ async fn apply_in_tx(
             // `removed_upstream`: the template no longer has helper files; the agent's go.
             ("helpers", "removed_upstream") => {
                 let removed = helpers_repo::delete_all(tx, agent.id).await?;
-                if removed > 0 {
+                if !removed.is_empty() {
                     skills_repo::bump_agent(tx, agent.id).await?;
                 }
             }

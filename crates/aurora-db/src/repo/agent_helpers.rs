@@ -83,13 +83,13 @@ pub async fn delete_one(conn: &mut PgConnection, agent: Uuid, path: &str) -> Res
     )
 }
 
-/// Delete every helper file of an agent; the number removed.
-pub async fn delete_all(conn: &mut PgConnection, agent: Uuid) -> Result<u64, DbError> {
-    Ok(
-        sqlx::query("DELETE FROM agent_helper_files WHERE agent_id = $1")
+/// Delete every helper file of an agent; the paths this statement removed, sorted.
+pub async fn delete_all(conn: &mut PgConnection, agent: Uuid) -> Result<Vec<String>, DbError> {
+    let mut paths: Vec<String> =
+        sqlx::query_scalar("DELETE FROM agent_helper_files WHERE agent_id = $1 RETURNING path")
             .bind(agent)
-            .execute(conn)
-            .await?
-            .rows_affected(),
-    )
+            .fetch_all(conn)
+            .await?;
+    paths.sort();
+    Ok(paths)
 }

@@ -560,8 +560,8 @@ ASCII words joined by hyphens.\n\n",
     // (P6-MEMLOCK, C-1151) Only when the agent holds at least one locked memory.
     if i.memory_locked {
         o.push_str(
-            "Memories marked (locked) were set by a person. Use them, but do not try to change \
-or delete them; if one looks wrong or out of date, say so.\n\n",
+            "Memories whose key is followed by (locked) were set by a person. Use them, but do \
+not try to change or delete them; if one looks wrong or out of date, say so.\n\n",
         );
     }
 
@@ -1056,8 +1056,9 @@ mod tests {
         let r = render(&with);
         assert!(
             r.contains(
-                "Memories marked (locked) were set by a person. Use them, but do not try to \
-                 change or delete them; if one looks wrong or out of date, say so."
+                "Memories whose key is followed by (locked) were set by a person. Use them, \
+                 but do not try to change or delete them; if one looks wrong or out of date, \
+                 say so."
             ),
             "{r}"
         );
