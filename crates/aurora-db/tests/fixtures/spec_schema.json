@@ -884,7 +884,8 @@
       "requester_user_id",
       "status",
       "task_conversation_id",
-      "to_agent_id"
+      "to_agent_id",
+      "wakes_used"
     ],
     "plugin_blobs": [
       "content",
@@ -1524,6 +1525,7 @@
       "error_message",
       "finished_at",
       "id",
+      "idle_usage_n",
       "last_event_n",
       "last_progress_at",
       "model_basis",
@@ -2603,7 +2605,8 @@
       "requester_user_id": "uuid null",
       "status": "text",
       "task_conversation_id": "uuid",
-      "to_agent_id": "uuid"
+      "to_agent_id": "uuid",
+      "wakes_used": "int not null"
     },
     "plugin_blobs": {
       "content": "bytea not null",
@@ -3243,6 +3246,7 @@
       "error_message": "text null",
       "finished_at": "timestamptz null",
       "id": "uuid not null",
+      "idle_usage_n": "bigint not null",
       "last_event_n": "int not null",
       "last_progress_at": "timestamptz null",
       "model_basis": "jsonb null",

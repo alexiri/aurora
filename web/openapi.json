@@ -14727,7 +14727,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "`queued` | `open` | `completed` | `cancelled` | `expired`",
+            "description": "`queued` | `open` | `waiting` | `completed` | `cancelled` | `expired`",
             "required": false,
             "schema": {
               "type": "string"
@@ -65443,7 +65443,7 @@
                 },
                 "status": {
                   "type": "string",
-                  "description": "`queued` | `open` | `completed` | `cancelled` | `expired`"
+                  "description": "`queued` | `open` | `waiting` | `completed` | `cancelled` | `expired`"
                 },
                 "task_conversation_id": {
                   "type": "string",
@@ -68090,7 +68090,7 @@
           },
           "status": {
             "type": "string",
-            "description": "`queued` | `open` | `completed` | `cancelled` | `expired`"
+            "description": "`queued` | `open` | `waiting` | `completed` | `cancelled` | `expired`"
           },
           "task_conversation_id": {
             "type": "string",

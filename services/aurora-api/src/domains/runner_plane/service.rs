@@ -286,6 +286,7 @@ async fn apply(
             let turn = match &r.body {
                 ReportBody::TurnStarted(t) => Some(t.turn_id),
                 ReportBody::TurnEvents(e) => Some(e.turn_id),
+                ReportBody::TurnIdleEvents(e) => Some(e.turn_id),
                 ReportBody::TurnProgress(t) => Some(t.turn_id),
                 ReportBody::TurnResult(t) => Some(t.turn_id),
                 _ => None,

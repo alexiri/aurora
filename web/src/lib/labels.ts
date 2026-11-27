@@ -352,6 +352,7 @@ COVERED.LinkPolicy = LINK_POLICY;
 export const PEER_TASK_STATUS = {
   queued: { label: "waiting its turn" },
   open: { label: "in progress" },
+  waiting: { label: "waiting for its wake-up" },
   completed: { label: "completed" },
   cancelled: { label: "cancelled" },
   expired: { label: "ran out of time" },

@@ -7,14 +7,14 @@ import { Altitude } from "@/components/ui/altitude";
 import { Markdown } from "@/components/ui/markdown";
 import { RedactDialog } from "@/components/agents/conversation-actions";
 import { Badge } from "@/components/ui/badge";
-import { CheckIcon, CopyIcon, MoreIcon, ReplyIcon } from "@/components/ui/icons";
+import { CheckIcon, ChevronDownIcon, CopyIcon, MoreIcon, ReplyIcon, WrenchIcon } from "@/components/ui/icons";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { ApiError } from "@/lib/api/client";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { chatApi } from "@/lib/api/conversations";
 import { useWorkspace } from "@/lib/api/queries";
 import { newIdempotencyKey } from "@/lib/chat/idempotency";
-import { clockTime, type Block, type Row } from "@/lib/chat/layout";
+import { clockTime, type Block, type Row, type ToolCall } from "@/lib/chat/layout";
 import type { TranscriptState } from "@/lib/chat/transcript";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +28,57 @@ import { ToolCallGroup } from "./tool-call-group";
 import type { AgentIdent } from "./types";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** (FIX-253, part B) The summary line of the after-the-turn fold: the count, in words. */
+const afterTurnSummary = (texts: string[], calls: ToolCall[]): string => {
+  const n = texts.length + calls.length;
+  const steps = `${n} ${n === 1 ? "step" : "steps"}`;
+  if (calls.length === 0) return `Wrote something · ${steps}`;
+  if (texts.length === 0) return `Used ${calls.length} ${calls.length === 1 ? "tool" : "tools"} · ${steps}`;
+  return `Worked · ${steps}`;
+};
+
+/**
+ * (FIX-253, part B) What the agent's harness child did after the turn ended, folded under
+ * "Worked after the turn": the reader sees one muted line with the count; opening it shows the
+ * child's own text and tool calls (masked when they were recorded). A `<details>` fold, so the
+ * row is keyboard-reachable and its label reads closed or open.
+ */
+function AfterTurnFold({ texts, calls }: { texts: string[]; calls: ToolCall[] }) {
+  return (
+    <details
+      data-testid="after-turn"
+      className="max-w-chat-card rounded-control border border-line bg-surface text-sm dark:bg-canvas">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 py-2 text-ink-2 md:min-h-9 [&::-webkit-details-marker]:hidden">
+        <WrenchIcon aria-hidden="true" className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          Worked after the turn · {afterTurnSummary(texts, calls)}
+        </span>
+        <ChevronDownIcon aria-hidden="true" className="shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none" />
+      </summary>
+      <div className="flex flex-col gap-2 border-t border-line px-3 py-2">
+        {texts.map((t, i) => (
+          <div key={i} className="text-sm text-ink-2">
+            <Markdown source={t} />
+          </div>
+        ))}
+        <ul className="divide-y divide-line">
+          {calls.map((c) => (
+            <li key={c.callId} className="flex min-w-0 items-start gap-2 py-2">
+              <Badge tone={c.ok === false ? "danger" : "neutral"} className="mt-0.5 shrink-0">
+                {c.ok === false ? "Failed" : "Tool"}
+              </Badge>
+              <span className="min-w-0 flex-1 break-words font-mono text-xs text-ink-2">
+                <span className="font-medium text-ink">{c.name}</span> {c.summary}
+                {c.result ? <span className="text-muted"> — {c.result}</span> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </details>
+  );
+}
 
 const noSubscribe = () => () => undefined;
 
@@ -265,6 +316,8 @@ function BlockView({
       return <Bubble ev={block.ev} state={state} convId={convId} side={side} author={author} />;
     case "tools":
       return <ToolCallGroup calls={block.calls} running={block.running} />;
+    case "after_turn":
+      return <AfterTurnFold texts={block.texts} calls={block.calls} />;
     case "approval":
       return block.ev.type === "approval.pending" ? (
         <ApprovalCard ev={block.ev} state={state} wsId={wsId} />
@@ -406,7 +459,7 @@ export function MessageGroup({
   );
   const blocks = row.blocks.map((b, i) => (
     <BlockView
-      key={b.kind === "tools" ? b.key : `${b.kind}-${"ev" in b ? b.ev.seq : i}`}
+      key={b.kind === "tools" || b.kind === "after_turn" ? b.key : `${b.kind}-${"ev" in b ? b.ev.seq : i}`}
       block={b}
       state={state}
       wsId={wsId}

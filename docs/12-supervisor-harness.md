@@ -146,9 +146,46 @@ pub trait HarnessSession: Send {
   channel presences, instruction inputs) while idle: the next message starts the
   session again with the same `resume_ref`, so conversation memory is kept and
   tools/instructions refresh together. A running turn is never interrupted for
-  this. (FIX-253, D-490) The same release is what a Stop of a finished turn's
+  running. (FIX-253, D-490) The same release is what a Stop of a finished turn's
   **Background activity** dispatches (`session.release`): the idle child is
   killed and its background work dies with it.
+- (FIX-253, part B) **The idle reader.** After a turn that leaves background
+  work, the supervisor starts the session's idle reader
+  (`HarnessSession::start_idle_reader`): while the work lasts, the adapter
+  keeps reading the idle child's stdout — the turn is over, so its stream is
+  otherwise unread — and keeps what it maps for
+  `HarnessSession::take_idle_events`. The turn's stream and the watch are one
+  receiver behind a mutex, and the turn's message is written only once it
+  holds that mutex: every line is read by exactly one of them, so a following
+  turn takes the stream back with nothing lost and nothing duplicated (the
+  reader re-checks the running flag every 100 ms tick and wakes on the turn's
+  notify). The watch ends when the background work is gone, the child dies, or
+  30 minutes have passed since it began (`IDLE_WATCH`; a longer watch is the
+  next turn's business — the supervisor restarts it after every turn that
+  still leaves work); it keeps at most 256 events for the next drain. The
+  supervisor drains on the harvest tick and reports what it got as
+  `turn.idle.events` anchored on the turn that ended (`16 §W5`). The reader
+  forwards text, tool calls and each idle run's usage (the usage of its
+  `result`, in a turn's shape; the per-message reports of the stream are
+  dropped, and usage is never dropped by the buffer bound); a `result` of an
+  idle run ends nothing. The API adds that usage to the usage ledger by the
+  same trust rule as a turn's (tokens only, no turn and no seconds, once per
+  event). In a peer task's conversation whose message budget is used up it
+  records nothing more and says so once. **Only the recording stops: the idle
+  work itself is not stopped by a budget** (stopping it by a token budget
+  needs usage limits, which do not exist yet).
+  The API records them only against the conversation's latest finished turn
+  run on the current boot, at most 500 entries per such turn and 2,000 per
+  conversation; beyond that one notice says more activity was not recorded and
+  nothing further is added (the supervisor keeps reading the child's stream, so
+  a following turn never finds stale lines).
+- (FIX-253, part B) **Governance of idle work does not widen with the reader.**
+  The idle child's own harness tools (e.g. `Bash`) run in its sandbox — the
+  same rights the turn had; they are what the reader now makes visible. The
+  platform tools go through the tools socket, and with no turn open the API
+  refuses every call `no_active_turn` (`10`): an idle child cannot raise an
+  approval, can never bypass one, and cannot spend a grant while nobody is
+  watching. The reader only records; it never answers the child.
 
 A **conformance suite** (`tests/conformance/harness`) runs against every adapter:
 terminal-event guarantee, abort, resume, steer refusal between turns, missed

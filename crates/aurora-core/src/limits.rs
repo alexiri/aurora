@@ -415,6 +415,12 @@ pub const APP_TURN_CAP: u32 = 5;
 /// messages.
 pub const PEER_TASK_BUDGET: u32 = 20;
 pub const PEER_TASK_TTL: Duration = Duration::from_secs(86400);
+/// (FIX-253) tasks of one requester waiting for a wake-up at once; one more is cancelled.
+pub const PEER_TASK_WAITING_PER_REQUESTER_MAX: i64 = 10;
+/// (FIX-253) tasks waiting on one receiving agent at once; one more is cancelled.
+pub const PEER_TASK_WAITING_PER_RECEIVER_MAX: i64 = 5;
+/// (FIX-253) wake-ups of one task without its report; the next one cancels the task.
+pub const PEER_TASK_WAKES_MAX: i32 = 20;
 /// pending action approvals expire after this (docs/03 `action_approvals.expires_at`: 24 h).
 pub const ACTION_APPROVAL_TTL: Duration = Duration::from_secs(86400);
 pub const SESSION_IDLE: Duration = Duration::from_secs(1209600);

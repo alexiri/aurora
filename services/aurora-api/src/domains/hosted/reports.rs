@@ -67,6 +67,7 @@ pub async fn apply(
         ReportBody::SupervisorReady(_)
             | ReportBody::TurnStarted(_)
             | ReportBody::TurnEvents(_)
+            | ReportBody::TurnIdleEvents(_)
             | ReportBody::TurnProgress(_)
             | ReportBody::TurnResult(_)
             | ReportBody::SteerResult(_)
@@ -102,6 +103,7 @@ pub async fn apply(
         }
         ReportBody::TurnStarted(t) => started(tx, facts, r, t.turn_id).await?,
         ReportBody::TurnEvents(e) => events(s, tx, facts, r, e.turn_id, &e.events).await?,
+        ReportBody::TurnIdleEvents(e) => idle_events(s, tx, facts, r, e.turn_id, &e.events).await?,
         ReportBody::TurnProgress(t) => {
             let own = own_turn(tx, facts, r, t.turn_id).await?;
             match own {
@@ -411,6 +413,222 @@ enum StageOp {
     Clear,
     Retract(String),
     Replace(String, String),
+}
+
+/// (FIX-253, part B) The most `turn.idle.events` entries one report may add: the reader is
+/// bounded (`12`), and this keeps a burst from flooding the transcript.
+const AFTER_TURN_MAX: usize = 100;
+/// What the conversation says when recording stops: at a cap, or with a task's budget used up.
+const CAPPED: &str = "More activity was not recorded.";
+const OUT_OF_BUDGET: &str = "More background activity happened but was not recorded: this task \
+                             has used its message budget.";
+/// The most after-the-turn entries one anchor turn keeps, and one conversation in all.
+const AFTER_TURN_PER_ANCHOR: i64 = 500;
+const AFTER_TURN_PER_CONVERSATION: i64 = 2_000;
+/// (FIX-253, part B) The most text one after-the-turn message keeps.
+const AFTER_TURN_TEXT_MAX: usize = 2000;
+
+/// (FIX-253, part B) What the idle harness child did after the anchor turn ended (`12 §The idle
+/// reader`): the supervisor watched the child and reports its own runs' events. They become the
+/// conversation's durable **after the turn** entries — text and tool calls, masked and capped
+/// like a turn's — attributed to the anchor turn (the web folds them under "Worked after the
+/// turn"). The anchor must be the reporting sandbox's own turn: finished, run on the current
+/// boot, and the conversation's latest finished one (an idle child belongs to it; a turn still
+/// running is not idle, its own path maps the events). The entries are bounded per anchor and per
+/// conversation, and stop in a peer task's conversation whose message budget is used up. What the
+/// idle runs spent is counted in the usage ledger in every one of these cases (a stale anchor
+/// too): the tokens were spent. Recording stops; the idle work itself is not stopped.
+async fn idle_events(
+    s: &AppState,
+    tx: &mut PgConnection,
+    facts: &SandboxFacts,
+    r: &Report,
+    turn: Uuid,
+    evs: &[NumberedEvent],
+) -> Result<ReportResult, ApiError> {
+    let t = match own_turn(tx, facts, r, turn).await? {
+        Ok(t) => t,
+        Err(x) => return Ok(x),
+    };
+    if matches!(t.status.as_str(), "dispatched" | "running") {
+        return Ok(res(r, ReportStatus::Invalid, Some("turn_still_running")));
+    }
+    if hosted::turn_boot(tx, t.id).await? != Some(r.boot_id) {
+        return Ok(res(r, ReportStatus::Fenced, Some("other_boot")));
+    }
+    let cid = t.conversation_id;
+    convs::lock(tx, cid).await?;
+    let mut sorted: Vec<&NumberedEvent> = evs.iter().collect();
+    sorted.sort_by_key(|e| e.n);
+    let (spent, sorted): (Vec<&NumberedEvent>, Vec<&NumberedEvent>) = sorted
+        .into_iter()
+        .partition(|e| e.event.kind.as_str() == "usage");
+    for e in spent {
+        let Some(claim) = e.event.data.get("usage").filter(|u| u.is_object()) else {
+            continue;
+        };
+        // The same trust rule as a turn's usage.
+        let usage = super::model::usage_for_turn(s, tx, turn, claim).await?;
+        let n = i64::try_from(e.n).unwrap_or(i64::MAX);
+        aurora_db::repo::usage::record_idle(tx, turn, n, &usage).await?;
+    }
+    if turns::latest_finished(&mut *tx, cid).await? != Some(turn) {
+        return Ok(res(r, ReportStatus::Invalid, Some("stale_anchor")));
+    }
+    let out_of_budget = aurora_db::repo::peer_tasks::by_task_conversation(&mut *tx, cid)
+        .await?
+        .is_some_and(|task| task.messages_used >= task.message_budget);
+    let (mut of_anchor, mut of_conversation) = after_turn_counts(tx, cid, turn).await?;
+    // Whether this report holds more than one report may add, and no other limit stopped it
+    // first (that limit writes its own line).
+    let mut left_out = sorted.len() > AFTER_TURN_MAX;
+    for e in sorted.into_iter().take(AFTER_TURN_MAX) {
+        let d = &e.event.data;
+        let (ty, mut p) = match e.event.kind.as_str() {
+            "tool.started" => (
+                "after_turn.tool",
+                json!({"turn_id": turn,
+                    "call_id": clip(str_of(d, "call_id").unwrap_or(""), 128),
+                    "name": clip(str_of(d, "name").unwrap_or(""), 128),
+                    "summary": sanitize::one_line(
+                        &sanitize::reason(str_of(d, "summary").unwrap_or(""), 200), 200)}),
+            ),
+            "tool.finished" => {
+                let mut p = json!({"turn_id": turn,
+                    "call_id": clip(str_of(d, "call_id").unwrap_or(""), 128),
+                    "ok": d.get("ok").and_then(Value::as_bool).unwrap_or(false)});
+                if let Some(sm) = str_of(d, "summary") {
+                    p["summary"] = json!(sanitize::one_line(&sanitize::reason(sm, 200), 200));
+                }
+                ("after_turn.tool_end", p)
+            }
+            "text.delta" => {
+                // Masked like a start-failure reason (tokens, `Authorization:`, `KEY=`), and
+                // recorded once per message: the idle run's text arrives whole.
+                let text = sanitize::reason(str_of(d, "delta").unwrap_or(""), AFTER_TURN_TEXT_MAX);
+                if text.is_empty() {
+                    continue;
+                }
+                let mid = clip(str_of(d, "message_id").unwrap_or(""), 128);
+                (
+                    "after_turn.text",
+                    json!({"turn_id": turn, "message_id": mid, "text": text}),
+                )
+            }
+            _ => continue, // the reader forwards only text and tool calls
+        };
+        let key = if ty == "after_turn.text" {
+            "message_id"
+        } else {
+            "call_id"
+        };
+        // An event without an id of its own is known by its place in the anchor's watch.
+        if p[key].as_str().is_none_or(str::is_empty) {
+            p[key] = json!(format!("{turn}:{}", e.n));
+        }
+        if already_recorded(tx, cid, ty, p[key].as_str().unwrap_or("")).await? {
+            continue;
+        }
+        let stopped = if out_of_budget {
+            Some(("budget", OUT_OF_BUDGET))
+        } else if of_conversation >= AFTER_TURN_PER_CONVERSATION {
+            Some(("conversation", CAPPED))
+        } else if of_anchor >= AFTER_TURN_PER_ANCHOR {
+            Some(("turn", CAPPED))
+        } else {
+            None
+        };
+        if let Some((scope, text)) = stopped {
+            note_not_recorded(tx, cid, turn, scope, text).await?;
+            left_out = false;
+            break;
+        }
+        conv::append_event(tx, cid, Some(turn), ty, &p).await?;
+        of_anchor += 1;
+        of_conversation += 1;
+    }
+    if left_out {
+        note_not_recorded(tx, cid, turn, "turn", CAPPED).await?;
+    }
+    Ok(res(r, ReportStatus::Applied, None))
+}
+
+/// How many after-the-turn entries exist: `(of the anchor turn, of the conversation)`.
+async fn after_turn_counts(
+    tx: &mut PgConnection,
+    cid: Uuid,
+    turn: Uuid,
+) -> Result<(i64, i64), ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE turn_id = $2), count(*) FROM transcript_events
+         WHERE conversation_id = $1 AND starts_with(type, 'after_turn.')",
+    )
+    .bind(cid)
+    .bind(turn)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(aurora_db::DbError::from)?)
+}
+
+/// One line says that further activity is not recorded: once per anchor turn for its cap, once
+/// per conversation for the conversation's cap and for a used-up task budget.
+async fn note_not_recorded(
+    tx: &mut PgConnection,
+    cid: Uuid,
+    turn: Uuid,
+    scope: &str,
+    text: &str,
+) -> Result<(), ApiError> {
+    let said: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM transcript_events
+          WHERE conversation_id = $1 AND type = 'notice'
+            AND payload->>'code' = 'after_turn_capped' AND payload->>'scope' = $2
+            AND ($2 <> 'turn' OR payload->>'turn_id' = $3))",
+    )
+    .bind(cid)
+    .bind(scope)
+    .bind(turn.to_string())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(aurora_db::DbError::from)?;
+    if !said {
+        conv::append_event(
+            tx,
+            cid,
+            Some(turn),
+            "notice",
+            &json!({"code": "after_turn_capped", "turn_id": turn, "scope": scope, "text": text}),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// (FIX-253, part B) Whether this after-the-turn item is already on the transcript (a
+/// redelivered report must not duplicate the idle child's work).
+async fn already_recorded(
+    tx: &mut PgConnection,
+    cid: Uuid,
+    ty: &str,
+    key: &str,
+) -> Result<bool, ApiError> {
+    let key_col = if ty == "after_turn.text" {
+        "message_id"
+    } else {
+        "call_id"
+    };
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM transcript_events
+         WHERE conversation_id = $1 AND type = $2 AND payload->>$3 = $4",
+    )
+    .bind(cid)
+    .bind(ty)
+    .bind(key_col)
+    .bind(key)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(aurora_db::DbError::from)?
+        > 0)
 }
 
 impl StageOp {
@@ -786,6 +1004,13 @@ async fn watch_fired(
     let Some(c) = convs::get(&mut *tx, cid).await? else {
         return Ok(res(r, ReportStatus::Invalid, Some("unknown_conversation")));
     };
+    // (FIX-253, D-490(b); security review, medium 2) The firing is a `waiting` task's wake —
+    // through the one wake helper, before any turn starts: it re-checks the requester's rights
+    // and the freeze, and a refused wake cancels the task with its close report (no turn).
+    let wake = crate::domains::peer_tasks::service::resume_on_wake(tx, cid).await?;
+    if wake.is_cancelled() {
+        return Ok(res(r, ReportStatus::Applied, None));
+    }
     let text = format!("A watch you set fired: {}", sanitize::block(detail, 4096));
     let created = conv::create_turn_tx(
         tx,

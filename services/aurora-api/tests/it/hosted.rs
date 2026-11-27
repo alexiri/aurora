@@ -679,6 +679,364 @@ async fn an_aborted_turns_stop_does_not_release_the_background_activity() {
     );
 }
 
+/// (FIX-253, part B) What the idle child did after the turn (`12 §The idle reader`) becomes the
+/// conversation's durable **after the turn** entries: text and tool calls, masked like every
+/// displayed text, anchored on the finished turn — and a redelivered report duplicates nothing.
+#[tokio::test]
+async fn turn_idle_events_become_after_the_turn_entries() {
+    let r = rig().await;
+    let lv = r.boot("idlewatch").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+    assert_eq!(r.turn_status(&turn).await.0, "done");
+
+    let idle = json!({"kind": "turn.idle.events", "turn_id": turn, "events": [
+        ev(1, "text.delta", json!({"message_id": "m1",
+            "delta": "The e2e run failed; I pushed a fix and started it again."})),
+        ev(2, "tool.started", json!({"call_id": "c1", "name": "Bash",
+            "summary": "Bash: curl -H 'Authorization: aub_secret123' https://x"})),
+        ev(3, "tool.finished", json!({"call_id": "c1", "ok": true, "summary": "exit 0"})),
+        ev(4, "usage", json!({"usage": {"input_tokens": 5}})),
+    ]});
+    r.report(&lv, idle.clone()).await;
+    let evs = r.events(lv.conv).await;
+    let after: Vec<&(String, Value)> = evs
+        .iter()
+        .filter(|(t, _)| t.starts_with("after_turn."))
+        .collect();
+    assert_eq!(
+        after.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
+        ["after_turn.text", "after_turn.tool", "after_turn.tool_end"],
+        "the idle run's text and tool calls, in order; `usage` is not an entry: {after:?}"
+    );
+    assert_eq!(
+        after[0].1["text"],
+        "The e2e run failed; I pushed a fix and started it again."
+    );
+    assert_eq!(
+        after[0].1["turn_id"], turn,
+        "anchored on the turn that ended"
+    );
+    assert_eq!(after[0].1["message_id"], "m1");
+    assert!(
+        !after[1].1["summary"]
+            .as_str()
+            .unwrap()
+            .contains("aub_secret123"),
+        "masked: {}",
+        after[1].1["summary"]
+    );
+    assert_eq!(after[2].1["ok"], true);
+
+    // A redelivered report (the wire replays on a reconnect) records nothing again.
+    r.report(&lv, idle).await;
+    let evs2 = r.events(lv.conv).await;
+    assert_eq!(
+        evs2.iter()
+            .filter(|(t, _)| t.starts_with("after_turn."))
+            .count(),
+        3
+    );
+
+    // Not the reporting sandbox's turn: refused.
+    let st = r
+        .report(
+            &lv,
+            json!({"kind": "turn.idle.events", "turn_id": Uuid::now_v7().to_string(), "events": []}),
+        )
+        .await;
+    assert_eq!(st, "invalid", "an unknown anchor turn is refused");
+}
+
+/// A booted agent whose first turn ran and ended `done`: `(lv, turn)`.
+async fn idle_after_one_turn(r: &Rig, handle: &str) -> (Live, String) {
+    let lv = r.boot(handle).await;
+    let turn = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    run_turn_to_done(r, &lv, &turn).await;
+    (lv, turn)
+}
+
+async fn run_turn_to_done(r: &Rig, lv: &Live, turn: &str) {
+    r.report(lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+}
+
+/// `count` idle tool calls with ids from `from`, anchored on `turn`.
+fn idle_calls(turn: &str, from: usize, count: usize) -> Value {
+    let events: Vec<Value> = (from..from + count)
+        .enumerate()
+        .map(|(i, c)| {
+            ev(
+                i as u64 + 1,
+                "tool.started",
+                json!({"call_id": format!("c{c}"), "name": "Bash", "summary": "Bash: true"}),
+            )
+        })
+        .collect();
+    json!({"kind": "turn.idle.events", "turn_id": turn, "events": events})
+}
+
+async fn after_turn_entries(r: &Rig, conv: Uuid) -> (usize, Vec<Value>) {
+    let evs = r.events(conv).await;
+    let entries = evs
+        .iter()
+        .filter(|(t, _)| t.starts_with("after_turn."))
+        .count();
+    let capped = evs
+        .into_iter()
+        .filter(|(t, p)| t == "notice" && p["code"] == "after_turn_capped")
+        .map(|(_, p)| p)
+        .collect();
+    (entries, capped)
+}
+
+/// (FIX-253 review, medium 4) Only the conversation's latest finished turn can be the anchor of
+/// idle work: an earlier one is refused and records nothing.
+#[tokio::test]
+async fn idle_events_anchor_only_on_the_latest_finished_turn() {
+    let r = rig().await;
+    let (lv, first) = idle_after_one_turn(&r, "idlestale").await;
+    r.say(lv.conv, "again").await;
+    let second = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    run_turn_to_done(&r, &lv, &second).await;
+
+    assert_eq!(r.report(&lv, idle_calls(&first, 0, 1)).await, "invalid");
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 0);
+    assert_eq!(r.report(&lv, idle_calls(&second, 0, 1)).await, "applied");
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 1);
+}
+
+/// (FIX-253 review, medium 4) The anchor must have run on the sandbox's current boot, and a
+/// report of another boot is fenced: an older boot's turn anchors nothing.
+#[tokio::test]
+async fn idle_events_of_another_boot_are_fenced() {
+    let r = rig().await;
+    let (mut lv, turn) = idle_after_one_turn(&r, "idleboot").await;
+
+    sqlx::query("UPDATE turns SET boot_id = $2 WHERE id = $1::uuid")
+        .bind(&turn)
+        .bind(Uuid::now_v7())
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(r.report(&lv, idle_calls(&turn, 0, 1)).await, "fenced");
+
+    lv.boot = Uuid::now_v7().to_string();
+    assert_eq!(r.report(&lv, idle_calls(&turn, 0, 1)).await, "fenced");
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 0);
+}
+
+/// (FIX-253 review, medium 4) At most 500 after-the-turn entries per anchor turn: then one line
+/// says more was not recorded, and nothing else is added.
+#[tokio::test]
+async fn idle_events_are_capped_per_anchor_turn() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlecap").await;
+    for batch in 0..7 {
+        r.report(&lv, idle_calls(&turn, batch * 100, 100)).await;
+    }
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 500);
+    assert_eq!(capped.len(), 1, "{capped:?}");
+    assert!(
+        capped[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("was not recorded"),
+        "{}",
+        capped[0]
+    );
+}
+
+/// (FIX-253 review, medium 4) At most 2,000 after-the-turn entries per conversation, whatever
+/// the anchors: then one line says so, once.
+#[tokio::test]
+async fn idle_events_are_capped_per_conversation() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idleconvcap").await;
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    for i in 0..1990 {
+        aurora_api::domains::conversations::service::append_event(
+            &mut conn,
+            lv.conv,
+            None,
+            "after_turn.tool",
+            &json!({"call_id": format!("earlier{i}")}),
+        )
+        .await
+        .unwrap();
+    }
+    drop(conn);
+    r.report(&lv, idle_calls(&turn, 0, 20)).await;
+    r.report(&lv, idle_calls(&turn, 20, 20)).await;
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 2000);
+    assert_eq!(capped.len(), 1, "{capped:?}");
+}
+
+/// (FIX-253 review 2, item 6) A report with more entries than one report may add says so, with
+/// the same one line the caps use: nothing is left out silently.
+#[tokio::test]
+async fn idle_events_beyond_one_reports_limit_are_said_to_be_unrecorded() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idleflood").await;
+    r.report(&lv, idle_calls(&turn, 0, 100)).await;
+    assert_eq!(after_turn_entries(&r, lv.conv).await.1.len(), 0, "all fit");
+    r.report(&lv, idle_calls(&turn, 100, 101)).await;
+    r.report(&lv, idle_calls(&turn, 300, 101)).await;
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 300);
+    assert_eq!(capped.len(), 1, "{capped:?}");
+    assert_eq!(capped[0]["text"], "More activity was not recorded.");
+}
+
+/// (FIX-253 review, low 8) An idle event without a call or message id is still recorded once:
+/// its place in the watch's numbering is its key, so a redelivery adds nothing and a later
+/// event does.
+#[tokio::test]
+async fn idle_events_without_ids_are_deduplicated_by_their_number() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlenoid").await;
+    let batch = |from: u64| {
+        json!({"kind": "turn.idle.events", "turn_id": turn, "events": [
+            ev(from, "text.delta", json!({"message_id": "", "delta": "still watching"})),
+            ev(from + 1, "tool.started", json!({"call_id": "", "name": "Bash",
+                "summary": "Bash: true"})),
+            ev(from + 2, "tool.finished", json!({"call_id": "", "ok": true})),
+        ]})
+    };
+    r.report(&lv, batch(1)).await;
+    r.report(&lv, batch(1)).await;
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 3, "redelivery");
+    r.report(&lv, batch(4)).await;
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 6, "later events");
+}
+
+/// `(turns, input tokens, output tokens)` of the agent in the usage ledger.
+async fn ledger(r: &Rig, agent: Uuid) -> (i64, i64, i64) {
+    sqlx::query_as(
+        "SELECT COALESCE(sum(turns), 0)::bigint, COALESCE(sum(input_tokens), 0)::bigint,
+                COALESCE(sum(output_tokens), 0)::bigint
+         FROM usage_daily WHERE agent_id = $1",
+    )
+    .bind(agent)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap()
+}
+
+/// One idle run's usage event, numbered `n`.
+fn idle_usage(n: u64) -> Value {
+    ev(
+        n,
+        "usage",
+        json!({"usage": {"input_tokens": 100, "output_tokens": 10}}),
+    )
+}
+
+/// (FIX-253 review, medium 5) An idle run's tokens are counted like a turn's: added to the usage
+/// ledger (no extra turn), once however often the report is redelivered — also when the anchor
+/// is no longer the latest turn and nothing else of the report is recorded.
+#[tokio::test]
+async fn idle_usage_is_added_to_the_usage_ledger_once() {
+    let r = rig().await;
+    let (lv, first) = idle_after_one_turn(&r, "idleusage").await;
+    let (turns, input, output) = ledger(&r, lv.agent).await;
+    assert_eq!((turns, input, output), (1, 0, 0));
+
+    let report = |turn: &str, n: u64| {
+        json!({"kind": "turn.idle.events", "turn_id": turn,
+        "events": [idle_usage(n)]})
+    };
+    r.report(&lv, report(&first, 1)).await;
+    r.report(&lv, report(&first, 1)).await;
+    assert_eq!(ledger(&r, lv.agent).await, (1, 100, 10), "redelivery");
+    r.report(&lv, report(&first, 2)).await;
+    assert_eq!(ledger(&r, lv.agent).await, (1, 200, 20));
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 0, "no entry");
+
+    r.say(lv.conv, "again").await;
+    let second = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    run_turn_to_done(&r, &lv, &second).await;
+    assert_eq!(r.report(&lv, report(&first, 3)).await, "invalid");
+    assert_eq!(ledger(&r, lv.agent).await, (2, 300, 30), "spent is spent");
+}
+
+/// (FIX-253 review, medium 5) In a peer task's conversation whose message budget is used up,
+/// nothing more is recorded and one line says so; the idle run's tokens are still counted.
+#[tokio::test]
+async fn idle_work_of_a_task_over_budget_is_counted_but_not_recorded() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlebudget").await;
+    let sender = r.agent("idlesender", false).await;
+    let origin = r.direct(sender).await;
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let (link, _) =
+        aurora_db::repo::agent_links::get_or_create(&mut conn, sender, lv.agent, "allow")
+            .await
+            .unwrap();
+    let task = aurora_db::repo::peer_tasks::insert(
+        &mut conn,
+        &aurora_db::repo::peer_tasks::NewPeerTask {
+            id: Uuid::now_v7(),
+            link_id: link.id,
+            from_agent_id: sender,
+            to_agent_id: lv.agent,
+            requester_user_id: None,
+            origin_conversation_id: origin,
+            task_conversation_id: lv.conv,
+            status: "open",
+            message_budget: 20,
+            ttl_secs: 3600.0,
+        },
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    // Under budget: recorded as anywhere.
+    r.report(&lv, idle_calls(&turn, 0, 1)).await;
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 1);
+
+    sqlx::query("UPDATE peer_tasks SET messages_used = message_budget WHERE id = $1")
+        .bind(task.id)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    for n in [10, 20] {
+        r.report(
+            &lv,
+            json!({"kind": "turn.idle.events", "turn_id": turn, "events": [
+                ev(n, "tool.started", json!({"call_id": format!("late{n}"), "name": "Bash",
+                    "summary": "Bash: true"})),
+                idle_usage(n + 1),
+            ]}),
+        )
+        .await;
+    }
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 1, "nothing more is recorded");
+    assert_eq!(capped.len(), 1, "{capped:?}");
+    assert_eq!(
+        capped[0]["text"],
+        "More background activity happened but was not recorded: this task has used its message \
+         budget."
+    );
+    assert_eq!(ledger(&r, lv.agent).await, (1, 200, 20), "still counted");
+}
+
 /// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
 /// `background` turn event: one visible **Background activity** notice (deduped while it keeps
 /// running), and Stop on a finished turn records **Stop requested** and dispatches one

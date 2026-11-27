@@ -9,9 +9,10 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use aurora_protocol::runner::{
-    Code, Gate, GateOutcome, HarnessId, HarnessInfo, HomeSynced, PortsState, SendNowOutcome,
-    SendNowResult, SessionPurged, SessionReleased, SessionReport, SteerOutcome, SteerResult,
-    SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
+    Code, Gate, GateOutcome, HarnessId, HarnessInfo, HomeSynced, NumberedEvent, PortsState,
+    SendNowOutcome, SendNowResult, SessionPurged, SessionReleased, SessionReport, SteerOutcome,
+    SteerResult, SupervisorReady, TurnDeliver, TurnEvent, TurnEvents, TurnMessage, TurnRef,
+    TurnResult, TurnStatus,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
 use serde_json::{Map, Value, json};
@@ -129,6 +130,11 @@ pub struct Supervisor {
     ptys: crate::pty::PtyHandle,
     /// (P4-PRV-2) Last reported listening loopback ports (`ports.state`); sent only on change.
     reported_ports: BTreeSet<u16>,
+    /// (FIX-253, part B) Conversations whose idle child is being watched, with the turn the
+    /// watch follows: `conversation -> anchor turn`. The drain reports the watch's events
+    /// against that anchor (`turn.idle.events`); the entry goes when the watch is done. With
+    /// the turn: the number of the watch's next event.
+    idle_turns: Arc<StdMutex<HashMap<Uuid, (Uuid, u64)>>>,
 }
 
 /// One share of the in-memory allow-list.
@@ -251,6 +257,7 @@ impl Supervisor {
             streams,
             ptys,
             reported_ports: BTreeSet::new(),
+            idle_turns: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -338,6 +345,8 @@ impl Supervisor {
                 _ = harvest_tick.tick() => {
                     self.harvest().await;
                     self.send_ports().await;
+                    // (FIX-253, part B) What the watched idle children did since the last tick.
+                    self.drain_idle().await;
                 }
                 msg = inbound.recv() => {
                     let Some(msg) = msg else { break };
@@ -356,6 +365,50 @@ impl Supervisor {
     fn finish_turn(&mut self, turn_id: Uuid) {
         if let Some(t) = self.turns.remove(&turn_id) {
             self.hub.set_turn(t.conversation_id, None);
+        }
+    }
+
+    /// (FIX-253, part B) Reports what the watched idle children did since the last drain, as
+    /// `turn.idle.events` anchored on the turn each watch follows. A watch whose background
+    /// work is gone and that has nothing left to report is dropped: the reader stopped itself.
+    async fn drain_idle(&mut self) {
+        let anchors: Vec<(Uuid, (Uuid, u64))> = self
+            .idle_turns
+            .lock()
+            .map(|m| m.iter().map(|(c, w)| (*c, *w)).collect())
+            .unwrap_or_default();
+        for (conversation_id, (turn_id, mut next)) in anchors {
+            let Some(entry) = self.sessions.get(&conversation_id) else {
+                if let Ok(mut m) = self.idle_turns.lock() {
+                    m.remove(&conversation_id);
+                }
+                continue;
+            };
+            let mut s = entry.session.lock().await;
+            let events: Vec<HarnessEvent> = s.take_idle_events();
+            if events.is_empty() {
+                if s.background_work().is_empty()
+                    && let Ok(mut m) = self.idle_turns.lock()
+                {
+                    m.remove(&conversation_id);
+                }
+                continue;
+            }
+            let wire = number_idle(&events, &mut next);
+            drop(s);
+            if let Ok(mut m) = self.idle_turns.lock()
+                && let Some(watch) = m.get_mut(&conversation_id)
+                && watch.0 == turn_id
+            {
+                watch.1 = next;
+            }
+            if !wire.is_empty() {
+                self.send(SupervisorToRunner::TurnIdleEvents(TurnEvents {
+                    turn_id,
+                    events: wire,
+                }))
+                .await;
+            }
         }
     }
 
@@ -408,6 +461,10 @@ impl Supervisor {
                     reported_ref,
                     _proxy,
                 }) => {
+                    // (FIX-253, part B) The watch dies with the session.
+                    if let Ok(mut m) = self.idle_turns.lock() {
+                        m.remove(&conversation_id);
+                    }
                     // (FIX-253 fixes2) `ok` only when the release really ran and succeeded. A
                     // session another live clone still holds was not released: the entry goes
                     // back, so the next Stop can try again.
@@ -824,6 +881,10 @@ impl Supervisor {
             && let Some(old) = self.sessions.remove(&d.conversation_id)
             && let Ok(m) = Arc::try_unwrap(old.session)
         {
+            // (FIX-253, part B) The old session's watch dies with it.
+            if let Ok(mut m2) = self.idle_turns.lock() {
+                m2.remove(&d.conversation_id);
+            }
             let _ = m.into_inner().release().await;
         }
         if !self.sessions.contains_key(&d.conversation_id) {
@@ -879,6 +940,7 @@ impl Supervisor {
             gate: d.gate,
             procs: self.procs.clone(),
             db_turns: self.db_turns.clone(),
+            idle_turns: self.idle_turns.clone(),
         };
         self.hub.set_turn(d.conversation_id, Some(d.turn_id));
         self.turns.insert(d.turn_id, handle);
@@ -1041,6 +1103,9 @@ struct TurnTask {
     gate: Option<Gate>,
     procs: Arc<ProcessManager>,
     db_turns: Arc<crate::pgrelay::DbTurns>,
+    /// (FIX-253, part B) The supervisor's `idle_turns` map, so the watch started here is known
+    /// to the drain.
+    idle_turns: Arc<StdMutex<HashMap<Uuid, (Uuid, u64)>>>,
 }
 
 impl TurnTask {
@@ -1131,6 +1196,15 @@ impl TurnTask {
                 },
             }))
             .await;
+            // (FIX-253, part B) The watch begins: what the child does while nobody holds its
+            // stream is reported as `turn.idle.events` against this turn until the work, the
+            // child or the watch budget ends it.
+            let mut s = self.session.lock().await;
+            s.start_idle_reader();
+            drop(s);
+            if let Ok(mut m) = self.idle_turns.lock() {
+                m.insert(self.conversation_id, (self.turn_id, 1));
+            }
         }
         self.cred.set_context(None);
         self.db_turns.end(self.turn_id);
@@ -1245,6 +1319,36 @@ async fn release_shared(session: SharedSession) -> (bool, Option<SharedSession>)
     match Arc::try_unwrap(session) {
         Ok(m) => (m.into_inner().release().await.is_ok(), None),
         Err(arc) => (false, Some(arc)),
+    }
+}
+
+/// (FIX-253) Numbers one drain of a watched idle child's events from `next`, which it advances:
+/// the numbers are the events' places in the whole watch, so the API can tell a redelivered
+/// event from a new one even when it carries no id of its own.
+fn number_idle(events: &[HarnessEvent], next: &mut u64) -> Vec<NumberedEvent> {
+    events
+        .iter()
+        .filter_map(HarnessEvent::to_wire)
+        .map(|event| {
+            let n = *next;
+            *next += 1;
+            NumberedEvent { n, event }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+
+    #[test]
+    fn idle_numbers_run_on_across_drains() {
+        let activity = || HarnessEvent::Activity { line: "x".into() };
+        let mut next = 1;
+        let first = number_idle(&[activity(), activity()], &mut next);
+        let second = number_idle(&[activity()], &mut next);
+        let ns: Vec<u64> = first.iter().chain(&second).map(|e| e.n).collect();
+        assert_eq!(ns, [1, 2, 3]);
     }
 }
 

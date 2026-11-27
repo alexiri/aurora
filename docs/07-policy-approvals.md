@@ -991,8 +991,50 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   push a decider gets, after the same delay, and skipped when a live surface
   already shows the card (the origin conversation watched, or the card posted).
   A task with a pending approval is not closed by the end of the receiving
-  turn; it stays open until the approval is decided, expires or the requester
-  cancels the task.
+  turn; it keeps the task out of cancellation until the approval is decided,
+  expires or the requester cancels the task.
+- (FIX-253, D-490(b)) **A peer task can wait.** When the receiving turn ends
+  while a wake is registered — an armed `process_watch` in the task
+  conversation, a one-time schedule created from that conversation, or a
+  pending approval (the FIX-252 minimum) — the task goes to `waiting` instead
+  of being cancelled, and the requester sees one `peer_task_waiting` notice
+  (words from `14 §Vocabulary`; a pending approval adds none beyond
+  FIX-252's card, and the notice shows once per wait, not per turn). Only the
+  receiving agent's own registrations count: a watch or a schedule of another
+  conversation never keeps the task alive, nor does a schedule a person set in
+  the task conversation (the agent's own wake-up is the one that carries the
+  task's deadline), and a registration removed before
+  the turn ends (a deleted schedule, a finished watch) still cancels the task
+  as today ("finished without a report"). `waiting` holds no worker and no
+  sandbox — it is a state in the database. **The wake resumes the task**: the
+  watch firing, the schedule firing and the approval decision (or deadline)
+  each give the task conversation its own turn and return the task to `open`,
+  with the same grants and policy it had — a wake never extends rights. Every
+  wake that starts a turn (also one that arrives while the task is still
+  `open`) first re-checks that the requester can still use the sending agent;
+  a failed check cancels the task with a "could not continue" line and starts
+  no turn. While the receiving agent, its workspace or its organization is
+  frozen, every wake is held — the task keeps waiting (a watch stays armed, a
+  one-time schedule waits, an approval decision and its notice are delivered
+  within a minute of the unfreeze). A `waiting` task holds the
+  pair's slot like an `open` one: a second task queues behind it, and ending it
+  promotes the queued one. A waiting task still ends by `complete_task`,
+  Cancel, or its overall expiry/budget (the expiry report reaches the requester
+  as today).
+  **Bounds.** Each wake turn is charged to `PEER_TASK_BUDGET` like a task
+  message; one task is woken at most `PEER_TASK_WAKES_MAX` times without its
+  report; at most `PEER_TASK_WAITING_PER_REQUESTER_MAX` tasks of one requester
+  and `PEER_TASK_WAITING_PER_RECEIVER_MAX` tasks of one receiving agent wait at
+  once. A task that would exceed a bound is closed with a line saying which.
+  The two waiting bounds are soft under concurrency: turn ends that overlap
+  never wait for each other to count (that could deadlock chained tasks), so
+  each may pass a bound by at most one task per other one in flight.
+  A wake that fires while the receiving turn is still running queues its turn:
+  the task stays `open` and that turn's end decides.
+  **Nothing left to wait for.** When the last wake-up of a waiting task ends
+  without firing (the schedule is deleted or switched off; the watch is lost
+  with its sandbox) and no approval is outstanding, the task is cancelled with
+  the usual report — at once for a schedule, within a minute otherwise.
 - **App-turn cap**: turns whose speaker is a bot or agent increment
   `conversations.app_turn_streak`; any person-authored turn resets it. When the
   streak reaches `APP_TURN_CAP` further bot/agent turns are refused with a
