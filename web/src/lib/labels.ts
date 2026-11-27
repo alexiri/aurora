@@ -526,6 +526,12 @@ export const AUDIT_SENTENCE: Record<string, AuditWords> = {
       `${actor} made ${t ?? "a person"} the owner of their personal workspace (previous role: ${typeof m?.from === "string" ? m.from : "none"})`,
     weight: "important",
   },
+  "workspace_access.self_grant": {
+    // (FIX-234, C-1161) An administrator gave themselves access. The row's target is that person or a group, so the
+    // sentence names neither; `metadata.via` is `group` when the access comes through a group.
+    sentence: (actor, _t, m) => `${actor} gave themselves access to the workspace${role(m) ? ` as ${role(m)}` : ""}${m.via === "group" ? " through a group" : ""}`,
+    weight: "important",
+  },
   "workspace_access.suspend": { sentence: (actor, t) => `${actor} suspended ${t ?? "a person"}`, weight: "important" },
   "workspace_access.restore": { sentence: (actor, t) => `${actor} restored ${t ?? "a person"}`, weight: "routine" },
   "workspace.access.grant": {
