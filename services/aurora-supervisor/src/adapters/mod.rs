@@ -456,6 +456,47 @@ mod tests {
         }
     }
 
+    /// (FIX-253 fixes2) A background command that detached into its own session (`setsid`) is in
+    /// no group of ours, so the group kill misses it: the descendant sweep walks /proc and kills
+    /// it anyway.
+    #[tokio::test]
+    async fn claude_code_release_kills_a_detached_setsid_background_child() {
+        fn gone(pid: u32) -> bool {
+            !std::path::Path::new(&format!("/proc/{pid}")).exists()
+        }
+        let l = claude_code::launcher::ProcessLauncher {
+            program: "/bin/sh".into(),
+        };
+        let spec = claude_code::config::LaunchSpec {
+            args: vec!["-c".into(),
+                "setsid /bin/sleep 300 & echo $!; exec /bin/sleep 600".into()],
+            env: vec![],
+            cwd: std::env::temp_dir(),
+            conversation_id: uuid::Uuid::now_v7(),
+        };
+        let mut io = claude_code::launcher::Launcher::launch(&l, spec)
+            .await
+            .unwrap();
+        let bg: u32 = tokio::time::timeout(std::time::Duration::from_secs(20), io.lines.recv())
+            .await
+            .expect("the fake harness printed no background pid")
+            .expect("closed")
+            .trim()
+            .parse()
+            .expect("a pid");
+        assert!(!gone(bg), "the detached background child is not running");
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        (io.kill)();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !gone(bg) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the detached background pid {bg} survived the release"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     #[test]
     fn known_ids_resolve_when_the_runtime_is_present() {
         for id in KNOWN {
