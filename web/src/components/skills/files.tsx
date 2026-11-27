@@ -23,6 +23,7 @@ import {
   type NewSkillFile,
   type SkillFile,
 } from "@/lib/api/skills";
+import { EMERGENCY_NO_SKILL_FILES } from "@/lib/emergency";
 import { formatCount } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
 
@@ -61,23 +62,27 @@ const WRAP = "whitespace-pre-wrap [overflow-wrap:anywhere]";
 
 /**
  * The files of a skill as a small tree, each opening in a read-only code view. Repository and app text is shown as it
- * is, never as markup. An app skill's files have no route to read them by, so only its `SKILL.md` opens.
+ * is, never as markup. An app skill's files have no route to read them by, so only its `SKILL.md` opens. For an
+ * emergency reader (`emergencyReader`) the files are only listed: nothing opens and no file is asked for.
  */
 export function SkillFileTree({
   skillId,
   version,
   body,
   files,
+  emergencyReader = false,
 }: {
   skillId: string | null | undefined;
   version: string | null | undefined;
   body: string;
   files: SkillFile[];
+  emergencyReader?: boolean;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const headingId = useId();
   const row = (path: string, label: string, depth: number, file: SkillFile | null) => {
-    const readable = path === SKILL_MD || !!skillId;
+    // SKILL.md too, for a reader: its text is the instructions above.
+    const readable = !emergencyReader && (path === SKILL_MD || !!skillId);
     const content = (
       <>
         <span className="min-w-0 flex-1 break-all font-mono text-xs text-ink">
@@ -128,6 +133,7 @@ export function SkillFileTree({
         <li>{row(SKILL_MD, SKILL_MD, 0, null)}</li>
         {nodes(tree, 0)}
       </ul>
+      {emergencyReader && files.length > 0 ? <p className="text-xs text-muted">{EMERGENCY_NO_SKILL_FILES}</p> : null}
       {open === SKILL_MD ? <TextViewer label={`File ${SKILL_MD}`} text={body} className={WRAP} /> : null}
       {open && open !== SKILL_MD && skillId ? <FileContent key={open} skillId={skillId} path={open} version={version} /> : null}
     </section>

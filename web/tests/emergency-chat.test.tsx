@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -45,6 +45,19 @@ const ACTIVE_GRANT = {
 function serve() {
   mockFetch({
     "GET /v1/conversations/c1/events": () => json(200, { items: [], last_seq: 0 }),
+    "GET /v1/agents/a1/answer-readiness": () => json(200, { can_answer: true }),
+  });
+}
+
+const MESSAGES = [
+  { seq: 1, type: "turn.queued", ts: "2026-11-20T10:00:00Z", payload: { turn_id: "t1", speaker_label: "Bob Builder", door: "dashboard", text: "Shall we ship it?", attachments: [] } },
+  { seq: 2, type: "text", ts: "2026-11-20T10:01:00Z", payload: { turn_id: "t1", message_id: "m2", text: "Yes, today." } },
+];
+
+function serveMessages() {
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn(async () => undefined) } });
+  mockFetch({
+    "GET /v1/conversations/c1/events": () => json(200, { items: MESSAGES, last_seq: 2 }),
     "GET /v1/agents/a1/answer-readiness": () => json(200, { can_answer: true }),
   });
 }
@@ -96,6 +109,32 @@ describe("emergency read access in the thread (FIX-236)", () => {
     expect(await screen.findByText(/Read-only view\. This is Bob Builder/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Conversation actions" })).toBeInTheDocument();
     expect(screen.queryByTestId("emergency-thread-notice")).toBeNull();
+  });
+
+  // (FIX-280) A conversation without a composer offers no Reply, for anyone; Copy and Copy link stay.
+  it.each([
+    ["the reader", { emergency: true }],
+    ["a co-owner reading another member's direct chat", { ownerView: "Bob Builder" }],
+    ["anyone in an archived conversation", { archived: true }],
+  ])("%s gets no Reply, and keeps Copy and Copy link", async (_who, props) => {
+    serveMessages();
+    wrap(thread(props));
+    const message = (await screen.findByText("Shall we ship it?")).closest("[data-seq]") as HTMLElement;
+    expect(screen.queryByRole("button", { name: "Reply" })).toBeNull();
+    expect(within(message).getByRole("button", { name: "Copy message" })).toBeInTheDocument();
+    // Radix opens a dropdown on keydown Enter (jsdom has no pointer capture).
+    fireEvent.keyDown(within(message).getByRole("button", { name: "More message actions" }), { key: "Enter" });
+    expect(await screen.findByRole("menuitem", { name: "Copy link" })).toBeInTheDocument();
+  });
+
+  it("a conversation with a composer offers Reply, and it opens the reply bar", async () => {
+    serveMessages();
+    wrap(thread({ ownDirect: true }));
+    await screen.findByLabelText("Message");
+    const replies = await screen.findAllByRole("button", { name: "Reply" });
+    expect(replies).toHaveLength(2);
+    fireEvent.click(replies[0]!);
+    expect(await screen.findByRole("group", { name: "Replying to" })).toBeInTheDocument();
   });
 
   it("an ended grant: no emergency line, the thread still read-only in emergency mode", async () => {

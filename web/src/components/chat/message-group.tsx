@@ -143,9 +143,11 @@ function MessageToolbar({
             ? "opacity-100"
             : "pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 group-hover/msg:pointer-events-auto group-hover/msg:opacity-100",
         )}>
-        <button type="button" className={iconButton} aria-label="Reply" onClick={() => actions.reply({ seq, author, excerpt: excerptOf(text) })}>
-          <ReplyIcon aria-hidden="true" />
-        </button>
+        {actions.reply ? (
+          <button type="button" className={iconButton} aria-label="Reply" onClick={() => actions.reply?.({ seq, author, excerpt: excerptOf(text) })}>
+            <ReplyIcon aria-hidden="true" />
+          </button>
+        ) : null}
         {canCopy ? (
           <button
             type="button"
@@ -219,6 +221,7 @@ function Bubble({
       onKeyDown={(e) => {
         // R on a focused message (or one of its controls) replies to it.
         if (
+          actions.reply &&
           (e.key === "r" || e.key === "R") &&
           !e.ctrlKey &&
           !e.metaKey &&
@@ -278,7 +281,7 @@ function FileMessage({
       data-seq={seq}
       onClick={() => setShown((v) => !v)}
       onKeyDown={(e) => {
-        if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (actions.reply && (e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey) {
           e.preventDefault();
           actions.reply({ seq, author, excerpt: excerptOf(text) });
         }

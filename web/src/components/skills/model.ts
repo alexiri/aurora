@@ -29,7 +29,15 @@ export type SkillPage =
       /** Who may decide a library update, per tier. */
       canDecide: Record<BudgetTier, boolean>;
     }
-  | { kind: "workspace"; wsId: string; orgId: string | undefined; label: string; canOwn: boolean }
+  | {
+      kind: "workspace";
+      wsId: string;
+      orgId: string | undefined;
+      label: string;
+      canOwn: boolean;
+      /** The viewer reads this workspace through their own emergency grant (an agent's page says it with `readOnly`). */
+      emergencyReader?: boolean;
+    }
   | { kind: "organization"; orgId: string; label: string };
 
 export function pageScope(page: SkillPage): SkillScope {

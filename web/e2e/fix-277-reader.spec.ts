@@ -3,7 +3,7 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import { ANN_DIRECT, mockChat, WITH_REDACTED } from "./support/chat-mock";
 import { mockEmergencyReader } from "./support/emergency-reader";
 import { mockMemories } from "./support/memory";
-import { agent, ws } from "./support/mock-api";
+import { agent, org, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
 
 // FIX-277: what the redirect used to hide. An emergency reader now reaches every page under `/o/<org>/w/<ws>`: what the
@@ -34,6 +34,15 @@ const EVENTS = [
   { seq: 9, type: "turn.finished", ts: new Date().toISOString(), payload: { turn_id: "t9", status: "failed", error_code: "sandbox_start_failed" } },
 ];
 
+/** (FIX-280) A skill with a file, on the agent's list and on the workspace's. */
+const skillWithFile = (tier: "agent" | "workspace") => ({
+  id: tier === "agent" ? "00000000-0000-4000-8000-0000000000e1" : "00000000-0000-4000-8000-0000000000e2",
+  org_id: org.id, agent_id: tier === "agent" ? agent.id : null, workspace_id: tier === "workspace" ? ws.id : null, scope: tier, tier,
+  name: "triage-alerts", title: null, description: "Look at firing alerts.", body: "# Triage alerts\n\nRun the script.", enabled: true,
+  files: [{ path: "scripts/firing.sh", size: 130, executable: true }], total_size: 40, overridden_in: null, used_by_agents: tier === "agent" ? null : 1,
+  source: null, created_at: "2026-11-20T10:00:00Z", updated_at: "2026-11-20T10:00:00Z",
+});
+
 /** The reader's API over a workspace that has something on every page: conversations, memories, a schedule, a webhook. */
 async function open(page: Page, path: string) {
   const answered403: string[] = [];
@@ -50,6 +59,8 @@ async function open(page: Page, path: string) {
     await page.route(/\/v1\/agents\/[^/]+\/webhooks$/, list([HOOK]));
     await page.route(/\/v1\/schedules\/[^/]+\/runs(\?.*)?$/, list([]));
     await page.route(/\/v1\/webhooks\/[^/]+\/deliveries(\?.*)?$/, list([]));
+    await page.route(/\/v1\/agents\/[^/]+\/skills$/, list([skillWithFile("agent")]));
+    await page.route(/\/v1\/workspaces\/[^/]+\/skills$/, list([skillWithFile("workspace")]));
   });
   await page.goto(path);
   // The terminal's page has no shell, so no banner: there the "not covered" notice is what shows.
@@ -143,6 +154,28 @@ for (const [what, path, there] of [
     const clean = await open(page, path);
     await expect(page.locator("main")).toContainText(there);
     await clean();
+  });
+}
+
+// (FIX-280) A skill's files are listed for a reader, but the grant doesn't cover them: nothing opens or asks for one.
+for (const [what, path] of [
+  ["an agent's", `${AGENT}?tab=skills`],
+  ["the workspace's", `${BASE}/skills`],
+] as const) {
+  test(`${what} skill lists its file without opening it, and asks for no file`, async ({ page }) => {
+    const asked: string[] = [];
+    page.on("request", (r) => {
+      if (new URL(r.url()).pathname.includes("/files/")) asked.push(r.url());
+    });
+    const clean = await open(page, path);
+    await page.getByRole("list", { name: "Skills" }).getByRole("button").first().click();
+    const files = page.getByRole("region", { name: "Files · 2" });
+    await expect(files.getByText("firing.sh", { exact: true })).toBeVisible();
+    await files.getByText("firing.sh", { exact: true }).click();
+    await clean();
+    expect(asked, "file requests").toEqual([]);
+    await expect(files.getByText("Emergency read access doesn’t cover a skill’s files.")).toBeVisible();
+    await expect(files.getByRole("button")).toHaveCount(0);
   });
 }
 

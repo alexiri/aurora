@@ -144,6 +144,20 @@ describe("Workspace manage page (FIX-235, D-477)", () => {
     expect(within(notice).getByRole("link", { name: "Read the workspace’s agents" })).toHaveAttribute("href", "/o/acme/w/lab/agents");
   });
 
+  // (FIX-280) With the grant open, the Agents section no longer says the agents can't be opened; without it, it does.
+  it("with the grant open, the Agents sentence doesn't say the agents can't be opened", async () => {
+    serve({}, { emergency_reader: true, emergency_reader_id: "e1", emergency_reader_expires_at: "2026-11-20T16:00:00Z" });
+    wrap(<WorkspaceManage />);
+    expect(await screen.findByText("The workspace's agents. You can pause or resume them.")).toBeInTheDocument();
+    expect(screen.queryByText(/you cannot open them/)).toBeNull();
+  });
+
+  it("without a grant, the Agents sentence is unchanged", async () => {
+    serve({}, { emergency_reader: false });
+    wrap(<WorkspaceManage />);
+    expect(await screen.findByText("The workspace's agents. You can pause or resume them; you cannot open them.")).toBeInTheDocument();
+  });
+
   it("an administrator without a grant gets no link into the workspace", async () => {
     serve({}, { emergency_reader: false });
     wrap(<WorkspaceManage />);

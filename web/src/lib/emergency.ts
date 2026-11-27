@@ -49,6 +49,9 @@ export function emergencyCovers(rest: string): boolean {
   return (EMERGENCY_TOPICS as readonly string[]).includes(topic) && second === undefined;
 }
 
+/** (FIX-280) Under a skill's file tree for a reader: the server keeps a skill's files to people with their own access. */
+export const EMERGENCY_NO_SKILL_FILES = "Emergency read access doesn’t cover a skill’s files.";
+
 /** The reader's banner (brief 2): on every page while the reader holds the grant. */
 export function emergencyReaderBannerText(expiresAt: string): string {
   return `Emergency read access until ${formatTime(expiresAt)}. Everything you open is recorded, and this workspace's people have been told.`;
