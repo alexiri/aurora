@@ -534,6 +534,199 @@ async fn self_grant_rules() {
     assert_eq!(f.h.mail.sent().len(), before);
 }
 
+// ---- (FIX-261, D-501, SEC-161) restoring a suspended binding is a grant ----
+
+impl OwnerCase {
+    /// Suspend `user`'s binding in `ws` through the route, as `who`.
+    async fn suspend(&self, who: &str, ws: Uuid, user: Uuid) {
+        let (s, v) = self
+            .call(
+                who,
+                Method::PATCH,
+                &format!("/v1/workspaces/{ws}/access/{user}"),
+                Some(json!({"status": "suspended"})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+    }
+
+    async fn restore(&self, who: &str, ws: Uuid, user: Uuid) -> (u16, Value) {
+        self.call(
+            who,
+            Method::PATCH,
+            &format!("/v1/workspaces/{ws}/access/{user}"),
+            Some(json!({"status": "active"})),
+        )
+        .await
+    }
+
+    async fn binding_status(&self, ws: Uuid, user: Uuid) -> String {
+        sqlx::query_scalar(
+            "SELECT status FROM workspace_access WHERE workspace_id = $1 AND user_id = $2",
+        )
+        .bind(ws)
+        .bind(user)
+        .fetch_one(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    async fn audit_rows(&self, ws: Uuid, action: &str) -> Vec<(String, Value)> {
+        sqlx::query_as(
+            "SELECT target_id::text, metadata FROM audit_log \
+             WHERE action = $2 AND workspace_id = $1",
+        )
+        .bind(ws)
+        .bind(action)
+        .fetch_all(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    /// A shared workspace Bob owns in his own right, where the admin's own `owner` binding was
+    /// suspended by Bob to cut them off.
+    async fn admin_cut_off(&self) -> Uuid {
+        let ws = self.h.workspace_owned_by(self.org, self.bob).await;
+        self.h.bind_ws(ws, self.admin, "owner").await;
+        self.suspend(&self.bob_cookie, ws, self.admin).await;
+        ws
+    }
+}
+
+/// An administrator restoring their own suspended binding is a self-grant: never by API key.
+#[tokio::test]
+async fn restoring_oneself_needs_a_session() {
+    let f = owner_case().await;
+    let ws = f.admin_cut_off().await;
+    let before = f.h.mail.sent().len();
+    let (s, _, v) =
+        f.h.send(
+            Method::PATCH,
+            &format!("/v1/workspaces/{ws}/access/{}", f.admin),
+            &[("authorization", &f.admin_org_key), ("origin", ORIGIN)],
+            Some(json!({"status": "active"})),
+        )
+        .await;
+    assert_eq!((s.as_u16(), code(&v)), (403, "session_required"), "{v}");
+    assert_eq!(f.binding_status(ws, f.admin).await, "suspended");
+    assert!(
+        f.audit_rows(ws, "workspace_access.restore")
+            .await
+            .is_empty()
+    );
+    assert!(
+        f.audit_rows(ws, "workspace_access.self_grant")
+            .await
+            .is_empty()
+    );
+    assert_eq!(f.h.mail.sent().len(), before);
+}
+
+/// By session it is allowed, audited as a self-grant (`via: "restore"`) beside the restore row,
+/// and the other owners are told.
+#[tokio::test]
+async fn restoring_oneself_is_an_audited_and_announced_self_grant() {
+    let f = owner_case().await;
+    let ws = f.admin_cut_off().await;
+    let before = f.h.mail.sent().len();
+    let (s, v) = f.restore(&f.admin_cookie, ws, f.admin).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["status"], "active", "{v}");
+    assert_eq!(f.binding_status(ws, f.admin).await, "active");
+    assert_eq!(f.audit_rows(ws, "workspace_access.restore").await.len(), 1);
+    let rows = f.audit_rows(ws, "workspace_access.self_grant").await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].0, f.admin.to_string(), "{rows:?}");
+    assert_eq!(rows[0].1["via"], "restore", "{rows:?}");
+    assert_eq!(rows[0].1["role"], "owner", "{rows:?}");
+    let mail = f.h.mail.sent()[before..].to_vec();
+    assert_eq!(mail.len(), 1, "only the other owner: {mail:?}");
+    assert_eq!(mail[0].to, "bob@x.io", "{mail:?}");
+    assert!(
+        mail[0].body.contains("gave themselves owner access to"),
+        "{mail:?}"
+    );
+}
+
+/// In a personal workspace only its person restores anyone: an administrator can neither put
+/// back someone the person suspended nor themselves, by session or by key.
+#[tokio::test]
+async fn only_the_person_restores_in_their_personal_workspace() {
+    let f = owner_case().await;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    f.h.bind_ws(f.ws, carol, "member").await;
+    f.suspend(&f.bob_cookie, f.ws, carol).await;
+    f.h.bind_ws(f.ws, f.admin, "owner").await;
+    f.suspend(&f.bob_cookie, f.ws, f.admin).await;
+
+    for target in [carol, f.admin] {
+        let (s, v) = f.restore(&f.admin_cookie, f.ws, target).await;
+        assert_eq!((s, code(&v)), (403, "personal_workspace_owner_only"), "{v}");
+        let (s, _, v) =
+            f.h.send(
+                Method::PATCH,
+                &format!("/v1/workspaces/{}/access/{target}", f.ws),
+                &[("authorization", &f.admin_org_key), ("origin", ORIGIN)],
+                Some(json!({"status": "active"})),
+            )
+            .await;
+        assert_eq!(
+            (s.as_u16(), code(&v)),
+            (403, "personal_workspace_owner_only"),
+            "{v}"
+        );
+        assert_eq!(f.binding_status(f.ws, target).await, "suspended");
+    }
+    assert!(
+        f.audit_rows(f.ws, "workspace_access.restore")
+            .await
+            .is_empty()
+    );
+}
+
+/// The person restores people in their own personal workspace: no self-grant.
+#[tokio::test]
+async fn the_person_restores_someone_in_their_personal_workspace() {
+    let f = owner_case().await;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    f.h.bind_ws(f.ws, carol, "member").await;
+    f.suspend(&f.bob_cookie, f.ws, carol).await;
+    let (s, v) = f.restore(&f.bob_cookie, f.ws, carol).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(f.binding_status(f.ws, carol).await, "active");
+    assert!(
+        f.audit_rows(f.ws, "workspace_access.self_grant")
+            .await
+            .is_empty()
+    );
+}
+
+/// In a shared workspace restoring someone else stays a `can_administer` action: an owner and
+/// an administrator without own access both may, with no self-grant row and no notice.
+#[tokio::test]
+async fn restoring_someone_else_in_a_shared_workspace_is_unchanged() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    f.h.bind_ws(ws, carol, "member").await;
+    let before = f.h.mail.sent().len();
+    for who in [&f.bob_cookie, &f.admin_cookie] {
+        f.suspend(&f.bob_cookie, ws, carol).await;
+        let (s, v) = f.restore(who, ws, carol).await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(f.binding_status(ws, carol).await, "active");
+    }
+    assert!(
+        f.audit_rows(ws, "workspace_access.self_grant")
+            .await
+            .is_empty()
+    );
+    assert_eq!(f.h.mail.sent().len(), before);
+}
+
 struct FailMailer;
 
 #[async_trait::async_trait]

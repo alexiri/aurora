@@ -829,6 +829,20 @@ async fn administer_admits_contentless_and_own_refuses_without_a_binding() {
             || m.eq_ignore_ascii_case("patch");
         let body = (write || (m.eq_ignore_ascii_case("delete") && *p == "/workspaces/{ws}"))
             .then(|| body_for_row(&m.to_uppercase(), p, &w));
+        // (FIX-261, D-501(c)) The walk's PATCH body restores: suspended first, so it is a real
+        // restore of someone else in a shared workspace, not the same-status no-op.
+        if m.eq_ignore_ascii_case("patch") && *p == "/workspaces/{ws}/access/{user}" {
+            let n = sqlx::query(
+                "UPDATE workspace_access SET status = 'suspended' \
+                 WHERE workspace_id = $1 AND user_id = $2",
+            )
+            .bind(w.fx.ws)
+            .bind(w.fx.victim)
+            .execute(w.h.pool())
+            .await
+            .unwrap();
+            assert_eq!(n.rows_affected(), 1, "the victim holds a direct binding");
+        }
         let (s, v) =
             w.h.call(
                 &c,

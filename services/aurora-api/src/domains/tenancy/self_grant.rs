@@ -4,12 +4,63 @@
 //! other active own-right owner of the workspace is told — when there is none, every other
 //! active org owner. One e-mail and one Web Push per recipient, no content: the fixed sentence
 //! with names and the role, and a link to the workspace's People page.
+//!
+//! The routes that give a person a **direct** binding (add or raise, and restore a suspended one,
+//! D-501) share [`require_session`], [`audit_tx`] and [`notify_committed`].
 
 use crate::app::AppState;
+use crate::audit::{self, AuditEvent};
 use crate::domains::auth::mail::Mail;
+use crate::http::auth::Caller;
 use aurora_core::{ApiError, sanitize};
 use aurora_db::{DbError, PgPool};
+use axum::http::StatusCode;
+use serde_json::json;
 use uuid::Uuid;
+
+/// A self-grant needs a signed-in session, never an API key.
+pub fn require_session(c: &Caller) -> Result<(), ApiError> {
+    if c.is_session() {
+        return Ok(());
+    }
+    Err(ApiError::new(
+        StatusCode::FORBIDDEN,
+        "session_required",
+        "Adding yourself to a workspace needs a signed-in session, not an API key.",
+    ))
+}
+
+/// The critical `workspace_access.self_grant` row of a caller's own direct binding, in the
+/// change's transaction (which the change's own row commits as critical). `via` says which act
+/// gave the access (`user`, `restore`).
+pub async fn audit_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    c: &Caller,
+    org: Uuid,
+    ws: Uuid,
+    role: &str,
+    via: &str,
+) -> Result<(), ApiError> {
+    let ev = AuditEvent::by(c, "workspace_access.self_grant")
+        .org(org)
+        .workspace(ws)
+        .target("user", c.user_id)
+        .metadata(json!({"role": role, "via": via}));
+    audit::insert_tx(tx, &ev).await?;
+    Ok(())
+}
+
+/// [`notify_for_user`] after the change committed: a failing notice is logged and the change
+/// stands.
+pub async fn notify_committed(state: &AppState, org: Uuid, ws: Uuid, actor: &Caller, role: &str) {
+    if let Err(e) = notify_for_user(state, org, ws, actor, role).await {
+        tracing::warn!(
+            error = %e,
+            workspace = %ws,
+            "self-grant notice after the change failed; the change stands"
+        );
+    }
+}
 
 const NAME_MAX: usize = 80;
 
