@@ -402,9 +402,10 @@ impl<'a> Resolver<'a> {
         match listing.items.iter().find(|i| i.name == r.name) {
             Some(i) if i.valid => {
                 // The agent-tier library budget (C-1142's `over_budget`): the gallery answers
-                // from the listing's byte size; the plan re-checks the loaded content's exact
-                // budget unit.
-                if !skills::library::agent_tier_fits(self.state, i.size as usize) {
+                // from the listing's size (the add's unit; a valid skill always has one); the
+                // plan re-checks the loaded content.
+                let size = i.size.and_then(|s| usize::try_from(s).ok());
+                if !skills::library::agent_tier_fits(self.state, size.unwrap_or(usize::MAX)) {
                     return Ok(Resolved {
                         available: false,
                         unavailable_reason: Some("over_budget"),

@@ -27,7 +27,9 @@ use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::domains::skill_libraries::content as lib_content;
 use crate::domains::skill_libraries::content::{self, LoadedFile, LoadedSkill};
-use crate::domains::skill_libraries::dto::{BlockedReason, BlockedSkill, LibraryBudget, TierRef};
+use crate::domains::skill_libraries::dto::{
+    BlockedReason, BlockedSkill, LibraryBudget, SkillInvalidReason, TierRef,
+};
 use crate::domains::skill_libraries::service as lib_service;
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
@@ -203,8 +205,8 @@ impl TierRoom {
     }
 
     /// Why the listed skill cannot be added to this tier, if it cannot: broken, then its name
-    /// taken, then over the budget. The size is the listing's (an estimate until the files are
-    /// read); the add checks again.
+    /// taken, then over the budget. The size is the listing's (what the add counts; zero is
+    /// never used, because a skill without a size is not valid); the add checks again.
     #[must_use]
     pub fn blocked(
         &self,
@@ -515,6 +517,8 @@ pub struct UpdateView {
     pub over_budget: bool,
     /// Why an `invalid` proposal cannot be applied (repository text: untrusted).
     pub reason: Option<String>,
+    /// The same as a code; non-null exactly for an `invalid` proposal.
+    pub reason_code: Option<SkillInvalidReason>,
     pub diff: Option<Diff>,
 }
 
@@ -718,7 +722,9 @@ async fn update_view(
         ),
         _ => (None, false, u.reason.as_deref().map(|r| one_line(r, 300))),
     };
+    let reason_code = u.reason_code.as_deref().and_then(SkillInvalidReason::parse);
     Ok(UpdateView {
+        reason_code,
         id: u.id,
         kind: u.kind,
         commit_sha: u.commit_sha,
@@ -871,9 +877,12 @@ async fn approve_update(
             let loaded: LoadedSkill =
                 content::finish(row.name.clone(), description, body, files, blobs).map_err(
                     |e| match e {
-                        content::LoadError::Invalid(r) => ApiError::unprocessable(
+                        content::LoadError::Invalid(i) => ApiError::unprocessable(
                             "library_skill_invalid",
-                            format!("This update cannot be applied: {}.", one_line(&r, 200)),
+                            format!(
+                                "This update cannot be applied: {}.",
+                                one_line(&i.reason, 200)
+                            ),
                         ),
                         content::LoadError::Read(_) => ApiError::internal("unreachable"),
                     },

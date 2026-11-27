@@ -15,8 +15,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::content::{self, Candidate, LoadError, ReadError, Reader};
+use super::dto::SkillInvalidReason;
 use super::git::GitRepo;
-use super::service::{Offered, catalogue, open_token, row_url};
+use super::service::{Offered, catalogue, default_branch_of, open_token, row_url};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 
@@ -163,6 +164,11 @@ pub async fn refresh_library_within(
             },
             next_in_secs(interval, 0),
         ),
+        // The source changed under the pass: nothing it found is recorded (`finish_refresh`
+        // only releases the lease, and the library stays due).
+        Err(Fail {
+            superseded: true, ..
+        }) => ("active", None, 0, None, "superseded", 0.0),
         // (FIX-096) The git host throttled us: not a failure of the library. Keep its state and
         // failure count and come back after the host's (capped) `Retry-After`.
         Err(Fail {
@@ -195,6 +201,7 @@ pub async fn refresh_library_within(
         owner,
         head_sha: head,
         head_epoch: lib.head_epoch,
+        source_epoch: lib.source_epoch,
         status,
         error: error.as_deref(),
         failures,
@@ -218,10 +225,12 @@ fn blobs_of(v: &Option<serde_json::Value>) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-/// Why a pass did not finish; with `retry_after` the git host throttled it (not a failure).
+/// Why a pass did not finish; with `retry_after` the git host throttled it (not a failure), with
+/// `superseded` the library's source changed under it (not a failure either).
 struct Fail {
     reason: String,
     retry_after: Option<u64>,
+    superseded: bool,
 }
 
 impl From<String> for Fail {
@@ -229,6 +238,7 @@ impl From<String> for Fail {
         Self {
             reason,
             retry_after: None,
+            superseded: false,
         }
     }
 }
@@ -247,21 +257,61 @@ impl From<ReadError> for Fail {
                 ReadError::Throttled(s) => Some(s),
                 _ => None,
             },
+            superseded: false,
         }
     }
+}
+
+fn db<E>(_: E) -> Fail {
+    "the database is unavailable".into()
+}
+
+/// A transaction in which the library still reads the source this pass read: its row is locked
+/// for share, so a change of source waits for the pass's write and then drops it. After a change
+/// the pass writes nothing more.
+async fn while_current<'a>(
+    state: &'a AppState,
+    lib: &LibraryRow,
+) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, Fail> {
+    let mut tx = state.pool.begin().await.map_err(db)?;
+    ensure_current(&mut tx, lib).await?;
+    Ok(tx)
+}
+
+async fn ensure_current(conn: &mut sqlx::PgConnection, lib: &LibraryRow) -> Result<(), Fail> {
+    if repo::lock_source(conn, lib.id).await.map_err(db)? == Some(lib.source_epoch) {
+        return Ok(());
+    }
+    Err(Fail {
+        superseded: true,
+        ..Fail::from("the library's source changed during the refresh")
+    })
+}
+
+/// The skill is back to what is pinned: its open proposal no longer applies.
+async fn supersede(state: &AppState, lib: &LibraryRow, skill: Uuid) -> Result<(), Fail> {
+    let mut tx = while_current(state, lib).await?;
+    repo::supersede_pending(&mut tx, skill).await.map_err(db)?;
+    tx.commit().await.map_err(db)
 }
 
 /// What loading one skill directory gave in this pass (kept for the other organizations' skills
 /// of the same directory).
 enum Loaded {
     Ok(content::LoadedSkill),
-    Invalid(String),
+    Invalid(content::Invalid),
 }
 
+/// What a pass found about one skill: `(kind, why it is invalid, proposed content, hash, bytes)`.
+type Finding = (
+    &'static str,
+    Option<(SkillInvalidReason, String)>,
+    Option<serde_json::Value>,
+    Vec<u8>,
+    i32,
+);
+
 async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Done, Fail> {
-    fn db<E>(_: E) -> Fail {
-        "the database is unavailable".into()
-    }
     // (P5-SKLIB-1, C-1125) The API reads the repository itself, with the library's token when
     // it has one (opened for this pass only).
     let url = row_url(lib)?;
@@ -273,9 +323,21 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
         state.library.fetch_timeout,
     )?;
     let reader = Reader::new(&git, &lib.path);
+    let resolved = reader.resolve_full(lib.reference.as_deref()).await?;
+    let default_branch = default_branch_of(&resolved, lib.reference.as_deref());
+    let head = resolved.sha;
+    let mut tx = while_current(state, lib).await?;
+    repo::record_head(&mut tx, lib.id, &head)
+        .await
+        .map_err(db)?;
+    // (The branch may be renamed while its head stays.)
+    if default_branch != lib.default_branch {
+        repo::set_default_branch(&mut tx, lib.id, default_branch.as_deref())
+            .await
+            .map_err(db)?;
+    }
+    tx.commit().await.map_err(db)?;
     let mut c = state.pool.acquire().await.map_err(db)?;
-    let head = reader.resolve(lib.reference.as_deref()).await?;
-    repo::record_head(&mut c, lib.id, &head).await.map_err(db)?;
     // An unchanged head costs this one call, unless an organization is over budget for the library
     // (space may be free: its skipped proposals are compared again).
     // (C-1176) A library whose counts are not stored yet is read once to store them.
@@ -307,10 +369,12 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
     // (C-1176) What the library offers at this head. A failure keeps the previous counts: it
     // never fails the pass that watches the added skills.
     if let Ok(cat) = catalogue(&reader, &lib.path, head.clone()).await {
+        let mut tx = while_current(state, lib).await?;
         Offered::of(&cat.items)
-            .store(&mut c, lib.id)
+            .store(&mut tx, lib.id)
             .await
             .map_err(db)?;
+        tx.commit().await.map_err(db)?;
     }
     let mut done = Done {
         head: head.clone(),
@@ -329,13 +393,7 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
         let pinned = blobs_of(&s.library_blobs);
         let pending = repo::pending_update(&mut c, s.id).await.map_err(db)?;
         // What the repository says now about this skill.
-        let (kind, reason, proposed, hash, bytes): (
-            &str,
-            Option<String>,
-            Option<serde_json::Value>,
-            Vec<u8>,
-            i32,
-        ) = match by_dir.get(dir.as_str()) {
+        let (kind, reason, proposed, hash, bytes): Finding = match by_dir.get(dir.as_str()) {
             None => (
                 "removed",
                 None,
@@ -352,9 +410,8 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
                         .is_none_or(|x| x.executable == f.executable)
                 });
                 if cand.problems.is_empty() && cand.blobs() == pinned && exec_same {
-                    if let Some(p) = &pending {
-                        let _ = p;
-                        repo::supersede_pending(&mut c, s.id).await.map_err(db)?;
+                    if pending.is_some() {
+                        supersede(state, lib, s.id).await?;
                     }
                     continue;
                 }
@@ -373,16 +430,16 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
                     loaded.insert(dir.clone(), v);
                 }
                 match &loaded[dir.as_str()] {
-                    Loaded::Invalid(r) => {
-                        let r = one_line(r, 300);
+                    Loaded::Invalid(i) => {
+                        let r = one_line(&i.reason, 300);
                         let h = content::marker_sha256("invalid", &r, &cand.blobs());
-                        ("invalid", Some(r), None, h.to_vec(), 0)
+                        ("invalid", Some((i.code, r)), None, h.to_vec(), 0)
                     }
                     Loaded::Ok(l) => {
                         if Some(l.content_sha256.as_slice()) == s.library_content_sha256.as_deref()
                         {
                             if pending.is_some() {
-                                repo::supersede_pending(&mut c, s.id).await.map_err(db)?;
+                                supersede(state, lib, s.id).await?;
                             }
                             continue;
                         }
@@ -426,6 +483,10 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
             .execute(&mut *tx)
             .await
             .map_err(db)?;
+        // (B-1) Lock order: the organization's proposal lock, then the library's row (for
+        // share), then proposal rows. A change of source holds the library's row, so either
+        // it waits and drops this proposal, or this pass sees it and writes nothing.
+        ensure_current(&mut tx, lib).await?;
         let pending_bytes = repo::pending_bytes_org(&mut tx, s.org_id)
             .await
             .map_err(db)?;
@@ -446,7 +507,8 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
                 commit_sha: &head,
                 proposed: proposed.as_ref(),
                 content_sha256: &hash,
-                reason: reason.as_deref(),
+                reason: reason.as_ref().map(|(_, r)| r.as_str()),
+                reason_code: reason.as_ref().map(|(c, _)| c.as_str()),
                 bytes,
             },
         )
@@ -478,8 +540,10 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
     // Exactly the organizations that did not fit are over budget; those that fit again (or no
     // longer use the library) are cleared.
     let over: Vec<Uuid> = over.into_iter().collect();
-    repo::set_org_states(&mut c, lib.id, &over)
+    let mut tx = while_current(state, lib).await?;
+    repo::set_org_states(&mut tx, lib.id, &over)
         .await
         .map_err(db)?;
+    tx.commit().await.map_err(db)?;
     Ok(done)
 }

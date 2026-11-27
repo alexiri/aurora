@@ -251,6 +251,11 @@ pub const LIBRARY_READS_CONCURRENT: usize = 4;
 /// may take overall, waiting for a read permit included.
 pub const LIBRARY_READ_DEADLINE: Duration = Duration::from_secs(90);
 pub const LIBRARY_BROWSE_MAX: usize = 200;
+/// (docs/02 §Limits) What judging a listing may fetch beyond the `SKILL.md` files: this many
+/// blob requests, each under the same caps as an add's, and no new request once the file bytes
+/// held pass `LIBRARY_JUDGE_BYTES_MAX`. A skill left over is not judged (`unknown_size`).
+pub const LIBRARY_JUDGE_REQUESTS_MAX: usize = 24;
+pub const LIBRARY_JUDGE_BYTES_MAX: usize = 32 * MIB;
 /// (P5-IA-1, C-987) One-time notice keys a person can have dismissed.
 pub const ONBOARDING_NOTICES_MAX: usize = 50;
 /// Open proposed updates per organization.

@@ -2,6 +2,7 @@
 //! libraries; phase 4, P4-GSL; phase 5, P5-SKLIB-1, D-448: a library is an https git URL with an
 //! optional sealed read-only token, C-1122..C-1127).
 
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -17,10 +18,13 @@ use base64::Engine as _;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::content::{self, Candidate, LoadError, LoadedSkill, ReadError, Reader, Resolved};
+use super::content::{
+    self, Candidate, LoadError, LoadedSkill, ReadError, Reader, Resolved, TreeEntry,
+};
 use super::dto::{
     CheckSkillLibraryRequest, CheckSkills, CreateSkillLibraryRequest, LibraryCheck, LibraryFile,
-    LibrarySkillContent, PatchSkillLibraryRequest, ResolvedRef, SkillCounts, SkillLibrary,
+    LibrarySkillContent, PatchSkillLibraryRequest, ResolvedRef, SkillCounts, SkillInvalidReason,
+    SkillLibrary,
 };
 use super::git::{self, GitRepo, Token};
 use super::{CachedListing, LibraryEnv};
@@ -48,7 +52,9 @@ pub struct ListItem {
     pub description: Option<String>,
     pub valid: bool,
     pub reason: Option<String>,
-    pub size: u64,
+    pub reason_code: Option<SkillInvalidReason>,
+    /// What an add counts; `None` only for a skill that could not be judged.
+    pub size: Option<u64>,
     pub files: usize,
 }
 
@@ -346,8 +352,14 @@ fn exists() -> ApiError {
     )
 }
 
-/// The read before saving (C-1122, C-1125): resolve the ref and read the catalogue at `path`
-/// (the tree and the `SKILL.md` files), so the stored library says what it offers (C-1176).
+/// The default branch's name a library without a ref stores and shows (C-6).
+pub(crate) fn default_branch_of(resolved: &Resolved, reference: Option<&str>) -> Option<String> {
+    (reference.is_none() && resolved.default && resolved.name != "HEAD")
+        .then(|| one_line(&resolved.name, 200))
+}
+
+/// The read before saving (C-1122, C-1125): resolve the ref and read the catalogue at `path`,
+/// so the stored library says what it offers (C-1176).
 async fn probe(
     state: &AppState,
     src: &SourceAddr,
@@ -437,6 +449,7 @@ pub async fn create(
     // (SEC-148) A create reads the repository like a check: the same per-person rate.
     super::routes::check_rate(caller, state)?;
     let (resolved, offered) = probe(state, &src, token.as_ref()).await?;
+    let default_branch = default_branch_of(&resolved, src.reference.as_deref());
     let head = resolved.sha;
     let id = Uuid::now_v7();
     // Seal first; a failed insert deletes the sealed value again.
@@ -467,6 +480,7 @@ pub async fn create(
                 path: &src.path,
                 token_ref: token_ref.as_deref(),
                 head_sha: &head,
+                default_branch: default_branch.as_deref(),
                 created_by: caller.user_id,
                 next_refresh_in_secs: refresh_interval(state),
             },
@@ -514,7 +528,7 @@ pub async fn check(
     )?;
     let token = token_input(req.token.as_deref(), req.token_username.as_deref())?;
     // (SEC-148) One of the replica's read permits, under the overall read deadline.
-    let (resolved, listing) = state
+    let (resolved, listing, root) = state
         .library
         .reads
         .interactive(async {
@@ -533,7 +547,14 @@ pub async fn check(
             let listing = catalogue(&reader, &src.path, resolved.sha.clone())
                 .await
                 .map_err(|e| unreachable_on_create(&e))?;
-            Ok((resolved, listing))
+            // The whole repository's folders, from the tree already read: only the suggested
+            // label uses them, so a tree over the caps just leaves the folder out of it.
+            let root = if src.path.is_empty() {
+                Vec::new()
+            } else {
+                reader.root_tree(&resolved.sha).await.unwrap_or_default()
+            };
+            Ok((resolved, listing, root))
         })
         .await?;
     let mut names: Vec<String> = listing
@@ -545,11 +566,7 @@ pub async fn check(
     names.sort();
     let valid = names.len();
     names.truncate(20);
-    let mut suggested = clean_label(src.address.last_segment());
-    if suggested.is_empty() {
-        suggested = "Skills".to_owned();
-    }
-    let suggested_label: String = suggested.chars().take(80).collect();
+    let suggested_label = suggested_label(&src.repo, &src.path, &root);
     Ok(LibraryCheck {
         url: src.url,
         repo: src.repo,
@@ -569,6 +586,40 @@ pub async fn check(
         truncated: listing.truncated,
         suggested_label,
     })
+}
+
+/// The label offered for a checked repository (`host/path`): `<owner>/<repo>` (in a nested
+/// group, the group that holds the repository), with the folder appended only when another
+/// folder of the repository also holds several skills. At most 80 characters.
+fn suggested_label(repo: &str, path: &str, root: &[TreeEntry]) -> String {
+    let in_host = repo.split_once('/').map_or("", |(_, p)| p);
+    let segments: Vec<&str> = in_host.split('/').filter(|s| !s.is_empty()).collect();
+    let mut name = segments[segments.len().saturating_sub(2)..].join("/");
+    if !path.is_empty() && other_library_folder(path, root) {
+        name = format!("{name}/{path}");
+    }
+    let cleaned: String = clean_label(&name).chars().take(80).collect();
+    if cleaned.is_empty() {
+        "Skills".to_owned()
+    } else {
+        cleaned
+    }
+}
+
+/// Whether a folder other than `path` holds at least two skill folders.
+fn other_library_folder(path: &str, root: &[TreeEntry]) -> bool {
+    let mut skills: BTreeMap<&str, usize> = BTreeMap::new();
+    for e in root.iter().filter(|e| e.kind == "blob") {
+        let Some(skill_dir) = e.path.strip_suffix("/SKILL.md") else {
+            continue;
+        };
+        if aurora_core::meta_paths::has_github_segment(skill_dir) {
+            continue;
+        }
+        let folder = skill_dir.rsplit_once('/').map_or("", |(f, _)| f);
+        *skills.entry(folder).or_default() += 1;
+    }
+    skills.iter().any(|(folder, n)| *folder != path && *n >= 2)
 }
 
 pub async fn get(state: &AppState, id: Uuid) -> Result<LibraryRow, ApiError> {
@@ -635,6 +686,7 @@ pub async fn view(state: &AppState, row: &LibraryRow, how: View) -> Result<Skill
             url: None,
             repo: None,
             reference: None,
+            default_branch: None,
             path: None,
             token_set: None,
             token_updated_at: None,
@@ -686,6 +738,11 @@ pub async fn view(state: &AppState, row: &LibraryRow, how: View) -> Result<Skill
         url: row.url.clone(),
         repo: row.repo.clone(),
         reference: row.reference.clone(),
+        default_branch: row
+            .reference
+            .is_none()
+            .then(|| row.default_branch.clone())
+            .flatten(),
         path: Some(row.path.clone()),
         token_set: Some(row.token_ref.is_some()),
         token_updated_at: if instance_in_org_view {
@@ -827,6 +884,7 @@ pub async fn patch(
     // A change of url, ref, path or token re-reads (with the token that will be stored) and
     // never touches stored skills; a failed read keeps everything as it was.
     let head;
+    let default_branch;
     let mut offered = None;
     if source_changed || new_token.is_some() || token_change == Some("removed") {
         let Some(u) = &effective_url else {
@@ -853,9 +911,11 @@ pub async fn patch(
         // (SEC-148) A patch that re-reads is a read like a check: the same per-person rate.
         super::routes::check_rate(caller, state)?;
         let (resolved, found) = probe(state, &src, token).await?;
+        default_branch = default_branch_of(&resolved, effective_ref.as_deref());
         head = resolved.sha;
         offered = Some(found);
         p.head_sha = Some(&head);
+        p.default_branch = default_branch.as_deref();
     }
     let sealed = match &new_token {
         Some(t) => Some(seal_token(state, id, cur.org_id, t).await?),
@@ -879,8 +939,23 @@ pub async fn patch(
                 DbError::UniqueViolation { .. } => exists(),
                 e => e.into(),
             })?;
+        // (B-1) Another source: what was proposed or accepted from the old one no longer
+        // applies. Lock order: the library row (held since `get_library_for_update`), then the
+        // proposal rows (an approval locks its skill, then its proposal, and never the
+        // library's row).
+        let moved =
+            row.url != locked.url || row.reference != locked.reference || row.path != locked.path;
+        if moved {
+            repo::mark_source_changed(&mut tx, id).await?;
+        }
         if let Some(h) = p.head_sha {
             repo::record_head(&mut tx, id, h).await?;
+        }
+        let mut dropped = Vec::new();
+        if moved {
+            dropped = repo::drop_pending(&mut tx, id).await?;
+            // Their bytes no longer count against any organization.
+            repo::set_org_states(&mut tx, id, &[]).await?;
         }
         let mut row = row;
         if let Some(found) = offered {
@@ -893,10 +968,37 @@ pub async fn patch(
         if let Some(t) = token_change {
             meta["token"] = json!(t);
         }
-        let ev = event(caller, cur.org_id, "skill_library.update")
-            .target("skill_library", id)
-            .metadata(meta);
-        audit::commit_critical(tx, &ev).await?;
+        let mut events = Vec::new();
+        if !dropped.is_empty() {
+            meta["proposals_dropped"] = json!(dropped.len());
+            let mut by_org: BTreeMap<Uuid, Vec<&repo::DroppedUpdate>> = BTreeMap::new();
+            for d in &dropped {
+                by_org.entry(d.org_id).or_default().push(d);
+            }
+            // An organization's library names what was dropped in its one row. An instance
+            // library's row holds the total only; each organization gets its own row, naming
+            // its own proposals and no other's.
+            for (org, items) in by_org {
+                if cur.org_id.is_some() {
+                    meta["dropped"] = dropped_json(&items);
+                } else {
+                    events.push(
+                        event(caller, Some(org), "skill_library.update")
+                            .target("skill_library", id)
+                            .metadata(json!({"change": changed, "label": row.label,
+                                "proposals_dropped": items.len(),
+                                "dropped": dropped_json(&items)})),
+                    );
+                }
+            }
+        }
+        events.insert(
+            0,
+            event(caller, cur.org_id, "skill_library.update")
+                .target("skill_library", id)
+                .metadata(meta),
+        );
+        audit::commit_critical_many(tx, &events).await?;
         // The value the row held under the lock and no longer holds.
         let replaced = match p.token_ref {
             Some(new) if locked.token_ref.as_deref() != new => locked.token_ref.clone(),
@@ -922,6 +1024,15 @@ pub async fn patch(
     };
     state.library.forget(id);
     result
+}
+
+/// The audit form of dropped proposals (at most 100 named; the count says how many).
+fn dropped_json(items: &[&repo::DroppedUpdate]) -> serde_json::Value {
+    items
+        .iter()
+        .take(100)
+        .map(|d| json!({"update_id": d.update_id, "skill_id": d.skill_id}))
+        .collect()
 }
 
 /// Deletes the library; every skill added from it is detached (keeps its content); the sealed
@@ -1032,6 +1143,8 @@ pub async fn listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>,
         }
         // (SEC-148) The replica's shared read permits; the wait counts toward the deadline.
         let _permit = state.library.reads.permit().await?;
+        // A listing past its five minutes is read again only if the head moved: what was
+        // judged for (library, commit) stays true.
         read_listing(state, row).await
     };
     match tokio::time::timeout(BROWSE_DEADLINE, cold).await {
@@ -1046,9 +1159,14 @@ pub async fn listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>,
 /// How long a browse may take (reading the tree and up to 200 `SKILL.md` files).
 const BROWSE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
 
-async fn record_head(state: &AppState, library: Uuid, sha: &str) -> Result<(), ApiError> {
-    let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-    repo::record_head(&mut c, library, sha).await?;
+/// Records `sha` as a head of the library, unless its source changed since `row` was read (a
+/// head of the old source is not accepted any more).
+async fn record_head(state: &AppState, row: &LibraryRow, sha: &str) -> Result<(), ApiError> {
+    let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+    if repo::lock_source(&mut tx, row.id).await? == Some(row.source_epoch) {
+        repo::record_head(&mut tx, row.id, sha).await?;
+        tx.commit().await.map_err(DbError::from)?;
+    }
     Ok(())
 }
 
@@ -1074,7 +1192,7 @@ async fn ensure_known_commit(
         .resolve(row.reference.as_deref())
         .await
         .map_err(|e| read_failure(&e))?;
-    record_head(state, row.id, &head).await?;
+    record_head(state, row, &head).await?;
     if head == commit {
         return Ok(());
     }
@@ -1100,8 +1218,9 @@ pub(crate) struct Catalogue {
     pub commit_sha: String,
 }
 
-/// Reads the tree at `sha` and the `SKILL.md` of the first `LIBRARY_BROWSE_MAX` skill
-/// directories (one blob request).
+/// Reads the tree at `sha` and judges the first `LIBRARY_BROWSE_MAX` skill directories by the
+/// add's own rules on their real content: one tree read, one blob request for the `SKILL.md`
+/// files, then at most `LIBRARY_JUDGE_REQUESTS_MAX` requests for the other files.
 pub(crate) async fn catalogue(
     reader: &Reader<'_>,
     path: &str,
@@ -1117,9 +1236,14 @@ pub(crate) async fn catalogue(
         .filter_map(|c| c.skill_md.as_ref().map(|s| s.blob.clone()))
         .collect();
     reader.prefetch(&ids).await?;
+    let unjudged = fetch_for_judgement(reader, &listed).await?;
     let mut items = Vec::with_capacity(listed.len());
     for c in listed {
-        items.push(list_item(reader, c).await?);
+        items.push(if unjudged.contains(c.dir.as_str()) {
+            unjudged_item(c)
+        } else {
+            judge(reader, c).await?
+        });
     }
     Ok(Catalogue {
         items,
@@ -1135,23 +1259,35 @@ async fn read_listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>
     let token = read_token(state, row).await?;
     let git = git_for(state, row, token.as_ref())?;
     let reader = Reader::new(&git, &row.path);
-    let sha = reader
-        .resolve(row.reference.as_deref())
+    let resolved = reader
+        .resolve_full(row.reference.as_deref())
         .await
         .map_err(|e| read_failure(&e))?;
-    record_head(state, row.id, &sha).await?;
-    let cat = catalogue(&reader, &row.path, sha)
-        .await
-        .map_err(|e| read_failure(&e))?;
+    let default_branch = default_branch_of(&resolved, row.reference.as_deref());
+    let sha = resolved.sha;
+    record_head(state, row, &sha).await?;
+    let l = match judged_listing(env, row, &sha) {
+        Some(l) => l,
+        None => {
+            let cat = catalogue(&reader, &row.path, sha)
+                .await
+                .map_err(|e| read_failure(&e))?;
+            Arc::new(Listing {
+                commit_sha: cat.commit_sha,
+                items: cat.items,
+                truncated: cat.truncated,
+            })
+        }
+    };
     {
-        let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-        Offered::of(&cat.items).store(&mut c, row.id).await?;
+        // Only while the library still reads this source.
+        let mut tx = state.pool.begin().await.map_err(DbError::from)?;
+        if repo::lock_source(&mut tx, row.id).await? == Some(row.source_epoch) {
+            Offered::of(&l.items).store(&mut tx, row.id).await?;
+            repo::set_default_branch(&mut tx, row.id, default_branch.as_deref()).await?;
+            tx.commit().await.map_err(DbError::from)?;
+        }
     }
-    let l = Arc::new(Listing {
-        commit_sha: cat.commit_sha,
-        items: cat.items,
-        truncated: cat.truncated,
-    });
     if let Ok(mut c) = env.cache.lock() {
         c.insert(
             row.id,
@@ -1165,51 +1301,142 @@ async fn read_listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>
     Ok(l)
 }
 
-async fn list_item(reader: &Reader<'_>, c: &Candidate) -> Result<ListItem, ReadError> {
-    let base =
-        |valid: bool, description: Option<String>, reason: Option<String>, extra: u64| ListItem {
-            path: c.dir.clone(),
-            name: c.dir.clone(),
-            description,
-            valid,
-            reason: reason.map(|r| one_line(&r, 200)),
-            size: c.tree_size() + extra,
-            files: c.files.len() + usize::from(c.skill_md.is_some()),
-        };
+/// The listing already judged for `(library, sha)` as the library is read now, however old.
+fn judged_listing(env: &LibraryEnv, row: &LibraryRow, sha: &str) -> Option<Arc<Listing>> {
+    let c = env.cache.lock().ok()?;
+    let e = c.get(&row.id)?;
+    (e.fingerprint == fingerprint(row) && e.listing.commit_sha == sha).then(|| e.listing.clone())
+}
+
+/// Fetches the files of the listed skills in as few requests as possible, within the bounds of
+/// one judgement, and returns the folders that were left out. A request over a size cap is split
+/// in two, so one huge folder does not hide the others.
+async fn fetch_for_judgement<'a>(
+    reader: &Reader<'_>,
+    listed: &[&'a Candidate],
+) -> Result<BTreeSet<&'a str>, ReadError> {
+    let mut batches: VecDeque<Vec<&'a Candidate>> = VecDeque::new();
+    let mut batch: Vec<&'a Candidate> = Vec::new();
+    let mut wants = 0;
+    for c in listed.iter().copied().filter(|c| c.problems.is_empty()) {
+        let n = c.files.len() + 1;
+        if wants + n > limits::LIBRARY_WANTS_MAX && !batch.is_empty() {
+            batches.push_back(std::mem::take(&mut batch));
+            wants = 0;
+        }
+        wants += n;
+        batch.push(c);
+    }
+    batches.push_back(batch);
+    let mut left_out = BTreeSet::new();
+    let mut requests = 0;
+    while let Some(batch) = batches.pop_front() {
+        let ids: Vec<String> = batch
+            .iter()
+            .flat_map(|c| c.blob_ids())
+            .filter(|id| !reader.has(id))
+            .collect();
+        if ids.is_empty() {
+            continue;
+        }
+        if requests >= limits::LIBRARY_JUDGE_REQUESTS_MAX
+            || reader.held_bytes() >= limits::LIBRARY_JUDGE_BYTES_MAX
+        {
+            left_out.extend(batch.iter().map(|c| c.dir.as_str()));
+            continue;
+        }
+        requests += 1;
+        match reader.prefetch(&ids).await {
+            Ok(()) => {}
+            Err(e) if git::is_size_cap(&e) => {
+                if let [one] = batch[..] {
+                    left_out.insert(one.dir.as_str());
+                } else {
+                    let (a, b) = batch.split_at(batch.len() / 2);
+                    batches.push_front(b.to_vec());
+                    batches.push_front(a.to_vec());
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(left_out)
+}
+
+const UNJUDGED: &str = "its size could not be checked: reading the files of this repository's \
+                        skills would pass the limits of one read";
+
+fn list_entry(c: &Candidate) -> ListItem {
+    ListItem {
+        path: c.dir.clone(),
+        name: c.dir.clone(),
+        description: None,
+        valid: false,
+        reason: None,
+        reason_code: None,
+        size: None,
+        files: c.files.len() + usize::from(c.skill_md.is_some()),
+    }
+}
+
+fn unjudged_item(c: &Candidate) -> ListItem {
+    ListItem {
+        reason: Some(UNJUDGED.to_owned()),
+        reason_code: Some(SkillInvalidReason::UnknownSize),
+        ..list_entry(c)
+    }
+}
+
+/// One skill as the add would judge it (its files are already fetched).
+async fn judge(reader: &Reader<'_>, c: &Candidate) -> Result<ListItem, ReadError> {
+    let refused = |i: content::Invalid, size: u64| ListItem {
+        reason: Some(one_line(&i.reason, 200)),
+        reason_code: Some(i.code),
+        size: Some(size),
+        ..list_entry(c)
+    };
+    // A folder refused for its shape is not read: its size is what the tree says.
     if let Some(p) = c.problem() {
-        return Ok(base(false, None, Some(p), 0));
+        return Ok(refused(p, c.tree_size()));
     }
-    let Some(sm) = &c.skill_md else {
-        return Ok(base(false, None, Some("SKILL.md is missing".into()), 0));
-    };
-    let raw = reader.blob(&sm.blob).await?;
-    // The tree of a filtered fetch has no blob sizes: count the SKILL.md just read.
-    let extra = if sm.size.is_none() {
-        raw.len() as u64
-    } else {
-        0
-    };
-    if raw.len() > limits::LIBRARY_FILE_MAX {
-        return Ok(base(
-            false,
-            None,
-            Some("SKILL.md is too large".into()),
-            extra,
-        ));
-    }
-    Ok(match content::parse_skill_md(&raw, &c.dir) {
-        Ok((d, _)) => base(true, Some(d), None, extra),
-        Err(r) => base(false, None, Some(r), extra),
+    Ok(match content::load(reader, c).await {
+        Ok(s) => ListItem {
+            description: Some(s.description),
+            valid: true,
+            size: Some(s.size as u64),
+            ..list_entry(c)
+        },
+        Err(LoadError::Invalid(i)) => refused(i, measured(reader, c)),
+        Err(LoadError::Read(e)) => return Err(e),
     })
+}
+
+/// The size an add counts (body characters and the files), for a skill it refuses.
+fn measured(reader: &Reader<'_>, c: &Candidate) -> u64 {
+    let body = c
+        .skill_md
+        .as_ref()
+        .and_then(|s| reader.cached(&s.blob))
+        .map_or(0, |raw| match content::parse_skill_md(&raw, &c.dir) {
+            Ok((_, body)) => body.chars().count(),
+            Err(_) => aurora_registry::skill_format::content_size(&raw),
+        });
+    let files: usize = c
+        .files
+        .iter()
+        .filter_map(|f| reader.cached(&f.blob))
+        .map(|b| aurora_registry::skill_format::content_size(&b))
+        .sum();
+    (body + files) as u64
 }
 
 fn load_failure(e: LoadError) -> ApiError {
     match e {
-        LoadError::Invalid(r) => ApiError::unprocessable(
+        LoadError::Invalid(i) => ApiError::unprocessable(
             "library_skill_invalid",
-            format!("This skill cannot be added: {}.", one_line(&r, 200)),
+            format!("This skill cannot be added: {}.", one_line(&i.reason, 200)),
         )
-        .with_details(json!({"reason": one_line(&r, 200)})),
+        .with_details(json!({"reason": one_line(&i.reason, 200)})),
         LoadError::Read(r) => read_failure(&r),
     }
 }
@@ -1280,7 +1507,7 @@ async fn skill_content_read(
                 .resolve(row.reference.as_deref())
                 .await
                 .map_err(|e| read_failure(&e))?;
-            record_head(state, row.id, &head).await?;
+            record_head(state, row, &head).await?;
             head
         }
     };
@@ -1291,12 +1518,13 @@ async fn skill_content_read(
             "No skill with that name at this commit.",
         ));
     };
-    let empty = |reason: String| LibrarySkillContent {
+    let empty = |i: content::Invalid| LibrarySkillContent {
         commit_sha: sha.clone(),
         path: c.dir.clone(),
         name: c.dir.clone(),
         valid: false,
-        reason: Some(one_line(&reason, 200)),
+        reason: Some(one_line(&i.reason, 200)),
+        reason_code: Some(i.code),
         description: None,
         body: None,
         files: Vec::new(),
@@ -1312,6 +1540,7 @@ async fn skill_content_read(
             name: s.name,
             valid: true,
             reason: None,
+            reason_code: None,
             description: Some(s.description),
             body: Some(s.body),
             files: s

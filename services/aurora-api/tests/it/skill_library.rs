@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::common::*;
 
+mod fix278;
 mod git;
 mod instance;
 
@@ -2001,6 +2002,7 @@ async fn refresh_runs_only_for_libraries_with_skills_under_a_lease() {
         owner: r1,
         head_sha: Some("x"),
         head_epoch: 0,
+        source_epoch: 0,
         status: "active",
         error: None,
         failures: 0,

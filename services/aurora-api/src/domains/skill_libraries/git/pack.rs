@@ -36,6 +36,10 @@ pub struct Object {
     pub data: Vec<u8>,
 }
 
+/// The reasons of the size caps of C-1125 a smaller request may stay under.
+pub const OBJECTS_TOO_LARGE: &str = "the repository's objects are too large to read";
+pub const TOO_MANY_OBJECTS: &str = "the repository sent too many objects";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackError {
     /// The bytes are not a valid pack (fixed reason, safe to show).
@@ -181,9 +185,7 @@ pub fn apply_delta(base: &[u8], delta: &[u8], budget: usize) -> Result<Vec<u8>, 
         return Err(bad);
     }
     if dst > budget {
-        return Err(PackError::TooLarge(
-            "the repository's objects are too large to read",
-        ));
+        return Err(PackError::TooLarge(OBJECTS_TOO_LARGE));
     }
     let mut out = Vec::with_capacity(dst);
     while c.pos < delta.len() {
@@ -239,7 +241,7 @@ pub fn parse(pack: &[u8], limits: Limits) -> Result<HashMap<Oid, Object>, PackEr
     }
     let count = u32::from_be_bytes([pack[8], pack[9], pack[10], pack[11]]) as usize;
     if count > limits.objects_max {
-        return Err(PackError::TooLarge("the repository sent too many objects"));
+        return Err(PackError::TooLarge(TOO_MANY_OBJECTS));
     }
     let body_end = pack.len() - 20;
     let mut sum = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA1_FOR_LEGACY_USE_ONLY);
@@ -266,8 +268,7 @@ pub fn parse(pack: &[u8], limits: Limits) -> Result<HashMap<Oid, Object>, PackEr
             size |= u64::from(b & 0x7f) << shift;
             shift += 7;
         }
-        let size = usize::try_from(size)
-            .map_err(|_| PackError::TooLarge("the repository's objects are too large to read"))?;
+        let size = usize::try_from(size).map_err(|_| PackError::TooLarge(OBJECTS_TOO_LARGE))?;
         let base = match t {
             1 => Base::Plain(Kind::Commit),
             2 => Base::Plain(Kind::Tree),
@@ -301,9 +302,7 @@ pub fn parse(pack: &[u8], limits: Limits) -> Result<HashMap<Oid, Object>, PackEr
             _ => return Err(PackError::Malformed("unknown pack object type")),
         };
         if size > budget {
-            return Err(PackError::TooLarge(
-                "the repository's objects are too large to read",
-            ));
+            return Err(PackError::TooLarge(OBJECTS_TOO_LARGE));
         }
         let (data, used) = inflate(&body[c.pos..], size)?;
         budget -= size;

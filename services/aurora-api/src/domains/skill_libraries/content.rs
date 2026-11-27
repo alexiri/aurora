@@ -12,6 +12,8 @@ use aurora_core::limits;
 use aurora_registry::skill_format;
 use sha2::{Digest, Sha256};
 
+use super::dto::SkillInvalidReason;
+use super::dto::SkillInvalidReason as Code;
 use crate::domains::skills::service as skills;
 
 /// More files than this in one skill directory is refused (bounds the blob reads of an add).
@@ -197,6 +199,41 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
+    /// A file's bytes if this read has already fetched them.
+    #[must_use]
+    pub fn cached(&self, blob: &str) -> Option<Vec<u8>> {
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(blob)
+            .cloned()
+    }
+
+    /// Whether this read has already fetched a file.
+    #[must_use]
+    pub fn has(&self, blob: &str) -> bool {
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(blob)
+    }
+
+    /// Bytes of every file fetched so far.
+    #[must_use]
+    pub fn held_bytes(&self) -> usize {
+        self.cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .map(Vec::len)
+            .sum()
+    }
+
+    /// Every entry of one commit's whole repository (the same tree read; no further request).
+    pub async fn root_tree(&self, sha: &str) -> Result<Vec<TreeEntry>, ReadError> {
+        self.src.tree(sha, "").await
+    }
+
     /// One file's bytes.
     pub async fn blob(&self, blob: &str) -> Result<Vec<u8>, ReadError> {
         if let Some(b) = self
@@ -235,7 +272,29 @@ pub struct Candidate {
     pub skill_md: Option<FileRef>,
     pub files: Vec<FileRef>,
     /// Why the directory cannot be stored (sanitized, fixed texts only).
-    pub problems: Vec<String>,
+    pub problems: Vec<Invalid>,
+}
+
+/// One reason a skill cannot be stored: the code clients branch on and the text beside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invalid {
+    pub code: SkillInvalidReason,
+    pub reason: String,
+}
+
+impl Invalid {
+    pub fn new(code: SkillInvalidReason, reason: impl Into<String>) -> Self {
+        Self {
+            code,
+            reason: reason.into(),
+        }
+    }
+}
+
+impl From<skill_format::SkillError> for Invalid {
+    fn from(e: skill_format::SkillError) -> Self {
+        Self::new(e.kind.into(), e.message)
+    }
 }
 
 impl Candidate {
@@ -272,9 +331,16 @@ impl Candidate {
             .collect()
     }
 
+    /// All the problems in one text; the code is the first one's.
     #[must_use]
-    pub fn problem(&self) -> Option<String> {
-        (!self.problems.is_empty()).then(|| self.problems.join("; "))
+    pub fn problem(&self) -> Option<Invalid> {
+        let first = self.problems.first()?;
+        let texts: Vec<&str> = self.problems.iter().map(|p| p.reason.as_str()).collect();
+        Some(Invalid::new(first.code, texts.join("; ")))
+    }
+
+    fn refuse(&mut self, code: SkillInvalidReason, reason: impl Into<String>) {
+        self.problems.push(Invalid::new(code, reason));
     }
 }
 
@@ -330,10 +396,10 @@ pub fn assemble_with(path: &str, entries: &[TreeEntry], file_max: usize) -> Vec<
         let Some(inner) = inner else {
             // The directory entry itself (or a top-level file, which is not a skill).
             if e.kind == "commit" || e.mode == "160000" {
-                c.problems.push("a submodule is not allowed".into());
+                c.refuse(Code::UnsupportedEntry, "a submodule is not allowed");
                 marker.insert(dir.to_owned());
             } else if is_file && e.mode == "120000" && !dir.contains('.') {
-                c.problems.push("a symlink is not allowed".into());
+                c.refuse(Code::UnsupportedEntry, "a symlink is not allowed");
                 marker.insert(dir.to_owned());
             }
             continue;
@@ -342,26 +408,34 @@ pub fn assemble_with(path: &str, entries: &[TreeEntry], file_max: usize) -> Vec<
             continue;
         }
         if e.kind == "commit" || e.mode == "160000" {
-            c.problems
-                .push(format!("a submodule is not allowed ({inner})"));
+            c.refuse(
+                Code::UnsupportedEntry,
+                format!("a submodule is not allowed ({inner})"),
+            );
             continue;
         }
         if !is_file {
-            c.problems
-                .push(format!("an unsupported entry type ({inner})"));
+            c.refuse(
+                Code::UnsupportedEntry,
+                format!("an unsupported entry type ({inner})"),
+            );
             continue;
         }
         if e.mode == "120000" {
             if inner.eq_ignore_ascii_case("skill.md") {
                 marker.insert(dir.to_owned());
             }
-            c.problems
-                .push(format!("a symlink is not allowed ({inner})"));
+            c.refuse(
+                Code::UnsupportedEntry,
+                format!("a symlink is not allowed ({inner})"),
+            );
             continue;
         }
         if !REGULAR.contains(&e.mode.as_str()) {
-            c.problems
-                .push(format!("an unsupported file mode ({inner})"));
+            c.refuse(
+                Code::UnsupportedEntry,
+                format!("an unsupported file mode ({inner})"),
+            );
             continue;
         }
         let f = FileRef {
@@ -379,21 +453,24 @@ pub fn assemble_with(path: &str, entries: &[TreeEntry], file_max: usize) -> Vec<
             // `skill.md` beside the other files (any case but the exact one) is a skill that
             // would not be read by the harness: refuse it with a reason.
             marker.insert(dir.to_owned());
-            c.problems.push(format!(
-                "the skill file must be named exactly SKILL.md ({inner})"
-            ));
+            c.refuse(
+                Code::SkillMd,
+                format!("the skill file must be named exactly SKILL.md ({inner})"),
+            );
             continue;
         }
         if skills::validate_path(inner).is_err() {
-            c.problems
-                .push(format!("an unsupported file path ({inner})"));
+            c.refuse(
+                Code::UnsupportedPath,
+                format!("an unsupported file path ({inner})"),
+            );
             continue;
         }
         if f.size.is_some_and(|s| s > file_max as u64) {
-            c.problems.push(format!(
-                "a file is larger than {} bytes ({inner})",
-                file_max
-            ));
+            c.refuse(
+                Code::FileTooLarge,
+                format!("a file is larger than {} bytes ({inner})", file_max),
+            );
             continue;
         }
         c.files.push(f);
@@ -402,21 +479,27 @@ pub fn assemble_with(path: &str, entries: &[TreeEntry], file_max: usize) -> Vec<
         .filter(|(d, c)| marker.contains(d) || c.skill_md.is_some())
         .map(|(d, mut c)| {
             if c.skill_md.is_none() && c.problems.is_empty() {
-                c.problems.push("SKILL.md is missing".into());
+                c.refuse(Code::SkillMd, "SKILL.md is missing");
             }
             if c.files.len() > FILES_PER_SKILL_MAX {
-                c.problems
-                    .push(format!("more than {FILES_PER_SKILL_MAX} files"));
+                c.refuse(
+                    Code::TooManyFiles,
+                    format!("more than {FILES_PER_SKILL_MAX} files"),
+                );
             }
             if skills::validate_name(&d).is_err() {
-                c.problems
-                    .push("the directory name is not a valid skill name".into());
+                c.refuse(
+                    Code::BadName,
+                    "the directory name is not a valid skill name",
+                );
             }
             if let Some(s) = &c.skill_md
                 && s.size.is_some_and(|n| n > file_max as u64)
             {
-                c.problems
-                    .push(format!("SKILL.md is larger than {} bytes", file_max));
+                c.refuse(
+                    Code::FileTooLarge,
+                    format!("SKILL.md is larger than {} bytes", file_max),
+                );
             }
             c
         })
@@ -425,7 +508,7 @@ pub fn assemble_with(path: &str, entries: &[TreeEntry], file_max: usize) -> Vec<
 
 // ---- SKILL.md and the stored form -----------------------------------------------------------
 
-pub use aurora_registry::skill_format::{clean_text, parse_skill_md};
+pub use aurora_registry::skill_format::{clean_text, parse_skill_md, parse_skill_md_typed};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadedFile {
@@ -500,7 +583,7 @@ pub fn parse_hex(s: &str) -> Option<Vec<u8>> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadError {
     /// The skill breaks a rule: nothing is stored (422 `library_skill_invalid`).
-    Invalid(String),
+    Invalid(Invalid),
     Read(ReadError),
 }
 
@@ -510,36 +593,40 @@ impl From<ReadError> for LoadError {
     }
 }
 
-fn invalid(s: impl Into<String>) -> LoadError {
-    LoadError::Invalid(s.into())
+fn invalid(code: Code, s: impl Into<String>) -> LoadError {
+    LoadError::Invalid(Invalid::new(code, s))
 }
 
 /// Reads and validates one candidate: the manual skills' rules plus the library rules.
 pub async fn load(reader: &Reader<'_>, c: &Candidate) -> Result<LoadedSkill, LoadError> {
     if let Some(p) = c.problem() {
-        return Err(invalid(p));
+        return Err(LoadError::Invalid(p));
     }
     let Some(sm) = &c.skill_md else {
-        return Err(invalid("SKILL.md is missing"));
+        return Err(invalid(Code::SkillMd, "SKILL.md is missing"));
     };
     // One blob request for the whole skill (a no-op when the caller prefetched).
     reader.prefetch(&c.blob_ids()).await?;
     let raw = reader.blob(&sm.blob).await?;
     if raw.len() > reader.profile.file_max {
-        return Err(invalid(format!(
-            "SKILL.md is larger than {} bytes",
-            reader.profile.file_max
-        )));
+        return Err(invalid(
+            Code::FileTooLarge,
+            format!("SKILL.md is larger than {} bytes", reader.profile.file_max),
+        ));
     }
-    let (description, body) = parse_skill_md(&raw, &c.dir).map_err(invalid)?;
+    let (description, body) =
+        parse_skill_md_typed(&raw, &c.dir).map_err(|e| LoadError::Invalid(e.into()))?;
     let mut files = Vec::with_capacity(c.files.len());
     for f in &c.files {
         let content = reader.blob(&f.blob).await?;
         if content.len() > reader.profile.file_max {
-            return Err(invalid(format!(
-                "a file is larger than {} bytes ({})",
-                reader.profile.file_max, f.rel
-            )));
+            return Err(invalid(
+                Code::FileTooLarge,
+                format!(
+                    "a file is larger than {} bytes ({})",
+                    reader.profile.file_max, f.rel
+                ),
+            ));
         }
         files.push(LoadedFile {
             path: f.rel.clone(),
@@ -558,8 +645,12 @@ pub fn finish(
     files: Vec<LoadedFile>,
     blobs: BTreeMap<String, String>,
 ) -> Result<LoadedSkill, LoadError> {
-    skills::validate_name(&name)
-        .map_err(|_| invalid("the directory name is not a valid skill name"))?;
+    skills::validate_name(&name).map_err(|_| {
+        invalid(
+            Code::BadName,
+            "the directory name is not a valid skill name",
+        )
+    })?;
     // (FIX-096, SEC-83) The same rules the refresh applied, again: an approval re-validates what
     // the stored proposal says, never trusting its JSON. The rules are the shared validator's
     // (P5-APPSKILL-1), the same ones a package skill passes.
@@ -568,7 +659,7 @@ pub fn finish(
         .map(|f| (f.path.as_str(), f.content.as_slice()))
         .collect();
     let size = skill_format::check_content(&description, &body, &refs, limits::LIBRARY_FILE_MAX)
-        .map_err(|e| invalid(e.message))?;
+        .map_err(|e| LoadError::Invalid(e.into()))?;
     let content_sha256 = content_sha256(&description, &body, &files);
     Ok(LoadedSkill {
         name,
@@ -687,7 +778,9 @@ mod tests {
         let sha = reader.resolve(None).await.unwrap();
         let cands = assemble("lib", &reader.tree(&sha).await.unwrap());
         assert_eq!(cands.len(), 2);
-        assert!(cands[1].problem().unwrap().contains("symlink"));
+        let p = cands[1].problem().unwrap();
+        assert!(p.reason.contains("symlink"));
+        assert_eq!(p.code, Code::UnsupportedEntry);
         let s = load(&reader, &cands[0]).await.unwrap();
         assert_eq!(s.description, "Alpha");
         assert_eq!(s.files.len(), 2);

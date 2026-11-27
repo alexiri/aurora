@@ -79,6 +79,15 @@ fn proto(e: ProtoError) -> ReadError {
     }
 }
 
+/// Whether a read failed only because one git answer passed a size cap (a response over
+/// `LIBRARY_PACK_MAX`, or a pack over the inflated-size or object caps): asking for fewer
+/// objects may work.
+#[must_use]
+pub fn is_size_cap(e: &ReadError) -> bool {
+    matches!(e, ReadError::Unreachable(r)
+        if r == reason::TOO_LARGE || r == pack::OBJECTS_TOO_LARGE || r == pack::TOO_MANY_OBJECTS)
+}
+
 fn pack_err(e: pack::PackError) -> ReadError {
     match e {
         pack::PackError::Malformed(_) => unreachable(reason::PROTOCOL),
