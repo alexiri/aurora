@@ -48892,7 +48892,7 @@
       },
       "ApplyPart": {
         "type": "object",
-        "description": "(C-1112) One part to take.",
+        "description": "(C-1112) One part to take. A part whose offer carries a merge (FIX-251) also echoes the\nmerge's hash the review showed and, for a `conflict` part, one resolution per conflict\nhunk in the offer's order.",
         "required": [
           "kind",
           "key"
@@ -48903,6 +48903,46 @@
           },
           "kind": {
             "type": "string"
+          },
+          "merge_sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The part's `merge.merge_sha256` from the offer (`merged` and `conflict` parts)."
+          },
+          "resolutions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApplyResolution"
+            },
+            "description": "One resolution per conflict hunk of this part, in the offer's order."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ApplyResolution": {
+        "type": "object",
+        "description": "(FIX-251) The person's choice for one conflict hunk.",
+        "required": [
+          "unit",
+          "choice"
+        ],
+        "properties": {
+          "choice": {
+            "type": "string",
+            "description": "`keep_mine` | `take_theirs` | `text`."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The person's own edit of the hunk (`choice` = `text`), size-limited."
+          },
+          "unit": {
+            "type": "string",
+            "description": "The hunk's unit, as the offer's `conflicts[].unit`."
           }
         },
         "additionalProperties": false
@@ -60338,6 +60378,29 @@
           }
         }
       },
+      "MergeConflict": {
+        "type": "object",
+        "description": "(FIX-251) One conflict hunk of a part's merge.",
+        "required": [
+          "unit",
+          "ours",
+          "theirs"
+        ],
+        "properties": {
+          "ours": {
+            "type": "string",
+            "description": "The agent's current text of the hunk (Keep mine)."
+          },
+          "theirs": {
+            "type": "string",
+            "description": "The new version's text of the hunk (Take the new one)."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Which text of the part the hunk is in: `description` or `body` (a skill's), or\n`file:<path>` (a skill file, a helper file). Instructions have no unit prefix: the\npart's whole text is one unit, named `text`."
+          }
+        }
+      },
       "MessageAccepted": {
         "type": "object",
         "description": "Exactly one of `turn` / `followup` is non-null (C-25).",
@@ -61175,6 +61238,24 @@
             "type": "string",
             "description": "`instructions` | `skill` | `helpers` | `library_skill`."
           },
+          "merge": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PartMerge",
+                "description": "The part's merge (FIX-251): present for `merged` and `conflict`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "merge_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the part has no merge: the agent's starting text is not stored (the version\ncontent is gone, or the part is not in it), so the offer fell back to the\nall-or-nothing `edited_here`."
+          },
           "proposed": {
             "type": [
               "string",
@@ -61194,7 +61275,7 @@
           },
           "state": {
             "type": "string",
-            "description": "`unchanged_here` | `edited_here` | `removed_here` | `new` | `removed_upstream`."
+            "description": "`unchanged_here` | `edited_here` | `merged` | `conflict` | `removed_here` | `new` |\n`removed_upstream`. `merged` and `conflict` (FIX-251, D-488(b)) replace\n`edited_here` wherever the agent's starting text is stored: the part is offered as a\nthree-way merge of that base, the agent's current text and the new version's text."
           }
         }
       },
@@ -66914,6 +66995,38 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PartMerge": {
+        "type": "object",
+        "description": "(FIX-251, D-488(b)) The three-way merge of one part: what the merge decided on its own and\nwhich hunks the person must resolve. The merge is computed from the agent's recorded\nstarting text (the stored version content), the agent's current text and the new version's\ntext rendered for this agent — all server-side; the apply recomputes it and takes nothing\nelse.",
+        "required": [
+          "state",
+          "merge_sha256"
+        ],
+        "properties": {
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MergeConflict"
+            },
+            "description": "The conflict hunks in order (a `conflict` part): one resolution per hunk, in this\norder, goes back with the apply."
+          },
+          "merge_sha256": {
+            "type": "string",
+            "description": "The merge's hash as the review showed it: the apply echoes it and the server refuses\na stale review with `template_version_changed`."
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The merged part text of a clean merge."
+          },
+          "state": {
+            "type": "string",
+            "description": "`merged`: a clean merge; `result` is the merged part text, shown diffed against\n`current`, applied as it is. `conflict`: at least one hunk needs the person's choice;\nnothing is applied to the part until every hunk is resolved."
           }
         }
       },

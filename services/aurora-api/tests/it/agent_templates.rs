@@ -3244,6 +3244,18 @@ fn part_state<'a>(v: &'a Value, kind: &str, key: &str) -> Option<&'a str> {
         .and_then(|p| p["state"].as_str())
 }
 
+/// The `merge` block of one part of an update offer.
+fn part_merge<'a>(v: &'a Value, kind: &str, key: &str) -> &'a Value {
+    v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == kind && p["key"] == key)
+        .unwrap()
+        .get("merge")
+        .unwrap()
+}
+
 /// The world of the update tests: the fixture `t` approved at 1.0.0 and one agent created
 /// from it whose own skill `watch` was edited and whose own skill `backup` was deleted.
 struct Upd {
@@ -3349,10 +3361,20 @@ async fn the_offer_lists_every_part_state_for_every_kind() {
     assert!(upd["readme"].as_str().unwrap().contains("Updates."), "{v}");
     assert_eq!(upd["changelog"], json!(null), "{v}");
     // Every state, one per kind where possible: the brief is untouched (the template changed
-    // it), `watch` was edited here, `backup` deleted here, `extra` is new, the helpers are
-    // untouched (the template rewrote them).
+    // it), `watch` was edited here and meets the template's own edit — a conflict part with
+    // one hunk (the body; the three-way merge, FIX-251), `backup` deleted here, `extra` is
+    // new, the helpers are untouched (the template rewrote them).
     assert_eq!(part_state(&v, "instructions", ""), Some("unchanged_here"));
-    assert_eq!(part_state(&v, "skill", "watch"), Some("edited_here"));
+    assert_eq!(part_state(&v, "skill", "watch"), Some("conflict"));
+    let watch = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "skill" && p["key"] == "watch")
+        .unwrap();
+    assert_eq!(watch["merge"]["state"], "conflict", "{watch}");
+    assert_eq!(watch["merge"]["conflicts"][0]["unit"], "body", "{watch}");
+    assert!(watch["merge"]["merge_sha256"].is_string(), "{watch}");
     assert_eq!(part_state(&v, "skill", "backup"), Some("removed_here"));
     assert_eq!(part_state(&v, "skill", "extra"), Some("new"));
     assert_eq!(part_state(&v, "helpers", ""), Some("unchanged_here"));
@@ -3503,6 +3525,18 @@ async fn applying_a_skill_keeps_its_enabled_choice() {
         .unwrap();
     let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
     let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    // The body edit meets the template's own body edit: the offer shows one conflict hunk
+    // (the body), and the apply echoes the merge's hash and resolves it — Take the new one,
+    // which is the template's text; the enabled choice is what this test is about.
+    let merge = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "skill" && p["key"] == "watch")
+        .unwrap()["merge"]
+        .clone();
+    assert_eq!(merge["state"], "conflict", "{merge}");
+    assert_eq!(merge["conflicts"][0]["unit"], "body", "{merge}");
 
     let (s, v) =
         u.w.apply(
@@ -3511,7 +3545,12 @@ async fn applying_a_skill_keeps_its_enabled_choice() {
             json!({
                 "version": "2.0.0",
                 "content_sha256": sha,
-                "parts": [{"kind": "skill", "key": "watch"}],
+                "parts": [{
+                    "kind": "skill",
+                    "key": "watch",
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": [{"unit": "body", "choice": "take_theirs"}],
+                }],
             }),
         )
         .await;
@@ -3525,6 +3564,196 @@ async fn applying_a_skill_keeps_its_enabled_choice() {
             .unwrap();
     assert!(!enabled);
     assert_eq!(body, "\nWatch body v2.\n");
+}
+
+/// An edit the new version does not touch merges cleanly and applies without resolutions:
+/// the person's line stays and the template's change arrives, and the memories are never
+/// touched (FIX-251, D-488).
+#[tokio::test]
+async fn an_edited_part_merges_and_applies_without_resolutions() {
+    let u = upd_world().await;
+    // The person appended a line to the brief; the template changed its first line.
+    sqlx::query("UPDATE agents SET brief = $2 WHERE id = $1")
+        .bind(u.agent)
+        .bind("Watch eu.\nAlso feed the cat.\n")
+        .execute(u.w.h.pool())
+        .await
+        .unwrap();
+    let memories: i64 = sqlx::query_scalar("SELECT count(*) FROM memories WHERE agent_id = $1")
+        .bind(u.agent)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    upd_advance(&u, "2.0.0").await;
+
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(part_state(&v, "instructions", ""), Some("merged"), "{v}");
+    let merge = part_merge(&v, "instructions", "");
+    assert_eq!(merge["state"], "merged", "{merge}");
+    assert_eq!(
+        merge["result"], "Watch eu closely.\nAlso feed the cat.\n",
+        "{merge}"
+    );
+    // No conflict hunks (an empty list is omitted altogether).
+    assert!(
+        merge["conflicts"].is_null()
+            || merge["conflicts"].as_array().unwrap().is_empty(),
+        "{merge}"
+    );
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": "instructions",
+                    "key": "",
+                    "merge_sha256": merge["merge_sha256"],
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The merged brief: the template's change and the person's line.
+    let brief: String = sqlx::query_scalar("SELECT brief FROM agents WHERE id = $1")
+        .bind(u.agent)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(brief, "Watch eu closely.\nAlso feed the cat.\n", "{brief}");
+    // The memories are never changed by an update.
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM memories WHERE agent_id = $1")
+        .bind(u.agent)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(after, memories);
+}
+
+/// A conflicting hunk resolved with Keep mine: the person's text stays, and the apply writes
+/// exactly what the resolution composed (FIX-251).
+#[tokio::test]
+async fn a_conflicting_hunk_resolved_with_keep_mine() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let merge = part_merge(&v, "skill", "watch").clone();
+    assert_eq!(merge["conflicts"][0]["unit"], "body", "{merge}");
+    let ours = merge["conflicts"][0]["ours"].as_str().unwrap().to_owned();
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": "skill",
+                    "key": "watch",
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": [{"unit": "body", "choice": "keep_mine"}],
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let body: String = sqlx::query_scalar("SELECT body FROM skills WHERE id = $1")
+        .bind(u.watch)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(body, ours, "{body}");
+}
+
+/// A merge review that no longer matches is refused with the plain 409: the merge is the
+/// server's own, and a stale hash is never silently re-merged (FIX-251).
+#[tokio::test]
+async fn a_stale_merge_review_is_refused() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let merge = part_merge(&v, "skill", "watch").clone();
+    // The agent's skill moves under the review: the merge the person answered to is gone.
+    sqlx::query("UPDATE skills SET body = $2 WHERE id = $1")
+        .bind(u.watch)
+        .bind("Watch body: changed under the review.")
+        .execute(u.w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": "skill",
+                    "key": "watch",
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": [{"unit": "body", "choice": "take_theirs"}],
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "template_version_changed", "{v}");
+}
+
+/// Resolutions that do not match the offer's conflict hunks are refused, and so is a part
+/// applied without its merge hash (FIX-251).
+#[tokio::test]
+async fn resolutions_that_do_not_match_the_hunks_are_refused() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let merge = part_merge(&v, "skill", "watch").clone();
+    let part = |resolutions: Value| {
+        json!({
+            "version": "2.0.0",
+            "content_sha256": sha,
+            "parts": [{
+                "kind": "skill",
+                "key": "watch",
+                "merge_sha256": merge["merge_sha256"],
+                "resolutions": resolutions,
+            }],
+        })
+    };
+    // A resolution for a hunk the offer does not have.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            part(json!([{"unit": "description", "choice": "take_theirs"}])),
+        )
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "template_merge_unresolved", "{v}");
+    // And a missing resolution for the one hunk it does have.
+    let (s, v) = u.w.apply(&u.owner, u.agent, part(json!([]))).await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "template_merge_unresolved", "{v}");
+    // And no merge hash at all: the review did not come from the offer's merge.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "skill", "key": "watch"}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "template_version_changed", "{v}");
 }
 
 #[tokio::test]
@@ -4197,6 +4426,27 @@ async fn an_apply_at_the_helper_totals_cap() {
     .await
     .unwrap();
     assert_eq!(helpers_of(&u.w, u.agent).await.len(), 9);
+    // The agent's set is the recorded one (the part's hash says so): the helpers are
+    // `unchanged_here` and the apply takes the version's set wholesale — the cap judges the
+    // set an apply writes (the version's), never the agent's current one. (A set the agent
+    // edited is offered as a three-way merge instead, and the merged set respects the cap.)
+    let live: Vec<(String, Vec<u8>, bool)> = sqlx::query_as(
+        "SELECT path, content, executable FROM agent_helper_files
+         WHERE agent_id = $1 ORDER BY path",
+    )
+    .bind(u.agent)
+    .fetch_all(u.w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE agent_template_parts SET content_sha256 = $2
+         WHERE agent_id = $1 AND kind = 'helpers'",
+    )
+    .bind(u.agent)
+    .bind(aurora_template::helpers_hash(&live))
+    .execute(u.w.h.pool())
+    .await
+    .unwrap();
 
     upd_advance(&u, "2.0.0").await;
     let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;

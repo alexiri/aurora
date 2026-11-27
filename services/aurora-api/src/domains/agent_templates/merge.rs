@@ -18,8 +18,6 @@
 //! the same text takes it once, and a region both touched differently is one conflict hunk —
 //! everything the person must decide, and nothing more.
 
-// Wired into the offer and the apply in the next commit; until then only the tests use it.
-#![cfg_attr(not(test), allow(dead_code))]
 /// The largest text one merge unit takes (`dto::FILE_TEXT_MAX`, the helper file limit the
 /// skill files share). The callers refuse above this before merging, with a clear message.
 pub(crate) const MERGE_INPUT_MAX: usize = 256 * 1024;
