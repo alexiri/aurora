@@ -35,7 +35,7 @@
     "push.vapid_rotate", "reach_grant.decide", "reach.requested", "retention.update", "schedule.create", "schedule.delete", "schedule.run_now",
     "schedule.update", "scim_token.create", "scim_token.expiry_notice", "scim_token.revoke", "scim.update", "scim.error", "secret.accept", "secret.create",
     "secret.delete", "secret.reject", "secret_stores.migrate_finish", "secret_stores.migrate_start", "secret.update", "secret.value_update",
-    "secret.verify", "session.revoke_others", "skill.create", "skill.delete", "skill.file.delete", "skill.file.put", "skill.library.add",
+    "secret.verify", "session.revoke_others", "skill.agent_off", "skill.agent_on", "skill.create", "skill.delete", "skill.file.delete", "skill.file.put", "skill.library.add",
     "skill_library.create", "skill_library.delete", "skill.library.detach", "skill_library.update", "skill.library.update_apply",
     "skill.library.update_proposed", "skill.library.update_reject", "skill.update", "space_binding.create", "space_binding.delete",
     "space_binding.update", "ssh_key.create", "ssh_key.delete", "ssh_session.disconnect", "transcript_event.redact", "trusted_key.create",
