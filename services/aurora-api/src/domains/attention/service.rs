@@ -334,6 +334,9 @@ struct WsOpen {
     /// (C-1080 `agent_cannot_answer`) Hosted agents with no usable AI key or model; workspace owners only.
     cannot_answer: Vec<(HostedAgentRow, AnswerReason)>,
     mine: Vec<RequestRow>,
+    /// (FIX-251, D-488(a)) The template update notices whose offer still stands; every active
+    /// member (the people who can apply the update).
+    template_updates: Vec<aurora_db::repo::agent_templates::UpdateNoticeRow>,
 }
 
 /// Most agents checked per call (C-1080): the check is a few queries per agent and the counts are polled.
@@ -429,6 +432,7 @@ async fn ws_open(s: &AppState, c: &Caller, auth: &WorkspaceAuth) -> Result<WsOpe
         Vec::new()
     };
     let mine = repo::open_of_asker(&s.pool, auth.org_id, c.user_id).await?;
+    let template_updates = template_updates_of(s, ws).await?;
     Ok(WsOpen {
         approvals,
         actions,
@@ -436,7 +440,27 @@ async fn ws_open(s: &AppState, c: &Caller, auth: &WorkspaceAuth) -> Result<WsOpe
         accounts,
         cannot_answer,
         mine,
+        template_updates,
     })
+}
+
+/// The workspace's template update notices that are for the version offered now.
+async fn template_updates_of(
+    s: &AppState,
+    ws: Uuid,
+) -> Result<Vec<aurora_db::repo::agent_templates::UpdateNoticeRow>, ApiError> {
+    use aurora_db::repo::agent_templates as trepo;
+
+    let told = trepo::update_notice_template_ids(&s.pool, ws).await?;
+    if told.is_empty() {
+        return Ok(Vec::new());
+    }
+    let offered: Vec<(String, String)> =
+        crate::domains::agent_templates::updates::offered_version_strings(&s.pool, &told)
+            .await?
+            .into_iter()
+            .collect();
+    Ok(trepo::update_notices_for_workspace(&s.pool, ws, &offered, FEED_LIMIT).await?)
 }
 
 struct Slugs {
@@ -698,9 +722,51 @@ pub async fn workspace_feed(
                 .find(|a| a.request_id == r.id && a.user_id == c.user_id);
             mine_item(r, ask, (me.0, &me.1), None, snap.as_ref(), &sl)
         }));
+        // (FIX-251, D-488(a)) The update notices: the in-app notice with its link to the Agents
+        // page filtered to the agents that are behind.
+        items.extend(
+            o.template_updates
+                .iter()
+                .map(|n| template_update_item(n, &sl)),
+        );
         items
     };
     Ok(list_of(items, done))
+}
+
+/// (FIX-251, D-488(a)) One template update notice: "<Template> <version> is available for N
+/// agents in <Workspace>", the Agents page filtered to the agents that are behind. Informational
+/// (never a decision), counted, shown to every active member — the people who can apply it.
+fn template_update_item(
+    n: &aurora_db::repo::agent_templates::UpdateNoticeRow,
+    sl: &Slugs,
+) -> AttentionItem {
+    let href = format!("/o/{}/w/{}/agents?needs_update=1", sl.org, sl.ws);
+    let agents = if n.behind == 1 {
+        "1 agent".to_owned()
+    } else {
+        format!("{} agents", n.behind)
+    };
+    AttentionItem::new(
+        AttentionKind::TemplateUpdate,
+        AttentionLevel::Workspace,
+        TOPIC_AGENTS,
+        format!("{}:{}", n.template_id, n.version),
+        (
+            format!(
+                "{} {} is available for {} in {}",
+                text::name(&n.template_name),
+                n.version,
+                agents,
+                text::name(&n.workspace_name),
+            ),
+            "Your changes are kept where they can be merged; memories are never changed."
+                .to_owned(),
+        ),
+        n.created_at,
+        href.clone(),
+    )
+    .action("Review updates", href)
 }
 
 async fn workspace_done(
@@ -859,7 +925,8 @@ pub async fn counts(
                         .chain(o.actions.iter().map(|_| TOPIC_APPROVALS))
                         .chain(o.access.iter().map(|_| TOPIC_ACCOUNTS))
                         .chain(o.accounts.iter().map(|_| TOPIC_ACCOUNTS))
-                        .chain(o.cannot_answer.iter().map(|_| TOPIC_AGENTS)),
+                        .chain(o.cannot_answer.iter().map(|_| TOPIC_AGENTS))
+                        .chain(o.template_updates.iter().map(|_| TOPIC_AGENTS)),
                 );
                 Some(WorkspaceCount {
                     workspace_id: w,

@@ -6,6 +6,7 @@
 
 use aurora_db::PgPool;
 use aurora_db::repo::agent_templates as repo;
+use aurora_testkit::TestDb;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -76,8 +77,9 @@ async fn row_status(pool: &PgPool, id: Uuid) -> (String, Option<String>) {
         .unwrap()
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn the_package_wait_expiry_is_measured_by_the_database_clock(pool: PgPool) {
+#[tokio::test]
+async fn the_package_wait_expiry_is_measured_by_the_database_clock() {
+    let (_db, pool) = TestDb::with_pool().await;
     aurora_db::migrate(&pool).await.unwrap();
     let source = seed_source(&pool).await;
     let template = seed_template(&pool, source, "service-monitor").await;
@@ -108,8 +110,9 @@ async fn the_package_wait_expiry_is_measured_by_the_database_clock(pool: PgPool)
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn a_stale_finish_does_not_change_an_approved_version(pool: PgPool) {
+#[tokio::test]
+async fn a_stale_finish_does_not_change_an_approved_version() {
+    let (_db, pool) = TestDb::with_pool().await;
     aurora_db::migrate(&pool).await.unwrap();
     let source = seed_source(&pool).await;
     let template = seed_template(&pool, source, "service-monitor").await;

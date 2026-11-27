@@ -5,11 +5,13 @@
 //! override maps every origin to it, so the token-origin rule stays testable). Real Postgres.
 
 use aurora_api::domains::agent_templates::poll;
+use aurora_api::domains::auth::mail::{Mail, MailError, Mailer};
 use aurora_template::TreeFile;
 use aurora_testkit::git_server::{Change, GitServer};
 use base64::Engine as _;
 use http::Method;
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
 use crate::common::*;
@@ -3553,6 +3555,18 @@ fn part_state<'a>(v: &'a Value, kind: &str, key: &str) -> Option<&'a str> {
         .and_then(|p| p["state"].as_str())
 }
 
+/// The `merge` block of one part of an update offer.
+fn part_merge<'a>(v: &'a Value, kind: &str, key: &str) -> &'a Value {
+    v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == kind && p["key"] == key)
+        .unwrap()
+        .get("merge")
+        .unwrap()
+}
+
 /// The world of the update tests: the fixture `t` approved at 1.0.0 and one agent created
 /// from it whose own skill `watch` was edited and whose own skill `backup` was deleted.
 struct Upd {
@@ -3658,10 +3672,20 @@ async fn the_offer_lists_every_part_state_for_every_kind() {
     assert!(upd["readme"].as_str().unwrap().contains("Updates."), "{v}");
     assert_eq!(upd["changelog"], json!(null), "{v}");
     // Every state, one per kind where possible: the brief is untouched (the template changed
-    // it), `watch` was edited here, `backup` deleted here, `extra` is new, the helpers are
-    // untouched (the template rewrote them).
+    // it), `watch` was edited here and meets the template's own edit — a conflict part with
+    // one hunk (the body; the three-way merge, FIX-251), `backup` deleted here, `extra` is
+    // new, the helpers are untouched (the template rewrote them).
     assert_eq!(part_state(&v, "instructions", ""), Some("unchanged_here"));
-    assert_eq!(part_state(&v, "skill", "watch"), Some("edited_here"));
+    assert_eq!(part_state(&v, "skill", "watch"), Some("conflict"));
+    let watch = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "skill" && p["key"] == "watch")
+        .unwrap();
+    assert_eq!(watch["merge"]["state"], "conflict", "{watch}");
+    assert_eq!(watch["merge"]["conflicts"][0]["unit"], "body", "{watch}");
+    assert!(watch["merge"]["merge_sha256"].is_string(), "{watch}");
     assert_eq!(part_state(&v, "skill", "backup"), Some("removed_here"));
     assert_eq!(part_state(&v, "skill", "extra"), Some("new"));
     assert_eq!(part_state(&v, "helpers", ""), Some("unchanged_here"));
@@ -3812,6 +3836,18 @@ async fn applying_a_skill_keeps_its_enabled_choice() {
         .unwrap();
     let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
     let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    // The body edit meets the template's own body edit: the offer shows one conflict hunk
+    // (the body), and the apply echoes the merge's hash and resolves it — Take the new one,
+    // which is the template's text; the enabled choice is what this test is about.
+    let merge = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "skill" && p["key"] == "watch")
+        .unwrap()["merge"]
+        .clone();
+    assert_eq!(merge["state"], "conflict", "{merge}");
+    assert_eq!(merge["conflicts"][0]["unit"], "body", "{merge}");
 
     let (s, v) =
         u.w.apply(
@@ -3820,7 +3856,12 @@ async fn applying_a_skill_keeps_its_enabled_choice() {
             json!({
                 "version": "2.0.0",
                 "content_sha256": sha,
-                "parts": [{"kind": "skill", "key": "watch"}],
+                "parts": [{
+                    "kind": "skill",
+                    "key": "watch",
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": [{"unit": "body", "choice": "take_theirs"}],
+                }],
             }),
         )
         .await;
@@ -3834,6 +3875,771 @@ async fn applying_a_skill_keeps_its_enabled_choice() {
             .unwrap();
     assert!(!enabled);
     assert_eq!(body, "\nWatch body v2.\n");
+}
+
+/// An edit the new version does not touch merges cleanly and applies without resolutions:
+/// the person's line stays and the template's change arrives, and the memories are never
+/// touched (FIX-251, D-488).
+#[tokio::test]
+async fn an_edited_part_merges_and_applies_without_resolutions() {
+    let u = upd_world().await;
+    // The person appended a line to the brief; the template changed its first line.
+    sqlx::query("UPDATE agents SET brief = $2 WHERE id = $1")
+        .bind(u.agent)
+        .bind("Watch eu.\nAlso feed the cat.\n")
+        .execute(u.w.h.pool())
+        .await
+        .unwrap();
+    let memories: i64 = sqlx::query_scalar("SELECT count(*) FROM memories WHERE agent_id = $1")
+        .bind(u.agent)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    upd_advance(&u, "2.0.0").await;
+
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(part_state(&v, "instructions", ""), Some("merged"), "{v}");
+    let merge = part_merge(&v, "instructions", "");
+    assert_eq!(merge["state"], "merged", "{merge}");
+    assert_eq!(
+        merge["result"], "Watch eu closely.\nAlso feed the cat.\n",
+        "{merge}"
+    );
+    // No conflict hunks (an empty list is omitted altogether).
+    assert!(
+        merge["conflicts"].is_null() || merge["conflicts"].as_array().unwrap().is_empty(),
+        "{merge}"
+    );
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": "instructions",
+                    "key": "",
+                    "merge_sha256": merge["merge_sha256"],
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // The merged brief: the template's change and the person's line.
+    let brief: String = sqlx::query_scalar("SELECT brief FROM agents WHERE id = $1")
+        .bind(u.agent)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(brief, "Watch eu closely.\nAlso feed the cat.\n", "{brief}");
+    // The memories are never changed by an update.
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM memories WHERE agent_id = $1")
+        .bind(u.agent)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(after, memories);
+}
+
+/// Replace the agent's `report.sh` with `content`, past the routes (as an own edit).
+async fn upd_set_report(u: &Upd, content: &str) {
+    let done = sqlx::query(
+        "UPDATE agent_helper_files SET content = $2, size = $3
+         WHERE agent_id = $1 AND path = 'report.sh'",
+    )
+    .bind(u.agent)
+    .bind(content.as_bytes())
+    .bind(content.len() as i32)
+    .execute(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(done.rows_affected(), 1);
+}
+
+/// 20_001 short lines: under the helper file's 256 KiB, over the merge's line cap.
+fn too_many_lines() -> String {
+    (0..20_001).map(|i| format!("{i}\n")).collect()
+}
+
+/// A helper file over the merge's line cap (FIX-251): the part falls back to today's
+/// all-or-nothing choice (`edited_here`, no merge) and says the reason in words. Nothing
+/// quadratic runs to get there — the caps are proven in merge.rs's own tests.
+#[tokio::test]
+async fn a_too_large_helper_file_is_offered_wholesale_with_the_reason() {
+    let u = upd_world().await;
+    upd_set_report(&u, &too_many_lines()).await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(part_state(&v, "helpers", ""), Some("edited_here"), "{v}");
+    let part = v["update"]["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "helpers")
+        .unwrap();
+    assert!(part["merge"].is_null(), "{part}");
+    assert!(
+        part["merge_note"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("This file is too large to merge automatically"),
+        "{part}"
+    );
+}
+
+/// A part reviewed as a merge that has since grown past the merge's caps is a stale review:
+/// the apply never overwrites it wholesale in the merge's place (FIX-251).
+#[tokio::test]
+async fn a_merge_review_that_outgrew_the_caps_is_refused() {
+    let u = upd_world().await;
+    upd_set_report(&u, "an own edit\n").await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let merge = part_merge(&v, "helpers", "").clone();
+    assert!(merge["merge_sha256"].is_string(), "{v}");
+    let resolutions: Vec<Value> = merge["conflicts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| json!({"unit": c["unit"], "choice": "keep_mine"}))
+        .collect();
+
+    let grown = too_many_lines();
+    upd_set_report(&u, &grown).await;
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": "helpers",
+                    "key": "",
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": resolutions,
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "template_version_changed", "{v}");
+    let kept: Vec<u8> = sqlx::query_scalar(
+        "SELECT content FROM agent_helper_files WHERE agent_id = $1 AND path = 'report.sh'",
+    )
+    .bind(u.agent)
+    .fetch_one(u.w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(kept, grown.into_bytes(), "the person's file is untouched");
+}
+
+/// A conflicting hunk resolved with Keep mine: the person's text stays, and the apply writes
+/// exactly what the resolution composed (FIX-251).
+#[tokio::test]
+async fn a_conflicting_hunk_resolved_with_keep_mine() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let merge = part_merge(&v, "skill", "watch").clone();
+    assert_eq!(merge["conflicts"][0]["unit"], "body", "{merge}");
+    let ours = merge["conflicts"][0]["ours"].as_str().unwrap().to_owned();
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": "skill",
+                    "key": "watch",
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": [{"unit": "body", "choice": "keep_mine"}],
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let body: String = sqlx::query_scalar("SELECT body FROM skills WHERE id = $1")
+        .bind(u.watch)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(body, ours, "{body}");
+}
+
+/// A merge review that no longer matches is refused with the plain 409: the merge is the
+/// server's own, and a stale hash is never silently re-merged (FIX-251).
+#[tokio::test]
+async fn a_stale_merge_review_is_refused() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let merge = part_merge(&v, "skill", "watch").clone();
+    // The agent's skill moves under the review: the merge the person answered to is gone.
+    sqlx::query("UPDATE skills SET body = $2 WHERE id = $1")
+        .bind(u.watch)
+        .bind("Watch body: changed under the review.")
+        .execute(u.w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": "skill",
+                    "key": "watch",
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": [{"unit": "body", "choice": "take_theirs"}],
+                }],
+            }),
+        )
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "template_version_changed", "{v}");
+}
+
+/// Give the agent's skill `watch` an own file, past the routes.
+async fn upd_own_skill_file(u: &Upd, path: &str, content: &str) {
+    let mut conn = u.w.h.pool().acquire().await.unwrap();
+    aurora_db::repo::skills::upsert_file(&mut conn, u.watch, path, content.as_bytes(), Some(false))
+        .await
+        .unwrap();
+}
+
+/// Take one part of the offered `version` with its reviewed merge, resolving hunk by hunk
+/// with `choose(unit)` (`{choice, text?}`).
+async fn upd_take_merged(
+    u: &Upd,
+    version: &str,
+    kind: &str,
+    key: &str,
+    choose: impl Fn(&str) -> Value,
+) -> (u16, Value) {
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let merge = part_merge(&v, kind, key).clone();
+    let resolutions: Vec<Value> = merge["conflicts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            let unit = c["unit"].as_str().unwrap();
+            let mut r = choose(unit);
+            r["unit"] = json!(unit);
+            r
+        })
+        .collect();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": version,
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": kind,
+                    "key": key,
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": resolutions,
+                }],
+            }),
+        )
+        .await;
+    (s, v)
+}
+
+async fn upd_watch_body(u: &Upd) -> String {
+    sqlx::query_scalar("SELECT body FROM skills WHERE id = $1")
+        .bind(u.watch)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap()
+}
+
+/// The merged skill's body and files together keep a manual edit's total limit (FIX-251):
+/// each is within its own limit, the sum is not.
+#[tokio::test]
+async fn a_merged_skill_over_the_total_limit_is_refused_like_an_edit() {
+    let u = upd_world().await;
+    upd_own_skill_file(&u, "own.md", &"o".repeat(13_000)).await;
+    upd_advance(&u, "2.0.0").await;
+    let (s, v) = upd_take_merged(
+        &u,
+        "2.0.0",
+        "skill",
+        "watch",
+        |_| json!({"choice": "text", "text": "b".repeat(20_000)}),
+    )
+    .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "skill_too_large", "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("32000 characters"),
+        "{v}"
+    );
+    assert_eq!(upd_watch_body(&u).await, "Watch body: mine.");
+}
+
+/// The updates fixture's `2.0.0` with `watch` given a new description and a new file.
+async fn upd_advance_watch_grows(u: &Upd) {
+    let mut files = upd_files("t", "2.0.0");
+    for f in &mut files {
+        if f.0 == "t/skills/watch/SKILL.md" {
+            f.1 = tpl_skill_md("watch", "Something is very off.", "Watch body v2.");
+        }
+    }
+    files.push(("t/skills/watch/extra.md".to_owned(), b"extra\n".to_vec()));
+    advance_fs(&u.w, u.id, u.repo, "t", "2.0.0", &files, &[]).await;
+}
+
+/// The merged skill keeps a manual edit's file count: the person's own files and the new
+/// version's together (FIX-251).
+#[tokio::test]
+async fn a_merged_skill_over_the_file_count_is_refused_like_an_edit() {
+    let u = upd_world().await;
+    for i in 0..50 {
+        upd_own_skill_file(&u, &format!("own-{i}.md"), "own\n").await;
+    }
+    upd_advance_watch_grows(&u).await;
+    let (s, v) = upd_take_merged(
+        &u,
+        "2.0.0",
+        "skill",
+        "watch",
+        |_| json!({"choice": "keep_mine"}),
+    )
+    .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "skill_files_limit_reached", "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("at most 50 files"),
+        "{v}"
+    );
+}
+
+/// A free edit of the merged description follows a manual edit's rules (FIX-251).
+#[tokio::test]
+async fn a_merged_description_follows_the_rules_of_an_edit() {
+    let u = upd_world().await;
+    sqlx::query("UPDATE skills SET description = 'Mine.' WHERE id = $1")
+        .bind(u.watch)
+        .execute(u.w.h.pool())
+        .await
+        .unwrap();
+    upd_advance_watch_grows(&u).await;
+    for (text, says) in [
+        ("two\nlines".to_owned(), "single line"),
+        (" ".to_owned(), "must not be empty"),
+        ("d".repeat(501), "at most 500 characters"),
+    ] {
+        let (s, v) = upd_take_merged(&u, "2.0.0", "skill", "watch", |unit| {
+            if unit == "description" {
+                json!({"choice": "text", "text": text})
+            } else {
+                json!({"choice": "keep_mine"})
+            }
+        })
+        .await;
+        assert!(s == 400 || s == 422, "{s} {v}");
+        assert!(v.to_string().contains(says), "{v}");
+        assert!(v.to_string().contains("/description"), "{v}");
+    }
+}
+
+/// The merged helper set keeps the per-agent caps, refused with the helpers' own error
+/// (FIX-251): the file count, and the bytes together.
+#[tokio::test]
+async fn a_merged_helper_set_over_the_caps_is_refused() {
+    for (count, size, says) in [
+        (50, 4, "at most 50 helper files"),
+        (9, 240 * 1024, "together can be at most 2097152 bytes"),
+    ] {
+        let u = upd_world().await;
+        upd_set_report(&u, "an own edit\n").await;
+        let content = vec![b'h'; size];
+        let mut conn = u.w.h.pool().acquire().await.unwrap();
+        for i in 0..count {
+            aurora_db::repo::agent_helpers::insert(
+                &mut conn,
+                u.agent,
+                &format!("own-{i}.md"),
+                &content,
+                false,
+                &"0".repeat(64),
+            )
+            .await
+            .unwrap();
+        }
+        drop(conn);
+        upd_advance(&u, "2.0.0").await;
+        let (s, v) = upd_take_merged(
+            &u,
+            "2.0.0",
+            "helpers",
+            "",
+            |_| json!({"choice": "keep_mine"}),
+        )
+        .await;
+        assert_eq!(s, 422, "{v}");
+        assert_eq!(v["error"]["code"], "helpers_limit", "{v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains(says),
+            "{v}"
+        );
+    }
+}
+
+// ---- an apply and a concurrent edit (T3): the agent row lock serializes them --------------------
+//
+// A test transaction holds one row lock to stop a request at a known point; the next step
+// starts only when Postgres reports the request waiting (or it has already answered, which is
+// what an unserialized writer does).
+
+/// Wait until `waiters` backends of this test's database wait for a lock, or `done` is set.
+async fn wait_for_lock_waiters(w: &W, waiters: i64, done: &AtomicBool) {
+    for _ in 0..2_000 {
+        let now: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        if now >= waiters || done.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{waiters} requests never waited for a lock");
+}
+
+/// The apply of `watch`'s conflict, taking the new text, bound to the offer `v` showed.
+fn upd_watch_apply_body(v: &Value, parts_before: &[Value]) -> Value {
+    let merge = part_merge(v, "skill", "watch");
+    let mut parts = parts_before.to_vec();
+    parts.push(json!({
+        "kind": "skill",
+        "key": "watch",
+        "merge_sha256": merge["merge_sha256"],
+        "resolutions": [{"unit": "body", "choice": "take_theirs"}],
+    }));
+    json!({
+        "version": "2.0.0",
+        "content_sha256": v["update"]["content_sha256"],
+        "parts": parts,
+    })
+}
+
+/// An edit that is under way when the apply starts is waited for and seen: the apply is the
+/// stale review's 409, and the edit stands.
+#[tokio::test]
+async fn an_apply_waits_for_a_skill_edit_under_way_and_sees_it() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let body = upd_watch_apply_body(&v, &[]);
+
+    // Hold the skill's row: the edit stops inside its transaction.
+    let mut blocker = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM skills WHERE id = $1 FOR UPDATE")
+        .bind(u.watch)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let uri = format!("/v1/skills/{}", u.watch);
+    let applied = AtomicBool::new(false);
+    let never = AtomicBool::new(false);
+    let edit = u.w.h.call(
+        &u.owner,
+        Method::PATCH,
+        &uri,
+        Some(json!({"body": "Watch body: edited meanwhile."})),
+    );
+    let apply = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        let r = u.w.apply(&u.owner, u.agent, body).await;
+        applied.store(true, Ordering::SeqCst);
+        r
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 2, &applied).await;
+        blocker.rollback().await.unwrap();
+    };
+    let ((edit_status, edit_answer), (status, answer), ()) = tokio::join!(edit, apply, release);
+
+    assert_eq!(edit_status, 200, "{edit_answer}");
+    assert_eq!(
+        upd_watch_body(&u).await,
+        "Watch body: edited meanwhile.",
+        "no lost edit: {status} {answer}"
+    );
+    assert_eq!(status, 409, "{answer}");
+    assert_eq!(
+        answer["error"]["code"], "template_version_changed",
+        "{answer}"
+    );
+}
+
+/// An edit that starts while the apply is under way waits for it and lands on top.
+#[tokio::test]
+async fn a_skill_edit_made_during_an_apply_lands_on_top() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    // The helpers are written first: the apply has read the skill and not written it yet when
+    // it stops at the held helper row.
+    let body = upd_watch_apply_body(&v, &[json!({"kind": "helpers", "key": ""})]);
+    let mut blocker = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent_helper_files WHERE agent_id = $1 FOR UPDATE")
+        .bind(u.agent)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let uri = format!("/v1/skills/{}", u.watch);
+    let edited = AtomicBool::new(false);
+    let never = AtomicBool::new(false);
+    let apply = u.w.apply(&u.owner, u.agent, body);
+    let edit = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        let r =
+            u.w.h
+                .call(
+                    &u.owner,
+                    Method::PATCH,
+                    &uri,
+                    Some(json!({"body": "Watch body: edited meanwhile."})),
+                )
+                .await;
+        edited.store(true, Ordering::SeqCst);
+        r
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 2, &edited).await;
+        blocker.rollback().await.unwrap();
+    };
+    let ((status, answer), (edit_status, edit_answer), ()) = tokio::join!(apply, edit, release);
+
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(edit_status, 200, "{edit_answer}");
+    assert_eq!(
+        upd_watch_body(&u).await,
+        "Watch body: edited meanwhile.",
+        "no lost edit"
+    );
+}
+
+/// The helper removal takes the same lock: an apply of the helpers that starts while a
+/// removal is under way sees it, and never writes the removed file back.
+#[tokio::test]
+async fn an_apply_waits_for_a_helper_removal_under_way_and_sees_it() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(part_state(&v, "helpers", ""), Some("unchanged_here"), "{v}");
+    let body = json!({
+        "version": "2.0.0",
+        "content_sha256": v["update"]["content_sha256"],
+        "parts": [{"kind": "helpers", "key": ""}],
+    });
+    let mut blocker = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent_helper_files WHERE agent_id = $1 FOR UPDATE")
+        .bind(u.agent)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let uri = format!("/v1/agents/{}/helpers?path=report.sh", u.agent);
+    let applied = AtomicBool::new(false);
+    let never = AtomicBool::new(false);
+    let removal = u.w.h.call(&u.owner, Method::DELETE, &uri, None);
+    let apply = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        let r = u.w.apply(&u.owner, u.agent, body).await;
+        applied.store(true, Ordering::SeqCst);
+        r
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 2, &applied).await;
+        blocker.rollback().await.unwrap();
+    };
+    let ((removal_status, removal_answer), (status, answer), ()) =
+        tokio::join!(removal, apply, release);
+
+    assert_eq!(removal_status, 204, "{removal_answer}");
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agent_helper_files WHERE agent_id = $1")
+            .bind(u.agent)
+            .fetch_one(u.w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 0, "no lost removal: {status} {answer}");
+    assert_eq!(status, 409, "{answer}");
+}
+
+/// Insert a row that references the agent (a skill of its own, through the repo), as a turn or
+/// a conversation does: its foreign-key check must not wait. Bounded, so a wait fails the test.
+async fn insert_referencing_agent(u: &Upd, name: &str) {
+    let insert = async {
+        let org: Uuid = sqlx::query_scalar("SELECT org_id FROM agents WHERE id = $1")
+            .bind(u.agent)
+            .fetch_one(u.w.h.pool())
+            .await
+            .unwrap();
+        let mut conn = u.w.h.pool().acquire().await.unwrap();
+        aurora_db::repo::skills::insert(
+            &mut conn,
+            org,
+            aurora_db::repo::skills::Owner {
+                agent: Some(u.agent),
+                workspace: None,
+            },
+            name,
+            "Probe.",
+            "Probe.",
+            true,
+            "user",
+        )
+        .await
+        .unwrap();
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), insert)
+        .await
+        .expect("an insert referencing the agent waited on the agent lock");
+}
+
+/// The agent lock of the writers serializes them with each other and lets foreign-key checks
+/// through: a row referencing the agent is inserted while it is held.
+#[tokio::test]
+async fn the_agent_write_lock_serializes_writers_and_not_references() {
+    let u = upd_world().await;
+    let mut holder = u.w.h.pool().begin().await.unwrap();
+    aurora_db::repo::agents::lock_for_write(&mut *holder, u.agent)
+        .await
+        .unwrap();
+
+    insert_referencing_agent(&u, "probe").await;
+
+    // A second writer waits for the holder.
+    let mut second = u.w.h.pool().begin().await.unwrap();
+    let done = AtomicBool::new(false);
+    let take = async {
+        let row = aurora_db::repo::agents::lock_for_write(&mut *second, u.agent).await;
+        done.store(true, Ordering::SeqCst);
+        row
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 1, &done).await;
+        assert!(!done.load(Ordering::SeqCst), "the second writer waits");
+        holder.rollback().await.unwrap();
+    };
+    let (row, ()) = tokio::join!(take, release);
+    assert!(row.unwrap().is_some());
+}
+
+/// While an apply is under way — here after it re-created a skill, which takes the lock again —
+/// rows referencing the agent (its turns, conversations, memories) are not held up.
+#[tokio::test]
+async fn an_apply_under_way_does_not_hold_up_rows_referencing_the_agent() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(
+        part_state(&v, "skill", "backup"),
+        Some("removed_here"),
+        "{v}"
+    );
+    let body = json!({
+        "version": "2.0.0",
+        "content_sha256": v["update"]["content_sha256"],
+        "parts": [{"kind": "skill", "key": "backup"}, {"kind": "helpers", "key": ""}],
+    });
+    // The apply stops at the held helper row, its transaction open.
+    let mut blocker = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent_helper_files WHERE agent_id = $1 FOR UPDATE")
+        .bind(u.agent)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let never = AtomicBool::new(false);
+    let apply = u.w.apply(&u.owner, u.agent, body);
+    let probe = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        insert_referencing_agent(&u, "probe").await;
+        blocker.rollback().await.unwrap();
+    };
+    let ((status, answer), ()) = tokio::join!(apply, probe);
+    assert_eq!(status, 200, "{answer}");
+}
+
+/// Resolutions that do not match the offer's conflict hunks are refused, and so is a part
+/// applied without its merge hash (FIX-251).
+#[tokio::test]
+async fn resolutions_that_do_not_match_the_hunks_are_refused() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let merge = part_merge(&v, "skill", "watch").clone();
+    let part = |resolutions: Value| {
+        json!({
+            "version": "2.0.0",
+            "content_sha256": sha,
+            "parts": [{
+                "kind": "skill",
+                "key": "watch",
+                "merge_sha256": merge["merge_sha256"],
+                "resolutions": resolutions,
+            }],
+        })
+    };
+    // A resolution for a hunk the offer does not have.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            part(json!([{"unit": "description", "choice": "take_theirs"}])),
+        )
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "template_merge_unresolved", "{v}");
+    // And a missing resolution for the one hunk it does have.
+    let (s, v) = u.w.apply(&u.owner, u.agent, part(json!([]))).await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "template_merge_unresolved", "{v}");
+    // And no merge hash at all: the review did not come from the offer's merge.
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "skill", "key": "watch"}],
+            }),
+        )
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "template_version_changed", "{v}");
 }
 
 #[tokio::test]
@@ -4506,6 +5312,27 @@ async fn an_apply_at_the_helper_totals_cap() {
     .await
     .unwrap();
     assert_eq!(helpers_of(&u.w, u.agent).await.len(), 9);
+    // The agent's set is the recorded one (the part's hash says so): the helpers are
+    // `unchanged_here` and the apply takes the version's set wholesale — the cap judges the
+    // set an apply writes (the version's), never the agent's current one. (A set the agent
+    // edited is offered as a three-way merge instead, and the merged set respects the cap.)
+    let live: Vec<(String, Vec<u8>, bool)> = sqlx::query_as(
+        "SELECT path, content, executable FROM agent_helper_files
+         WHERE agent_id = $1 ORDER BY path",
+    )
+    .bind(u.agent)
+    .fetch_all(u.w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE agent_template_parts SET content_sha256 = $2
+         WHERE agent_id = $1 AND kind = 'helpers'",
+    )
+    .bind(u.agent)
+    .bind(aurora_template::helpers_hash(&live))
+    .execute(u.w.h.pool())
+    .await
+    .unwrap();
 
     upd_advance(&u, "2.0.0").await;
     let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
@@ -7362,4 +8189,485 @@ async fn the_checked_in_example_walks_the_whole_journey() {
         vec!["alert-summary.sh".to_owned()]
     );
     assert_eq!(skills_of(&w, agent).await.len(), 3);
+}
+
+// ---------------------------------------------------------------------------------------------
+// (FIX-251, D-488(a)) The update notice on an approval and a re-offer.
+// ---------------------------------------------------------------------------------------------
+
+struct FailMailer;
+
+#[async_trait::async_trait]
+impl Mailer for FailMailer {
+    async fn send(&self, _: Mail) -> Result<(), MailError> {
+        Err(MailError("smtp down".into()))
+    }
+}
+
+/// Seed, ingest and approve nothing: the source is checked, `t`@`1.0.0` waits for review.
+async fn template_ingested(w: &W) {
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    w.check(id).await;
+}
+
+/// An agent made from `t`, recorded as coming from `version` (behind the offered one when that
+/// is newer).
+async fn agent_from_template(
+    w: &W,
+    org: Uuid,
+    ws: Uuid,
+    handle: &str,
+    version: Option<&str>,
+) -> Uuid {
+    let id = w.h.hosted_agent(org, ws, handle).await;
+    sqlx::query(
+        "UPDATE agents SET template_id = 't', template_name = 'T', template_version = $2 WHERE id = $1",
+    )
+    .bind(id)
+    .bind(version)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// An active org member with their own workspace binding (the apply right) and their cookie.
+async fn bound_member(w: &W, org: Uuid, ws: Uuid, email: &str, role: &str) -> (Uuid, String) {
+    let u = w.h.user(email, false).await;
+    w.h.member(org, u, "member", "active").await;
+    w.h.bind_ws(ws, u, role).await;
+    let cookie = cookie(&w.h.good_session(u).await.1);
+    (u, cookie)
+}
+
+/// An approval tells exactly the people who can apply the update — the active members with an
+/// effective workspace access (the right the apply route requires): the bound owner and member
+/// get it, a bound-but-disabled person and a workspace-less org member do not, the approver
+/// never does; one notice per workspace and version (the dedup row); the bodies name nobody by
+/// e-mail address; the workspace attention feed carries the in-app notice.
+#[tokio::test]
+async fn an_approval_tells_exactly_the_people_who_can_apply() {
+    let w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let (_, owner_cookie) = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    let _ = bound_member(&w, org, ws, "member@x.io", "member").await;
+    // A bound person whose account is disabled: never told.
+    let gone = w.h.user("gone@x.io", false).await;
+    w.h.member(org, gone, "member", "active").await;
+    w.h.bind_ws(ws, gone, "member").await;
+    w.h.disable_user(gone).await;
+    // An active org member with no workspace binding: no apply right, never told.
+    let outsider = w.h.user("outsider@x.io", false).await;
+    w.h.member(org, outsider, "member", "active").await;
+
+    agent_from_template(&w, org, ws, "behind", Some("0.9.0")).await;
+    w.approve("t", "1.0.0").await;
+
+    let mail = w.h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, vec!["owner@x.io", "member@x.io"], "{mail:?}");
+    for m in &mail {
+        assert!(
+            m.body.contains("T 1.0.0 is available for 1 agent in"),
+            "{m:?}"
+        );
+        assert!(m.body.contains("memories are never changed"), "{m:?}");
+        // Never an e-mail address as a label in the body.
+        assert!(!m.body.contains("@x.io"), "{m:?}");
+    }
+    // The dedup row: exactly one, for this workspace and version.
+    let rows: Vec<(Uuid, String, String)> = sqlx::query_as(
+        "SELECT workspace_id, template_id, version FROM agent_template_update_notices",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![(ws, "t".into(), "1.0.0".into())], "{rows:?}");
+
+    // The in-app notice: the workspace attention feed shows it to a member with the apply
+    // right, with the link to the Agents page filtered to the agents that are behind.
+    let (s, v) =
+        w.h.call(
+            &owner_cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/attention"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let items: Vec<&Value> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["kind"].as_str() == Some("template_update"))
+        .collect();
+    assert_eq!(items.len(), 1, "{v}");
+    assert!(
+        items[0]["title"]
+            .as_str()
+            .unwrap()
+            .starts_with("T 1.0.0 is available for 1 agent in "),
+        "{v}"
+    );
+    assert!(
+        items[0]["action"]["href"]
+            .as_str()
+            .unwrap()
+            .ends_with("/agents?needs_update=1")
+            && items[0]["action"]["href"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("/w/{}/agents", ws.simple())),
+        "{v}"
+    );
+    assert_eq!(items[0]["action"]["label"], json!("Review updates"), "{v}");
+
+    // The rails' number counts it under the agents topic.
+    let (s, v) =
+        w.h.call(
+            &owner_cookie,
+            Method::GET,
+            &format!("/v1/attention/counts?workspace={ws}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        v["workspace"]["topics"]["agents"].as_i64().unwrap_or(0) >= 1,
+        "{v}"
+    );
+
+    // A re-approval path (the version is approved; a second decide is refused) — the dedup is
+    // proven by the re-offer test; here: a withdrawal and a re-offer keep it silent.
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": true})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(w.h.mail.sent().len(), 2, "no second notice");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_template_update_notices")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+}
+
+/// The offered version is the highest approved one by semver precedence, whatever order the
+/// versions were stored in: a lower version approved later neither hides nor replaces the
+/// notice, not even after a re-offer.
+#[tokio::test]
+async fn a_lower_version_approved_later_does_not_replace_the_notice() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.4.0");
+    w.git.serve_file("pkg/t-1.4.0.zip", pack("t", "1.4.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    w.check(src["id"].as_str().unwrap().parse().unwrap()).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let (_, owner) = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    agent_from_template(&w, org, ws, "behind", Some("1.0.0")).await;
+    w.approve("t", "1.4.0").await;
+
+    // A check never ingests a version below a stored one, so the later, lower approved
+    // version is stored directly.
+    let stored = sqlx::query(
+        "INSERT INTO agent_template_versions \
+         SELECT (jsonb_populate_record(v, jsonb_build_object( \
+                    'id', gen_random_uuid(), 'version', '1.3.1', \
+                    'created_at', v.created_at + interval '1 hour'))).* \
+         FROM agent_template_versions v WHERE v.version = '1.4.0'",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored.rows_affected(), 1);
+
+    for reoffer in [false, true] {
+        if reoffer {
+            for offered in [false, true] {
+                let (s, v) = w
+                    .call(
+                        Method::PATCH,
+                        "/v1/admin/agent-templates/t",
+                        Some(json!({"offered": offered})),
+                    )
+                    .await;
+                assert_eq!(s, 200, "{v}");
+            }
+        }
+        let (s, v) =
+            w.h.call(
+                &owner,
+                Method::GET,
+                &format!("/v1/workspaces/{ws}/attention"),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        let titles: Vec<&str> = v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["kind"] == "template_update")
+            .map(|i| i["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(titles.len(), 1, "re-offered {reoffer}: {v}");
+        assert!(
+            titles[0].starts_with("T 1.4.0 is available for 1 agent in "),
+            "re-offered {reoffer}: {v}"
+        );
+        assert_eq!(w.h.mail.sent().len(), 1, "re-offered {reoffer}");
+    }
+}
+
+/// An organization role administers and never uses (D-477): an organization owner or admin
+/// with no access of their own in the workspace cannot apply the update, so they get no
+/// e-mail and no item in the workspace's attention feed.
+#[tokio::test]
+async fn an_organization_role_alone_is_not_told_about_an_update() {
+    let w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let _ = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    let mut role_only: Vec<String> = Vec::new();
+    for (email, role) in [("orgowner@x.io", "owner"), ("orgadmin@x.io", "admin")] {
+        let u = w.h.user(email, false).await;
+        w.h.member(org, u, role, "active").await;
+        role_only.push(cookie(&w.h.good_session(u).await.1));
+    }
+
+    agent_from_template(&w, org, ws, "behind", Some("0.9.0")).await;
+    w.approve("t", "1.0.0").await;
+
+    let mail = w.h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, vec!["owner@x.io"], "{mail:?}");
+    for c in &role_only {
+        let (s, v) =
+            w.h.call(
+                c,
+                Method::GET,
+                &format!("/v1/workspaces/{ws}/attention"),
+                None,
+            )
+            .await;
+        let told = v["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|i| i["kind"] == "template_update"));
+        assert!(!told, "{s} {v}");
+    }
+}
+
+/// A re-offer of the same version is silent (the dedup), a new version tells again, and every
+/// workspace with agents from the template gets its own notice.
+#[tokio::test]
+async fn the_notice_is_sent_once_per_workspace_and_version() {
+    let w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws1 = w.h.workspace(org).await;
+    let ws2 = w.h.workspace(org).await;
+    let _ = bound_member(&w, org, ws1, "one@x.io", "owner").await;
+    let _ = bound_member(&w, org, ws2, "two@x.io", "owner").await;
+    agent_from_template(&w, org, ws1, "a1", Some("0.9.0")).await;
+    agent_from_template(&w, org, ws2, "a2", None).await;
+
+    w.approve("t", "1.0.0").await;
+    let mail = w.h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, vec!["one@x.io", "two@x.io"], "{mail:?}");
+    let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT workspace_id, version FROM agent_template_update_notices ORDER BY workspace_id",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+
+    // Withdraw and offer again: the same version is silent everywhere.
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": true})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(w.h.mail.sent().len(), 2, "the re-offer told nobody again");
+
+    // A new version tells again, once per workspace and version.
+    w.seed("acme/tpl", "t", "1.1.0");
+    w.git.serve_file("pkg/t-1.1.0.zip", pack("t", "1.1.0"));
+    let sid: Uuid = sqlx::query_scalar("SELECT id FROM agent_template_sources LIMIT 1")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = w
+        .call(
+            Method::POST,
+            &format!("/v1/admin/agent-template-sources/{sid}/check"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    w.approve("t", "1.1.0").await;
+    let mail = w.h.mail.sent();
+    assert_eq!(mail.len(), 4, "{mail:?}");
+    assert!(mail.iter().any(|m| m.body.contains("1.1.0")), "{mail:?}");
+}
+
+/// A failing mailer never fails or undoes the approval: the version is approved, the critical
+/// audit row stands and the in-app notice (the dedup row) is there.
+#[tokio::test]
+async fn a_failing_notice_does_not_fail_the_approval() {
+    let mut w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let _ = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    agent_from_template(&w, org, ws, "behind", Some("0.9.0")).await;
+
+    w.h.state =
+        w.h.state
+            .clone()
+            .with_mailer(std::sync::Arc::new(FailMailer));
+    w.h.app = test_router(w.h.state.clone());
+
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-templates/t/versions/1.0.0/approve",
+            Some(json!({"content_sha256": w.content_sha("1.0.0").await.unwrap()})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        w.versions().await,
+        vec![("1.0.0".into(), "approved".into(), None)]
+    );
+    assert_eq!(w.audit_critical("agent_template.approve").await, 1);
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_template_update_notices")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(rows, 1, "the in-app notice is there");
+}
+
+// ---------------------------------------------------------------------------------------------
+// (FIX-251, D-488(a)) The Update available mark on the agents list and the agent read.
+// ---------------------------------------------------------------------------------------------
+
+fn needs_update_of(v: &Value, id: Uuid) -> bool {
+    v["items"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|a| a["id"].as_str() == Some(id.to_string().as_str()))
+                .map(|a| a["needs_update"].as_bool().unwrap())
+        })
+        .unwrap_or_else(|| panic!("agent {id} not in the list: {v}"))
+}
+
+/// The workspace agents list and the single-agent read mark the agents whose template offers a
+/// semver-newer version than the stored one (`needs_update`): behind at 0.9.0 against an
+/// approved 1.0.0, an agent already on it is not, an agent without a template never is; a newer
+/// approval marks both; a withdrawn offer marks nobody.
+#[tokio::test]
+async fn the_agents_list_marks_the_ones_behind() {
+    let w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let (_, cookie) = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    let behind = agent_from_template(&w, org, ws, "behind", Some("0.9.0")).await;
+    let current = agent_from_template(&w, org, ws, "current", Some("1.0.0")).await;
+    let plain = w.h.hosted_agent(org, ws, "plain").await;
+
+    w.approve("t", "1.0.0").await;
+
+    let (s, v) =
+        w.h.call(
+            &cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/agents"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(needs_update_of(&v, behind), "{v}");
+    assert!(!needs_update_of(&v, current), "{v}");
+    assert!(!needs_update_of(&v, plain), "{v}");
+    let (s, v) =
+        w.h.call(&cookie, Method::GET, &format!("/v1/agents/{behind}"), None)
+            .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["needs_update"], json!(true), "{v}");
+
+    // A newer approved version marks the stored one behind too.
+    w.seed("acme/tpl", "t", "1.1.0");
+    w.git.serve_file("pkg/t-1.1.0.zip", pack("t", "1.1.0"));
+    let sid: Uuid = sqlx::query_scalar("SELECT id FROM agent_template_sources LIMIT 1")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    w.check(sid).await;
+    w.approve("t", "1.1.0").await;
+    let (s, v) =
+        w.h.call(
+            &cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/agents"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(needs_update_of(&v, behind), "{v}");
+    assert!(needs_update_of(&v, current), "{v}");
+
+    // The offer withdrawn: nobody is behind.
+    let (s, v) = w
+        .call(
+            Method::PATCH,
+            "/v1/admin/agent-templates/t",
+            Some(json!({"offered": false})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) =
+        w.h.call(
+            &cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}/agents"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(!needs_update_of(&v, behind), "{v}");
+    assert!(!needs_update_of(&v, current), "{v}");
 }

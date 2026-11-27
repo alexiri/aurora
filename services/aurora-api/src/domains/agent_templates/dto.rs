@@ -1259,15 +1259,62 @@ pub struct OfferPart {
     pub kind: String,
     /// Empty for `instructions` and `helpers`; the skill name; the C-1104 `skill_ref_key`.
     pub key: String,
-    /// `unchanged_here` | `edited_here` | `removed_here` | `new` | `removed_upstream`.
+    /// `unchanged_here` | `edited_here` | `merged` | `conflict` | `removed_here` | `new` |
+    /// `removed_upstream`. `merged` and `conflict` (FIX-251, D-488(b)) replace
+    /// `edited_here` wherever the agent's starting text is stored: the part is offered as a
+    /// three-way merge of that base, the agent's current text and the new version's text.
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proposed: Option<String>,
+    /// The part's merge (FIX-251): present for `merged` and `conflict`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge: Option<PartMerge>,
+    /// Why the part has no merge: the agent's starting text is not stored (the version
+    /// content is gone, or the part is not in it), so the offer fell back to the
+    /// all-or-nothing `edited_here`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge_note: Option<String>,
     /// For a `library_skill`: the reference, resolved as C-1142.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_ref: Option<SkillRefPlan>,
+}
+
+/// (FIX-251, D-488(b)) The three-way merge of one part: what the merge decided on its own and
+/// which hunks the person must resolve. The merge is computed from the agent's recorded
+/// starting text (the stored version content), the agent's current text and the new version's
+/// text rendered for this agent — all server-side; the apply recomputes it and takes nothing
+/// else.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PartMerge {
+    /// `merged`: a clean merge; `result` is the merged part text, shown diffed against
+    /// `current`, applied as it is. `conflict`: at least one hunk needs the person's choice;
+    /// nothing is applied to the part until every hunk is resolved.
+    pub state: String,
+    /// The merged part text of a clean merge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    /// The conflict hunks in order (a `conflict` part): one resolution per hunk, in this
+    /// order, goes back with the apply.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<MergeConflict>,
+    /// The merge's hash as the review showed it: the apply echoes it and the server refuses
+    /// a stale review with `template_version_changed`.
+    pub merge_sha256: String,
+}
+
+/// (FIX-251) One conflict hunk of a part's merge.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct MergeConflict {
+    /// Which text of the part the hunk is in: `description` or `body` (a skill's), or
+    /// `file:<path>` (a skill file, a helper file). Instructions have no unit prefix: the
+    /// part's whole text is one unit, named `text`.
+    pub unit: String,
+    /// The agent's current text of the hunk (Keep mine).
+    pub ours: String,
+    /// The new version's text of the hunk (Take the new one).
+    pub theirs: String,
 }
 
 /// (C-1112) Body of `POST /v1/agents/{agent}/template/apply`: which offered version, which
@@ -1298,10 +1345,31 @@ pub struct ApplySkillRef {
     pub commit_sha: String,
 }
 
-/// (C-1112) One part to take.
+/// (C-1112) One part to take. A part whose offer carries a merge (FIX-251) also echoes the
+/// merge's hash the review showed and, for a `conflict` part, one resolution per conflict
+/// hunk in the offer's order.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApplyPart {
     pub kind: String,
     pub key: String,
+    /// The part's `merge.merge_sha256` from the offer (`merged` and `conflict` parts).
+    #[serde(default)]
+    pub merge_sha256: Option<String>,
+    /// One resolution per conflict hunk of this part, in the offer's order.
+    #[serde(default)]
+    pub resolutions: Vec<ApplyResolution>,
+}
+
+/// (FIX-251) The person's choice for one conflict hunk.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyResolution {
+    /// The hunk's unit, as the offer's `conflicts[].unit`.
+    pub unit: String,
+    /// `keep_mine` | `take_theirs` | `text`.
+    pub choice: String,
+    /// The person's own edit of the hunk (`choice` = `text`), size-limited.
+    #[serde(default)]
+    pub text: Option<String>,
 }

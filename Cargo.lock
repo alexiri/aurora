@@ -638,6 +638,7 @@ dependencies = [
  "aurora-config",
  "aurora-core",
  "aurora-counters",
+ "aurora-testkit",
  "aws-lc-rs",
  "chrono",
  "futures",

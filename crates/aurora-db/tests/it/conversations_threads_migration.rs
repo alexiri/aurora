@@ -5,7 +5,7 @@
 //! under their automation with its current name, a gone automation is marked deleted, other
 //! conversations are untouched, and `webhook_deliveries` accepts `duplicate`. The old creators'
 //! insert (no new columns) still works afterwards.
-use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
 
@@ -13,8 +13,9 @@ const VERSION: i64 = 20_261_201_000_262;
 
 type Folded = (Option<String>, Option<Uuid>, bool, String, Option<String>);
 
-#[sqlx::test(migrations = false)]
-async fn the_backfill_folds_existing_threads_and_the_one_chat_rule_goes(pool: PgPool) {
+#[tokio::test]
+async fn the_backfill_folds_existing_threads_and_the_one_chat_rule_goes() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version < VERSION)

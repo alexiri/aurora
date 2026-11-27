@@ -5,6 +5,7 @@
 
 use aurora_db::PgPool;
 use aurora_db::authz;
+use aurora_testkit::TestDb;
 use uuid::Uuid;
 
 async fn user(pool: &PgPool, org: Uuid, org_role: Option<(&str, &str)>) -> Uuid {
@@ -96,8 +97,9 @@ async fn rows(pool: &PgPool, source: &str) -> Vec<(Uuid, Uuid, Uuid, String)> {
     .unwrap()
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn the_two_views_are_equal_and_an_admin_has_no_row_without_a_binding(pool: PgPool) {
+#[tokio::test]
+async fn the_two_views_are_equal_and_an_admin_has_no_row_without_a_binding() {
+    let (_db, pool) = TestDb::with_pool().await;
     let org = Uuid::now_v7();
     sqlx::query("INSERT INTO organizations (id, slug, name, external_id) VALUES ($1,$2,'o',$2)")
         .bind(org)

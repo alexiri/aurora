@@ -448,7 +448,12 @@ and existing agents are untouched by a waiting, rejected or invalid version.
   instructions, each skill, helpers, automations. The person chooses which
   parts to apply. **Memories are never offered again** (they are the agent's
   own after creation), and apps a new version adds are listed with a link to
-  give access.
+  give access. (FIX-251, D-488) The people who can apply the update are told
+  when a version becomes the offered one — one in-app notice per workspace and
+  version, plus e-mail and push by preference — and an edited part is offered
+  as a three-way merge, not all-or-nothing: a clean merge applies the new
+  change around the person's edit, a conflict is resolved hunk by hunk (Keep
+  mine, Take the new one, or the person's own text).
 - **Library skills update themselves**: a referenced library skill is pinned
   to a commit but refreshed and proposed by its library, like any library
   skill. Its content is not part of the template's approval — it is trusted

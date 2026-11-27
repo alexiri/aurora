@@ -3,14 +3,15 @@
 //! (the order an upgraded database sees) and backfills `closed_by_role`: a decline with a decliner is an
 //! organization owner's or admin's, a resolution the system's; open, withdrawn and decliner-less rows stay
 //! null. The two free-text columns are bounded to 300 characters.
-use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
 
 const VERSION: i64 = 20_261_201_000_263;
 
-#[sqlx::test(migrations = false)]
-async fn the_backfill_names_the_closing_role_and_the_texts_are_bounded(pool: PgPool) {
+#[tokio::test]
+async fn the_backfill_names_the_closing_role_and_the_texts_are_bounded() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let without: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version != VERSION)

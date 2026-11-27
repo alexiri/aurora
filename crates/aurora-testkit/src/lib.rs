@@ -2,10 +2,10 @@
 //!
 //! - [`TestDb`]: a uniquely named, migrated Postgres database per instance.
 //!   Server resolution: `AURORA_TEST_DATABASE_URL`, then `DATABASE_URL`
-//!   (process env, then repo-root `.env`). If neither is set, a podman
-//!   `postgres:16` container is started once per process as a fallback;
-//!   leftovers of crashed or killed runs older than an hour are reaped
-//!   before a new one starts.
+//!   (process env, then repo-root `.env`). If neither is set, the machine's one
+//!   shared test server is used (`scripts/dev/test-pg.sh`, FIX-255, D-491),
+//!   started on first use. This crate never starts a server per process, and it
+//!   refuses a URL on port 55432 (the owner's dev database).
 //! - [`MockUpstream`]: wiremock-backed HTTP upstream. `wiremock` is re-exported.
 #![forbid(unsafe_code)]
 
@@ -82,9 +82,9 @@ fn is_no_free_slot(e: &sqlx::Error) -> bool {
 }
 
 /// Retry `attempt` while the server has no free connection slot, polling until
-/// [`CONNECT_SLOT_DEADLINE`]. The dev Postgres (`max_connections` 100) is shared by every lane and
-/// by every nextest process (each opens its own pool), so under load a connect can be refused for a
-/// moment although nothing is wrong; any other error is returned at once.
+/// [`CONNECT_SLOT_DEADLINE`]. The test server is shared by every lane and by every nextest
+/// process (each opens its own pool), so under load a connect can be refused for a moment
+/// although nothing is wrong; any other error is returned at once.
 async fn retry_no_free_slot<T, F, Fut>(mut attempt: F) -> sqlx::Result<T>
 where
     F: FnMut() -> Fut,
@@ -112,7 +112,7 @@ pub async fn connect_admin(url: &str) -> sqlx::Result<PgConnection> {
 pub const TEST_POOL_SIZE_ENV: &str = "AURORA_TEST_POOL_SIZE";
 
 /// Default connections per `TestDb` pool. Every test (and every nextest process) opens its own
-/// pool against the shared dev Postgres (`max_connections` 100), so a smaller pool would allow
+/// pool against the shared test Postgres, so a smaller pool would allow
 /// more parallel tests — but the `aurora-api` harness hands this same pool to the app under test
 /// (workers, SSE, LISTEN, long polls), and at 2 connections 20 of its 899 tests starve and fail
 /// (VEL-005 measurement, `docs/ops/build-performance.md` §7). So the default stays 5; set
@@ -150,8 +150,36 @@ impl TestDb {
         }
     }
 
+    /// [`TestDb::new`] plus an owned handle to its pool: what a test that used
+    /// `#[sqlx::test(migrator = "aurora_db::MIGRATOR")]` starts with. That attribute is banned
+    /// (`scripts/guards/no-sqlx-test.py`): it reads `DATABASE_URL` and `.env` itself, past the
+    /// URL rules of this crate. Keep the `TestDb` bound until the test ends
+    /// (`let (_db, pool) = …`, never `let (_, pool)`): dropping it drops the database.
+    pub async fn with_pool() -> (TestDb, PgPool) {
+        let db = TestDb::new().await;
+        let pool = db.pool.clone();
+        (db, pool)
+    }
+
+    /// Like [`TestDb::with_pool`], but the database is empty: no migration is applied
+    /// (`#[sqlx::test(migrations = false)]`). For tests that run migrations themselves.
+    #[allow(clippy::panic)]
+    pub async fn unmigrated_with_pool() -> (TestDb, PgPool) {
+        match Self::try_create(false).await {
+            Ok(db) => {
+                let pool = db.pool.clone();
+                (db, pool)
+            }
+            Err(e) => panic!("aurora-testkit: failed to create test database: {e:#}"),
+        }
+    }
+
     /// Fallible variant of [`TestDb::new`].
     pub async fn try_new() -> anyhow::Result<TestDb> {
+        Self::try_create(true).await
+    }
+
+    async fn try_create(with_migrations: bool) -> anyhow::Result<TestDb> {
         let server_url = server_url().await?;
         let name = format!("aurora_test_{}", uuid::Uuid::now_v7().simple());
 
@@ -161,7 +189,7 @@ impl TestDb {
         // VEL-003: clone the per-server template (migrated once) at
         // filesystem speed instead of replaying all migrations per test.
         // `AURORA_TEST_TEMPLATE_DB=0` reverts to the legacy path below.
-        let migrated = if template::template_enabled() {
+        let migrated = if with_migrations && template::template_enabled() {
             let template = template::ensure_template(&server_url).await?;
             template::clone_from_template(&mut admin, template, &name).await?;
             true
@@ -182,7 +210,7 @@ impl TestDb {
         })
         .await
         .context("connecting to test database")?;
-        if !migrated {
+        if with_migrations && !migrated {
             template::migrate_pool(&pool).await?;
         }
         Ok(TestDb {
@@ -383,24 +411,114 @@ async fn drop_role(server_url: &str, role: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Resolve the server URL: env var, then `.env`, then the podman fallback.
+/// Resolve the server URL: env var, then `.env`, then the machine's shared test server.
 async fn server_url() -> anyhow::Result<String> {
-    for key in [TEST_DB_ENV, "DATABASE_URL"] {
-        if let Ok(v) = std::env::var(key)
-            && !v.is_empty()
-        {
-            return Ok(v);
-        }
+    let dotenv = read_dotenv()?;
+    resolve_server_url(|key| std::env::var(key).ok(), &dotenv, shared_server_url).await
+}
+
+/// The URL rules of [`server_url`]: the process environment wins over `.env`, and `shared` is
+/// only called when neither names a server. A resolved URL on the owner's dev database port is
+/// refused, wherever it came from.
+async fn resolve_server_url<F, Fut>(
+    env: impl Fn(&str) -> Option<String>,
+    dotenv: &[(String, String)],
+    shared: F,
+) -> anyhow::Result<String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<String>>,
+{
+    const KEYS: [&str; 2] = [TEST_DB_ENV, "DATABASE_URL"];
+    let from_env = KEYS.iter().find_map(|key| {
+        env(key)
+            .filter(|v| !v.is_empty())
+            .map(|v| (format!("${key}"), v))
+    });
+    let from_dotenv = || {
+        KEYS.iter().find_map(|key| {
+            dotenv
+                .iter()
+                .find(|(k, _)| k == key)
+                .filter(|(_, v)| !v.is_empty())
+                .map(|(_, v)| (format!("{key} in .env"), v.clone()))
+        })
+    };
+    let (source, url) = match from_env.or_else(from_dotenv) {
+        Some(found) => found,
+        None => ("the shared test server".to_owned(), shared().await?),
+    };
+    if is_dev_database(&url) {
+        // The URL itself is not echoed: it may carry a password.
+        bail!(
+            "refusing the test database URL from {source}: port {DEV_DATABASE_PORT} is the \
+             owner's dev database. Run tests with scripts/dev/test.sh (it uses the shared test \
+             server of scripts/dev/test-pg.sh), or remove that setting."
+        );
     }
-    let env = read_dotenv()?;
-    for key in [TEST_DB_ENV, "DATABASE_URL"] {
-        if let Some(v) = env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
-            && !v.is_empty()
-        {
-            return Ok(v);
+    Ok(url)
+}
+
+/// Port of the owner's dev database (`just dev-db`), which no test may touch.
+const DEV_DATABASE_PORT: u16 = 55432;
+
+/// Whether `url` points at [`DEV_DATABASE_PORT`], by authority port or `?port=`. A URL that
+/// does not parse counts if it mentions the port at all.
+fn is_dev_database(url: &str) -> bool {
+    let wanted = DEV_DATABASE_PORT.to_string();
+    match url::Url::parse(url) {
+        Ok(u) => {
+            u.port() == Some(DEV_DATABASE_PORT)
+                || u.query_pairs().any(|(k, v)| k == "port" && v == wanted)
         }
+        Err(_) => url.contains(&wanted),
     }
-    container_url().await
+}
+
+/// The machine's one shared test Postgres (`scripts/dev/test-pg.sh`, D-491): started if it is
+/// not running, under a machine-wide lock, so any number of test processes get the same server.
+/// Resolved once per process.
+async fn shared_server_url() -> anyhow::Result<String> {
+    static SHARED_URL: OnceCell<String> = OnceCell::const_new();
+    SHARED_URL
+        .get_or_try_init(|| async {
+            run_test_pg("up").await?;
+            let url = run_test_pg("url").await?;
+            Ok::<_, anyhow::Error>(url.trim().to_owned())
+        })
+        .await
+        .cloned()
+}
+
+/// Run `scripts/dev/test-pg.sh <command>` and return what it prints.
+async fn run_test_pg(command: &str) -> anyhow::Result<String> {
+    let script: PathBuf = [
+        env!("CARGO_MANIFEST_DIR"),
+        "..",
+        "..",
+        "scripts",
+        "dev",
+        "test-pg.sh",
+    ]
+    .iter()
+    .collect();
+    let out = tokio::process::Command::new("bash")
+        .arg(&script)
+        .arg(command)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .with_context(|| format!("running {} {command}", script.display()))?;
+    if !out.status.success() {
+        bail!(
+            "neither {TEST_DB_ENV} nor DATABASE_URL is set, and the shared test server is not \
+             available (`{} {command}`: {}): {}",
+            script.display(),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Parse the repo-root `.env` (KEY=VALUE lines; `#` comments; optional quotes).
@@ -445,157 +563,6 @@ pub(crate) fn replace_db_name(base: &str, name: &str) -> anyhow::Result<String> 
     Ok(out)
 }
 
-static CONTAINER_URL: OnceCell<String> = OnceCell::const_new();
-
-/// Start (once per process) a podman postgres:16 container and return its URL.
-async fn container_url() -> anyhow::Result<String> {
-    CONTAINER_URL
-        .get_or_try_init(start_container)
-        .await
-        .cloned()
-}
-
-async fn start_container() -> anyhow::Result<String> {
-    eprintln!(
-        "aurora-testkit: neither {TEST_DB_ENV} nor DATABASE_URL is set; \
-         starting a podman postgres:16 container. Set {TEST_DB_ENV} to use an \
-         existing server instead."
-    );
-    reap_stale_containers().await;
-    let name = format!("aurora-testkit-{}", uuid::Uuid::now_v7().simple());
-    let run = tokio::process::Command::new("podman")
-        .args(run_args(&name))
-        .output()
-        .await
-        .context("running podman (is podman installed?)")?;
-    if !run.status.success() {
-        bail!(
-            "podman run failed: {}",
-            String::from_utf8_lossy(&run.stderr)
-        );
-    }
-    let port_out = tokio::process::Command::new("podman")
-        .args(["port", &name, "5432/tcp"])
-        .output()
-        .await
-        .context("podman port")?;
-    let port: u16 = String::from_utf8_lossy(&port_out.stdout)
-        .lines()
-        .find_map(|l| l.rsplit(':').next().and_then(|p| p.trim().parse().ok()))
-        .context("could not determine container host port")?;
-    let url = format!("postgres://aurora:aurora@127.0.0.1:{port}/postgres");
-
-    for _ in 0..120 {
-        if PgConnection::connect(&url).await.is_ok() {
-            eprintln!(
-                "aurora-testkit: container {name} ready on port {port}; \
-                       stop it with `podman rm -f {name}`"
-            );
-            return Ok(url);
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    bail!("postgres container {name} did not become ready")
-}
-
-/// The fallback test server image.
-const POSTGRES_IMAGE: &str = "docker.io/library/postgres:16";
-
-/// The image's data directory, which the image declares as a VOLUME
-/// (`podman image inspect docker.io/library/postgres:16`: `PGDATA=/var/lib/postgresql/data`).
-const POSTGRES_PGDATA: &str = "/var/lib/postgresql/data";
-
-/// Arguments for `podman run` of the fallback test server.
-///
-/// `--tmpfs <PGDATA>` mounts the image's VOLUME data directory on a tmpfs, so
-/// podman never creates the anonymous volume it otherwise would — one leaked
-/// volume per test process, which exhausted podman's lock table (Nov 2026).
-/// The data is throwaway, and the tmpfs also makes the tests faster.
-fn run_args(name: &str) -> Vec<String> {
-    vec![
-        "run".into(),
-        "-d".into(),
-        "--rm".into(),
-        "--name".into(),
-        name.into(),
-        "--tmpfs".into(),
-        POSTGRES_PGDATA.into(),
-        "-p".into(),
-        "127.0.0.1::5432".into(),
-        "-e".into(),
-        "POSTGRES_USER=aurora".into(),
-        "-e".into(),
-        "POSTGRES_PASSWORD=aurora".into(),
-        "-e".into(),
-        "POSTGRES_DB=postgres".into(),
-        POSTGRES_IMAGE.into(),
-    ]
-}
-
-/// Arguments for `podman rm` of a stale container. `-v` removes any volume the
-/// container owns with it (e.g. an anonymous one from a run before the tmpfs
-/// change) instead of leaving it behind forever.
-fn reap_args(id: &str) -> Vec<String> {
-    vec![
-        "rm".into(),
-        "-f".into(),
-        "-v".into(),
-        "-t".into(),
-        "1".into(),
-        id.into(),
-    ]
-}
-
-/// Age after which an `aurora-testkit-*` container counts as a leftover: a
-/// running test target never holds a container longer than this (nextest
-/// kills a test at 10 minutes), and tests start their container at process
-/// start, so anything older belongs to a crashed or killed run.
-const CONTAINER_STALE_AFTER: Duration = Duration::from_secs(3600);
-
-/// Best-effort: remove leftover `aurora-testkit-*` containers older than
-/// [`CONTAINER_STALE_AFTER`]. These are created with `--rm`, which only takes
-/// effect when the container *stops* — so a test run that crashes or is killed
-/// (SIGKILL, `just clean-lane`'s process sweep, laptop suspend) leaks its
-/// container, and one leaks per test process. Reaped by every fresh fallback
-/// start; the youngest possible legitimate container (this process's own
-/// predecessor) is out of the window. Never touches other containers
-/// (`aurora-dev-pg`, e2e anchors, …).
-async fn reap_stale_containers() {
-    const PREFIX: &str = "^aurora-testkit-";
-    // `until=Nm` matches containers created before now-N; it applies to
-    // running containers too (podman 5/6), which is the case that matters.
-    let list = tokio::process::Command::new("podman")
-        .args([
-            "ps",
-            "-a",
-            "--filter",
-            &format!("name={PREFIX}"),
-            "--filter",
-            &format!("until={}m", CONTAINER_STALE_AFTER.as_secs() / 60),
-            "--format",
-            "{{.ID}}",
-        ])
-        .output()
-        .await;
-    let Ok(list) = list else {
-        return; // no podman; start_container's own error will report that
-    };
-    for id in String::from_utf8_lossy(&list.stdout).lines() {
-        let id = id.trim();
-        if id.is_empty() {
-            continue;
-        }
-        if tokio::process::Command::new("podman")
-            .args(reap_args(id))
-            .output()
-            .await
-            .is_ok_and(|o| o.status.success())
-        {
-            eprintln!("aurora-testkit: reaped stale container {id}");
-        }
-    }
-}
-
 /// Mock HTTP upstream backed by `wiremock::MockServer`.
 pub struct MockUpstream {
     server: wiremock::MockServer,
@@ -634,57 +601,111 @@ impl MockUpstream {
 }
 
 #[cfg(test)]
-mod container_args_tests {
-    use super::{reap_args, run_args};
+mod server_url_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// The tmpfs mount for the image's data directory must stay in `run_args`:
-    /// the postgres:16 image declares its PGDATA as a VOLUME, so without the
-    /// mount every test process leaks one anonymous podman volume — about
-    /// 1,900 in two days in Nov 2026, which exhausted podman's lock table and
-    /// blocked every test run. A refactor must not silently drop it.
-    #[test]
-    fn run_args_mounts_the_image_data_dir_on_tmpfs() {
-        let args = run_args("aurora-testkit-x");
-        let joined = args.join(" ");
-        assert!(
-            joined.contains("--tmpfs /var/lib/postgresql/data"),
-            "run_args must mount the image's PGDATA on a tmpfs (no anonymous volume), got: {joined}"
-        );
+    use super::{TEST_DB_ENV, resolve_server_url};
+
+    const SHARED: &str = "postgres://aurora:aurora@127.0.0.1:55990/aurora";
+
+    /// Resolve with a fake environment and `.env`; also returns how often the shared server
+    /// was asked for. Never touches the real environment or podman.
+    async fn resolve(
+        env: &[(&str, &str)],
+        dotenv: &[(&str, &str)],
+    ) -> (anyhow::Result<String>, usize) {
+        let calls = AtomicUsize::new(0);
+        let dotenv: Vec<(String, String)> = dotenv
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        let result = resolve_server_url(
+            |key| {
+                env.iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| (*v).to_owned())
+            },
+            &dotenv,
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(SHARED.to_owned())
+            },
+        )
+        .await;
+        (result, calls.load(Ordering::SeqCst))
     }
 
-    #[test]
-    fn run_args_still_runs_the_expected_container() {
-        let args = run_args("aurora-testkit-x");
-        for expected in [
-            "run",
-            "-d",
-            "--rm",
-            "--name",
-            "aurora-testkit-x",
-            "-p",
-            "127.0.0.1::5432",
-            "docker.io/library/postgres:16",
+    #[tokio::test]
+    async fn the_environment_wins_and_the_test_variable_comes_first() {
+        let dotenv = [(TEST_DB_ENV, "postgres://h:5432/dotenv")];
+        let (url, calls) = resolve(
+            &[
+                ("DATABASE_URL", "postgres://h:5432/plain"),
+                (TEST_DB_ENV, "postgres://h:5432/test"),
+            ],
+            &dotenv,
+        )
+        .await;
+        assert_eq!(url.expect("url"), "postgres://h:5432/test");
+        assert_eq!(calls, 0);
+        let (url, _) = resolve(&[("DATABASE_URL", "postgres://h:5432/plain")], &dotenv).await;
+        assert_eq!(url.expect("url"), "postgres://h:5432/plain");
+    }
+
+    #[tokio::test]
+    async fn dotenv_comes_next_and_empty_values_count_as_unset() {
+        let (url, calls) = resolve(
+            &[("DATABASE_URL", ""), (TEST_DB_ENV, "")],
+            &[
+                (TEST_DB_ENV, ""),
+                ("DATABASE_URL", "postgres://h:5432/dotenv"),
+            ],
+        )
+        .await;
+        assert_eq!(url.expect("url"), "postgres://h:5432/dotenv");
+        assert_eq!(calls, 0);
+    }
+
+    #[tokio::test]
+    async fn without_any_url_the_shared_server_is_used() {
+        let (url, calls) = resolve(&[], &[("OTHER", "x")]).await;
+        assert_eq!(url.expect("url"), SHARED);
+        assert_eq!(calls, 1);
+    }
+
+    #[tokio::test]
+    async fn the_dev_database_is_refused_from_every_source() {
+        for bad in [
+            "postgres://aurora:s3cret@127.0.0.1:55432/aurora",
+            "postgres://aurora:s3cret@localhost:55432/aurora",
+            "postgresql://aurora:s3cret@[::1]:55432/aurora?sslmode=disable",
+            "postgres://aurora:s3cret@localhost/aurora?port=55432",
+            "not a url, port 55432, s3cret",
         ] {
-            assert!(
-                args.iter().any(|a| a == expected),
-                "run_args lost `{expected}`: {}",
-                args.join(" ")
-            );
+            for (env, dotenv) in [
+                (vec![(TEST_DB_ENV, bad)], vec![]),
+                (vec![("DATABASE_URL", bad)], vec![]),
+                (vec![], vec![("DATABASE_URL", bad)]),
+            ] {
+                let (result, calls) = resolve(&env, &dotenv).await;
+                let message = result.expect_err(bad).to_string();
+                assert!(message.contains("scripts/dev/test.sh"), "{message}");
+                assert!(message.contains("55432"), "{message}");
+                assert!(!message.contains("s3cret"), "{message}");
+                assert_eq!(calls, 0, "a refused URL must not fall back");
+            }
         }
     }
 
-    /// `-v` must stay in `reap_args`: without it a reaped container's owned
-    /// volumes (e.g. anonymous ones from runs before the tmpfs change) are
-    /// left behind forever.
-    #[test]
-    fn reap_args_removes_volumes_owned_by_the_container() {
-        let args = reap_args("abc123");
-        for expected in ["rm", "-f", "-v", "-t", "1", "abc123"] {
-            assert!(
-                args.iter().any(|a| a == expected),
-                "reap_args lost `{expected}`: {}",
-                args.join(" ")
-            );
+    #[tokio::test]
+    async fn other_ports_and_lookalikes_are_accepted() {
+        for good in [
+            "postgres://aurora:aurora@127.0.0.1:5432/aurora",
+            "postgres://aurora:aurora@127.0.0.1:55990/aurora",
+            "postgres://aurora:pw55432@db.example/aurora_55432",
+        ] {
+            let (result, _) = resolve(&[("DATABASE_URL", good)], &[]).await;
+            assert_eq!(result.expect(good), good);
         }
     }
 }

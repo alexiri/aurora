@@ -2,6 +2,7 @@
 
 use aurora_db::grants::{GrantsError, apply_gateway_grants};
 use aurora_db::{DbError, PgPool};
+use aurora_testkit::TestDb;
 use uuid::Uuid;
 
 async fn exec(pool: &PgPool, sql: &str, binds: &[Uuid]) -> Result<(), DbError> {
@@ -54,8 +55,9 @@ fn unique(r: Result<(), DbError>, name: &str) {
     assert_eq!(e.constraint(), Some(name));
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn one_active_turn_per_conversation(pool: PgPool) {
+#[tokio::test]
+async fn one_active_turn_per_conversation() {
+    let (_db, pool) = TestDb::with_pool().await;
     let (_, w, a) = fixture(&pool).await;
     let c = conversation(&pool, a, w).await;
     turn(&pool, c, a, "turn", "done").await.unwrap();
@@ -70,8 +72,9 @@ async fn one_active_turn_per_conversation(pool: PgPool) {
     assert!(matches!(e, DbError::CheckViolation { .. }), "{e:?}");
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn one_open_runtime_interval_per_sandbox_and_no_fks(pool: PgPool) {
+#[tokio::test]
+async fn one_open_runtime_interval_per_sandbox_and_no_fks() {
+    let (_db, pool) = TestDb::with_pool().await;
     let (o, w, a) = fixture(&pool).await;
     let sb = Uuid::now_v7();
     let ins = |boot: Uuid, ended: bool| {
@@ -110,8 +113,9 @@ async fn one_open_runtime_interval_per_sandbox_and_no_fks(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn active_space_binding_unique(pool: PgPool) {
+#[tokio::test]
+async fn active_space_binding_unique() {
+    let (_db, pool) = TestDb::with_pool().await;
     let (o, _, a) = fixture(&pool).await;
     let (conn, integ) = (
         format!("c{}", &Uuid::now_v7().simple().to_string()[20..]),
@@ -136,8 +140,9 @@ async fn active_space_binding_unique(pool: PgPool) {
     bind(false).await.unwrap();
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn deferred_conversation_fks(pool: PgPool) {
+#[tokio::test]
+async fn deferred_conversation_fks() {
+    let (_db, pool) = TestDb::with_pool().await;
     let (_, w, a) = fixture(&pool).await;
     let c = conversation(&pool, a, w).await;
     // gateway_credentials.conversation_id now enforces the FK and cascades.
@@ -163,8 +168,9 @@ async fn deferred_conversation_fks(pool: PgPool) {
     assert_eq!(n, 0);
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn gateway_grants(pool: PgPool) {
+#[tokio::test]
+async fn gateway_grants() {
+    let (_db, pool) = TestDb::with_pool().await;
     let role = format!(
         "aurora_gw_test_{}",
         &Uuid::now_v7().simple().to_string()[20..]
