@@ -27,7 +27,9 @@ REFUSED = {
     "drive": ["file deletion"],
     "calendar": ["calendar clear"],
     "gmail": ["mail deletion"],
-    "microsoft-365": ["mail deletion"],
+    # (FIX-273) The other ways to put mail or an invitation on the wire.
+    "microsoft-365": ["mail deletion", "draft creation", "draft send", "mail forward",
+                      "mail reply", "event change", "event cancellation"],
     # (P5-GRAFANA, D-429, SEC-145) credentials, administration, data sources (they hold the
     # backends' credentials), dashboard deletion, plugins, and the Prometheus admin API behind the
     # data source proxy.

@@ -101,6 +101,17 @@ fn sentry_2_0_0_replaces_1_0_2_without_widening_and_takes_over_the_old_apps() {
     assert!(aurora_registry::upgrade::supersedes(&old).is_empty());
 }
 
+/// (FIX-273, D-504) microsoft-365 became tools-only. Tightening widens nothing, so the shipped
+/// version replaces 1.7.0 by itself: the restriction does not wait for an administrator.
+#[test]
+fn microsoft_365_1_8_0_is_tools_only_and_replaces_1_7_0_without_widening() {
+    check("microsoft-365", "1.7.0", "1.8.0");
+    let new = read("../../plugins/builtin/microsoft-365/plugin.yaml");
+    assert!(new.apps.iter().all(|a| a.grants.block_untooled));
+    // `full` stays a grant: it means every tool.
+    assert!(new.apps.iter().all(|a| !a.grants.custom_only));
+}
+
 #[test]
 fn indico_1_2_0_replaces_1_1_1_without_widening() {
     check("indico", "1.1.1", "1.6.2");
