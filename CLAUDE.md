@@ -40,7 +40,8 @@ Choose the least expensive model likely to succeed; escalate when complexity war
 Plan -> define/update API contract -> write bounded brief -> discover if needed -> implement -> targeted verify -> integrate -> update progress and requirement traceability.
 
 ## Quality gates
-- Rust: use repo-appropriate `cargo fmt --check`, targeted `cargo test`, and clippy checks.
+- Rust: use repo-appropriate `cargo fmt --check`, targeted tests (below), and clippy checks.
+- **Tests on this machine run only through `scripts/dev/test.sh`** (D-491): `scripts/dev/test.sh <lane> rust -p <crate> [filters]`, `… rust --crates a,b`, `… web vitest [files]`, `… web playwright <spec> --project=mocked` (`-h` for the rest). It uses the one shared test Postgres (`scripts/dev/test-pg.sh`), takes a heavy slot itself (don't wrap it in `heavy.sh`), runs one crate at a time and waits when the machine is loaded. Never `podman run` a database, never run `cargo test`/`cargo nextest` by hand across the workspace (`just test` and `just test-nextest` do exactly that), never use port 55432, and don't `test-pg.sh down` while others may be testing. Run every other heavy command (cargo build/check/clippy/deny, pnpm build, e2e scripts, `podman build`) through `scripts/dev/heavy.sh <lane> <command>`.
 - Next.js: use repo-appropriate tests, TypeScript checks, lint/format, and production build.
 - Cross-stack: verify schemas, error handling, auth/session/cookies/CORS where relevant, and important end-to-end journeys.
 - Never claim a check passed unless it ran and passed. Do not weaken security, validation, privacy, or data integrity to save usage.
