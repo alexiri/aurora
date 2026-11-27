@@ -172,15 +172,44 @@ pub trait HarnessSession: Send {
   while its pid still has the start time the scan saw; the supervisor itself is
   never signalled: HUP to the group, up to 2 s of grace, then KILL, repeated
   until two scans in a row find nothing. The whole end has one deadline of
-  7 s; scans run on a blocking thread and read at most 128 KiB of a process's
-  environment. Only then does `release` succeed and
+  7 s, and only a scan that began after it and still finds a process fails the
+  end; (FIX-258) the scans that confirm a tree that emptied just before it may
+  run up to 500 ms past it. Scans run on a blocking thread and read at most
+  128 KiB of a process's environment. A scan that was given up runs on, so the
+  group is signalled only while a process the scan saw in it is, right then,
+  still that process and still in it (the child may have been waited for and
+  its number taken again). Only after that does `release` succeed and
   `session.released { ok: true }` leave. One release request waits at most
   4 s (`release_deadline`) for all the conversation's sessions together, which
   are released at once; what is not released by then goes on in its own task,
   the answer is `ok: false`, and the next `session.release` goes on with it (a
-  failed one is tried again). While such a session exists, a newer session's
-  empty background list is not reported. A supervisor that is not PID 1 makes
-  itself the child subreaper, so orphans are still reaped. **Limit:** a process
+  failed one is tried again). A changed tool list releases every idle session
+  under one such deadline, and (FIX-258) starts all the releases before it
+  waits for any, so a slow one does not fail the others. While an unreleased
+  session exists, a newer session's empty background list is not reported. A
+  supervisor that is not PID 1 makes itself the child subreaper, so orphans are
+  still reaped.
+  **Telling the API later.** The API re-sends the `session.release` of a Stop
+  every 30 s until it gets `ok: true`. (FIX-258) A release nobody pressed Stop
+  for is not re-sent, so the supervisor also says
+  `session.released { ok: true }` unasked: once for a conversation that had a
+  session not released within the deadline (an `ok: false` answer, or a
+  replaced or purged session), as soon as every such release has ended well,
+  no turn of the conversation runs, and its live session, if it has one, lists
+  no background work and has no child that is still ending. It looks every
+  250 ms. A release that **failed** is not acknowledged this way: only a later
+  `session.release` tries it again. A release that was put off because a turn
+  was running ended nothing and is not acknowledged either. A Stop's re-sent
+  request after the late acknowledgement is answered `ok: true` again, which
+  the API takes as a duplicate.
+  **Known edges** (accepted): a session whose release did not finish in time is
+  not put back, so the next turn starts a fresh child while the old processes
+  may still be ending (the new child has its own group and tag, so the old end
+  does not touch it); and dropping a child handle that was never waited for (an
+  end that failed with nobody left to ask) drops the reaper's ownership mark
+  while tokio still reaps that child in the background. Whichever waits first
+  collects it and the other finds no child; only a pid reused between the two
+  could lose a new child's exit status. **Limit:** a process
   that left the group and the parent tree **and** dropped the variable
   (`env -i`, an overwritten environment, a process that hides its environment,
   like `ssh-agent`, or one whose environment holds the variable only past the
@@ -1018,6 +1047,18 @@ The home (`/workspace`) holds:
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves
   stale bytes and no ack; the next boot starts at generation 0 with a full sync.
+- (FIX-258) The skills and helpers roots are pruned **before** the staged files
+  are installed, so a path may turn from a file into a folder, or back, between
+  two generations. A skill file the home cannot hold (a file where a folder is
+  needed or the reverse, a name too long) is skipped with a warning in the
+  sandbox log, like a helper; the rest of the generation is installed and acked.
+  No report tells the API, so the skill is simply incomplete in the sandbox.
+  Any other error on a skill file (a full disk) still fails the generation.
+- (FIX-258) Folder modes under the managed roots, and the file modes of a
+  locked tree, are set on descriptors opened from the parent's descriptor
+  without following links, from the home down. An installed file's folders are
+  made and opened the same way, and its temp file and rename are relative to
+  them.
 - Paths outside managed roots are refused (warning), although traversal is
   already unrepresentable on the wire.
 - Desired generation = `agents.home_sync_generation` + workspace generation +

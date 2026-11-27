@@ -24,6 +24,8 @@ struct Mock {
     /// (arrival instant, was init already emitted)
     received: Arc<StdMutex<Vec<bool>>>,
     killed: Arc<AtomicBool>,
+    /// A kill is only asked for: the child has not ended until something waits for its end.
+    lingers: bool,
     /// (FIX-253) Lines written after the turn's `result` (the idle child's own run), `late_after`
     /// behind the reply.
     late: Vec<String>,
@@ -43,6 +45,7 @@ impl Mock {
             specs: Arc::default(),
             received: Arc::default(),
             killed: Arc::default(),
+            lingers: false,
             late: Vec::new(),
             late_after: Duration::from_millis(150),
         }
@@ -108,12 +111,13 @@ impl Launcher for Mock {
             }
         });
         let killed = self.killed.clone();
+        let lingers = self.lingers;
         Ok(ChildIo {
             stdin: in_tx,
             lines: out_rx,
             procs: Arc::new(MockProcs(killed.clone())),
             kill: Box::new(move || {
-                killed.store(true, Ordering::SeqCst);
+                killed.fetch_or(!lingers, Ordering::SeqCst);
                 drop(out_tx); // the scripted child's own clone ends with its task
             }),
         })
@@ -393,6 +397,26 @@ async fn abort_ends_with_single_aborted_and_restart_resumes() {
         "{:?}",
         sp[1].args
     );
+}
+
+/// (FIX-258) A child that was killed, or killed and replaced, and has not ended yet may still
+/// run: the session says so until something has seen it end.
+#[tokio::test]
+async fn a_killed_child_is_still_ending_until_it_ended() {
+    let mut mock = Mock::new(Some((INIT_OK, Duration::ZERO)), REPLY);
+    mock.silent = true;
+    mock.lingers = true;
+    let a = ClaudeCodeAdapter::with_launcher(Arc::new(mock));
+    let mut s = a.start_session(opts(None)).await.unwrap();
+    assert!(!s.still_ending());
+    let rx = s.run_turn(turn("hi")).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!s.still_ending(), "a running child is not ending");
+    s.abort().await.unwrap();
+    collect(rx).await;
+    assert!(s.still_ending(), "killed, not ended");
+    s.release().await.unwrap();
+    assert!(!s.still_ending());
 }
 
 #[tokio::test]

@@ -311,6 +311,12 @@ pub trait HarnessSession: Send {
     fn wants_idle_watch(&self) -> bool {
         false
     }
+
+    /// (FIX-258) `true` while a child this session killed or replaced is not seen ended:
+    /// something of it may still run, and no list says so.
+    fn still_ending(&self) -> bool {
+        false
+    }
 }
 
 /// (FIX-253, D-490) One piece of the harness child's own background work.

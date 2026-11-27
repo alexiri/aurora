@@ -35,6 +35,11 @@ pub struct ChildIo {
 pub trait ChildProcs: Send + Sync {
     /// `true` once nothing of it was left running.
     fn ended(&self) -> bool;
+    /// (FIX-258) `true` once an end of it began, whoever asked: until [`Self::ended`],
+    /// something of it may be left that no list of background work names.
+    fn ending(&self) -> bool {
+        false
+    }
     /// Ends it and waits: `Ok` only when nothing of it is left. After an error it can be
     /// called again.
     async fn end(&self) -> Result<(), HarnessError>;
@@ -50,13 +55,24 @@ type EndRequest = Option<oneshot::Sender<Result<(), String>>>;
 
 struct Watched {
     requests: mpsc::UnboundedSender<EndRequest>,
-    ended: Arc<AtomicBool>,
+    state: Arc<ChildState>,
+}
+
+/// How far the end of one child has come.
+#[derive(Default)]
+struct ChildState {
+    ending: AtomicBool,
+    ended: AtomicBool,
 }
 
 #[async_trait]
 impl ChildProcs for Watched {
     fn ended(&self) -> bool {
-        self.ended.load(Ordering::SeqCst)
+        self.state.ended.load(Ordering::SeqCst)
+    }
+
+    fn ending(&self) -> bool {
+        self.state.ending.load(Ordering::SeqCst)
     }
 
     async fn end(&self) -> Result<(), HarnessError> {
@@ -88,7 +104,7 @@ async fn watch_child(
     mut tree: Option<ChildTree>,
     leader: Option<i32>,
     mut requests: mpsc::UnboundedReceiver<EndRequest>,
-    ended: Arc<AtomicBool>,
+    state: Arc<ChildState>,
 ) {
     let mut left_behind_tried = false;
     loop {
@@ -105,6 +121,7 @@ async fn watch_child(
                 (None, false, false)
             }
         };
+        state.ending.store(true, Ordering::SeqCst);
         let result = match &mut tree {
             Some(t) => t.end(hup).await,
             None => Ok(()), // no pid: the child was already waited for
@@ -112,7 +129,7 @@ async fn watch_child(
         let ok = result.is_ok();
         if ok {
             let _ = child.wait().await;
-            ended.store(true, Ordering::SeqCst);
+            state.ended.store(true, Ordering::SeqCst);
         } else if let Err(e) = &result {
             tracing::warn!(target: "claude_code", "stop: {e}");
         }
@@ -197,11 +214,11 @@ impl Launcher for ProcessLauncher {
         let leader = child.id().and_then(|p| i32::try_from(p).ok());
         let tree = leader.map(|p| ChildTree::new(p, &tag));
         let (requests, requests_rx) = mpsc::unbounded_channel::<EndRequest>();
-        let ended = Arc::new(AtomicBool::new(false));
-        let watched_ended = ended.clone();
+        let state = Arc::new(ChildState::default());
+        let watched = state.clone();
         tokio::spawn(async move {
             let _registration = registration;
-            watch_child(child, tree, leader, requests_rx, watched_ended).await;
+            watch_child(child, tree, leader, requests_rx, watched).await;
         });
         let kill = requests.clone();
         Ok(ChildIo {
@@ -211,7 +228,7 @@ impl Launcher for ProcessLauncher {
             kill: Box::new(move || {
                 let _ = kill.send(None);
             }),
-            procs: Arc::new(Watched { requests, ended }),
+            procs: Arc::new(Watched { requests, state }),
         })
     }
 }

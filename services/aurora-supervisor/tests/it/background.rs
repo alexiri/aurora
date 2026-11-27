@@ -8,6 +8,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -18,8 +19,8 @@ use aurora_supervisor::adapters::claude_code::launcher::ProcessLauncher;
 use aurora_supervisor::channel::ChannelSender;
 use aurora_supervisor::fake::FakeHarness;
 use aurora_supervisor::harness::{
-    HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEventStream, HarnessSession,
-    SessionOptions, SteerAck, SteerInput, TurnInput,
+    BackgroundWork, HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEventStream,
+    HarnessSession, SessionOptions, SteerAck, SteerInput, TurnInput,
 };
 use aurora_supervisor::process::ProcessConfig;
 use aurora_supervisor::supervisor::{Supervisor, SupervisorConfig};
@@ -103,6 +104,14 @@ async fn rig(turns: &[String]) -> Rig {
 }
 
 async fn rig_with(ws: PathBuf, adapter: Arc<dyn HarnessAdapter>) -> Rig {
+    rig_cfg(ws, adapter, |_| {}).await
+}
+
+async fn rig_cfg(
+    ws: PathBuf,
+    adapter: Arc<dyn HarnessAdapter>,
+    tune: impl FnOnce(&mut SupervisorConfig),
+) -> Rig {
     fs::create_dir_all(ws.join(".aurora")).unwrap();
     let (out_tx, out_rx) = mpsc::channel(256);
     let (in_tx, in_rx) = mpsc::channel(256);
@@ -111,6 +120,7 @@ async fn rig_with(ws: PathBuf, adapter: Arc<dyn HarnessAdapter>) -> Rig {
     cfg.process = ProcessConfig::new(ws.clone());
     cfg.harvest_interval = Duration::from_millis(100);
     cfg.mcp_bridge_command = vec!["/bin/true".into(), "mcp-bridge".into()];
+    tune(&mut cfg);
     let sup = Supervisor::new(
         cfg,
         ChannelSender::from_mpsc(out_tx),
@@ -599,4 +609,223 @@ async fn stuck_releases_do_not_stall_the_other_conversations() {
         .await;
     assert_eq!(got[0]["ok"], false, "{got:?}");
     assert_eq!(got[1]["status"], "aborted", "{got:?}");
+}
+
+/// What the test of a late acknowledgement decides.
+#[derive(Default)]
+struct Switches {
+    /// The release of the first session ends once this is set.
+    open: AtomicBool,
+    /// It then fails, this once.
+    fail: AtomicBool,
+    /// What a later session says: a background command runs; a child of it is still ending.
+    listing: AtomicBool,
+    ending: AtomicBool,
+}
+
+/// The fake harness; only the first session's release waits.
+struct Gated(Arc<Switches>, AtomicUsize);
+
+struct GatedSession {
+    inner: Box<dyn HarnessSession>,
+    first: bool,
+    switches: Arc<Switches>,
+}
+
+#[async_trait]
+impl HarnessAdapter for Gated {
+    fn id(&self) -> &'static str {
+        "fake"
+    }
+    fn capabilities(&self) -> HarnessCapabilities {
+        FakeHarness.capabilities()
+    }
+    async fn start_session(
+        &self,
+        opts: SessionOptions,
+    ) -> Result<Box<dyn HarnessSession>, HarnessError> {
+        Ok(Box::new(GatedSession {
+            inner: FakeHarness.start_session(opts).await?,
+            first: self.1.fetch_add(1, Ordering::SeqCst) == 0,
+            switches: self.0.clone(),
+        }))
+    }
+    async fn purge_session(&self, dir: &Path, session_ref: &str) -> Result<(), HarnessError> {
+        FakeHarness.purge_session(dir, session_ref).await
+    }
+}
+
+#[async_trait]
+impl HarnessSession for GatedSession {
+    fn session_ref(&self) -> Option<String> {
+        self.inner.session_ref()
+    }
+    async fn run_turn(&mut self, input: TurnInput) -> Result<HarnessEventStream, HarnessError> {
+        self.inner.run_turn(input).await
+    }
+    async fn steer(&mut self, input: SteerInput) -> Result<SteerAck, HarnessError> {
+        self.inner.steer(input).await
+    }
+    async fn background_running_tool(&mut self) -> Result<SendNowOutcome, HarnessError> {
+        self.inner.background_running_tool().await
+    }
+    async fn abort(&mut self) -> Result<(), HarnessError> {
+        self.inner.abort().await
+    }
+    async fn release(&mut self) -> Result<(), HarnessError> {
+        if self.first {
+            while !self.switches.open.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            if self.switches.fail.swap(false, Ordering::SeqCst) {
+                return Err(HarnessError::new("stop_failed", "something still runs"));
+            }
+        }
+        self.inner.release().await
+    }
+    fn background_work(&self) -> Vec<BackgroundWork> {
+        let listing = !self.first && self.switches.listing.load(Ordering::SeqCst);
+        listing
+            .then(|| BackgroundWork {
+                command: "cmd-new".into(),
+                started_at: 1,
+            })
+            .into_iter()
+            .collect()
+    }
+    fn still_ending(&self) -> bool {
+        !self.first && self.switches.ending.load(Ordering::SeqCst)
+    }
+}
+
+/// How long a test waits to say that no acknowledgement comes: several of the supervisor's
+/// looks at its unfinished releases.
+const QUIET: Duration = Duration::from_millis(1200);
+
+async fn gated() -> (Rig, Arc<Switches>) {
+    let switches = Arc::new(Switches::default());
+    let adapter = Gated(switches.clone(), AtomicUsize::new(0));
+    let rig = rig_cfg(TempDir::new().keep(), Arc::new(adapter), |cfg| {
+        cfg.release_deadline = Duration::from_millis(300);
+    })
+    .await;
+    (rig, switches)
+}
+
+impl Rig {
+    /// Runs one turn of [`CONV`] to its end.
+    async fn short_turn(&mut self, epoch: u64) {
+        let turn = Uuid::now_v7();
+        self.deliver(CONV, turn, epoch, "hello").await;
+        self.within(T, "turn", &[("turn.result", "turn_id", json!(turn))])
+            .await;
+    }
+
+    async fn release(&mut self) -> bool {
+        self.send("session.release", json!({"conversation_id": CONV}))
+            .await;
+        self.next("session.released").await["ok"] == true
+    }
+
+    /// Whatever arrives within [`QUIET`], no `session.released` does.
+    async fn nothing_released(&mut self, when: &str) {
+        let until = tokio::time::Instant::now() + QUIET;
+        while let Ok(m) = tokio::time::timeout_at(until, self.from_sup.recv()).await {
+            let m = m.unwrap();
+            assert_ne!(
+                m.kind(),
+                "session.released",
+                "{when}: {}",
+                serde_json::to_value(&m).unwrap()
+            );
+        }
+    }
+
+    /// The one late acknowledgement.
+    async fn released_late(&mut self) {
+        let got = timeout(Duration::from_secs(5), self.next("session.released"))
+            .await
+            .expect("no late session.released");
+        assert_eq!(got["ok"], true, "{got}");
+        self.nothing_released("after the late one").await;
+    }
+}
+
+/// (FIX-258) A release that overruns the deadline answers `ok: false`; when it finishes, the
+/// supervisor says so by itself, once.
+#[tokio::test]
+async fn a_release_that_finishes_late_is_acknowledged_once() {
+    let (mut r, switches) = gated().await;
+    r.short_turn(1).await;
+    assert!(!r.release().await);
+    r.nothing_released("while the release runs").await;
+    switches.open.store(true, Ordering::SeqCst);
+    r.released_late().await;
+}
+
+/// (FIX-258) A release nobody asked for (a new session epoch replaced the session) is
+/// acknowledged when it finishes late too.
+#[tokio::test]
+async fn a_replaced_session_released_late_is_acknowledged() {
+    let (mut r, switches) = gated().await;
+    r.short_turn(1).await;
+    r.short_turn(2).await;
+    r.nothing_released("while the release runs").await;
+    switches.open.store(true, Ordering::SeqCst);
+    r.released_late().await;
+}
+
+/// (FIX-258) "Released" is never said early: not while a turn runs, while the live session
+/// lists background work, or while a child it replaced is still ending.
+#[tokio::test]
+async fn the_late_acknowledgement_waits_until_nothing_runs() {
+    let (mut r, switches) = gated().await;
+    r.short_turn(1).await;
+    assert!(!r.release().await);
+    switches.listing.store(true, Ordering::SeqCst);
+    let turn = Uuid::now_v7();
+    r.deliver(CONV, turn, 1, "[[sleep: 120s]]").await;
+    r.within(T, "start", &[("turn.started", "turn_id", json!(turn))])
+        .await;
+    switches.open.store(true, Ordering::SeqCst);
+    r.nothing_released("while a turn runs").await;
+    r.send("turn.abort", json!({"turn_id": turn})).await;
+    r.within(T, "abort", &[("turn.result", "turn_id", json!(turn))])
+        .await;
+    r.nothing_released("while background work is listed").await;
+    switches.ending.store(true, Ordering::SeqCst);
+    switches.listing.store(false, Ordering::SeqCst);
+    r.nothing_released("while a replaced child is ending").await;
+    switches.ending.store(false, Ordering::SeqCst);
+    r.released_late().await;
+}
+
+/// (FIX-258) A late release that fails is no acknowledgement: only the next request, which
+/// tries again, says "released".
+#[tokio::test]
+async fn a_late_failure_is_not_acknowledged() {
+    let (mut r, switches) = gated().await;
+    r.short_turn(1).await;
+    assert!(!r.release().await);
+    switches.fail.store(true, Ordering::SeqCst);
+    switches.open.store(true, Ordering::SeqCst);
+    r.nothing_released("after a failed release").await;
+    assert!(r.release().await, "the retry released it");
+    r.nothing_released("after the normal acknowledgement").await;
+}
+
+/// (FIX-258) A release put off because a turn runs ended no session, so nothing is said when
+/// the turn ends.
+#[tokio::test]
+async fn a_release_put_off_by_a_turn_is_not_acknowledged_by_itself() {
+    let (mut r, _) = gated().await;
+    let turn = Uuid::now_v7();
+    r.deliver(CONV, turn, 1, "[[sleep: 120s]]").await;
+    r.within(T, "start", &[("turn.started", "turn_id", json!(turn))])
+        .await;
+    assert!(!r.release().await);
+    r.send("turn.abort", json!({"turn_id": turn})).await;
+    r.within(T, "abort", &[("turn.result", "turn_id", json!(turn))])
+        .await;
+    r.nothing_released("after the turn").await;
 }
