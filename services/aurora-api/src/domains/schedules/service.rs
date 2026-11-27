@@ -16,6 +16,41 @@ const GATE_DESCRIPTION_MAX: usize = 200;
 /// Schedules per agent.
 const PER_AGENT_MAX: i64 = 50;
 
+/// (FIX-253 fixes2 A) A delegated task's conversation keeps at most three open one-time
+/// wake-ups — the same cap the create tool pre-checks, enforced again inside the transactions
+/// that insert or re-arm one, so no path (and no race) can overshoot it.
+const WAKEUP_CAP: i64 = 3;
+
+/// (FIX-253 fixes2 A) Whether this conversation is a delegated task's conversation: the
+/// open-wake-up cap applies there.
+async fn is_task_conversation(conn: &mut PgConnection, id: Uuid) -> Result<bool, ApiError> {
+    let kind: Option<String> = sqlx::query_scalar("SELECT kind FROM conversations WHERE id = $1")
+        .bind(id)
+        .fetch_optional(conn)
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    Ok(kind.as_deref() == Some("peer"))
+}
+
+/// (FIX-253 fixes2 A) Serialize the open-wake-up cap of one task conversation: the transaction
+/// advisory lock is taken before the cap is counted, in [`create_in_tx`] and [`patch_with`]
+/// alike, so a concurrent create and re-arm cannot both pass.
+async fn lock_task_wakeups(conn: &mut PgConnection, conversation: Uuid) -> Result<(), ApiError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(format!("task-wakeups:{conversation}"))
+        .execute(&mut *conn)
+        .await
+        .map_err(aurora_db::DbError::from)?;
+    Ok(())
+}
+
+fn wakeup_cap() -> ApiError {
+    ApiError::conflict(
+        "task_wakeup_cap",
+        "This task already has three open wake-ups: finish one (or ask the person to) before setting another.",
+    )
+}
+
 fn bad(path: &str, msg: &str) -> ApiError {
     ApiError::invalid_field("Invalid schedule.", path, msg)
 }
@@ -186,6 +221,16 @@ pub async fn create_in_tx(
     };
     let (cron_expr, run_at, next) =
         timing(c.cron.as_deref(), c.run_at.as_deref(), &tz, Utc::now())?;
+    // (FIX-253 fixes2 A) The open-wake-up cap of a task conversation, serialized per
+    // conversation before any row is locked.
+    if let Some(origin) = origin {
+        if is_task_conversation(&mut *tx, origin).await? {
+            lock_task_wakeups(&mut *tx, origin).await?;
+            if repo::open_once_count_from(&mut *tx, origin).await? >= WAKEUP_CAP {
+                return Err(wakeup_cap());
+            }
+        }
+    }
     // Serialize the per-agent cap.
     sqlx::query("SELECT 1 FROM agents WHERE id = $1 FOR UPDATE")
         .bind(agent.id)
@@ -263,6 +308,22 @@ pub async fn patch_with(
     let now = Utc::now();
     if p.cron.is_some() && p.run_at.is_some() {
         return Err(both_kinds());
+    }
+    // (FIX-253 fixes2 A) Re-arming a task conversation's one-time wake-up obeys the cap of three
+    // open ones. The lock serializes it against a concurrent create or re-arm; the schedule
+    // being re-armed (open again the moment the patch lands) does not count against itself.
+    if p.run_at.is_some() {
+        if let Some(origin) = seen.origin_conversation_id {
+            if is_task_conversation(&mut *tx, origin).await? {
+                lock_task_wakeups(&mut *tx, origin).await?;
+                let open = repo::open_once_count_from(&mut *tx, origin).await?;
+                let self_open =
+                    (r.run_at.is_some() && r.cron.is_none() && r.completed_at.is_none()) as i64;
+                if open - self_open >= WAKEUP_CAP {
+                    return Err(wakeup_cap());
+                }
+            }
+        }
     }
     // The timing after this patch; `Some(next)` when it changed (re-armed if enabled).
     let mut retimed: Option<Option<DateTime<Utc>>> = None;

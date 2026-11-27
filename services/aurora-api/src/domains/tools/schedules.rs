@@ -114,6 +114,28 @@ async fn default_tz(
         .map_or_else(|| "UTC".to_owned(), |w| w.timezone))
 }
 
+/// (FIX-253 fixes2 A) Whether this turn is a peer turn of a delegated task — no person speaks,
+/// the speaker is an agent, a peer task sits behind this conversation (whatever its status, so a
+/// closed task's turn can still tidy up what it created). Such a turn may only touch schedules
+/// created from this task conversation: the same scope `creator` gives `schedule_create`.
+async fn peer_turn(ctx: &ToolCallContext) -> Result<Option<Uuid>, ToolError> {
+    let turn = match ctx.turn_id {
+        Some(t) => turns::get(&ctx.agent.pool, t).await?,
+        None => None,
+    };
+    if turn.as_ref().and_then(|t| t.speaker_user_id).is_some() {
+        return Ok(None);
+    }
+    if !turn.is_some_and(|t| t.speaker_kind == "agent") {
+        return Ok(None);
+    }
+    Ok(
+        peer_tasks::by_task_conversation(&ctx.agent.pool, ctx.conversation_id)
+            .await?
+            .map(|_| ctx.conversation_id),
+    )
+}
+
 async fn own(ctx: &ToolCallContext, id: Uuid) -> Result<ScheduleRow, ToolError> {
     let r = service::get(&ctx.agent.pool, id).await.map_err(fail)?;
     if r.agent_id != ctx.agent.agent_id {
@@ -305,6 +327,20 @@ impl PlatformTool for UpdateT {
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: UpdateArgs = parse(args)?;
         let cur = own(ctx, a.id).await?;
+        // (FIX-253 fixes2 A) From a peer turn the scope is the task conversation — only
+        // schedules created from it, and never a recurring one (the rules the create has).
+        if peer_turn(ctx).await?.is_some() {
+            if cur.origin_conversation_id != Some(ctx.conversation_id) {
+                return Err(ToolError::Failed(
+                    "Only a schedule of this task can be changed from here.".into(),
+                ));
+            }
+            if a.cron.is_some() {
+                return Err(ToolError::Failed(
+                    "a delegated task can only set a one-time wake-up: give `run_at` (a repeating schedule belongs to the person themselves).".into(),
+                ));
+            }
+        }
         // (C-1094) A new time without a zone is read in the speaker's zone, as on create; with
         // nobody speaking the schedule keeps its zone.
         let timezone = match (&a.timezone, a.cron.is_some() || a.run_at.is_some()) {
@@ -362,7 +398,16 @@ impl PlatformTool for DeleteT {
         args: Value,
     ) -> Result<Vec<ToolContent>, ToolError> {
         let a: DeleteArgs = parse(args)?;
-        own(ctx, a.id).await?;
+        let cur = own(ctx, a.id).await?;
+        // (FIX-253 fixes2 A) From a peer turn only a schedule of this task conversation is
+        // theirs to delete.
+        if peer_turn(ctx).await?.is_some()
+            && cur.origin_conversation_id != Some(ctx.conversation_id)
+        {
+            return Err(ToolError::Failed(
+                "Only a schedule of this task can be deleted from here.".into(),
+            ));
+        }
         service::delete(&ctx.agent.pool, a.id).await.map_err(fail)?;
         out(json!({"deleted": a.id}))
     }
