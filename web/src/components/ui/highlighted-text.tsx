@@ -7,7 +7,18 @@ import { cn } from "@/lib/utils";
  * code units, which is what JavaScript strings index. The text is never parsed as markup; bad or overlapping ranges
  * are clamped or skipped, so a wrong server answer cannot throw.
  */
-export function HighlightedText({ text, highlights, className }: { text: string; highlights: number[][]; className?: string }) {
+export function HighlightedText({
+  text,
+  highlights,
+  className,
+  tone = "soft",
+}: {
+  text: string;
+  highlights: number[][];
+  className?: string;
+  /** `solid` (accent fill) for a list that is itself tinted when selected, as Memory's search results. */
+  tone?: "soft" | "solid";
+}) {
   const ranges = highlights
     .map(([s, e]) => [Math.max(0, Math.min(s ?? 0, text.length)), Math.max(0, Math.min(e ?? 0, text.length))] as const)
     .filter(([s, e]) => e > s)
@@ -25,7 +36,7 @@ export function HighlightedText({ text, highlights, className }: { text: string;
     <span className={className}>
       {parts.map((p, i) =>
         p.mark ? (
-          <mark key={i} className={cn("rounded-sm bg-accent-soft px-0.5 font-semibold text-accent-ink")}>
+          <mark key={i} className={cn("rounded-sm px-0.5 font-semibold", tone === "solid" ? "bg-accent text-on-accent" : "bg-accent-soft text-accent-ink")}>
             {p.text}
           </mark>
         ) : (

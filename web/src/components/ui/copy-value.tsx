@@ -6,6 +6,36 @@ import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
 
 import { Button } from "./button";
+import { CheckIcon, CopyIcon } from "./icons";
+
+/**
+ * (P5-MEMORY-2) A short identifier shown inline as a small monospace chip with its copy button (a memory's key): the
+ * visible `label` before it, the button named "Copy <label>". The tick replaces the icon for two seconds.
+ */
+export function CopyChip({ label, value, className }: { label: string; value: string; className?: string }) {
+  const { state, copy } = useCopy();
+  return (
+    <span className={cn("inline-flex max-w-full items-center gap-2 text-xs text-muted", className)}>
+      <span aria-hidden="true">{label}</span>
+      <span className="inline-flex min-w-0 items-center gap-1 rounded-control bg-subtle pl-2">
+        <span className="min-w-0 select-all break-all font-mono text-ink" data-testid="copy-chip-text">
+          {value}
+        </span>
+        <button
+          type="button"
+          aria-label={`Copy ${label}`}
+          onClick={() => copy(value)}
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-control text-ink-2 hover:text-ink"
+        >
+          {state === "copied" ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+        </button>
+      </span>
+      <span role="status" className={state === "failed" ? "text-danger-ink" : "sr-only"}>
+        {state === "copied" ? "Copied" : state === "failed" ? "Your browser blocked copying; select the text instead." : ""}
+      </span>
+    </span>
+  );
+}
 
 /**
  * A value the person copies into another service (an OAuth callback URL, the organization's external id): a label,

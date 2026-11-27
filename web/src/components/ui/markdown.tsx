@@ -10,6 +10,7 @@ import remarkGfm from "remark-gfm";
 
 import { useCopy, copyLabel } from "@/lib/use-copy";
 
+import { rehypeMarks, rehypeTightTasks } from "./markdown-marks";
 import { rehypeAlerts, rehypeFragmentLinks, sanitizeSchema } from "./markdown-pipeline";
 
 type Plugins = NonNullable<Options["remarkPlugins"]>;
@@ -246,17 +247,32 @@ export const Markdown = memo(function Markdown({
   source,
   breaks = false,
   streaming = false,
+  marks,
+  reading = false,
 }: {
   source: string;
   breaks?: boolean;
   streaming?: boolean;
+  /** A document read at length (a memory): the larger size, with ticked checklist items struck through. */
+  reading?: boolean;
+  /** Words to mark in the rendered text (a search), with the line of the first one set off (`md-match-line`). */
+  marks?: string[];
 }) {
   const extras = useExtras(source);
   const remark = useMemo<Plugins>(
     () => [...(breaks ? BASE_REMARK_BREAKS : BASE_REMARK), ...extras.flatMap((e) => e.remark)],
     [breaks, extras],
   );
-  const rehype = useMemo<Plugins>(() => [...BASE_REHYPE, ...extras.flatMap((e) => e.rehype)], [extras]);
+  const marked = marks?.join("\u0000") ?? "";
+  const rehype = useMemo<Plugins>(
+    () => [
+      ...BASE_REHYPE,
+      ...extras.flatMap((e) => e.rehype),
+      ...(reading ? [rehypeTightTasks] : []),
+      ...(marked ? [rehypeMarks(marked.split("\u0000"))] : []),
+    ],
+    [extras, marked, reading],
+  );
   const text = (streaming ? holdBackPartial(source) : source).replace(/\r\n/g, "\n");
   return (
     <div className="md space-y-2 text-sm">

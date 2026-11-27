@@ -85,6 +85,40 @@ export function formatTime(date: string | number | Date | null | undefined, empt
   return d ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone }).format(d) : empty;
 }
 
+/** The calendar day `d` falls on in the person's zone, as a day number (for counting days apart). */
+function dayNumber(d: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "numeric", day: "numeric", timeZone: zone }).formatToParts(d);
+  const n = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  return Date.UTC(n("year"), n("month") - 1, n("day")) / 86_400_000;
+}
+
+const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+/**
+ * (P5-MEMORY-2) How long ago, in calendar days, for a line that says where something came from: "today", "yesterday",
+ * "2 days ago", "1 week ago", "3 weeks ago", "2 months ago", "1 year ago". Empty for a missing time. Show it in a
+ * `<time>` whose title is `formatExact`.
+ */
+export function formatAge(date: string | number | Date | null | undefined, now: number = Date.now()): string {
+  const d = parse(date);
+  if (!d) return "";
+  const days = Math.max(0, Math.round(dayNumber(new Date(now)) - dayNumber(d)));
+  if (days === 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 60) return `${plural(Math.floor(days / 7), "week")} ago`;
+  if (days < 365) return `${plural(Math.floor(days / 30), "month")} ago`;
+  return `${plural(Math.floor(days / 365), "year")} ago`;
+}
+
+/** A day inside a sentence: "25 Nov", with the year when it is not this year; "" when missing. */
+export function formatShortDay(date: string | number | Date | null | undefined, now: number = Date.now()): string {
+  const d = parse(date);
+  if (!d) return "";
+  const sameYear = yearOf(d) === yearOf(new Date(now));
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }), timeZone: zone }).format(d);
+}
+
 /** A date without a time ("19 Nov 2026"), "—" when missing. */
 export function formatDay(date: string | number | Date | null | undefined, empty: string = EMPTY): string {
   const d = parse(date);

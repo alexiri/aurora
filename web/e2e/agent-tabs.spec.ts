@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { memory, mockMemories } from "./support/memory";
 import { mockWithTerminal } from "./support/terminal";
 import { CANVAS, overflow, type Scheme } from "./support/open";
 
@@ -157,80 +158,41 @@ test.describe("agent page width", () => {
   });
 });
 
-// (P6-MEMLOCK, C-1150) The Memory page's locked badge in the list, the Locked switch in the editor
-// (its own PUT, not Save), and no horizontal scroll with a badge at 390 px. The API is mocked.
+// (P6-MEMLOCK, C-1150; P5-MEMORY-2) The Memory page's lock icon in the list, Lock in the reading view, the Locked switch
+// in the editor (its own PUT, not Save), and no horizontal scroll with a locked row at 390 px. The API is mocked.
 
-const lockedMemory = {
-  key: "bobs-tea", title: "Bob's tea", description: null, content: "Bob prefers green tea in the morning.",
-  index_line: "bobs-tea: Bob's tea", revision: 1,
-  created_at: "2026-11-20T10:00:00Z", updated_at: "2026-11-20T10:00:00Z",
-  locked: false, locked_at: null, locked_by: null,
-  added_by: { kind: "person", person: { id: "u1", display_name: "Ada" } },
-  changed_by: { kind: "person", person: { id: "u1", display_name: "Ada" } }, last_used: null,
-};
-
-/** The shared mock plus the memories list and the idempotent `PUT …/locked`, which remembers its state. */
-async function mockMemories(page: import("@playwright/test").Page) {
+/** The shared mock plus one memory and its idempotent `PUT …/locked`, which remembers its state. */
+async function mockOneMemory(page: import("@playwright/test").Page) {
   await mockAgent(page);
-  let locked = false;
-  await page.route("**/v1/agents/*/memories", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        items: [
-          {
-            ...lockedMemory,
-            locked,
-            locked_at: locked ? "2026-11-21T09:00:00Z" : null,
-            locked_by: locked ? { id: "u1", display_name: "Ada" } : null,
-          },
-        ],
-        next_cursor: null,
-      }),
-    }),
-  );
-  await page.route("**/v1/agents/*/memories/*/locked", async (route) => {
-    const body = route.request().postDataJSON() as { locked: boolean };
-    locked = body.locked;
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        ...lockedMemory,
-        locked,
-        locked_at: locked ? "2026-11-21T09:00:00Z" : null,
-        locked_by: locked ? { id: "u1", display_name: "Ada" } : null,
-      }),
-    });
-  });
+  await mockMemories(page, [memory({ key: "bobs-tea", title: "Bob's tea", content: "Bob prefers green tea in the morning." })]);
 }
 
 test.describe("locked memories", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
 
-  test("the badge is in the list and the switch locks and unlocks on its own (light and dark)", async ({ page }) => {
+  test("the lock is in the list; the button and the switch lock and unlock on their own (light and dark)", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     for (const scheme of ["light", "dark"] as const) {
-      await mockMemories(page);
+      await mockOneMemory(page);
       await page.emulateMedia({ colorScheme: scheme });
       await page.goto("/o/acme/w/main/agents/daneel?tab=memory");
       await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
-      // Unlocked: no badge anywhere in the list.
-      await expect(page.getByRole("list", { name: "Memories" }).getByText("Locked")).toHaveCount(0);
-      await page.getByText("Bob's tea").click();
+      // Unlocked: no lock anywhere in the list.
+      const list = page.getByRole("list", { name: "Memories" });
+      await expect(list.getByText("Bob's tea")).toBeVisible();
+      await expect(list.getByText("Locked")).toHaveCount(0);
+      await page.getByRole("button", { name: "Lock", exact: true }).click();
+      await expect(list.getByText("Locked")).toHaveCount(1);
+      await expect(page.getByTestId("memory-meta")).toContainText("Locked by Ada Lovelace on ");
+      await page.getByRole("button", { name: "Edit" }).click();
       const sw = page.getByRole("switch", { name: "Locked" });
-      await expect(sw).toBeVisible();
-      expect(await sw.getAttribute("aria-checked")).toBe("false");
-      await sw.click();
-      // The switch flips and the refetched list shows the badge; the toast names it.
       await expect(sw).toBeChecked();
-      await expect(page.getByText(/Locked by Ada on /)).toBeVisible();
-      await expect(page.getByRole("list", { name: "Memories" }).getByText("Locked")).toBeVisible();
-      // Back off: the badge is gone again.
+      await expect(page.getByText(/Locked by Ada Lovelace on /)).toBeVisible();
+      // Back off: the lock is gone again.
       await sw.click();
-      await expect(page.getByRole("list", { name: "Memories" }).getByText("Locked")).toHaveCount(0);
+      await expect(sw).not.toBeChecked();
+      await expect(list.getByText("Locked")).toHaveCount(0);
       expect(errors).toEqual([]);
     }
   });
@@ -239,12 +201,14 @@ test.describe("locked memories", () => {
 test.describe("locked memories at 390 px", () => {
   test.use({ viewport: { width: 390, height: 800 } });
 
-  test("a locked row with its badge does not scroll sideways", async ({ page }) => {
-    await mockMemories(page);
+  test("a locked row does not scroll sideways", async ({ page }) => {
+    await mockOneMemory(page);
     await page.goto("/o/acme/w/main/agents/daneel?tab=memory");
     await page.getByText("Bob's tea").click();
-    await page.getByRole("switch", { name: "Locked" }).click();
-    await expect(page.getByRole("list", { name: "Memories" }).getByText("Locked")).toBeVisible();
+    await page.getByRole("button", { name: "Lock", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Memory", exact: true }).click();
+    await expect(page.getByRole("list", { name: "Memories" }).getByText("Locked")).toHaveCount(1);
     expect(await overflow(page), "the page scrolls sideways").toBeLessThanOrEqual(0);
   });
 });

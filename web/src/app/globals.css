@@ -477,6 +477,47 @@
   height: auto;
   border-radius: var(--radius-control);
 }
+/* (P5-MEMORY-2, M-2) A document read at length (a memory): comfortable size and ticked checklists struck through. */
+.md-reading .md {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+/* The checklist boxes are read-only; drawn, so a ticked one reads as ticked rather than as a greyed-out control. */
+.md-reading .md .task-list-item input {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  margin-right: 0.75rem;
+  vertical-align: -0.1875rem;
+  border: 2px solid var(--line-strong);
+  border-radius: 4px;
+}
+.md-reading .md .task-list-item input:checked {
+  border-color: var(--accent);
+  background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-10'/%3E%3C/svg%3E") center / 0.75rem no-repeat;
+}
+:root[data-theme="dark"] .md-reading .md .task-list-item input:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-10'/%3E%3C/svg%3E");
+}
+.md-reading .md .task-list-item:has(> input:checked),
+.md-reading .md .task-list-item:has(> p > input:checked) {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+/* (P5-MEMORY-2, M-1) The search terms in a document, and the line that holds the first one. */
+.md mark[data-match] {
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--on-accent);
+  padding: 0 0.125rem;
+}
+.md .md-match-line {
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--accent-soft);
+  padding: 0.25rem 0.625rem;
+  scroll-margin-block: 6rem;
+}
 .md .katex-display {
   overflow-x: auto;
   overflow-y: hidden;

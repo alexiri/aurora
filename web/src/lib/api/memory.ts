@@ -10,6 +10,10 @@ import { unwrap } from "./unwrap";
 export type Memory = components["schemas"]["Memory"];
 export type MemoryRevision = components["schemas"]["MemoryRevision"];
 export type MemorySearchHit = components["schemas"]["MemorySearchHit"];
+export type MemoryActor = components["schemas"]["MemoryActor"];
+export type ConversationRef = components["schemas"]["ConversationRef"];
+export const MEMORY_TITLE_MAX = 120;
+export const MEMORY_DESCRIPTION_MAX = 240;
 export type PutMemoryRequest = components["schemas"]["PutMemoryRequest"];
 
 /** Limits from docs/02 (`MEMORY_CONTENT_MAX`, `MEMORY_MAX_PER_AGENT`); the API stays authoritative. */
