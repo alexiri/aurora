@@ -38,6 +38,8 @@ const ENVIRON_MAX: u64 = 128 * 1024;
 const KILL_GRACE: Duration = Duration::from_secs(2);
 /// The one deadline of a whole end: the HUP, the grace, the KILLs and every scan.
 const SWEEP_LIMIT: Duration = Duration::from_secs(7);
+/// How far past that deadline the scans that confirm the end may run.
+const CONFIRM_LIMIT: Duration = Duration::from_millis(500);
 const SCAN_EVERY: Duration = Duration::from_millis(50);
 /// This many scans in a row must find nothing: one scan can miss a process in mid-`exec`.
 const EMPTY_SCANS: u32 = 2;
@@ -132,6 +134,49 @@ fn signal_instance(p: &Proc, signal: Signal) {
     }
 }
 
+/// Whether a process the scan saw in the group `root` is, right now, still that process and
+/// still in the group. While it is, the number cannot name another group. A scan may signal long
+/// after it looked (one that was given up runs on), when the child may have been waited for and
+/// its number taken again, so this is asked just before the group is signalled.
+fn group_still_ours(root: i32, found: &[Proc], now: impl Fn(i32) -> Option<Proc>) -> bool {
+    found
+        .iter()
+        .filter(|p| p.group == root)
+        .any(|p| now(p.pid).is_some_and(|n| n.start == p.start && n.group == root))
+}
+
+/// KILL, repeated until [`EMPTY_SCANS`] scans in a row find nothing. `scan` is one pass that is
+/// given up at the instant it is handed. Only a scan that **began** after `deadline` and still
+/// finds something says that the tree did not end, so a tree that empties just before it is
+/// confirmed; the whole takes at most [`CONFIRM_LIMIT`] longer.
+async fn kill_until_empty<F>(
+    deadline: Instant,
+    mut scan: impl FnMut(Instant) -> F,
+) -> Result<(), String>
+where
+    F: Future<Output = Result<usize, String>>,
+{
+    let mut empty = 0;
+    loop {
+        let late = Instant::now() >= deadline;
+        let found = scan(deadline + CONFIRM_LIMIT).await?;
+        if found == 0 {
+            empty += 1;
+            if empty >= EMPTY_SCANS {
+                return Ok(());
+            }
+        } else {
+            empty = 0;
+            if late {
+                return Err(format!(
+                    "{found} processes that the harness started did not end"
+                ));
+            }
+        }
+        tokio::time::sleep(SCAN_EVERY).await;
+    }
+}
+
 /// The scanning half, which reads `/proc` and so runs off the async threads.
 struct Scanner {
     root: i32,
@@ -215,7 +260,7 @@ impl Scanner {
             // The group is the child's own for as long as the child is unwaited, which it is
             // until its owner has seen this end succeed (the reaper leaves owned children).
             if own_group
-                && found.iter().any(|p| p.group == self.root)
+                && group_still_ours(self.root, &found, stat_of)
                 && let Some(g) = Pid::from_raw(self.root)
             {
                 let _ = kill_process_group(g, signal);
@@ -276,30 +321,84 @@ impl ChildTree {
                 left = self.pass(None, deadline).await?;
             }
         }
-        let mut empty = 0;
-        loop {
-            let found = self.pass(Some(Signal::KILL), deadline).await?;
-            if found == 0 {
-                empty += 1;
-                if empty >= EMPTY_SCANS {
-                    return Ok(());
-                }
-            } else {
-                empty = 0;
-                if Instant::now() >= deadline {
-                    return Err(format!(
-                        "{found} processes that the harness started did not end"
-                    ));
-                }
-            }
-            tokio::time::sleep(SCAN_EVERY).await;
-        }
+        let tree = &*self;
+        kill_until_empty(deadline, |limit| tree.pass(Some(Signal::KILL), limit)).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn member(pid: i32, group: i32, start: u64) -> Proc {
+        Proc {
+            pid,
+            ppid: 1,
+            group,
+            zombie: false,
+            start,
+        }
+    }
+
+    /// (FIX-258) A scan that was given up may come to its group signal much later: by then the
+    /// number may name another group, so a member must still be there at that moment.
+    #[test]
+    fn a_stale_scan_does_not_signal_a_group() {
+        let found = [member(100, 100, 5), member(101, 100, 6), member(102, 7, 8)];
+        // Every member ended since the scan.
+        assert!(!group_still_ours(100, &found, |_| None));
+        // A member's pid names another process now.
+        assert!(!group_still_ours(100, &found, |pid| Some(member(
+            pid, 100, 99
+        ))));
+        // The member left the group.
+        assert!(!group_still_ours(100, &found, |pid| {
+            found
+                .iter()
+                .find(|p| p.pid == pid)
+                .map(|p| member(pid, 7, p.start))
+        }));
+        // One member of the group is still the same.
+        assert!(group_still_ours(100, &found, |pid| {
+            (pid == 101).then(|| member(101, 100, 6))
+        }));
+        // A process outside the group says nothing about it.
+        assert!(!group_still_ours(100, &found, |pid| {
+            (pid == 102).then(|| member(102, 7, 8))
+        }));
+    }
+
+    /// A pass that takes a moment, finds one process until `ends` and is given up at `limit`.
+    async fn scan_until(ends: Instant, limit: Instant) -> Result<usize, String> {
+        timeout_at(limit, tokio::time::sleep(Duration::from_millis(30)))
+            .await
+            .map_err(|_| "the scan of the processes did not finish in time".to_owned())?;
+        Ok(usize::from(Instant::now() < ends))
+    }
+
+    /// (FIX-258) A tree that is empty just before the deadline is reported as ended: the scan
+    /// that confirms it still runs.
+    #[tokio::test(start_paused = true)]
+    async fn a_tree_that_empties_just_before_the_deadline_has_ended() {
+        // With a scan every 80 ms, the confirming one then ends after the deadline.
+        for before in [40, 60] {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            let ends = deadline - Duration::from_millis(before);
+            let end = kill_until_empty(deadline, |limit| scan_until(ends, limit)).await;
+            assert_eq!(end, Ok(()), "empty {before} ms before the deadline");
+        }
+    }
+
+    /// And one that never empties is given up, soon after the deadline.
+    #[tokio::test(start_paused = true)]
+    async fn a_tree_that_does_not_empty_is_given_up() {
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(1);
+        let never = start + Duration::from_secs(3600);
+        let end = kill_until_empty(deadline, |limit| scan_until(never, limit)).await;
+        assert!(end.is_err());
+        assert!(Instant::now() < deadline + Duration::from_secs(1));
+    }
 
     /// (SEC-165) Only "no such process" or a zombie says that the leader exited: a read that
     /// fails for want of a file descriptor must not start the kill of a live child.

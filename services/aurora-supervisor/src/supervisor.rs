@@ -147,7 +147,17 @@ pub struct Supervisor {
     /// longer than [`SupervisorConfig::release_deadline`]: the conversation's next
     /// `session.release` goes on with them.
     unreleased: Vec<(Uuid, Unreleased)>,
+    /// (FIX-258) Conversations with a session that was not released within the deadline (a
+    /// release that answered `ok: false`, or a replaced session) and that were not told
+    /// since: once nothing of theirs runs, `session.released { ok: true }` is sent unasked.
+    owes_released: HashSet<Uuid>,
+    /// (FIX-258) Conversations whose release task died: nothing can say any more that all of
+    /// theirs ended, so they are not told unasked until a request was answered `ok: true`.
+    lost_releases: HashSet<Uuid>,
 }
+
+/// How often the supervisor looks whether an unfinished release has finished.
+const LATE_RELEASE_TICK: Duration = Duration::from_millis(250);
 
 /// A session the supervisor is done with but has not seen released.
 enum Unreleased {
@@ -233,17 +243,24 @@ impl Supervisor {
         ptys: crate::pty::PtyHandle,
     ) -> Self {
         let caps = adapter.capabilities();
+        let mut projector = HomeProjector::new(HomeConfig {
+            root: cfg.working_dir.clone(),
+            skills_dir: Some(caps.skills_dir.clone()),
+            instruction_files: caps.instruction_files.clone(),
+            pg: cfg.pg,
+            // (C-653) A supervisor-local fact, computed once at start: the wrapper is there.
+            agent_cli: crate::agent_cli::agent_cli_available(std::path::Path::new(
+                crate::agent_cli::WRAPPER,
+            )),
+        });
+        // (FIX-258) The same rule as for its processes: a root supervisor runs them as this uid.
+        if rustix::process::getuid().is_root()
+            && let Some(uid) = cfg.process.uid
+        {
+            projector.set_agent_uid(uid);
+        }
         let home = Arc::new(StdMutex::new(HomeCtl {
-            projector: HomeProjector::new(HomeConfig {
-                root: cfg.working_dir.clone(),
-                skills_dir: Some(caps.skills_dir.clone()),
-                instruction_files: caps.instruction_files.clone(),
-                pg: cfg.pg,
-                // (C-653) A supervisor-local fact, computed once at start: the wrapper is there.
-                agent_cli: crate::agent_cli::agent_cli_available(std::path::Path::new(
-                    crate::agent_cli::WRAPPER,
-                )),
-            }),
+            projector,
             harvester: Harvester::new(&cfg.working_dir),
         }));
         let mut process = cfg.process.clone();
@@ -288,6 +305,8 @@ impl Supervisor {
             idle_turns: Arc::new(StdMutex::new(HashMap::new())),
             reported_background: Arc::default(),
             unreleased: Vec::new(),
+            owes_released: HashSet::new(),
+            lost_releases: HashSet::new(),
         }
     }
 
@@ -367,8 +386,14 @@ impl Supervisor {
         self.sync_db_relay().await;
         let mut harvest_tick = interval(self.cfg.harvest_interval);
         harvest_tick.tick().await;
+        // Its own interval: it keeps its beat however busy the other arms are.
+        let mut late_tick = interval(LATE_RELEASE_TICK);
+        late_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
+                _ = late_tick.tick(), if !self.owes_released.is_empty() => {
+                    self.acknowledge_late_releases().await;
+                }
                 // (P4-PRV-2) The harvest tick also drives port discovery (`ports.state`): the
                 // first tick fires immediately, so a boot's listeners are reported without
                 // waiting a full interval (`11 §Port discovery`).
@@ -521,12 +546,16 @@ impl Supervisor {
                 // nothing says that it was released.
                 Ok(Err(e)) => {
                     tracing::error!(error = %e, "a release task failed");
+                    self.lost_releases.insert(conversation_id);
                     None
                 }
                 Err(_) => Some(Unreleased::Running(release)),
             };
             released = false;
-            self.unreleased.extend(kept.map(|k| (conversation_id, k)));
+            if let Some(kept) = kept {
+                self.owes_released.insert(conversation_id);
+                self.unreleased.push((conversation_id, kept));
+            }
         }
         released
     }
@@ -547,7 +576,12 @@ impl Supervisor {
             let u = match u {
                 Unreleased::Running(r) if r.is_finished() => match r.await {
                     Ok(Some(session)) => Unreleased::Failed(session),
-                    _ => continue,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        tracing::error!(error = %e, "a release task failed");
+                        self.lost_releases.insert(c);
+                        continue;
+                    }
                 },
                 u => u,
             };
@@ -565,50 +599,75 @@ impl Supervisor {
     /// goes on with it.
     async fn release_session(&mut self, conversation_id: Uuid) {
         let deadline = Instant::now() + self.cfg.release_deadline;
-        self.release_session_by(conversation_id, deadline).await;
+        let releases = self.begin_release(conversation_id).await;
+        self.finish_release(conversation_id, releases, deadline)
+            .await;
     }
 
-    /// [`Self::release_session`] that waits no longer than `deadline`, for every session of
-    /// the conversation together.
-    async fn release_session_by(&mut self, conversation_id: Uuid, deadline: Instant) {
+    /// Starts every release the conversation needs, so that they all run at once; `None`
+    /// while one of its turns runs (a running turn is never interrupted).
+    async fn begin_release(&mut self, conversation_id: Uuid) -> Option<Vec<Releasing>> {
         // A failed release that is still running counts as such once it has finished.
         self.has_unreleased(conversation_id).await;
-        let ok = if self
+        if self
             .turns
             .values()
             .any(|t| t.conversation_id == conversation_id)
         {
-            false
-        } else {
-            let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut self.unreleased)
-                .into_iter()
-                .partition(|(c, _)| *c == conversation_id);
-            self.unreleased = others;
-            // They all run at once: the deadline is not shared out between them.
-            let mut releases: Vec<Releasing> = mine
-                .into_iter()
-                .map(|(_, u)| match u {
-                    Unreleased::Running(r) => r,
-                    Unreleased::Failed(s) => start_release(s),
-                })
-                .collect();
-            // (FIX-253 fixes2) `ok` only when every release really ran and succeeded. No
-            // session: nothing of it to release.
-            if let Some(e) = self.sessions.remove(&conversation_id) {
-                releases.push(start_release(e.session));
-            }
-            let ok = self.settle(conversation_id, releases, deadline).await;
-            if ok {
-                // (FIX-253, part B) The watch dies with the session.
-                if let Ok(mut m) = self.idle_turns.lock() {
-                    m.remove(&conversation_id);
-                }
-                if let Ok(mut m) = self.reported_background.lock() {
-                    m.remove(&conversation_id);
-                }
-            }
-            ok
+            return None;
+        }
+        let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut self.unreleased)
+            .into_iter()
+            .partition(|(c, _)| *c == conversation_id);
+        self.unreleased = others;
+        let mut releases: Vec<Releasing> = mine
+            .into_iter()
+            .map(|(_, u)| match u {
+                Unreleased::Running(r) => r,
+                Unreleased::Failed(s) => start_release(s),
+            })
+            .collect();
+        if let Some(e) = self.sessions.remove(&conversation_id) {
+            releases.push(start_release(e.session));
+        }
+        Some(releases)
+    }
+
+    /// Waits for what [`Self::begin_release`] started, until `deadline`, and reports the
+    /// outcome (`None`: not released, a turn runs).
+    async fn finish_release(
+        &mut self,
+        conversation_id: Uuid,
+        releases: Option<Vec<Releasing>>,
+        deadline: Instant,
+    ) {
+        // (FIX-253 fixes2) `ok` only when every release really ran and succeeded. No
+        // session: nothing of it to release.
+        let ok = match releases {
+            None => false,
+            Some(releases) => self.settle(conversation_id, releases, deadline).await,
         };
+        if ok {
+            // The API has it from this answer: nothing is owed, and a release task that
+            // died earlier no longer says anything about a later one.
+            self.owes_released.remove(&conversation_id);
+            self.lost_releases.remove(&conversation_id);
+            self.forget_watch(conversation_id);
+        }
+        self.send_released(conversation_id, ok).await;
+    }
+
+    /// (FIX-253, part B) The watch dies with the session, and what was reported of it.
+    fn forget_watch(&self, conversation_id: Uuid) {
+        if let Ok(mut m) = self.idle_turns.lock() {
+            m.remove(&conversation_id);
+        }
+        if let Ok(mut m) = self.reported_background.lock() {
+            m.remove(&conversation_id);
+        }
+    }
+
+    async fn send_released(&self, conversation_id: Uuid, ok: bool) {
         self.send(SupervisorToRunner::SessionReleased(SessionReleased {
             conversation_id,
             ok,
@@ -616,15 +675,63 @@ impl Supervisor {
         .await;
     }
 
+    /// (FIX-258) Says `session.released { ok: true }` unasked for each conversation that is
+    /// owed it, once, as soon as that is true and not before: every unfinished release of it
+    /// has ended well, none of its turns runs, and its live session, if it has one, lists no
+    /// background work and has no child that is still ending.
+    async fn acknowledge_late_releases(&mut self) {
+        let owed: Vec<Uuid> = self.owes_released.iter().copied().collect();
+        for conversation_id in owed {
+            // A failed release stays unreleased: only a `session.release` tries it again.
+            if self.has_unreleased(conversation_id).await
+                || self
+                    .turns
+                    .values()
+                    .any(|t| t.conversation_id == conversation_id)
+            {
+                continue;
+            }
+            if self.lost_releases.contains(&conversation_id) {
+                self.owes_released.remove(&conversation_id);
+                continue;
+            }
+            let live = match self.sessions.get(&conversation_id) {
+                Some(e) => {
+                    let s = e.session.lock().await;
+                    if !s.background_work().is_empty() || s.still_ending() {
+                        continue;
+                    }
+                    true
+                }
+                None => false,
+            };
+            self.owes_released.remove(&conversation_id);
+            if !live {
+                self.forget_watch(conversation_id);
+            } else if let Ok(mut m) = self.reported_background.lock()
+                && let Some(reported) = m.get_mut(&conversation_id)
+            {
+                // The live session's watch goes on, and reports what it starts from here.
+                reported.clear();
+            }
+            self.send_released(conversation_id, true).await;
+        }
+    }
+
     /// (P5-GUIDE-7, C-654) A sync changed what new sessions are told (core descriptors or the
     /// instruction files): every idle session is released and picks the new list up at its next
     /// message; a session with a turn running keeps its own until then.
     async fn release_idle_sessions(&mut self) {
         let ids: Vec<Uuid> = self.sessions.keys().copied().collect();
-        // One deadline for them all.
+        // One deadline for them all, so all are started before any is waited for: a slow one
+        // uses up the wait, never the time the others have to finish.
         let deadline = Instant::now() + self.cfg.release_deadline;
+        let mut started = Vec::new();
         for id in ids {
-            self.release_session_by(id, deadline).await;
+            started.push((id, self.begin_release(id).await));
+        }
+        for (id, releases) in started {
+            self.finish_release(id, releases, deadline).await;
         }
     }
 

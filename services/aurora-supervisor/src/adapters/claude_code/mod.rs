@@ -726,6 +726,13 @@ impl HarnessSession for ClaudeSession {
         })
     }
 
+    fn still_ending(&self) -> bool {
+        self.unended.iter().any(|p| !p.ended())
+            || self.live.as_ref().is_some_and(|l| {
+                !l.procs.ended() && (l.dead.load(Ordering::SeqCst) || l.procs.ending())
+            })
+    }
+
     /// (FIX-253, D-490) The child's own background commands that have not ended. A child of
     /// which nothing is left running has none; one that is being ended keeps its list until
     /// that is so.

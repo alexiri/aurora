@@ -21,9 +21,11 @@
 //! - `manifest`: `{path}`; every managed path that should exist.
 
 use std::collections::{BTreeSet, HashMap};
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read as _;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::fd::AsFd as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -113,9 +115,14 @@ pub struct HomeProjector {
     /// (P6-MEMLOCK, C-1149) The memory files staged as locked in the current generation (their
     /// rel paths); reset with the staging area. Only a memory file entry arrives with the flag.
     locked_keys: BTreeSet<PathBuf>,
+    /// (FIX-258) The skill and helper files of the current generation that could not be
+    /// staged; reset with the staging area.
+    skipped: BTreeSet<PathBuf>,
     /// (P6-MEMLOCK, C-1149) The sealed bytes of every installed locked memory, key → file bytes;
     /// held in memory only. The harvest restores them instead of uploading an agent's edit.
     locked_bytes: Arc<HashMap<String, Vec<u8>>>,
+    /// (FIX-258) The uid the agent runs as: the only files whose mode a lock changes.
+    agent_uid: u32,
 }
 
 /// Relative, normal components only.
@@ -195,6 +202,31 @@ fn is_helper_path(rel: &Path) -> bool {
     !segs.is_empty() && aurora_template::helper_path_ok(&segs.join("/"))
 }
 
+/// The errors that are about the file's own place (a file where a folder is needed or the
+/// reverse, a name that is too long, an oversized staged file): trying again gives the same.
+/// Any other one (a full disk) fails the generation, which is then sent again.
+fn cannot_hold(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind as K;
+    matches!(
+        error.kind(),
+        K::AlreadyExists
+            | K::NotADirectory
+            | K::IsADirectory
+            | K::DirectoryNotEmpty
+            | K::InvalidFilename
+            | K::InvalidData
+    )
+}
+
+/// A skill or helper file whose new version is skipped must be seen to be missing, never be
+/// the old one beside the new rest: it leaves `keep` and the home.
+fn discard(root: &Path, keep: &mut BTreeSet<PathBuf>, rel: &Path) {
+    keep.remove(rel);
+    if let Err(error) = nofollow::remove_file_beneath(root, rel) {
+        tracing::warn!(path = %rel.display(), %error, "old version of a skipped file not removed");
+    }
+}
+
 fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.filter_map(Result::ok) {
@@ -243,14 +275,15 @@ fn install_staged(
             "staged file too large",
         ));
     }
-    if let Some(p) = dst.parent() {
-        // Every managed destination: no link in the chain from the home down.
-        if let Ok(rp) = p.strip_prefix(root) {
-            clear_link_chain(root, rp);
-        }
-        fs::create_dir_all(p)?;
-    }
-    nofollow::write_atomic(dst, &bytes, mode)?;
+    let outside = || std::io::Error::from(std::io::ErrorKind::InvalidInput);
+    let rel = dst.strip_prefix(root).map_err(|_| outside())?;
+    let (parent, name) = rel.parent().zip(rel.file_name()).ok_or_else(outside)?;
+    // Every managed destination: no link in the chain from the home down. The folders are
+    // then made and held open from the home's descriptor, so that a link planted after the
+    // sweep is not followed either.
+    clear_link_chain(root, parent);
+    let dir = nofollow::create_dir_beneath(root, parent)?;
+    nofollow::write_atomic_at(dir.as_fd(), name, &bytes, mode)?;
     // The whole staging area is removed after the commit anyway.
     let _ = fs::remove_file(src);
     Ok(bytes)
@@ -273,8 +306,15 @@ impl HomeProjector {
             failed: None,
             current: None,
             locked_keys: BTreeSet::new(),
+            skipped: BTreeSet::new(),
             locked_bytes: Arc::new(HashMap::new()),
+            agent_uid: rustix::process::getuid().as_raw(),
         }
+    }
+
+    /// The agent runs as another uid than the supervisor (the root supervisor mode).
+    pub fn set_agent_uid(&mut self, uid: u32) {
+        self.agent_uid = uid;
     }
 
     fn sync_dir(&self) -> PathBuf {
@@ -287,6 +327,10 @@ impl HomeProjector {
 
     fn skills_prefix(&self) -> Option<PathBuf> {
         self.cfg.skills_dir.as_deref().and_then(clean_rel)
+    }
+
+    fn is_skill_path(&self, rel: &Path) -> bool {
+        self.skills_prefix().is_some_and(|s| rel.starts_with(s))
     }
 
     /// A managed projection path: under the skills dir, `memory/<name>.md`, an app folder file
@@ -323,6 +367,7 @@ impl HomeProjector {
             self.failed = None;
             // (P6-MEMLOCK) The locked set belongs to the generation being staged.
             self.locked_keys.clear();
+            self.skipped.clear();
         }
         self.current = Some(sync.generation);
         if let Err(e) = self.stage(sync) {
@@ -376,11 +421,25 @@ impl HomeProjector {
                     if memory && e.locked {
                         self.locked_keys.insert(rel.clone());
                     }
-                    write_atomic(
+                    match write_atomic(
                         &self.staged_files().join(&rel),
                         body.as_bytes(),
                         staged_mode,
-                    )?;
+                    ) {
+                        Ok(()) => {
+                            self.skipped.remove(&rel);
+                        }
+                        // A skill file the home cannot hold is skipped, like a helper.
+                        Err(error) if !memory && cannot_hold(&error) => {
+                            tracing::warn!(
+                                path = %e.path.escape_debug(),
+                                %error,
+                                "skill file not written; skipped"
+                            );
+                            self.skipped.insert(rel);
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                 }
             }
             HomeSyncKind::Apps => {
@@ -417,16 +476,22 @@ impl HomeProjector {
                             let staged_mode = if e.exec { 0o700 } else { 0o600 };
                             // One helper the home cannot hold (a file that is also a folder)
                             // is skipped: it must not stall the whole sync.
-                            if let Err(error) = write_atomic(
+                            match write_atomic(
                                 &self.staged_files().join(&r),
                                 e.content.as_bytes(),
                                 staged_mode,
                             ) {
-                                tracing::warn!(
-                                    path = %e.path.escape_debug(),
-                                    %error,
-                                    "helper file not written; skipped"
-                                );
+                                Ok(()) => {
+                                    self.skipped.remove(&r);
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        path = %e.path.escape_debug(),
+                                        %error,
+                                        "helper file not written; skipped"
+                                    );
+                                    self.skipped.insert(r);
+                                }
                             }
                         }
                         _ => {
@@ -501,20 +566,27 @@ impl HomeProjector {
             // and rename write outside the managed tree. Links are removed (never followed) first.
             clear_link_chain(&root, &rel);
             unlink_tree_symlinks(s);
-            set_dirs(s, 0o755);
+            set_dirs(&root, &rel, 0o755);
         }
         let apps_root = root.join(APPS_DIR);
         clear_link_chain(&root, Path::new(APPS_DIR));
         unlink_tree_symlinks(&apps_root);
-        set_dirs(&apps_root, 0o755);
+        set_dirs(&root, Path::new(APPS_DIR), 0o755);
         // (P6-TPL-6, C-1143) The same link discipline for the helpers root: a link anywhere in
         // the chain or the tree is removed, never followed.
         let helpers_root = root.join(HELPERS_DIR);
         clear_link_chain(&root, Path::new(HELPERS_DIR));
         unlink_tree_symlinks(&helpers_root);
-        set_dirs(&helpers_root, 0o755);
-        // The helpers are pruned before the install, so that a name can turn from a file into a
-        // folder (or back) between two generations.
+        set_dirs(&root, Path::new(HELPERS_DIR), 0o755);
+        // A file that could not be staged goes now, whatever the manifest says.
+        for rel in &self.skipped {
+            discard(&root, &mut keep, rel);
+        }
+        // The skills and the helpers are pruned before the install, so that a name can turn
+        // from a file into a folder (or back) between two generations.
+        if let Some(s) = &skills_root {
+            prune_to(&root, s, &keep);
+        }
         prune_to(&root, &helpers_root, &keep);
 
         // Install.
@@ -534,6 +606,9 @@ impl HomeProjector {
                 Ok(f) => f,
                 Err(error) => {
                     tracing::warn!(path = %rel.display(), %error, "staged file refused");
+                    if is_helper_path(&rel) || self.is_skill_path(&rel) {
+                        discard(&root, &mut keep, &rel);
+                    }
                     continue;
                 }
             };
@@ -553,10 +628,11 @@ impl HomeProjector {
             let bytes = match install_staged(&root, file, &src, &dst, mode) {
                 Ok(b) => b,
                 Err(error) => {
-                    if !is_helper_path(&rel) {
+                    if !(is_helper_path(&rel) || self.is_skill_path(&rel) && cannot_hold(&error)) {
                         return Err(error.into());
                     }
-                    tracing::warn!(path = %rel.display(), %error, "helper file not installed; skipped");
+                    tracing::warn!(path = %rel.display(), %error, "file not installed; skipped");
+                    discard(&root, &mut keep, &rel);
                     continue;
                 }
             };
@@ -574,21 +650,7 @@ impl HomeProjector {
             keep.insert(rel);
         }
 
-        // Prune managed roots.
-        if let Some(s) = &skills_root {
-            let mut files = Vec::new();
-            walk_files(s, &mut files);
-            for f in files {
-                if f.strip_prefix(&root).is_ok_and(|r| !keep.contains(r)) {
-                    let _ = fs::remove_file(&f);
-                }
-            }
-            let mut dirs = Vec::new();
-            walk_dirs(s, &mut dirs);
-            for d in dirs {
-                let _ = fs::remove_dir(&d); // only succeeds when empty
-            }
-        }
+        // Prune the other managed roots.
         // A link at `memory` must not let the prune remove files elsewhere.
         clear_link_chain(&root, Path::new(MEMORY_DIR));
         if let Ok(rd) = fs::read_dir(root.join(MEMORY_DIR)) {
@@ -614,8 +676,8 @@ impl HomeProjector {
                 }
             }
         }
-        if let Some(s) = &skills_root {
-            lock_tree(s);
+        if let Some(rel) = self.skills_prefix() {
+            lock_tree(&root, &rel, self.agent_uid);
         }
         // The app folders: pruned to the manifest like skills (a revoked grant removes its folder).
         {
@@ -631,15 +693,11 @@ impl HomeProjector {
             for d in dirs {
                 let _ = fs::remove_dir(&d);
             }
-            if apps_root.is_dir() {
-                lock_tree(&apps_root);
-            }
+            lock_tree(&root, Path::new(APPS_DIR), self.agent_uid);
         }
         // (P6-TPL-6, C-1143) The helper files (pruned to the manifest before the install, so a
         // removed helper is gone): locked read-only (0555/0444 files, 0555 dirs).
-        if helpers_root.is_dir() {
-            lock_tree(&helpers_root);
-        }
+        lock_tree(&root, Path::new(HELPERS_DIR), self.agent_uid);
 
         // .aurora cache + instruction files.
         let aurora = root.join(AURORA_DIR);
@@ -797,31 +855,43 @@ fn unlink_tree_symlinks(dir: &Path) {
     }
 }
 
-fn set_dirs(root: &Path, mode: u32) {
-    let mut dirs = Vec::new();
-    walk_dirs(root, &mut dirs);
-    dirs.push(root.to_path_buf());
-    for d in dirs {
-        let _ = fs::set_permissions(&d, fs::Permissions::from_mode(mode));
+/// Sets `mode` on the folder `rel` of the home and on every folder below it; no link, at
+/// `rel`, above it or inside it, is followed. A missing `rel` is nothing to do.
+fn set_dirs(home: &Path, rel: &Path, mode: u32) {
+    if let Ok(dir) = nofollow::open_dir_beneath(home, rel) {
+        nofollow::set_tree_modes(dir, mode, None);
     }
 }
 
-fn lock_tree(root: &Path) {
-    let mut files = Vec::new();
-    walk_files(root, &mut files);
-    for f in files {
-        // Only a regular file, and the mode is read and set on its open descriptor: a link
-        // here (planted after the link sweep) is never followed.
-        if !fs::symlink_metadata(&f).is_ok_and(|m| m.is_file()) {
-            continue;
-        }
-        let _ = nofollow::open_regular(&f).and_then(|file| {
-            // Executable skill files stay 0555; everything else is 0444.
-            let exec = file.metadata()?.permissions().mode() & 0o100 != 0;
-            nofollow::set_mode(&file, if exec { 0o555 } else { 0o444 })
-        });
+/// Whether the lock may change a file's mode: it has this one name and is the agent's. A hard
+/// link may be another user's file (`fs.protected_hardlinks=0`).
+fn may_lock(links: u64, owner: u32, agent: u32) -> bool {
+    links <= 1 && owner == agent
+}
+
+/// [`set_dirs`] at 0555 that locks the files too: executable ones stay 0555, everything else
+/// is 0444. A file that is not [the agent's own](may_lock) keeps its mode.
+fn lock_tree(home: &Path, rel: &Path, agent_uid: u32) {
+    if let Ok(dir) = nofollow::open_dir_beneath(home, rel) {
+        let file_mode = |meta: &fs::Metadata, name: &OsStr| {
+            let mode = meta.permissions().mode();
+            let wanted = if mode & 0o100 != 0 { 0o555 } else { 0o444 };
+            // Nothing to say about a file that already has it (in the root mode Aurora's own
+            // files are root's, installed with their final mode).
+            if mode & 0o7777 == wanted {
+                return None;
+            }
+            if !may_lock(meta.nlink(), meta.uid(), agent_uid) {
+                tracing::warn!(
+                    name = %name.to_string_lossy().escape_debug(),
+                    "mode not changed: a hard link or another user's file"
+                );
+                return None;
+            }
+            Some(wanted)
+        };
+        nofollow::set_tree_modes(dir, 0o555, Some(&file_mode));
     }
-    set_dirs(root, 0o555);
 }
 
 #[cfg(test)]
@@ -837,6 +907,10 @@ mod tests {
         fs::write(&victim, "outside").unwrap();
         fs::set_permissions(&victim, fs::Permissions::from_mode(0o600)).unwrap();
         (dir, home, victim)
+    }
+
+    fn me() -> u32 {
+        rustix::process::getuid().as_raw()
     }
 
     fn mode_of(p: &Path) -> u32 {
@@ -882,13 +956,136 @@ mod tests {
         }
         std::os::unix::fs::symlink(&victim, tree.join("sub/link")).unwrap();
 
-        lock_tree(&tree);
+        lock_tree(&home, Path::new("helpers"), me());
 
         assert_eq!(mode_of(&victim), 0o600, "outside file chmodded");
         assert_eq!(mode_of(&tree.join("run.sh")), 0o555);
         assert_eq!(mode_of(&tree.join("sub/note")), 0o444);
         assert_eq!(mode_of(&tree.join("sub")), 0o555);
-        set_dirs(&tree, 0o755);
+        set_dirs(&home, Path::new("helpers"), 0o755);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-258) A hard link in a managed tree is another name of a file that may be anyone's
+    /// (`fs.protected_hardlinks=0`): locking the tree leaves its mode alone.
+    #[test]
+    fn locking_a_tree_leaves_a_hard_linked_file_alone() {
+        let (dir, home, victim) = scratch();
+        fs::create_dir_all(home.join("helpers")).unwrap();
+        fs::hard_link(&victim, home.join("helpers/link")).unwrap();
+
+        lock_tree(&home, Path::new("helpers"), me());
+
+        assert_eq!(mode_of(&victim), 0o600, "hard-linked file chmodded");
+        assert_eq!(mode_of(&home.join("helpers")), 0o555);
+        set_dirs(&home, Path::new("helpers"), 0o755);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-258) Nor is the mode of a file the agent does not own changed (the test's files
+    /// are not those of another uid it names as the agent).
+    #[test]
+    fn locking_a_tree_leaves_another_users_file_alone() {
+        let (dir, home, _) = scratch();
+        let file = home.join("helpers/file");
+        fs::create_dir_all(home.join("helpers")).unwrap();
+        fs::write(&file, "x").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+
+        lock_tree(&home, Path::new("helpers"), me() + 1);
+        assert_eq!(mode_of(&file), 0o600);
+        set_dirs(&home, Path::new("helpers"), 0o755);
+
+        lock_tree(&home, Path::new("helpers"), me());
+        assert_eq!(mode_of(&file), 0o444);
+        set_dirs(&home, Path::new("helpers"), 0o755);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_a_single_named_file_of_the_agent_is_locked() {
+        assert!(may_lock(1, 1000, 1000));
+        assert!(!may_lock(2, 1000, 1000), "a hard link");
+        assert!(!may_lock(1, 0, 1000), "root's file");
+    }
+
+    /// `outside/tree/sub/file`, all at private modes, beside the home.
+    fn outside_tree(dir: &Path) -> PathBuf {
+        let outside = dir.join("outside");
+        fs::create_dir_all(outside.join("tree/sub")).unwrap();
+        fs::write(outside.join("tree/sub/file"), "outside").unwrap();
+        for (p, mode) in [
+            ("tree/sub/file", 0o600),
+            ("tree/sub", 0o700),
+            ("tree", 0o700),
+        ] {
+            fs::set_permissions(outside.join(p), fs::Permissions::from_mode(mode)).unwrap();
+        }
+        outside
+    }
+
+    fn assert_outside_modes(outside: &Path) {
+        assert_eq!(mode_of(&outside.join("tree")), 0o700);
+        assert_eq!(mode_of(&outside.join("tree/sub")), 0o700);
+        assert_eq!(mode_of(&outside.join("tree/sub/file")), 0o600);
+    }
+
+    /// (FIX-258) A link planted after the link sweep, at the managed root, above it or inside
+    /// the tree: setting the folder modes changes nothing outside the home.
+    #[test]
+    fn setting_folder_modes_follows_no_link() {
+        let (dir, home, _) = scratch();
+        let outside = outside_tree(&dir);
+        // Above the root.
+        std::os::unix::fs::symlink(&outside, home.join("above")).unwrap();
+        // The root itself.
+        std::os::unix::fs::symlink(outside.join("tree"), home.join("root")).unwrap();
+        // Inside the tree.
+        fs::create_dir_all(home.join("skills/s")).unwrap();
+        std::os::unix::fs::symlink(outside.join("tree"), home.join("skills/s/link")).unwrap();
+        for rel in ["above/tree", "root", "skills"] {
+            set_dirs(&home, Path::new(rel), 0o755);
+            assert_outside_modes(&outside);
+        }
+        assert_eq!(mode_of(&home.join("skills/s")), 0o755);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-258) Folders the agent made unreadable are still reached and get the mode.
+    #[test]
+    fn setting_folder_modes_restores_an_unreadable_folder() {
+        let (dir, home, _) = scratch();
+        fs::create_dir_all(home.join("skills/s/sub")).unwrap();
+        for p in ["skills/s/sub", "skills/s", "skills"] {
+            fs::set_permissions(home.join(p), fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        set_dirs(&home, Path::new("skills"), 0o755);
+        for p in ["skills", "skills/s", "skills/s/sub"] {
+            assert_eq!(mode_of(&home.join(p)), 0o755, "{p}");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-258) The folders of an installed file are opened from the home's descriptor: a
+    /// link among them is refused, never created or renamed through.
+    #[test]
+    fn folders_are_not_made_through_a_link() {
+        let (dir, home, _) = scratch();
+        let outside = outside_tree(&dir);
+        std::os::unix::fs::symlink(&outside, home.join("above")).unwrap();
+        assert!(nofollow::create_dir_beneath(&home, Path::new("above/new")).is_err());
+        assert!(!outside.join("new").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-258) Nor does locking a tree whose parent became a link.
+    #[test]
+    fn locking_a_tree_follows_no_linked_parent() {
+        let (dir, home, _) = scratch();
+        let outside = outside_tree(&dir);
+        std::os::unix::fs::symlink(&outside, home.join("above")).unwrap();
+        lock_tree(&home, Path::new("above/tree"), me());
+        assert_outside_modes(&outside);
         fs::remove_dir_all(dir).unwrap();
     }
 
