@@ -11,7 +11,8 @@ export interface ReplyTarget {
 
 /** What a message in the transcript can ask of the thread (P5-CHAT-2): reply, jump to another message, link to one. */
 export interface ChatActions {
-  reply: (target: ReplyTarget) => void;
+  /** Null where the conversation has no composer: nothing then offers to reply. */
+  reply: ((target: ReplyTarget) => void) | null;
   jump: (seq: number) => void;
   link: (seq: number) => string;
 }

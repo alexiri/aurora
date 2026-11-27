@@ -156,7 +156,12 @@ export function WorkspaceManage() {
         </div>
       </Section>
 
-      <Section id="manage-agents" title="Agents" description="The workspace's agents. You can pause or resume them; you cannot open them.">
+      <Section
+        id="manage-agents"
+        title="Agents"
+        // (FIX-280) While the viewer's own grant is open they can read the agents, so the page doesn't say otherwise.
+        description={`The workspace's agents. You can pause or resume them${isEmergencyReader(w) ? "." : "; you cannot open them."}`}
+      >
         {agents.isPending ? (
           <Loading />
         ) : agents.isError ? (

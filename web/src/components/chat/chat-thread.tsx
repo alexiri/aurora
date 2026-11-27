@@ -108,16 +108,22 @@ export function ChatThread({
     return seq === null ? null : { seq, n: 1 };
   });
   const [missing, setMissing] = useState(false);
+  // (D-414) The agent has no AI key at all: no composer, and the empty chat says "<Agent> has no AI model yet".
+  // (FIX-277) Not asked for a reader: the grant doesn't cover it, and they have no composer to disable.
+  const { noKey: noModel } = useAnswerFix(agentId, !emergency);
+  const readOnly = ownerView !== null || emergency;
+  // The one decision whether this conversation can be written: the composer shows, and messages offer Reply.
+  const canWrite = !readOnly && !archived && !noModel;
   const actions = useMemo<ChatActions>(
     () => ({
-      reply: setReply,
+      reply: canWrite ? setReply : null,
       jump: (seq) => {
         setMissing(false);
         setJump((j) => ({ seq, n: (j?.n ?? 0) + 1 }));
       },
       link: (seq) => buildPermalink(window.location.href, convId, seq),
     }),
-    [convId],
+    [convId, canWrite],
   );
   // The jump is one-shot: drop `m` from the address once the history has loaded, so a reload does not repeat it.
   const ready = !loading && !error;
@@ -138,10 +144,6 @@ export function ChatThread({
   // A conversation switch unmounts this thread: the rail must not keep its last turn.
   useEffect(() => () => onTurn?.({ active: false, line: null }), [onTurn]);
   const agentName = agent?.name ?? "the agent";
-  // (D-414) The agent has no AI key at all: no composer, and the empty chat says "<Agent> has no AI model yet".
-  // (FIX-277) Not asked for a reader: the grant doesn't cover it, and they have no composer to disable.
-  const { noKey: noModel } = useAnswerFix(agentId, !emergency);
-  const readOnly = ownerView !== null || emergency;
   const isDirect = ownDirect || !!direct || readOnly || conversation?.kind === "direct";
   const empty = !loading && !error && state.events.length === 0 && Object.keys(state.deltas).length === 0;
 
@@ -310,8 +312,8 @@ export function ChatThread({
         ) : (
           <>
             <AccountsBanner workspaceId={wsId} agent={{ id: agentId, name: agentName }} base={base} />
-          {noModel ? (
-            // The composer is disabled while the agent has no AI key (the action is in the card above, or in the header).
+          {!canWrite ? (
+            // Only a missing AI key gets here: the composer gives way to it (the action is in the card above, or in the header).
             <NoModelBar agentId={agentId} agentName={agentName} />
           ) : (
           <Composer

@@ -242,7 +242,15 @@ export function SkillPanel({
         <p className="text-label font-semibold uppercase tracking-label text-muted">Instructions</p>
         {skill.body.trim() ? <Markdown source={skill.body} images={!isOutsideText(skill)} /> : <p className="text-sm text-muted">No instructions.</p>}
       </section>
-      <SkillFileTree key={skill.updated_at ?? ""} skillId={skill.id} version={skill.updated_at} body={skill.body} files={skill.files} />
+      <SkillFileTree
+        key={skill.updated_at ?? ""}
+        skillId={skill.id}
+        version={skill.updated_at}
+        body={skill.body}
+        files={skill.files}
+        // An agent's page is read-only exactly for an emergency reader. The organization's page is in no workspace.
+        emergencyReader={page.kind === "agent" ? page.readOnly : page.kind === "workspace" && page.emergencyReader}
+      />
       {usage ? (
         <p className="flex items-start gap-2 text-xs text-muted" data-testid="skill-usage">
           <ActivityIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />

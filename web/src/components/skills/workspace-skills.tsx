@@ -6,6 +6,7 @@ import { ErrorState, Loading } from "@/components/states";
 import { ScreenChromeContext } from "@/components/ui/list-detail";
 import { PageHeader } from "@/components/ui/page-header";
 import { useMe, useResolve, useWorkspace } from "@/lib/api/queries";
+import { isEmergencyReader } from "@/lib/emergency";
 import { nameInSentence, workspaceDisplayName } from "@/lib/workspace-name";
 
 import { useHeaderSlot } from "./header-slot";
@@ -31,7 +32,16 @@ export function WorkspaceSkills() {
     <div>
       <PageHeader title="Skills" description={`Skills every agent in ${name} can use`} actions={header.slot} className={header.subScreen ? "hidden" : undefined} />
       <ScreenChromeContext.Provider value={header.chrome}>
-        <SkillsList page={{ kind: "workspace", wsId, orgId: workspace.data.org_id, label: name, canOwn: workspace.data.my_role === "owner" }} />
+        <SkillsList
+          page={{
+            kind: "workspace",
+            wsId,
+            orgId: workspace.data.org_id,
+            label: name,
+            canOwn: workspace.data.my_role === "owner",
+            emergencyReader: isEmergencyReader(workspace.data),
+          }}
+        />
       </ScreenChromeContext.Provider>
     </div>
   );
