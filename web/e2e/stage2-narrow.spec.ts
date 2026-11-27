@@ -96,9 +96,8 @@ test.describe("390 px", () => {
     });
   }
 
-  // FIX-129: the strip no longer scrolls sideways; what does not fit is behind a More menu (the menu itself is covered by
-  // tests/tabs-overflow.test.tsx). P5-AGENT-2 split the agent page into five sections, so each strip now fits at 390 px and
-  // the More button only appears when a section has more pages than fit: assert the invariant, not the button.
+  // FIX-129, D-507: the agent's four tabs fit at 390 px; the quiet second row under Computer and Settings is the one that
+  // may scroll, within itself (agent-tabs.spec.ts).
   test("the agent tab strip never scrolls", async ({ page }) => {
     await mockApi(page);
     await page.goto("/o/acme/w/main/agents/daneel");

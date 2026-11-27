@@ -9,19 +9,23 @@ import { cn } from "@/lib/utils";
 import { ChevronLeftIcon } from "./icons";
 
 /**
- * (P5-MEMORY-2, M-9) A list with the selected item beside it, as two screens where both do not fit. Below
- * `NARROW_SCREEN` (a phone, and a small window where the rail and a settings sub-nav leave no room for two columns) the
- * list is one screen and the opened item is another, with a "‹ <list>" back link; the surrounding page chrome (the
- * settings header and sub-nav) steps aside on the item's screen. Only one of the two is rendered there.
+ * (P5-MEMORY-2, M-9) A list with the selected item beside it, as two screens where both do not fit. Below the
+ * surrounding page's cut-off (`ScreenChrome.narrowQuery`, else `NARROW_SCREEN`: a phone, and a small window with no
+ * room for two columns) the list is one screen and the opened item is another, with a "‹ <list>" back link; the page
+ * chrome around it (its title row and second row of tabs) steps aside on the item's screen. Only one of the two is
+ * rendered there.
  */
 export const NARROW_SCREEN = "(max-width: 1099px)";
 
 /** `false` on the server and in tests without `matchMedia`: the two-column layout is the first render. */
 export function useNarrowScreen(): boolean {
-  return useMediaQuery(NARROW_SCREEN);
+  const chrome = useContext(ScreenChromeContext);
+  return useMediaQuery(chrome?.narrowQuery ?? NARROW_SCREEN);
 }
 
 export interface ScreenChrome {
+  /** Where two columns stop fitting inside this chrome, when it leaves a different width than the default. */
+  narrowQuery?: string;
   /** The place in the page header where a page puts its main action; null until it is mounted. */
   actionSlot: HTMLElement | null;
   /** Hides the page header and sub-navigation while a sub-screen is open. */

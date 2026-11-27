@@ -403,10 +403,20 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   depends on colour alone.
 - **StatusDot** with label.
 - **Card**.
-- **Tabs**: segmented style for page-level views such as Approvals
-  Pending/Actions/History, and underline style for the agent page's tab strip
-  (FIX-129: it never scrolls sideways; `overflow="menu"` moves the tabs that do
-  not fit into a trailing **More ▾** menu, the selected tab is always shown).
+- **Tabs**: a **segmented** control switches a view of the same data (Approvals
+  Pending/Actions/History); **underline** tabs move between the pages of one topic,
+  the agent page's tab row among them (D-507). A strip that does not fit scrolls
+  within itself; `overflow="menu"` (FIX-129) is there for a strip that should move
+  what does not fit into a trailing **More ▾** menu instead, the selected tab
+  always shown.
+- **SubTabs** (`ui/sub-tabs.tsx`, D-507): the quiet second row under a tab, for the
+  open tab's sub-pages (the agent page's Computer pages and Settings sections). The
+  tabs are pills (the selected one in `accent-soft` with an `accent` border, the rest
+  plain `ink-2` text), 32 px high with a 44 px target below `md`. The row is always
+  **one line**: it scrolls sideways within itself, with a fade into the canvas at each
+  edge that has more, and brings the selected pill into view (it never scrolls the
+  page). It is a `Tabs` tablist (arrows, Home, End; `aria-current="page"` on the
+  selected one). It sits on the page canvas, never on a card.
 - **Field**: label, hint and error text linked by `aria-describedby`;
   `aria-invalid` sets the error border.
 - (phase 5, FIX-173, D-375) **SecretInput**: a value that is written but never read back. It is
@@ -499,12 +509,15 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     is linked to the textarea.
   - **ListDetail**, **SubScreenHeader**, **HeaderActions** (`ui/list-detail.tsx`)
     [P5-MEMORY-2]: a list with the chosen item beside it (18 rem and the rest).
-    Below 1100 px (`NARROW_SCREEN`: the rail and a settings sub-nav leave no room
-    for two columns) they are two screens: the list, or the item under a
-    `SubScreenHeader` ("‹ <list>" and the item's actions), and the surrounding
-    settings heading and sub-nav are hidden on the item's screen. `HeaderActions`
-    puts a page's main action beside the settings heading (inline without one).
-    (P5-SKILLS-3) Crossing 1100 px never mounts the item's pane again, so a form
+    Below the surrounding chrome's cut-off they are two screens: the list, or the
+    item under a `SubScreenHeader` ("‹ <list>" and the item's actions), and the
+    chrome's own title row and second row of tabs are hidden on the item's screen.
+    The cut-off is **1024 px on an agent's Settings pages** (D-507: with no second
+    column the content is the window less the rail and padding, so from there the
+    list and an item of at least 24 rem fit; `ScreenChrome.narrowQuery`) and
+    **1100 px elsewhere** (`NARROW_SCREEN`). `HeaderActions` puts a page's main
+    action beside the chrome's title (inline without one).
+    (P5-SKILLS-3) Crossing the cut-off never mounts the item's pane again, so a form
     keeps what was typed and what was opened: `ListDetail` is one tree for both
     layouts (keyed panes), and a pane that is a card on a wide screen and bare on
     a narrow one is the same `Card` with `BARE_ON_NARROW`, never two elements.
@@ -578,60 +591,48 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
 - **Agent page (phase 5)** (P5-AGENT-2, D-200, D-201; design: the "Agent page
   redesign" canvas, boards "Chosen · Rail expanded", "Chosen · Rail collapsed"
   and "A · Phone"; its "New conversation" button is not part of the design).
-  - **Header**, one row of about 56 px from 1280 px up (it does not wrap; the
-    chat card below fills the rest of the window height); (P5-REFINE-20 batch 9) from 768 to 1279 px
-    the name, state and Settings are one row and the section switcher the row under it, so the name
-    is never squeezed out and the state ("Can't answer: no AI key" is the longest) shows whole;
-    at every width from 390 px there is no sideways scroll; on a phone one
-    compact row (back arrow, 32 px avatar, name with the state under it, the
-    44 px Status and Agent actions buttons) with the section switcher as a
-    44 px-tall strip under it, like the board "A · Phone": 40 px avatar; "Agents /" breadcrumb above
-    the name (20 px Space Grotesk 600) and `@handle` (mono, `muted`); for a hosted
-    agent the sandbox state as a `StatusDot` (labels and failure tooltip as in
-    the FIX-025 rule above); on the right the **section switcher** (segmented
-    `Tabs`, label "Agent sections") and the **Agent actions** menu (`MoreIcon`,
-    accessible name "Agent actions"; (phase 5, FIX-186, D-403) the switcher is as
-    wide as its tabs, with no empty track after the last one, and on a phone its
-    tabs share the row equally): Pause / Resume (D-407; same confirm dialog and
-    permission as before) and "Delete agent…" (the existing delete flow and
-    typed confirmation, `can_own`). The kind and Default badges move to the
-    rail's About part; a BYO agent (no rail) keeps them in the header. A paused
-    agent's banner stays full width under the header.
-  - **Sections**, in this order (names as of D-407, P5-REFINE-1; ids unchanged): **Chat** (hosted only) · **Instructions**
-    (Instructions, Memory, Skills, Tests; id `behaviour`) · **Automations** (Schedules, Webhooks, Channels,
-    Other agents; id `triggers`) · **Computer** (Computer, Terminal, (phase 5, P5-FILES) Files, Previews, (phase 5, P4-SSH) SSH; BYO: Computer: Connect) ·
-    **Apps & access** (id `access`). Pages keep today's availability rules (Terminal, Files and Previews only
-    where enabled; BYO has only Instructions, Computer: Connect and Access); a
-    section with no available page is hidden; a section with several pages shows
-    them as a segmented `Tabs` row under the header. The URL keeps
-    `?tab=<page>` with the existing page ids, so `?tab=access`, `?tab=instructions`
-    (C-506) and `?c=<id>` open what they open today; the section is derived from
-    the page. A hosted agent opens on Chat, a BYO agent on Instructions. The
-    Delete zone under Instructions is removed (Delete is in Agent actions).
-  - (phase 5, P5-POLISH-6, D-382, C-1036; **amended by D-408**, P5-REFINE-11: a labelled **Settings**
-    button replaces the … menu and the tabs become Chat · Automations · Computer) **Instructions and Apps & access
-    are configuration, reached from the … menu.** The tab bar shows **Chat · Automations · Computer** (BYO: Computer). The … menu (Agent
-    actions) lists **Instructions** ("Name, instructions, model, memory, skills"), **Apps & access** ("Apps,
-    accounts and the AI key it uses"), a separator, **Pause <Agent>** ("Pauses it until you resume
-    it") and **Delete <Agent>…** (danger). On an Instructions or Apps & access page no tab is selected, the …
-    button is marked, and under the header a back link **Chat**, the page name and one sentence name
-    the page; Instructions keeps its Instructions · Memory · Skills · Tests row. `?tab=` ids are
-    unchanged. A BYO agent (no Chat) opens on Instructions as before. This replaces the five-section order
-    above wherever they disagree.
-  - (phase 5, **P5-REFINE-11, D-408, D-409, D-415, D-407; supersedes the D-382 bullet above and the "Agent actions" menu
-    in the header paragraph**) **The Settings button and page.** The header has the tabs **Chat · Automations · Computer**
-    (BYO: Computer) and a **labelled outline button "Settings" with a gear** (accent outline while a Settings page is open; it
-    keeps its label at 390 px). It opens the **Settings page directly** (on Instructions): the page header (back link, the page's
-    name, a one-line lead: Instructions "Name, instructions, model", Apps & access "Apps, accounts and the AI key it uses",
-    Memory "What it remembers", Skills "What it knows how to do"), a **left sub-nav** (Instructions · Apps & access · Memory ·
-    Skills · Tests* · Other agents* · **Manage** (owners only), * Expert altitude) that is the segmented `Tabs` under 768 px, and
-    the page. **(D-447, FIX-213) The frame no longer ends with a danger zone:** Pause, Export and import and Delete are the owners'
-    last page, **Manage** (`?tab=manage`, lead "Pause, export, import or delete <Agent>"), with the owners' sections in
+  - **Header** (D-507, P5-NAV-1; design `docs/design/navigation/`, nav-2a), **the same on every section and in the same
+    place** (Chat, Automations, Computer, every Settings page, a BYO agent and an emergency reader): a name row — 44 px
+    avatar, the "Agents /" breadcrumb above the name (Space Grotesk 600), and on the name's line `@handle` (mono,
+    `muted`, Expert), the state, the attention chip and **Update available** when they apply (a BYO agent: its kind
+    chip) — then the **tab row**. The line wraps inside the name column when it is long ("Can't answer: no AI key" shows
+    whole; its one action is a row of its own above the tabs). On a phone the name row is compact: back to Agents, 32 px
+    avatar, name with the state under it, and the 44 px **Status** button on Chat; on a hosted agent's other sections
+    that button keeps its place, hidden from sight and assistive technology, so a long state wraps the same way and
+    nothing moves. The header has **no agent actions menu**: Pause and Delete are on Settings › Manage. A paused agent's
+    banner is full width under the header.
+  - **The tab row** is **underline** tabs (`Tabs`, label "Agent sections"), left-aligned over a line that spans the
+    content: **Chat · Automations · Computer · Settings** (gear icon). Settings is a tab like the others, not a button;
+    there is no back link and no left sub-nav anywhere on an agent page. The open tab is `aria-selected` and
+    `aria-current="page"`. A BYO agent has Computer · Settings (Settings only below Expert); an emergency reader Chat ·
+    Automations · Settings. A section with no listed page is hidden. Choosing Computer or Settings opens the page last
+    open there, else the section's first (Computer: Files, else Overview; Settings: Instructions). On a phone the four
+    tabs are one 44 px line that never wraps (it would scroll within itself if it did not fit).
+  - **The second row** appears only under **Computer** and **Settings**, when the section lists more than one page:
+    `SubTabs` (§Components), labelled "Computer pages" / "Settings pages", always one line.
+  - **Width:** every section uses the full content width; long-form panels keep a readable width inside themselves.
+  - **Addresses** are unchanged (D-507(e)): `?tab=<page>` with the existing page ids, so `?tab=memory`, `?tab=access`,
+    `?tab=instructions` (C-506) and `?c=<id>` open what they opened before; the section is derived from the page. A
+    hosted agent opens on Chat, a BYO agent on Instructions. Pages keep their availability rules (Terminal, Files,
+    Connect and Previews only where enabled; Manage for workspace owners; BYO only Instructions, Computer: Connect, Apps
+    & access and Manage; an emergency reader only Chat, Automations, Instructions, Memory and Skills), and altitude
+    hides a page from the rows only: a direct `?tab=` still opens it.
+  - **Settings pages** (D-507, was D-408's Settings button and frame): under the second row (Instructions · Apps &
+    access · Memory · Skills · Tests* · Other agents* · **Manage** (owners only), * Expert altitude), each page has a
+    **title row** — the page's name (24 px) over its one-line lead (Instructions "Name, instructions, model", Apps &
+    access "Apps, accounts and the AI key it uses", Memory "What it remembers", Skills "What it knows how to do"), with
+    the page's main action (for example **New memory**) at its right — and the page at the full content width. Memory
+    and Skills keep their list beside the item from 1024 px (`ListDetail`, §Components); below that, an item's own
+    screen hides the second row and the title row. Automations has the same title row (its name, its sentence, **New
+    automation**). Computer pages have none: the computer's state line comes first.
+  - **(D-447, FIX-213)** Pause, Export and import and Delete are the owners' last Settings page, **Manage**
+    (`?tab=manage`, lead "Pause, export, import or delete <Agent>"), with the owners' sections in
     this order: **Pause** ("Stops it until you resume it"; **Pause <Agent>**, or the paused state with **Resume <Agent>**),
     the agent's **Template** section (C-1117, only for agents made from a template or holding helper files), **Export and
     import** (Expert, hosted agents only) and **Delete** (danger style, **Delete <Agent>…**). A BYO agent's Manage has
     Pause and Delete only. Members and approvers see no Manage entry (they see the other pages read-only) and
-    `?tab=manage` lands them on the default page. `?tab=` ids are otherwise unchanged. Section ids are now `chat`,
+    `?tab=manage` lands them on the default page. `?tab=` ids are otherwise unchanged. Section ids are `chat`,
+    `triggers`, `computer` and `settings`.
   - **The header state** (D-408) is one `StatusLine`: **Can't answer: <reason>** (`no AI key`, `the key stopped working`,
     `choose a model`, from `GET /v1/agents/{agent}/answer-readiness`, C-1062; or `its computer couldn't start`; beside it
     the one action the API chose for the viewer (`fix`): **Give <Agent> the <key name>** (one click, "<Agent> can answer now",
@@ -686,7 +687,7 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     durable `no_wakeup_set` notice then reads **"A reminder is set for HH:MM."** and the button is disabled — a second
     press, by the same or another person, changes nothing.
   - *Waiting for other briefs:* "can't answer" fix button (P5-REFINE-12), the timeline feed (P5-REFINE-9), the Needs-you badge on the Agents list (C-1082, P5-REFINE-8).
-  - **Computer** (phase 5, **P5-REFINE-15, D-405, D-406, D-408, D-412, D-416**). The sub-nav is **Files · Terminal · Connect · Previews ·
+  - **Computer** (phase 5, **P5-REFINE-15, D-405, D-406, D-408, D-412, D-416**). The second row (D-507) is **Files · Terminal · Connect · Previews ·
     Details** (`?tab=files|terminal|ssh|previews|computer`; the ids are unchanged). The tab opens on **Files**; with the terminal off
     on the instance it has no Files and opens on **Overview** (the Details page under its old name, with the "isn't set up" sentence).
     Terminal, Connect and Previews are **Expert**; at Use the row is **Files · Details**.
@@ -1308,7 +1309,7 @@ here, add it here and document it.
 | Popover | `Popover`, `PopoverTrigger`, `PopoverContent` (`ui/popover.tsx`, Radix) | (phase 5, P5-AGENT-2) A small non-modal panel anchored to a control (the status rail's Needs-you items). Esc closes it and returns focus to the trigger; use `Menu` for a list of commands and `Dialog` when the content needs the whole screen. |
 | Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. (Phase 5, FIX-149, D-272) **Every dialog has a close icon**: `DialogContent` renders a × button (`aria-label="Close"`, `XIcon`, at least a 44 px target on touch) at the right of its title row. The title row stays visible while the body scrolls. Escape and a click on the scrim still dismiss. A view is shown on top of a page only as a `Dialog`, never as a page opened in another browser window (`window.open` is reserved for an OAuth provider's sign-in, C-842, and the terminal's owner-requested **Open in new window**, FIX-138; guard test). |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
-| Tabs | `Tabs` (`segmented`, `underline`) | Page-level views and the agent page strip. The agent page strip uses `overflow="menu"` (FIX-129): tabs that do not fit (measured with a `ResizeObserver`) collapse into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab; `?tab=` addressing is unchanged. The other strips (`scroll`, the default) scroll within themselves. |
+| Tabs | `Tabs` (`segmented`, `underline`), `SubTabs` | `segmented` switches a view of the same data, `underline` moves between the pages of one topic (the agent page's tab row), and `SubTabs` is the quiet second row under a tab (D-507). A strip scrolls within itself (`scroll`, the default). `overflow="menu"` (FIX-129) instead collapses what does not fit (measured with a `ResizeObserver`) into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab. The agent page no longer uses it. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `pending`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. `pending` is the one action of an amber card. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
 | Chat | `ChatPanel`, `ConversationList` + `ConversationRow`, `MessageGroup`, `ToolCallGroup`, `Composer` (in `web/src/components/chat`) | The agent Chat tab (see **Agent chat** above): a fixed-height panel with the list pane and the thread pane, sender-grouped bubbles, folded tool calls and a pinned composer. Inline approvals reuse the approval card in a compact variant. (Phase 5, P5-CHAT: `QuoteStrip`, `ReplyBar`, `JumpToLatest`, the formatting row and drafts under `components/chat/composer/`, and `components/chat/search/`, built from the phase-5 primitives listed under **Components**.) |
@@ -2939,9 +2940,9 @@ the page is one empty state.
   the list and the memory that was open. With no result no memory is shown.
 - **Deep link** (C-1177): `?tab=memory&memory=<key>` opens that memory (`&history=1` its history); choosing a row
   writes it with `replace`; leaving the page drops both.
-- **Narrow screens** (below 1100 px, M-9): the list is one screen; a row opens the memory on its own screen: "‹ Memory",
-  **Edit** and **…** (Delete) at the top, **Lock** and **History** at the bottom; the settings heading and sub-nav step
-  aside there. Edit opens the form full width.
+- **Narrow screens** (below 1024 px, M-9, D-507): the list is one screen; a row opens the memory on its own screen:
+  "‹ Memory", **Edit** and **…** (Delete) at the top, **Lock** and **History** at the bottom; the second row of tabs and
+  the page's title row step aside there. Edit opens the form full width.
 - **Emergency reader:** the list and the reading view only: no search, no actions, no history, no form.
 
 **Memory › History** (P5-MEMORY-3, D-497(d), C-1170; mockup mem-4; `memory-history.tsx`). **…** › History (on a narrow
@@ -2984,7 +2985,8 @@ agent's, the workspace's and the organization's pages.
   (C-1174), of the agent's own skill (and on the level pages) the skill's own; what its owners switched off is off and
   disabled with the reason; an app's skill reads **On** with no switch (D-455). Under the list, the sentence naming the
   one replacement there is and the link **How skills combine**.
-- **The panel.** Choosing a row opens the skill beside the list (`?skill=<id>`; below 1100 px its own screen with
+- **The panel.** Choosing a row opens the skill beside the list (`?skill=<id>`; below the `ListDetail` cut-off, 1024 px
+  on the agent's page and 1100 px on the level pages, its own screen with
   **‹ Skills**; choosing it again closes it): name, source, switch, the "Use it to …" line, **Edit** (only where the
   skill can be edited here), **Try it in chat** (agent page, a skill that applies: the chat with the draft "Use the
   “<name>” skill to "), "…" (**Duplicate as <Agent>’s own** for an inherited skill or an app skill without files,

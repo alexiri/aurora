@@ -188,6 +188,8 @@ export function AutomationsTab({
   return (
     <Section
       id="automations"
+      pageTitle
+      className="pt-1"
       title="Automations"
       description={`When ${agentName} runs: on a schedule, when something calls its address, or in a chat.`}
       actions={newButton}

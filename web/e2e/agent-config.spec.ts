@@ -3,9 +3,9 @@ import { expect, test } from "@playwright/test";
 import { serious } from "./support/axe";
 import { openRoute, overflow } from "./support/open";
 
-// P5-REFINE-11 (D-408, was P5-POLISH-6 D-382): the Settings pages open from the labelled Settings button, not tabs. No section tab is
-// selected on them, the page has a back link, its name and one sentence; old `?tab=` links open them; Instructions is one
-// card whose save bar appears only after a change. Both themes at 1280 px and 390 px, axe, no horizontal scroll, no console error.
+// P5-REFINE-11 + P5-NAV-1 (D-507, was D-408): Settings is the agent's fourth tab. Its pages are the quiet second row, each
+// with its name and one sentence (no back link); old `?tab=` links open them; Instructions is one card whose save bar
+// appears only after a change. Both themes at 1280 px and 390 px, axe, no horizontal scroll, no console error.
 
 const AGENT = "/o/acme/w/main/agents/daneel";
 
@@ -14,11 +14,11 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("the tab bar is Chat · Automations · Computer; the labelled Settings button opens Settings; Pause and Delete are on its last page, Manage, and under no other page", async ({ page }) => {
+      test("the tabs are Chat · Automations · Computer · Settings; Settings opens on Instructions; Pause and Delete are on its last page, Manage, and under no other page", async ({ page }) => {
         await openRoute(page, AGENT, scheme);
         const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
-        await expect(tabs).toHaveText(["Chat", "Automations", "Computer"]);
-        await page.getByRole("button", { name: "Settings" }).click();
+        await expect(tabs).toHaveText(["Chat", "Automations", "Computer", "Settings"]);
+        await page.getByRole("tab", { name: "Settings" }).click();
         await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
         await expect(page.getByRole("button", { name: "Pause Daneel" })).toHaveCount(0);
         await expect(page.getByRole("button", { name: "Delete Daneel…" })).toHaveCount(0);
@@ -30,10 +30,11 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("heading", { name: "Manage", level: 2 })).toBeVisible();
         await expect(page.getByRole("button", { name: "Pause Daneel" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Delete Daneel…" })).toBeVisible();
-        await expect(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { selected: true })).toHaveCount(0);
+        await expect(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab", { selected: true })).toHaveText("Settings");
+        await expect(page.getByRole("button", { name: "Chat" })).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
-        await page.getByRole("button", { name: "Chat" }).click();
+        await page.getByRole("tab", { name: "Chat" }).click();
         await expect(page.getByRole("tab", { name: "Chat", selected: true })).toBeVisible();
       });
 
@@ -83,7 +84,7 @@ for (const scheme of ["light", "dark"] as const) {
   }
 }
 
-// (FIX-212) At 768 px the sidebar and the Settings sub-nav leave the form narrow: its fields stack, and nothing pushes the
+// (FIX-212) At 768 px the sidebar leaves the form narrow: its fields stack, and nothing pushes the
 // page sideways (fixed md:w-80 columns once made it scroll 330 px; the rows now follow the form's own width).
 test.describe("Instructions at 768 px", () => {
   test.use({ viewport: { width: 768, height: 900 } });

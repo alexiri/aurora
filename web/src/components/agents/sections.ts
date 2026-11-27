@@ -27,7 +27,7 @@ export type AgentPageId =
   | "connect"
   | "access";
 
-/** (P5-REFINE-11, D-408) `settings` is the Settings page behind the labelled Settings button; it replaces Behaviour and Access. */
+/** (D-507) `settings` is the agent's fourth tab, with its pages as the second row; it replaces Behaviour and Access. */
 export type SectionId = "chat" | "triggers" | "computer" | "settings";
 
 /** Every page id, for `useTabParam` (unknown `?tab=` values fall back). */

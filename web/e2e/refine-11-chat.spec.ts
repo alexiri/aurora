@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { DEFAULT, MINE, openChat } from "./support/chat-mock";
 import { overflow } from "./support/open";
 
-// P5-REFINE-11 (D-408, D-415; UX review 5 chat-1, chat-5, chat-6, chat-8, chat-11): the Settings button, the rail's visible
+// P5-REFINE-11 (D-507, D-415; UX review 5 chat-1, chat-5, chat-6, chat-8, chat-11): the agent's tabs, the rail's visible
 // words, an archived conversation (read-only, Restore, no composer), one composer row until Aa, the phone opening the
 // conversation. Both themes at 1280 px and 390 px; axe (serious and critical) clean. The API is mocked.
 
@@ -17,10 +17,10 @@ for (const scheme of ["light", "dark"] as const) {
   test.describe(`${scheme}, 1280 px`, () => {
     test.use({ viewport: { width: 1280, height: 900 } });
 
-    test("the header has Chat · Automations · Computer and a labelled Settings button", async ({ page }) => {
+    test("the header's tabs are Chat · Automations · Computer · Settings", async ({ page }) => {
       await openChat(page, scheme, DEFAULT, `?c=${MINE.id}`);
-      await expect(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab")).toHaveText(["Chat", "Automations", "Computer"]);
-      await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();
+      await expect(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab")).toHaveText(["Chat", "Automations", "Computer", "Settings"]);
+      await expect(page.getByRole("tab", { name: "Settings" })).toBeVisible();
       expect(await serious(page)).toEqual([]);
     });
 
@@ -65,7 +65,7 @@ for (const scheme of ["light", "dark"] as const) {
       await openChat(page, scheme, DEFAULT);
       await expect(page.getByRole("log")).toBeVisible();
       await expect(page.locator("#chat-input")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();
+      await expect(page.getByRole("tab", { name: "Settings" })).toBeInViewport();
       expect(await overflow(page)).toBeLessThanOrEqual(0);
       await page.getByRole("button", { name: "Back to conversations" }).click();
       await expect(page.getByRole("navigation", { name: "Conversations" })).toBeVisible();

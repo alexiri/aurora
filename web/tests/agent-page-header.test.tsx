@@ -54,17 +54,24 @@ function renderPage() {
   );
 }
 const sectionTabs = () => within(screen.getByRole("tablist", { name: "Agent sections" })).getAllByRole("tab").map((t) => t.textContent);
-// (P5-REFINE-11, D-408) The labelled Settings button opens the Settings page directly (no menu).
-const openSettings = async () => fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+// (D-507) Settings is the fourth tab of the one header; there is no Settings button, back link or left sub-nav.
+const agentTab = (name: string) => within(screen.getByRole("tablist", { name: "Agent sections" })).getByRole("tab", { name });
+const openSettings = async () => fireEvent.click(await screen.findByRole("tab", { name: "Settings" }));
 const settingsPages = () => within(screen.getByRole("tablist", { name: "Settings pages" })).getAllByRole("tab").map((t) => t.textContent);
 
-describe("agent page frame (D-200)", () => {
-  it("opens a hosted agent on Chat with three tabs in one header line and a labelled Settings button", async () => {
+describe("agent page frame (D-200, D-507)", () => {
+  it("opens a hosted agent on Chat with one header and the tabs Chat · Automations · Computer · Settings", async () => {
     mockFetch(routes());
     renderPage();
     expect(await screen.findByTestId("chat-tab")).toBeInTheDocument();
-    expect(sectionTabs()).toEqual(["Chat", "Automations", "Computer"]);
+    expect(sectionTabs()).toEqual(["Chat", "Automations", "Computer", "Settings"]);
     expect(screen.getByRole("tab", { name: "Chat", selected: true })).toBeInTheDocument();
+    expect(agentTab("Chat")).toHaveAttribute("aria-current", "page");
+    expect(agentTab("Settings")).not.toHaveAttribute("aria-current");
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
+    // The tab row is part of the header, and the open section is its panel.
+    expect(screen.getByRole("tablist", { name: "Agent sections" }).closest("header")).not.toBeNull();
+    expect(screen.getByRole("tabpanel", { name: "Chat" })).toContainElement(screen.getByTestId("chat-tab"));
     const h1 = screen.getByRole("heading", { level: 1 });
     expect(h1.className).toContain("text-xl");
     expect(h1.textContent).toContain("Scout");
@@ -103,19 +110,21 @@ describe("agent page frame (D-200)", () => {
     expect(row.contains(screen.getByTestId("agent-state"))).toBe(false);
   });
 
-  it("opens Settings on Instructions: no tab selected, a back link, the page name and its lead, the sub-nav; the URL keeps the page id", async () => {
+  it("opens the Settings tab on Instructions: its second row, the page name and lead, no back link; the URL keeps the page id", async () => {
     mockFetch(routes());
     renderPage();
     await screen.findByTestId("chat-tab");
     await openSettings();
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
     expect(window.location.search).toBe("?tab=instructions");
-    expect(within(screen.getByRole("tablist", { name: "Agent sections" })).queryByRole("tab", { selected: true })).toBeNull();
-    expect(screen.getByRole("button", { name: "Settings" })).toHaveAttribute("aria-current", "page");
+    expect(agentTab("Settings")).toHaveAttribute("aria-selected", "true");
+    expect(agentTab("Settings")).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("tabpanel", { name: "Settings" })).toContainElement(screen.getByTestId("instructions-tab"));
     expect(screen.getByRole("heading", { name: "Instructions", level: 2 })).toBeInTheDocument();
     expect(screen.getByText("Name, instructions, model")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
-    // At Set up and Expert (the switch is on in this test) the sub-nav lists every page.
+    expect(screen.queryByRole("button", { name: "Chat" })).toBeNull();
+    expect(within(screen.getByRole("tablist", { name: "Settings pages" })).getByRole("tab", { name: "Instructions" })).toHaveAttribute("aria-current", "page");
+    // At Set up and Expert (the switch is on in this test) the second row lists every page.
     expect(settingsPages()).toEqual(["Instructions", "Apps & access", "Memory", "Skills", "Tests", "Other agents", "Manage"]);
     const pages = screen.getByRole("tablist", { name: "Settings pages" });
     fireEvent.click(within(pages).getByRole("tab", { name: "Memory" }));
@@ -125,8 +134,8 @@ describe("agent page frame (D-200)", () => {
     fireEvent.click(within(pages).getByRole("tab", { name: "Apps & access" }));
     expect(await screen.findByTestId("access-tab")).toBeInTheDocument();
     expect(screen.getByText("Apps, accounts and the AI key it uses")).toBeInTheDocument();
-    // Leaving and coming back with the Settings button returns to the page last open; the back link returns to Chat.
-    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    // Leaving by the Chat tab and coming back by the Settings tab returns to the page last open.
+    fireEvent.click(agentTab("Chat"));
     expect(await screen.findByTestId("chat-tab")).toBeInTheDocument();
     await openSettings();
     expect(await screen.findByTestId("access-tab")).toBeInTheDocument();
@@ -145,15 +154,47 @@ describe("agent page frame (D-200)", () => {
       mockFetch(routes());
       renderPage();
       expect(await screen.findByTestId(testId)).toBeInTheDocument();
-      // A Settings page: no tab is selected, the page has its own title and the Settings button is highlighted.
+      // A Settings page: the Settings tab and the page's pill are selected, and the page has its own title.
       expect(screen.getByRole("heading", { name: title, level: 2 })).toBeInTheDocument();
-      expect(within(screen.getByRole("tablist", { name: "Agent sections" })).queryByRole("tab", { selected: true })).toBeNull();
+      expect(agentTab("Settings")).toHaveAttribute("aria-selected", "true");
       expect(screen.getByRole("tab", { name: title, selected: true })).toBeInTheDocument();
       cleanup();
     }
   });
 
-  it("opens Chat for a ?c= link, and a BYO agent on Instructions with Instructions · Computer · Apps & access", async () => {
+  it("(FIX-236) an emergency reader gets Chat · Automations · Settings with the pages they may read, and no write control in the frame", async () => {
+    window.history.replaceState(null, "", "/?tab=memory");
+    mockFetch(
+      routes(
+        { "GET /v1/workspaces/w1": () => json(200, { id: "w1", org_id: "o1", my_role: null, emergency_reader: true, timezone: "Europe/Zurich" }) },
+        { ...agent, needs_update: true },
+      ),
+    );
+    renderPage();
+    expect(await screen.findByTestId("memory-tab")).toBeInTheDocument();
+    expect(sectionTabs()).toEqual(["Chat", "Automations", "Settings"]);
+    expect(settingsPages()).toEqual(["Instructions", "Memory", "Skills"]);
+    expect(screen.queryByRole("button", { name: "Status" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Update available/ })).toBeNull();
+    expect(screen.queryByTestId("agent-state")).toBeNull();
+    // The header holds its two links and the tabs, nothing that acts.
+    expect(within(screen.getByRole("banner", { hidden: true })).queryByRole("button")).toBeNull();
+  });
+
+  it("the Computer tab has the same quiet second row, one line that never collapses into a More menu", async () => {
+    window.history.replaceState(null, "", "/?tab=details");
+    mockFetch(routes({ "GET /v1/instance": () => json(200, { features: { terminal: true, ssh: true } }) }));
+    renderPage();
+    const row = await screen.findByRole("tablist", { name: "Computer pages" });
+    expect(agentTab("Computer")).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(within(row).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Files", "Terminal", "Connect", "Details"]));
+    expect(within(row).getByRole("tab", { name: "Details" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("button", { name: /^More computer/ })).toBeNull();
+    // Computer pages have no title row of their own: the state line comes straight under the row.
+    expect(screen.queryByRole("heading", { level: 2, name: "Details" })).toBeNull();
+  });
+
+  it("opens Chat for a ?c= link, and a BYO agent on Instructions with the tabs Computer · Settings", async () => {
     window.history.replaceState(null, "", "/?c=conv-1");
     mockFetch(routes());
     renderPage();
@@ -163,7 +204,9 @@ describe("agent page frame (D-200)", () => {
     mockFetch(routes({}, { ...agent, kind: "byo", is_default: true }));
     renderPage();
     expect(await screen.findByTestId("instructions-tab")).toBeInTheDocument();
-    expect(sectionTabs()).toEqual(["Computer"]);
+    expect(sectionTabs()).toEqual(["Computer", "Settings"]);
+    expect(agentTab("Settings")).toHaveAttribute("aria-selected", "true");
+    expect(settingsPages()).toEqual(["Instructions", "Apps & access", "Manage"]);
     // Without a rail one chip stays in the header, in a person's words: never the raw kind, never "Default".
     expect(screen.getByText("Came with this workspace")).toBeInTheDocument();
     expect(screen.queryByText("byo")).toBeNull();

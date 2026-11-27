@@ -63,7 +63,7 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("region", { name: "Unsaved changes" })).toBeVisible();
         await shot(page, `mem-2-edit-${width}-${scheme}`);
         await clean(page, "edit");
-        // Leaving by the settings sub-nav asks first.
+        // Leaving by the Settings tab's second row asks first.
         await page.getByRole("tablist", { name: "Settings pages" }).getByRole("tab", { name: "Skills" }).click();
         await page.getByRole("dialog", { name: "Leave without saving?" }).getByRole("button", { name: "Keep editing" }).click();
         await form.getByRole("tab", { name: "Preview" }).click();
@@ -127,7 +127,7 @@ for (const scheme of ["light", "dark"] as const) {
       const article = page.getByRole("article", { name: "Aurora migration project" });
       await expect(article).toBeInViewport();
       await expect(list).toHaveCount(0);
-      // The settings header and sub-nav step aside on the memory's own screen.
+      // The title row and the second row step aside on the memory's own screen.
       await expect(page.getByRole("tablist", { name: "Settings pages" })).toBeHidden();
       for (const name of ["Memory", "Edit", "More actions", "Lock", "History"]) {
         await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
