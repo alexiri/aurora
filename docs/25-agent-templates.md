@@ -170,7 +170,7 @@ service-monitor/
     on-call-notes.md   # optional starting memory; front matter key + optional locked
   skills/
     triage-alert/
-      SKILL.md         # front matter name + use-it-when; then the body
+      SKILL.md         # front matter name + use-it-when (+ optional title); then the body
       severity.py      # the skill's own files
   helpers/
     alert-summary.sh   # copied byte for byte; projected read-only at .aurora/helpers/
@@ -290,8 +290,11 @@ once across all of them:
 - **Its own skills**, `skills/<name>/SKILL.md` plus that skill's other files
   (at most 25 skills): front matter `name` (equal to the directory name, the
   skill-name rules of `10 §Skills`, never `aurora-*`) and `use-it-when` (one
-  line — this becomes the skill's description, so make it a clear sentence);
-  then the body. The library's file rules apply: 64 KiB per file, at most 50
+  line — this becomes the skill's description, so make it a clear sentence),
+  and optionally `title` (the name people see, one line of at most 80
+  characters; without it the folder name is shown). An update keeps a name the
+  person gave the skill and takes the template's only when the skill has none.
+  Then the body. The library's file rules apply: 64 KiB per file, at most 50
   files per skill, depth ≤ 4.
 - **Library references** (`library:` in `template.yaml`): a git address (the
   same rules as the skill library's — a page URL is accepted and normalized),

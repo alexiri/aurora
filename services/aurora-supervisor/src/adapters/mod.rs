@@ -9,6 +9,7 @@ pub mod opencode;
 pub mod pi;
 pub(crate) mod provider_error;
 pub mod render;
+pub mod skill_use;
 
 use std::sync::Arc;
 

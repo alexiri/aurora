@@ -346,12 +346,13 @@ fn exists() -> ApiError {
     )
 }
 
-/// The read before saving (C-1122, C-1125): resolve the ref and list the tree at `path`.
+/// The read before saving (C-1122, C-1125): resolve the ref and read the catalogue at `path`
+/// (the tree and the `SKILL.md` files), so the stored library says what it offers (C-1176).
 async fn probe(
     state: &AppState,
     src: &SourceAddr,
     token: Option<&Token>,
-) -> Result<Resolved, ApiError> {
+) -> Result<(Resolved, Offered), ApiError> {
     // (SEC-148) One of the replica's read permits, under the overall read deadline.
     state
         .library
@@ -364,13 +365,39 @@ async fn probe(
                 .resolve_full(src.reference.as_deref())
                 .await
                 .map_err(|e| unreachable_on_create(&e))?;
-            reader
-                .tree(&resolved.sha)
+            let listing = catalogue(&reader, &src.path, resolved.sha.clone())
                 .await
                 .map_err(|e| unreachable_on_create(&e))?;
-            Ok(resolved)
+            let offered = Offered::of(&listing.items);
+            Ok((resolved, offered))
         })
         .await
+}
+
+/// (C-1176) How many skill folders of a listing can be added, and how many cannot.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Offered {
+    pub offered: i32,
+    pub unavailable: i32,
+}
+
+impl Offered {
+    pub(crate) fn of(items: &[ListItem]) -> Self {
+        let valid = items.iter().filter(|i| i.valid).count();
+        let n = |v: usize| i32::try_from(v).unwrap_or(i32::MAX);
+        Self {
+            offered: n(valid),
+            unavailable: n(items.len() - valid),
+        }
+    }
+
+    pub(crate) async fn store(
+        self,
+        conn: &mut sqlx::PgConnection,
+        library: Uuid,
+    ) -> Result<(), DbError> {
+        repo::set_offered(conn, library, self.offered, self.unavailable).await
+    }
 }
 
 /// Creates a library of `org`, or (`None`) an instance library (D-449; the caller has been
@@ -409,7 +436,8 @@ pub async fn create(
     }
     // (SEC-148) A create reads the repository like a check: the same per-person rate.
     super::routes::check_rate(caller, state)?;
-    let head = probe(state, &src, token.as_ref()).await?.sha;
+    let (resolved, offered) = probe(state, &src, token.as_ref()).await?;
+    let head = resolved.sha;
     let id = Uuid::now_v7();
     // Seal first; a failed insert deletes the sealed value again.
     let token_ref = match &token {
@@ -449,6 +477,10 @@ pub async fn create(
             e => e.into(),
         })?;
         repo::record_head(&mut tx, row.id, &head).await?;
+        offered.store(&mut tx, row.id).await?;
+        let mut row = row;
+        row.skills_offered = Some(offered.offered);
+        row.skills_unavailable = Some(offered.unavailable);
         let mut meta = json!({"label": row.label, "url": row.url, "repo": row.repo,
             "ref": row.reference, "path": row.path});
         if token.is_some() {
@@ -604,6 +636,9 @@ pub async fn view(state: &AppState, row: &LibraryRow, how: View) -> Result<Skill
             skill_counts: None,
             pending_updates: None,
             orgs_using: None,
+            // (C-1176) The picker shows how many skills a library offers.
+            skills_offered: row.skills_offered,
+            skills_unavailable: row.skills_unavailable,
             created_at: None,
         });
     }
@@ -660,6 +695,8 @@ pub async fn view(state: &AppState, row: &LibraryRow, how: View) -> Result<Skill
         }),
         pending_updates: Some(pending),
         orgs_using,
+        skills_offered: row.skills_offered,
+        skills_unavailable: row.skills_unavailable,
         created_at: Some(row.created_at),
     })
 }
@@ -782,6 +819,7 @@ pub async fn patch(
     // A change of url, ref, path or token re-reads (with the token that will be stored) and
     // never touches stored skills; a failed read keeps everything as it was.
     let head;
+    let mut offered = None;
     if source_changed || new_token.is_some() || token_change == Some("removed") {
         let Some(u) = &effective_url else {
             return Err(bad("/url", "enter the repository's git address first"));
@@ -806,7 +844,9 @@ pub async fn patch(
         };
         // (SEC-148) A patch that re-reads is a read like a check: the same per-person rate.
         super::routes::check_rate(caller, state)?;
-        head = probe(state, &src, token).await?.sha;
+        let (resolved, found) = probe(state, &src, token).await?;
+        head = resolved.sha;
+        offered = Some(found);
         p.head_sha = Some(&head);
     }
     let sealed = match &new_token {
@@ -833,6 +873,12 @@ pub async fn patch(
             })?;
         if let Some(h) = p.head_sha {
             repo::record_head(&mut tx, id, h).await?;
+        }
+        let mut row = row;
+        if let Some(found) = offered {
+            found.store(&mut tx, id).await?;
+            row.skills_offered = Some(found.offered);
+            row.skills_unavailable = Some(found.unavailable);
         }
         let mut meta = json!({"change": changed, "label": row.label, "url": row.url,
             "ref": row.reference, "path": row.path});
@@ -1041,7 +1087,11 @@ pub(crate) struct Catalogue {
 
 /// Reads the tree at `sha` and the `SKILL.md` of the first `LIBRARY_BROWSE_MAX` skill
 /// directories (one blob request).
-async fn catalogue(reader: &Reader<'_>, path: &str, sha: String) -> Result<Catalogue, ReadError> {
+pub(crate) async fn catalogue(
+    reader: &Reader<'_>,
+    path: &str,
+    sha: String,
+) -> Result<Catalogue, ReadError> {
     let entries = reader.tree(&sha).await?;
     let cands = content::assemble(path, &entries);
     let truncated = cands.len() > limits::LIBRARY_BROWSE_MAX;
@@ -1078,6 +1128,10 @@ async fn read_listing(state: &AppState, row: &LibraryRow) -> Result<Arc<Listing>
     let cat = catalogue(&reader, &row.path, sha)
         .await
         .map_err(|e| read_failure(&e))?;
+    {
+        let mut c = state.pool.acquire().await.map_err(DbError::from)?;
+        Offered::of(&cat.items).store(&mut c, row.id).await?;
+    }
     let l = Arc::new(Listing {
         commit_sha: cat.commit_sha,
         items: cat.items,

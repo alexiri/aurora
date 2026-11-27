@@ -3,7 +3,7 @@
 //! is a person's act with the tier's write authority (agent `can_use`, workspace `can_own`, org
 //! owner/admin: SEC-56 unchanged); approve, reject and detach are session-only.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use aurora_core::ApiError;
 use aurora_core::limits;
@@ -27,7 +27,7 @@ use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
 use crate::domains::skill_libraries::content as lib_content;
 use crate::domains::skill_libraries::content::{self, LoadedFile, LoadedSkill};
-use crate::domains::skill_libraries::dto::TierRef;
+use crate::domains::skill_libraries::dto::{BlockedReason, BlockedSkill, LibraryBudget, TierRef};
 use crate::domains::skill_libraries::service as lib_service;
 use crate::http::auth::{Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
@@ -160,6 +160,99 @@ async fn lock_budget(conn: &mut PgConnection, org: Uuid, owner: Owner) -> Result
         .await
         .map_err(DbError::from)?;
     Ok(())
+}
+
+// ---- what cannot be added (C-1176) ----------------------------------------------------------
+
+/// What one tier holds, as far as adding a library skill to it goes: the folder names taken and
+/// the room left in its budget.
+pub struct TierRoom {
+    owner: Owner,
+    names: HashSet<String>,
+    used_bytes: usize,
+    skills: usize,
+    limits: Limits,
+}
+
+/// Reads the room of the tier `owner` of `org`. The caller has established that the person may
+/// see that tier's skills.
+pub async fn tier_room(state: &AppState, org: Uuid, owner: Owner) -> Result<TierRoom, ApiError> {
+    let mut c = state.pool.acquire().await.map_err(DbError::from)?;
+    let rows = match (owner.agent, owner.workspace) {
+        (Some(a), _) => skills_repo::list_agent(&mut c, a).await?,
+        (None, Some(w)) => skills_repo::list_workspace(&mut c, w).await?,
+        (None, None) => skills_repo::list_org(&mut c, org).await?,
+    };
+    let (used_bytes, skills) = usage(&mut c, org, owner, None).await?;
+    Ok(TierRoom {
+        owner,
+        names: rows.into_iter().map(|r| r.name).collect(),
+        used_bytes,
+        skills,
+        limits: limits_of(state, owner),
+    })
+}
+
+impl TierRoom {
+    #[must_use]
+    pub fn budget(&self) -> LibraryBudget {
+        LibraryBudget {
+            bytes: self.limits.bytes,
+            used: self.used_bytes,
+        }
+    }
+
+    /// Why the listed skill cannot be added to this tier, if it cannot: broken, then its name
+    /// taken, then over the budget. The size is the listing's (an estimate until the files are
+    /// read); the add checks again.
+    #[must_use]
+    pub fn blocked(
+        &self,
+        name: &str,
+        valid: bool,
+        reason: Option<&str>,
+        size: u64,
+    ) -> Option<BlockedSkill> {
+        let blocked = |reason, message: String| Some(BlockedSkill { reason, message });
+        if !valid {
+            return blocked(
+                BlockedReason::Invalid,
+                reason.unwrap_or("this skill cannot be added").to_owned(),
+            );
+        }
+        if self.names.contains(name) {
+            let holder = match tier_name(self.owner) {
+                "agent" => "This agent",
+                "workspace" => "This workspace",
+                _ => "The organization",
+            };
+            return blocked(
+                BlockedReason::NameTaken,
+                format!("{holder} already has a skill named {name}."),
+            );
+        }
+        let size = usize::try_from(size).unwrap_or(usize::MAX);
+        if self.used_bytes.saturating_add(size) > self.limits.bytes {
+            return blocked(
+                BlockedReason::Budget,
+                format!(
+                    "Too large for the room left for library skills here ({} of {} characters \
+                     used).",
+                    self.used_bytes, self.limits.bytes
+                ),
+            );
+        }
+        if self.skills + 1 > self.limits.skills {
+            return blocked(
+                BlockedReason::Budget,
+                format!(
+                    "No more library skills fit here ({} of {} used).",
+                    self.skills, self.limits.skills
+                ),
+            );
+        }
+        None
+    }
 }
 
 // ---- add ------------------------------------------------------------------------------------

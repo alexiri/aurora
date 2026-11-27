@@ -190,6 +190,7 @@ pub(crate) fn hash_content() -> TemplateContent {
         }],
         skills: vec![TemplateSkill {
             name: "what-is-on".into(),
+            title: None,
             use_it_when: "The person asks what is on.".into(),
             body: "Look at the calendar.".into(),
             files: vec![TemplateFile {

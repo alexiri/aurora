@@ -18,6 +18,7 @@
 
 use serde_json::{Value, json};
 
+use crate::adapters::skill_use;
 use crate::harness::HarnessEvent;
 
 const SUMMARY_MAX: usize = 120;
@@ -169,10 +170,20 @@ impl StreamMapper {
         if call.is_empty() {
             return;
         }
+        // (C-1175) OpenCode's own `skill` tool, a `read` of a skill's `SKILL.md`, or a read
+        // command in `bash`.
+        let input = state.get("input");
+        let skill = match name.as_str() {
+            "skill" => skill_use::of_skill_tool(input, &["name"]),
+            "read" => skill_use::of_read(input, super::SKILLS_DIR),
+            "bash" => skill_use::of_shell(input, super::SKILLS_DIR),
+            _ => None,
+        };
         out.events.push(HarnessEvent::ToolStarted {
             call_id: call.to_owned(),
             summary: summary(&name, &state),
             name,
+            skill,
         });
         let ok = state.get("status").and_then(Value::as_str) == Some("completed");
         let text = state
@@ -345,6 +356,47 @@ mod tests {
             all.push(r);
         }
         (ev, all)
+    }
+
+    /// (C-1175) OpenCode's `skill` tool, a `read` of a skill's `SKILL.md` and a `bash` read.
+    #[test]
+    fn loading_a_skill_names_it() {
+        let call = |id: &str, tool: &str, input: &str| {
+            format!(
+                r#"{{"type":"tool_use","sessionID":"ses_a","part":{{"type":"tool","tool":"{tool}","callID":"{id}","state":{{"status":"completed","input":{input},"output":"x"}}}}}}"#
+            )
+        };
+        let lines = [
+            call("a", "skill", r#"{"name":"pdf"}"#),
+            call(
+                "b",
+                "read",
+                r#"{"filePath":"/workspace/.agents/skills/triage/SKILL.md"}"#,
+            ),
+            call(
+                "c",
+                "bash",
+                r#"{"command":"cat .agents/skills/notes/SKILL.md"}"#,
+            ),
+            call("d", "aurora_skill", r#"{"name":"pdf"}"#),
+        ];
+        let (ev, _) = run(&lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let got: Vec<Option<String>> = ev
+            .iter()
+            .filter_map(|e| match e {
+                HarnessEvent::ToolStarted { skill, .. } => Some(skill.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                Some("pdf".into()),
+                Some("triage".into()),
+                Some("notes".into()),
+                None
+            ]
+        );
     }
 
     // Lines recorded from OpenCode 1.19.6 (trimmed: the snapshot hashes and timestamps are dropped).

@@ -856,11 +856,11 @@ Rule: `05 §Idempotency keys`, `10 §Turns` (create), `13 §4.1`, `§5.1` step 1
 
 Rule: `10 §Skills`, `05 §Memory, skills, schedules, webhooks, links`, `04 §Permission matrix`, `12 §Tools` (skills), `12 §Sync protocol`, `16 §W6`, `03 §Planned changes` (`skills`), `14` (agent Skills tab, workspace Skills page, org Skills), SEC-56. Reserved numbers C-330..C-339 (reserved, unused: C-336..C-339). The phase-0 `Skill` DTO (`services/aurora-api/src/domains/skills/dto.rs`) has no contract section; the shape below is that DTO plus the phase-3 fields.
 
-- C-330 **`Skill`** = `{ id: Uuid, tier: "agent" | "workspace" | "org", scope: "agent" | "workspace" | "organization", agent_id: Uuid | null, workspace_id: Uuid | null, org_id: Uuid, name: string, description: string, body: string, enabled: bool, files: { path: string, size: int, executable: bool }[], total_size: int, overridden_in: { agent: { id: Uuid, handle: string, name: string }, skill_id: Uuid }[] | null, created_at: Timestamp, updated_at: Timestamp }`. `tier` is new (`05`); the existing `scope` is kept for compatibility and gains `"workspace"` (D-107). `workspace_id` is non-null only for workspace skills. `overridden_in` (D-107: the workspace Skills page lists "any agent-level skill that overrides it", `14`) is non-null only for a workspace-tier skill: the **enabled** agent-tier skills of the same name in that workspace (agents it does not reach); `null` for agent and org skills.
+- C-330 **`Skill`** = `{ id: Uuid, tier: "agent" | "workspace" | "org", scope: "agent" | "workspace" | "organization", agent_id: Uuid | null, workspace_id: Uuid | null, org_id: Uuid, name: string, description: string, body: string, enabled: bool, files: { path: string, size: int, executable: bool }[], total_size: int, overridden_in: { agent: { id: Uuid, handle: string, name: string }, skill_id: Uuid }[] | null, created_at: Timestamp, updated_at: Timestamp }`. `tier` is new (`05`); the existing `scope` is kept for compatibility and gains `"workspace"` (D-107). `workspace_id` is non-null only for workspace skills. `overridden_in` (D-107: the workspace Skills page lists "any agent-level skill that overrides it", `14`) is non-null only for a workspace-tier skill: the **enabled** agent-tier skills of the same name in that workspace (agents it does not reach); `null` for agent and org skills. (P5-SKILLS-1) also `title: string | null` (C-1173) and `used_by_agents: int | null` (C-1175).
 - C-331 **`GET /v1/workspaces/{ws}/skills`** (S/K, `can_use`; 404 invisible) → 200 `Page<Skill>` of the workspace's skills, ordered by `name` (as the other tier lists). **`POST /v1/workspaces/{ws}/skills`** (S/K, `can_own`, org owners/admins included; a plain member gets 403 `forbidden`) body `CreateSkillRequest { name, description, body, enabled?: bool }` (same as the other tiers) → 201 `Skill`. Errors are those of the other tiers: 400 `invalid_request` (`details.fields`: name not kebab-case or > 64 chars, reserved `aurora-*`, description not one line or > 500 chars), 422 `skill_too_large` (body > `SKILL_BODY_MAX` or body + files > `SKILL_TOTAL_MAX`), **409 `skill_exists`** for a duplicate name in the workspace tier (D-107: the code the agent and org tiers already answer). The same name may exist in other tiers.
 - C-332 **Item routes** (`GET/PATCH/DELETE /v1/skills/{id}`, `PUT/DELETE /v1/skills/{id}/files/{path}`; `GET` of a file added by C-1099): unchanged shapes; for a workspace skill, read needs `can_use` on its workspace and write needs `can_own` (403 `forbidden` for a member, 404 when the workspace is invisible). Every change to a workspace skill or its files bumps `workspaces.home_sync_generation` in the same transaction. Audit actions as for the other tiers (`skill.create|update|delete`), with the skill's workspace id set.
-- C-333 **`GET /v1/agents/{agent}/skills/effective`** (S/K, `can_use`; 404 invisible) → 200 `{ items: EffectiveSkill[], shadowed: ShadowedSkill[] }`. `EffectiveSkill = { skill: Skill, tier, enabled: true, shadows: { id: Uuid, tier }[] }`: one per name of the set the agent receives (highest *enabled* tier wins, precedence agent > workspace > org), ordered by `name`; `shadows` lists every lower-tier skill of that name (enabled or not). `ShadowedSkill = { skill: Skill, tier, enabled: bool, shadowed_by: { id: Uuid, tier } | null }`: every other skill of the three tiers that reaches the agent and is not in `items`; `shadowed_by` is the winner of its name, `null` for a disabled skill whose name has no enabled skill (D-107; `enabled` is always `true` in `items` because a disabled skill never wins). For a BYO agent the route answers the same set (nothing is projected).
-- C-334 **Agent tools** (`12 §Tools`, model-facing): `skill_list {}` returns `{ skills: [{ name, tier, scope, description, enabled, files, shadows: ("workspace" | "org")[] }] }` — the effective set plus the agent's own disabled agent-tier skills (so the agent can still find and re-enable them); `shadows` names the tiers an agent skill overrides (empty otherwise). `skill_get {name}` resolves the name in the effective set (`tier` added to its result). `skill_create`/`skill_update`/`skill_delete` act on the agent tier only: `update`/`delete` of a name that exists only in the workspace or org tier is a tool error ("<name> is a workspace (organization) skill and is read-only; ask an owner") and changes nothing; `skill_create` with a name taken in another tier creates an agent skill that shadows it.
+- C-333 **`GET /v1/agents/{agent}/skills/effective`** (S/K, `can_use`; 404 invisible) → 200 `{ items: EffectiveSkill[], shadowed: ShadowedSkill[] }`. `EffectiveSkill = { skill: Skill, tier, enabled: true, shadows: { id: Uuid, tier }[] }`: one per name of the set the agent receives (highest *enabled* tier wins, precedence agent > workspace > org), ordered by `name`; `shadows` lists every lower-tier skill of that name (enabled or not). `ShadowedSkill = { skill: Skill, tier, enabled: bool, shadowed_by: { id: Uuid, tier } | null }`: every other skill of the three tiers that reaches the agent and is not in `items`; `shadowed_by` is the winner of its name, `null` for a disabled skill whose name has no enabled skill (D-107; `enabled` is always `true` in `items` because a disabled skill never wins). For a BYO agent the route answers the same set (nothing is projected). (P5-SKILLS-1) A skill turned off for the agent counts as not enabled for it; entries gain `off_for_agent`, `usage`, and `shadowed` entries `reason` (C-1174, C-1175).
+- C-334 **Agent tools** (`12 §Tools`, model-facing): `skill_list {}` returns `{ skills: [{ name, tier, scope, description, enabled, files, shadows: ("workspace" | "org")[] }] }` — the effective set plus the agent's own disabled agent-tier skills (so the agent can still find and re-enable them); `shadows` names the tiers an agent skill overrides (empty otherwise). `skill_get {name}` resolves the name in the effective set (`tier` added to its result). `skill_create`/`skill_update`/`skill_delete` act on the agent tier only: `update`/`delete` of a name that exists only in the workspace or org tier is a tool error ("<name> is a workspace (organization) skill and is read-only; ask an owner") and changes nothing; `skill_create` with a name taken in another tier creates an agent skill that shadows it. (P5-SKILLS-1) summaries carry `title`; `skill_create`/`skill_update` take an optional `title` (C-1173); a skill off for the agent is not listed or returned (C-1174); `skill_get` of the instructions counts as a use (C-1175).
 - C-335 **Projection** (no wire change): home sync `skills` parts carry the effective set only (`16 §W6`, unchanged format); workspace skills reach hosted agents of that workspace only.
 
 ### Phase 3 — RFE-022 (plugin major upgrade: `impact`, `reauth_required`, D-65)
@@ -2378,7 +2378,7 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
 Amends C-570..C-579 (P4-GSL). Every route still answers 404 `skill_libraries_disabled` while `skills.library.enabled` is false. Everything read from a repository stays untrusted text (C-571). Briefs: `docs/tasks/P5-SKLIB-1.md` (C-1122..C-1127), `P5-SKLIB-2.md` (C-1128), `P5-SKLIB-3.md` (C-1129).
 
 - C-1122 **`SkillLibrary`, create and patch by URL** (P5-SKLIB-1, D-448; amends C-570, the `05` library rows).
-  - `SkillLibrary = { id, scope: "org"|"instance", org_id|null, label, status: "active"|"paused"|"error"|"over_budget", url|null, repo, ref|null, path, token_set, token_updated_at|null, last_head_sha|null, last_refresh_at|null, last_error|null, skill_counts: { agent, workspace, org }, pending_updates, created_at }`. `url` is the stored clone URL (null only for a library migrated without one, C-1127); `repo` is its display form `host/path` without `.git` (kept for compatibility, also what `skills.library_repo` stores at add); `token_set` and `token_updated_at` say whether a token is saved, **never** the token. `app_id` and `connection` are removed. People who are not managers keep getting only `id`, `label`, `status` and `scope` (every other field null), as in C-570.
+  - `SkillLibrary = { id, scope: "org"|"instance", org_id|null, label, status: "active"|"paused"|"error"|"over_budget", url|null, repo, ref|null, path, token_set, token_updated_at|null, last_head_sha|null, last_refresh_at|null, last_error|null, skill_counts: { agent, workspace, org }, pending_updates, created_at }` (P5-SKILLS-1 adds `skills_offered|null`, `skills_unavailable|null`, also in the members' view; C-1176). `url` is the stored clone URL (null only for a library migrated without one, C-1127); `repo` is its display form `host/path` without `.git` (kept for compatibility, also what `skills.library_repo` stores at add); `token_set` and `token_updated_at` say whether a token is saved, **never** the token. `app_id` and `connection` are removed. People who are not managers keep getting only `id`, `label`, `status` and `scope` (every other field null), as in C-570.
   - `POST /v1/orgs/{org}/skill-libraries` `{ label, url, ref?, path?, token?, token_username? }` → 201. The URL is normalized by C-1123 (a page URL fills `ref` and `path` when those fields are absent; when present, the fields win). Creation reads the repository once (C-1125: resolve the ref, list the tree at `path`); failure → 422 `library_unreachable` with the sanitized reason, nothing stored. `token` 1..1024 printable ASCII, no whitespace; `token_username` 1..100 `[A-Za-z0-9._@-]`, default `x-access-token`; a `token_username` without `token` → 400 `invalid_request` (field errors answer 400 here as everywhere in this API; the reader's failures are 422). 409 `library_exists` now means the same normalized `url` + `ref` + `path` already exists in that organization (labels stay unique too, `skill_libraries_label_uq`).
   - `PATCH /v1/skill-libraries/{id}` `{ label?, status?: "active"|"paused", ref? ("" clears), path?, token?: string|null, token_username?, url? }`. `token: "<value>"` sets or replaces (re-reads the repository with it first: 422 `library_unreachable` keeps the old token), `token: null` removes it; omitted leaves it. `url` is accepted **only** while the stored `url` is null (409 `library_url_fixed` otherwise: a different repository is a new library). A change of url, ref, path or token re-reads and never touches stored skills.
   - Errors removed: `connection_not_org_scoped`, `app_without_library`. Added: 422 `library_url_invalid` (`details.reason`: `not_https`, `ssh_url`, `credentials_in_url`, `query_or_fragment`, `not_a_repository_path`, `too_long`), 409 `library_url_fixed`.
@@ -2940,29 +2940,58 @@ names, and copy the route rows into `05`, the tables into `03`, the rules into `
   `transcript_events` rows, readable by whoever may read the conversation, and replayed like the others. The
   `memory_save` result also returns `title`, and a refusal keeps its code (`tool_failed: memory_locked: …`) instead of
   a bare failure.
-- C-1173 **A skill's display name** (D-498; P5-SKILLS-1; migration `20261201000289`). `Skill` gains `title: string|null`
-  (at most 80 characters, plain text). Create and update accept it; the folder `name` is still the immutable slug.
-  Library and app skills have `title: null`. Export, import and templates carry `title` when set. The projected
-  `SKILL.md` front matter is unchanged (`name`, `description`).
-- C-1174 **Turn an inherited skill off for one agent** (D-499; P5-SKILLS-1; same migration). `PUT
-  /v1/agents/{agent}/skills/{skill_id}/off` (no body) and `DELETE …/off`, both idempotent, for anyone who may edit the
-  agent; `skill_id` must be a workspace or organization skill that reaches the agent (404 otherwise; 409
-  `skill_not_inherited` for the agent's own or an app skill). Table `agent_skills_off (agent_id, skill_id, set_by,
-  set_at)`, cascading on either. `EffectiveSkill` gains `off_for_agent: bool` and the shadow reason `off_for_agent`;
-  the effective set, the projection (`hosted::skills` must apply it, or use `service::effective`), the skill tools and
-  the eval fingerprint honour it; the agent's home sync is bumped; audit `skill.agent_off` / `skill.agent_on`.
-- C-1175 **Skill usage** (D-505; P5-SKILLS-1; migration `20261201000290`). Table `skill_uses (skill_id, agent_id,
-  conversation_id, turn_id, at)`, kept 90 days. Written by the `skill_get` tool and by a new optional field `skill`
-  (the folder name) on the supervisor's `tool.started` report (`16`) when the harness's own skill tool runs or a file
-  `<skills dir>/<name>/SKILL.md` is read; the API maps the name to the skill that reached the agent at that time.
-  `EffectiveSkill` (the agent's view) gains `usage: { week: integer, last: { at, conversation: ConversationRef|null }|null }`;
-  workspace and organization `Skill` lists gain `used_by_agents: integer` (distinct agents, last 30 days).
-- C-1176 **Libraries say what they offer and what cannot be added** (P5-SKILLS-1; skill-5, skill-6). `SkillLibrary`
-  gains `skills_offered: integer|null` (valid skills at the last check) and `skills_unavailable: integer|null`.
-  `LibrarySkillItem` gains `blocked: { reason: "name_taken" | "budget" | "invalid", message }|null` for the tier the
-  browse is for (`?tier=agent&agent=…`, `?tier=workspace&workspace=…`, `?tier=organization`); `valid`/`reason` stay.
-  `GET /v1/skill-libraries/{id}/skills` returns `budget: { bytes, used }` for that tier, replacing the dashboard's
-  hard-coded numbers.
+- C-1173 **A skill's display name** (D-498; P5-SKILLS-1, built; migration `20261201000289`). `Skill` and the
+  effective set's `skill` gain `title: string|null`: trimmed plain text of at most `SKILL_TITLE_MAX` (80) characters
+  on one line (no control character); blank means none. `CreateSkillRequest.title?` and `UpdateSkillRequest.title?`
+  (absent keeps, `""` clears) on the three tiers; a violation is 400 `invalid_request` on `/title`; on a library
+  skill a `title` in a patch is 409 `library_skill_readonly`; `from_library` excludes it. The folder `name` stays the
+  immutable slug. Library and app skills have `title: null`. The agent tools `skill_create`/`skill_update` take an
+  optional `title`; `skill_list`/`skill_get` return it. The agent export writes `title` in the `skills/<name>/SKILL.md`
+  front matter only when set, and the import passes it on; a template's skill may carry the same optional `title`
+  front-matter line (placeholders filled; part of the version's `content_sha256` only when set, not of the skill
+  part hash of C-1112: an update keeps the agent's own title and sets the version's only where the skill has none).
+  The projected `SKILL.md` front matter is unchanged (`name`, `description`).
+- C-1174 **Turn an inherited skill off for one agent** (D-499; P5-SKILLS-1, built; same migration). `PUT
+  /v1/agents/{agent}/skills/{skill_id}/off` (`turnAgentSkillOff`, no body) and `DELETE …/off` (`turnAgentSkillOn`),
+  both 204 and idempotent, for anyone who may edit the agent (own access to its workspace; the same refusals as the
+  agent's other writes: 404, or 403 `workspace_access_required` for an administrator without own access).
+  `skill_id` must be a workspace or organization skill that reaches the agent, library-added ones included, enabled or
+  not: anything else (another agent's, workspace's or organization's skill, an unknown id) is the same 404
+  `not_found`; the agent's own skill is 409 `skill_not_inherited` (an app skill has no id, so no request can name
+  it). Table `agent_skills_off (agent_id, skill_id, set_by, set_at)`, cascading on either. In the effective set a
+  skill that is off is **never** in `items`; it is in `shadowed`. `EffectiveSkill` and `ShadowedSkill` gain
+  `off_for_agent: bool` (always false in `items`); `ShadowedSkill` gains `reason: "replaced" | "disabled" |
+  "off_for_agent"` (`disabled` when its owners switched it off, else `off_for_agent` when off for the agent, else
+  `replaced`). Off means "treated as not enabled for this agent": a lower tier's skill of the name, or an app skill,
+  may then apply. One rule (`repo::skills::resolve`) serves the effective set, the projection, `skill_list`/
+  `skill_get`, the eval fingerprint and the mapping of a reported use. A change bumps the agent's home-sync
+  generation only, and is audited `skill.agent_off` / `skill.agent_on` (critical, in the change's transaction;
+  target the skill, metadata `name`, `scope`, `agent_id`); an unchanged request writes neither.
+- C-1175 **Skill usage** (D-505; P5-SKILLS-1, built; migration `20261201000290`). Table `skill_uses (skill_id,
+  agent_id, conversation_id, turn_id, at)`, pruned after 90 days by the daily retention pass; at most one row per turn
+  and skill. Written (a) by `skill_get` when it returns the instructions of a skill that applies (not a `path` read,
+  not an own skill that is switched off, not an app skill, which has no row) and (b) from the new optional field
+  `skill` (the folder name) of the supervisor's `tool.started` event (`16`), in a turn's and in an after-turn report.
+  The API takes the agent and the conversation from the turn row, and maps the name to the skill that reaches that
+  agent at that moment (after every switch); a name nothing stored holds records nothing. The agent's effective set
+  gains `usage: { week: integer, last: { at, conversation: ConversationRef|null }|null }|null` on every entry (null
+  for an app skill): `week` counts the last 7 days, `last` the latest within 90. `ConversationRef = { id, title:
+  string|null }` is given only to a caller who may read that conversation (SEC-157's helper), else null.
+  `Skill.used_by_agents: integer|null` is the number of distinct agents with a use in the last 30 days, set for
+  workspace and organization skills (lists, one skill, the effective set); null for an agent's own skill.
+- C-1176 **Libraries say what they offer and what cannot be added** (P5-SKILLS-1, built; skill-5, skill-6).
+  `SkillLibrary` gains `skills_offered: integer|null` and `skills_unavailable: integer|null`: the valid and invalid
+  skill folders (at most `LIBRARY_BROWSE_MAX`) at the last read of the repository (create, a change of url, ref, path
+  or token, a browse that read the repository, a refresh that compared a head; a library without counts is read once by
+  its next refresh); null before. Members' picker view carries them too. Creating or re-addressing a library now
+  reads its `SKILL.md` files (as the check does), not only its tree. `GET /v1/skill-libraries/{id}/skills` takes
+  `?tier=agent&agent=<id>`, `?tier=workspace&workspace=<id>` or `?tier=organization` (400 `invalid_request` on
+  `/tier` for a mismatched set of parameters); the tier must be of the organization browsed as and the caller must see
+  its skills (own access to the workspace; a member of the organization), else 404. With a tier, each item has
+  `blocked: { reason: "name_taken" | "budget" | "invalid", message }|null` (the first that applies, in the order
+  invalid, name_taken, budget; the size is the listing's estimate, and the add checks again) and the response
+  `budget: { bytes, used }|null` (the tier's real byte budget, `skills.library.bytes_per_agent` included, and what its
+  library skills use); both null without a tier. `valid`/`reason` stay.
 - C-1177 **Dashboard routes** (D-506, D-497; P5-SKILLS-2, P5-MEMORY-2; `14`). `/o/<org>/skills` with `?tab=skills|libraries`
   (Manage <org> › Skills); `/admin/skills` (Administration › Skills: instance libraries and library settings); the
   agent's memory deep link `…/agents/<handle>?tab=memory&memory=<key>` (opens that memory's reading view; `&history=1`

@@ -182,6 +182,60 @@ async fn an_agent_with_a_grant_gets_the_app_skills_in_every_harness_folder_and_o
     assert!(manifest(&p).iter().all(|m| !m.contains("sk-app")));
 }
 
+/// (C-1174) A skill turned off for the agent holds no name: the app skill below it applies, in
+/// the effective set and in the projected folder alike.
+#[tokio::test]
+async fn turning_an_inherited_skill_off_lets_the_app_skill_of_its_name_apply() {
+    let (r, agent) = world().await;
+    db_skill(&r, None, None, "sk-app-api", "org version", true).await;
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM skills WHERE name = 'sk-app-api'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let path = ".claude/skills/sk-app-api/SKILL.md";
+    let content = |p: &[HomeSync]| {
+        skill_entry(p, path).unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(content(&parts(&r, r.h.state.clone(), agent, None).await).contains("org version"));
+    let (s, v) = r
+        .user(
+            Method::PUT,
+            &format!("/v1/agents/{agent}/skills/{id}/off"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    let p = parts(&r, r.h.state.clone(), agent, None).await;
+    assert!(content(&p).contains("How the API works"), "{}", content(&p));
+    let (_, v) = r
+        .user(
+            Method::GET,
+            &format!("/v1/agents/{agent}/skills/effective"),
+            None,
+        )
+        .await;
+    let find = |list: &str| {
+        v[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["skill"]["name"] == "sk-app-api")
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(find("items")["tier"], "app", "{v}");
+    assert_eq!(find("items")["usage"], Value::Null);
+    let off = find("shadowed");
+    assert_eq!(
+        (off["tier"].as_str(), off["reason"].as_str()),
+        (Some("org"), Some("off_for_agent")),
+        "{off}"
+    );
+}
+
 async fn db_skill(
     r: &Rig,
     agent: Option<Uuid>,

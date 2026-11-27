@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
-use crate::adapters::provider_error;
+use crate::adapters::{provider_error, skill_use};
 use crate::harness::HarnessEvent;
 
 const SUMMARY_MAX: usize = 120;
@@ -168,6 +168,8 @@ impl StreamMapper {
                         call_id: id.to_owned(),
                         name: "shell".into(),
                         summary: format!("shell: {}", trunc(unwrap_shell(cmd), SUMMARY_MAX)),
+                        // (C-1175) Codex reads a skill with a shell command.
+                        skill: skill_use::of_command(unwrap_shell(cmd), super::SKILLS_DIR),
                     });
                 }
                 if completed {
@@ -198,6 +200,7 @@ impl StreamMapper {
                         call_id: id.to_owned(),
                         summary: format!("{name} ({n} args)"),
                         name,
+                        skill: None,
                     });
                 }
                 if completed {
@@ -240,6 +243,7 @@ impl StreamMapper {
                     call_id: id.to_owned(),
                     name: "apply_patch".into(),
                     summary: summary.clone(),
+                    skill: None,
                 });
                 out.events.push(HarnessEvent::ToolFinished {
                     call_id: id.to_owned(),
@@ -421,6 +425,37 @@ mod tests {
                                    "cache_read_tokens": 2, "reasoning_tokens": 1}))
             })
         );
+    }
+
+    /// (C-1175) Codex reads a skill with a shell command: the `skill` field names it.
+    #[test]
+    fn reading_a_skill_md_in_the_shell_names_the_skill() {
+        let item = |id: &str, cmd: &str| {
+            format!(
+                r#"{{"type":"item.started","item":{{"id":"{id}","type":"command_execution","command":"{cmd}","aggregated_output":"","exit_code":null,"status":"in_progress"}}}}"#
+            )
+        };
+        let lines = [
+            item(
+                "i1",
+                "/bin/bash -lc 'sed -n 1,200p /workspace/.codex/skills/aurora/pdf/SKILL.md'",
+            ),
+            item(
+                "i2",
+                "/bin/bash -lc 'cat /workspace/.codex/skills/.system/x/SKILL.md'",
+            ),
+            item("i3", "/bin/bash -lc 'echo hi'"),
+        ]
+        .join("\n");
+        let (ev, _) = run(&lines);
+        let got: Vec<Option<String>> = ev
+            .iter()
+            .filter_map(|e| match e {
+                HarnessEvent::ToolStarted { skill, .. } => Some(skill.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(got, [Some("pdf".into()), None, None]);
     }
 
     #[test]

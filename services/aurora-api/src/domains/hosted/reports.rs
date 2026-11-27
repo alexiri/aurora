@@ -371,6 +371,7 @@ async fn events(
         n_done = n;
         applied = true;
         one_event(s, tx, cid, turn, &e.event, &mut staged).await?;
+        record_skill_use(tx, t.agent_id, cid, turn, &e.event).await?;
     }
     if applied {
         hosted::set_last_event_n(tx, turn, i32::try_from(n_done).unwrap_or(i32::MAX)).await?;
@@ -483,6 +484,8 @@ async fn idle_events(
     // first (that limit writes its own line).
     let mut left_out = sorted.len() > AFTER_TURN_MAX;
     for e in sorted.into_iter().take(AFTER_TURN_MAX) {
+        // (C-1175) Loading a skill after the turn is a use by the anchor turn's agent.
+        record_skill_use(tx, t.agent_id, cid, turn, &e.event).await?;
         let d = &e.event.data;
         let (ty, mut p) = match e.event.kind.as_str() {
             "tool.started" => (
@@ -657,6 +660,53 @@ impl StageOp {
             }
         }
     }
+}
+
+/// (C-1175, SEC-158) The supervisor says a `tool.started` loaded a skill (`skill`, the folder
+/// name). It counts only for the agent and conversation of the turn the report is about, both
+/// taken from the turn row (never from the report), and only for a skill that reaches that
+/// agent now. A failure to count never fails the report.
+async fn record_skill_use(
+    tx: &mut PgConnection,
+    agent: Uuid,
+    cid: Uuid,
+    turn: Uuid,
+    ev: &HarnessEventWire,
+) -> Result<(), ApiError> {
+    use aurora_db::DbError;
+    use sqlx::Connection;
+    if ev.kind.as_str() != "tool.started" {
+        return Ok(());
+    }
+    let Some(name) = str_of(&ev.data, "skill") else {
+        return Ok(());
+    };
+    let mut sp = tx.begin().await.map_err(DbError::from)?;
+    let recorded = async {
+        match aurora_db::repo::agents::get(&mut *sp, agent).await? {
+            Some(a) => {
+                crate::domains::skills::usage::record_loaded(
+                    &mut sp,
+                    &a,
+                    cid,
+                    Some(turn),
+                    name,
+                    None,
+                )
+                .await
+            }
+            None => Ok(()),
+        }
+    }
+    .await;
+    match recorded {
+        Ok(()) => sp.commit().await.map_err(DbError::from)?,
+        Err(e) => {
+            tracing::warn!(turn = %turn, error = %e, "a skill use was not recorded");
+            sp.rollback().await.map_err(DbError::from)?;
+        }
+    }
+    Ok(())
 }
 
 async fn one_event(

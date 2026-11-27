@@ -147,6 +147,9 @@ pub const SECURITY_CRITICAL_ACTIONS: &[&str] = &[
     "skill.library.detach",
     "skill.library.update_apply",
     "skill.library.update_reject",
+    // (P5-SKILLS-1, D-499) an inherited skill turned off or back on for one agent
+    "skill.agent_off",
+    "skill.agent_on",
     "skill_library.create",
     "skill_library.delete",
     "skill_library.update",

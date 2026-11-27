@@ -9,6 +9,8 @@ use http::Method;
 mod app_tier;
 #[path = "skills_library.rs"]
 mod library_tier;
+#[path = "skills_use.rs"]
+mod switch_and_use;
 #[path = "skills_workspace.rs"]
 mod workspace_tier;
 use serde_json::{Value, json};

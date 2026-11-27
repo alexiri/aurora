@@ -16,6 +16,8 @@ pub struct TreeFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateSkill {
     pub name: String,
+    /// The optional `title` front-matter line (the skill's display name).
+    pub title: Option<String>,
     /// The `use-it-when` front-matter line (the skill's `description`).
     pub use_it_when: String,
     pub body: String,

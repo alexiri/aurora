@@ -233,6 +233,7 @@ const OWN: &[(&str, &[&str])] = &[
     ("/agents/{agent}/skill-library-updates", &["get"]),
     ("/agents/{agent}/skills", &["post"]),
     ("/agents/{agent}/skills/effective", &["get"]),
+    ("/agents/{agent}/skills/{skill_id}/off", &["put", "delete"]),
     ("/agents/{agent}/space-bindings", &["get", "post"]),
     ("/agents/{agent}/ssh-certificate", &["post"]),
     ("/agents/{agent}/ssh-sessions", &["get"]),

@@ -8,7 +8,7 @@ use uuid::Uuid;
 pub(crate) const COLS: &str = "id, org_id, agent_id, workspace_id, name, description, body, \
                     enabled, created_by_kind, created_at, updated_at, library_id, library_label, \
                     library_repo, library_path, library_commit_sha, library_blobs, \
-                    library_content_sha256, library_pinned_at, library_pinned_by_user_id";
+                    library_content_sha256, library_pinned_at, library_pinned_by_user_id, title";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SkillRow {
@@ -37,6 +37,72 @@ pub struct SkillRow {
     pub library_content_sha256: Option<Vec<u8>>,
     pub library_pinned_at: Option<DateTime<Utc>>,
     pub library_pinned_by_user_id: Option<Uuid>,
+    /// (P5-SKILLS-1, C-1173) The display name; null: the folder name made readable.
+    pub title: Option<String>,
+}
+
+/// A skill as it reaches one agent: the row and whether it is turned off **for that agent**.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ReachingRow {
+    #[sqlx(flatten)]
+    pub row: SkillRow,
+    pub off_for_agent: bool,
+}
+
+impl ReachingRow {
+    /// Whether the skill can win its name for this agent: switched on by its owners and not
+    /// turned off for the agent.
+    #[must_use]
+    pub fn applies(&self) -> bool {
+        self.row.enabled && !self.off_for_agent
+    }
+}
+
+/// Precedence rank: lower wins (agent > workspace > organization).
+#[must_use]
+pub fn rank(r: &SkillRow) -> u8 {
+    if r.agent_id.is_some() {
+        0
+    } else if r.workspace_id.is_some() {
+        1
+    } else {
+        2
+    }
+}
+
+/// The skills of one name.
+#[derive(Debug)]
+pub struct NameGroup {
+    /// The skill the agent receives; none when no skill of the name applies.
+    pub winner: Option<ReachingRow>,
+    /// Every other skill of the name, highest tier first.
+    pub others: Vec<ReachingRow>,
+}
+
+/// **The one rule of an agent's effective set** (RFE-020, C-1174): per name the highest tier
+/// that applies ([`ReachingRow::applies`]) wins, agent > workspace > organization; a skill that
+/// is switched off, or turned off for the agent, never vetoes a lower tier. The API's effective
+/// set, the files projected into the agent's computer, the configuration fingerprint and the
+/// mapping of a reported skill use all come from here. Groups are ordered by name.
+#[must_use]
+pub fn resolve(mut rows: Vec<ReachingRow>) -> Vec<NameGroup> {
+    rows.sort_by(|a, b| {
+        (a.row.name.as_str(), rank(&a.row)).cmp(&(b.row.name.as_str(), rank(&b.row)))
+    });
+    let mut out = Vec::new();
+    let mut it = rows.into_iter().peekable();
+    while let Some(first) = it.next() {
+        let mut others = vec![first];
+        while it.peek().is_some_and(|n| n.row.name == others[0].row.name) {
+            others.extend(it.next());
+        }
+        let winner = others
+            .iter()
+            .position(ReachingRow::applies)
+            .map(|i| others.remove(i));
+        out.push(NameGroup { winner, others });
+    }
+    out
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -125,23 +191,152 @@ pub async fn list_workspace(
 }
 
 /// Every skill of the three tiers that reaches the agent (its own, its workspace's, its
-/// organization's), enabled or not.
+/// organization's), enabled or not, each with whether it is turned off for the agent; with
+/// `name`, only the skills of that folder name.
 pub async fn list_reaching(
     conn: &mut PgConnection,
     org: Uuid,
     workspace: Uuid,
     agent: Uuid,
-) -> Result<Vec<SkillRow>, DbError> {
+    name: Option<&str>,
+) -> Result<Vec<ReachingRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLS} FROM skills WHERE org_id = $1
+        "SELECT {COLS}, EXISTS (SELECT 1 FROM agent_skills_off o
+                                WHERE o.agent_id = $3 AND o.skill_id = skills.id) AS off_for_agent
+         FROM skills WHERE org_id = $1
          AND (agent_id = $3 OR workspace_id = $2 OR (agent_id IS NULL AND workspace_id IS NULL))
+         AND ($4::text IS NULL OR name = $4)
          ORDER BY name"
     )))
     .bind(org)
     .bind(workspace)
     .bind(agent)
+    .bind(name)
     .fetch_all(conn)
     .await?)
+}
+
+/// Turns the skill off for the agent; false when it already was.
+pub async fn set_off(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    skill: Uuid,
+    by: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query(
+        "INSERT INTO agent_skills_off (agent_id, skill_id, set_by) VALUES ($1, $2, $3)
+         ON CONFLICT (agent_id, skill_id) DO NOTHING",
+    )
+    .bind(agent)
+    .bind(skill)
+    .bind(by)
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
+}
+
+/// Turns the skill back on for the agent; false when it was not off.
+pub async fn clear_off(conn: &mut PgConnection, agent: Uuid, skill: Uuid) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query("DELETE FROM agent_skills_off WHERE agent_id = $1 AND skill_id = $2")
+            .bind(agent)
+            .bind(skill)
+            .execute(conn)
+            .await?
+            .rows_affected()
+            > 0,
+    )
+}
+
+// ---- usage (C-1175) -------------------------------------------------------------------------
+
+/// Records that the agent loaded the skill; at most one row per turn and skill. The caller has
+/// established that the agent, the conversation and the turn belong together.
+pub async fn record_use(
+    conn: &mut PgConnection,
+    skill: Uuid,
+    agent: Uuid,
+    conversation: Uuid,
+    turn: Option<Uuid>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO skill_uses (skill_id, agent_id, conversation_id, turn_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (turn_id, skill_id) WHERE turn_id IS NOT NULL DO NOTHING",
+    )
+    .bind(skill)
+    .bind(agent)
+    .bind(conversation)
+    .bind(turn)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// One agent's uses of one skill.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AgentUsageRow {
+    pub skill_id: Uuid,
+    /// Uses in the last 7 days.
+    pub week: i64,
+    pub last_at: DateTime<Utc>,
+    pub last_conversation_id: Option<Uuid>,
+}
+
+/// The agent's usage of the skills among `skills` it has used within `keep_days`.
+pub async fn usage_of_agent(
+    conn: &mut PgConnection,
+    agent: Uuid,
+    skills: &[Uuid],
+    week_days: i32,
+    keep_days: i32,
+) -> Result<Vec<AgentUsageRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT skill_id,
+                count(*) FILTER (WHERE at > now() - make_interval(days => $3)) AS week,
+                max(at) AS last_at,
+                (array_agg(conversation_id ORDER BY at DESC))[1] AS last_conversation_id
+         FROM skill_uses
+         WHERE agent_id = $1 AND skill_id = ANY($2) AND at > now() - make_interval(days => $4)
+         GROUP BY skill_id",
+    )
+    .bind(agent)
+    .bind(skills)
+    .bind(week_days)
+    .bind(keep_days)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// For each of `skills` that some agent used in the last `days`: how many distinct agents.
+pub async fn used_by_agents(
+    conn: &mut PgConnection,
+    skills: &[Uuid],
+    days: i32,
+) -> Result<Vec<(Uuid, i64)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT skill_id, count(DISTINCT agent_id) FROM skill_uses
+         WHERE skill_id = ANY($1) AND at > now() - make_interval(days => $2)
+         GROUP BY skill_id",
+    )
+    .bind(skills)
+    .bind(days)
+    .fetch_all(conn)
+    .await?)
+}
+
+/// Deletes up to `batch` uses older than `days`; returns how many.
+pub async fn prune_uses(pool: &sqlx::PgPool, days: i32, batch: i64) -> Result<u64, DbError> {
+    Ok(sqlx::query(
+        "DELETE FROM skill_uses WHERE ctid IN (
+            SELECT ctid FROM skill_uses WHERE at < now() - make_interval(days => $1) LIMIT $2)",
+    )
+    .bind(days)
+    .bind(batch)
+    .execute(pool)
+    .await?
+    .rows_affected())
 }
 
 /// Enabled agent-tier skills of the workspace's agents with the given names, with the agent.
@@ -218,11 +413,12 @@ pub async fn insert(
     body: &str,
     enabled: bool,
     created_by_kind: &str,
+    title: Option<&str>,
 ) -> Result<SkillRow, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO skills (id, org_id, agent_id, workspace_id, name, description, body, enabled,
-            created_by_kind)
-         VALUES ($1,$2,$3,$9,$4,$5,$6,$7,$8) RETURNING {COLS}"
+            created_by_kind, title)
+         VALUES ($1,$2,$3,$9,$4,$5,$6,$7,$8,$10) RETURNING {COLS}"
     )))
     .bind(Uuid::now_v7())
     .bind(org)
@@ -233,6 +429,7 @@ pub async fn insert(
     .bind(enabled)
     .bind(created_by_kind)
     .bind(owner.workspace)
+    .bind(title)
     .fetch_one(conn)
     .await?)
 }
@@ -243,15 +440,17 @@ pub async fn update(
     description: &str,
     body: &str,
     enabled: bool,
+    title: Option<&str>,
 ) -> Result<SkillRow, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "UPDATE skills SET description = $2, body = $3, enabled = $4, updated_at = now()
+        "UPDATE skills SET description = $2, body = $3, enabled = $4, title = $5, updated_at = now()
          WHERE id = $1 RETURNING {COLS}"
     )))
     .bind(id)
     .bind(description)
     .bind(body)
     .bind(enabled)
+    .bind(title)
     .fetch_one(conn)
     .await?)
 }

@@ -211,6 +211,7 @@ pub struct RenderedMemory {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderedSkill {
     pub name: String,
+    pub title: Option<String>,
     pub use_it_when: String,
     pub body: String,
     /// The skill's other files, byte for byte (never placeholder-filled).
@@ -277,6 +278,7 @@ pub fn render(
             .iter()
             .map(|s| RenderedSkill {
                 name: s.name.clone(),
+                title: s.title.as_deref().map(fill),
                 use_it_when: fill(&s.use_it_when),
                 body: fill(&s.body),
                 files: s.files.clone(),

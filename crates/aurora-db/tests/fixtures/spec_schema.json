@@ -87,6 +87,12 @@
       "policy_b",
       "revision"
     ],
+    "agent_skills_off": [
+      "agent_id",
+      "set_at",
+      "set_by",
+      "skill_id"
+    ],
     "agent_template_parts": [
       "agent_id",
       "content_sha256",
@@ -1321,6 +1327,8 @@
       "refresh_failures",
       "refresh_lease_until",
       "repo",
+      "skills_offered",
+      "skills_unavailable",
       "status",
       "token_ref",
       "token_updated_at",
@@ -1350,6 +1358,13 @@
       "skill_id",
       "status"
     ],
+    "skill_uses": [
+      "agent_id",
+      "at",
+      "conversation_id",
+      "skill_id",
+      "turn_id"
+    ],
     "skills": [
       "agent_id",
       "body",
@@ -1368,6 +1383,7 @@
       "library_repo",
       "name",
       "org_id",
+      "title",
       "workspace_id"
     ],
     "space_bindings": [
@@ -1807,6 +1823,12 @@
       "policy_a": "text",
       "policy_b": "text",
       "revision": "bigint not null"
+    },
+    "agent_skills_off": {
+      "agent_id": "uuid",
+      "set_at": "timestamptz not null",
+      "set_by": "uuid null",
+      "skill_id": "uuid"
     },
     "agent_template_parts": {
       "agent_id": "uuid not null",
@@ -3042,6 +3064,8 @@
       "refresh_failures": "integer not null",
       "refresh_lease_until": "timestamptz null",
       "repo": "text null",
+      "skills_offered": "integer null",
+      "skills_unavailable": "integer null",
       "status": "text not null",
       "token_ref": "text null",
       "token_updated_at": "timestamptz null",
@@ -3071,6 +3095,13 @@
       "skill_id": "uuid",
       "status": "text"
     },
+    "skill_uses": {
+      "agent_id": "uuid not null",
+      "at": "timestamptz not null",
+      "conversation_id": "uuid null",
+      "skill_id": "uuid not null",
+      "turn_id": "uuid null"
+    },
     "skills": {
       "agent_id": "uuid null",
       "body": "text not null",
@@ -3089,6 +3120,7 @@
       "library_repo": "text null",
       "name": "text not null",
       "org_id": "uuid",
+      "title": "text null",
       "workspace_id": "uuid null"
     },
     "space_bindings": {

@@ -1,4 +1,5 @@
 use super::service::{self, SkillView};
+use crate::domains::conversations::reference::ConversationRef;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -36,10 +37,17 @@ pub struct Skill {
     pub agent_id: Option<Uuid>,
     pub workspace_id: Option<Uuid>,
     pub org_id: Uuid,
+    /// The folder name (immutable).
     pub name: String,
+    /// (C-1173) The display name, at most 80 characters of plain text; null for a skill
+    /// without one (library and app skills have none).
+    pub title: Option<String>,
     pub description: String,
     pub body: String,
     pub enabled: bool,
+    /// (C-1175) Workspace and organization skills: how many distinct agents used it in the last
+    /// 30 days; null for an agent's own skill.
+    pub used_by_agents: Option<i64>,
     /// Metadata only; content is fetched per file.
     pub files: Vec<SkillFile>,
     /// Body plus files, in characters (binary counted as base64 length).
@@ -104,9 +112,11 @@ impl From<SkillView> for Skill {
             org_id: r.org_id,
             overridden_in: None,
             name: r.name,
+            title: r.title,
             description: r.description,
             body: r.body,
             enabled: r.enabled,
+            used_by_agents: None,
             files: v
                 .files
                 .into_iter()
@@ -155,9 +165,11 @@ pub struct EffectiveBody {
     pub workspace_id: Option<Uuid>,
     pub org_id: Option<Uuid>,
     pub name: String,
+    pub title: Option<String>,
     pub description: String,
     pub body: String,
     pub enabled: bool,
+    pub used_by_agents: Option<i64>,
     pub files: Vec<SkillFile>,
     pub total_size: usize,
     pub overridden_in: Option<Vec<OverriddenAgent>>,
@@ -176,9 +188,11 @@ impl From<Skill> for EffectiveBody {
             workspace_id: s.workspace_id,
             org_id: Some(s.org_id),
             name: s.name,
+            title: s.title,
             description: s.description,
             body: s.body,
             enabled: s.enabled,
+            used_by_agents: s.used_by_agents,
             files: s.files,
             total_size: s.total_size,
             overridden_in: s.overridden_in,
@@ -199,6 +213,23 @@ pub struct EffectiveSkill {
     pub shadows: Vec<TierRef>,
     /// The app of an app skill; null for the other tiers.
     pub app: Option<AppRef>,
+    /// (C-1174) Always false: a skill turned off for the agent is never in effect (it is in
+    /// `shadowed`).
+    pub off_for_agent: bool,
+    /// (C-1175) This agent's use of the skill; null for an app skill.
+    pub usage: Option<SkillUsage>,
+}
+
+/// Why a skill of the agent's tiers is not in effect.
+#[derive(Serialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotAppliedReason {
+    /// Another skill of the same name wins (`shadowed_by`).
+    Replaced,
+    /// The skill's owners switched it off.
+    Disabled,
+    /// Turned off for this agent only (C-1174).
+    OffForAgent,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -206,10 +237,33 @@ pub struct ShadowedSkill {
     pub skill: EffectiveBody,
     pub tier: &'static str,
     pub enabled: bool,
-    /// The winner of this name; null for a disabled skill whose name has no enabled skill.
+    /// The skill that is in effect under this name; null when none is (every skill of the name
+    /// is switched off or turned off for the agent).
     pub shadowed_by: Option<TierRef>,
     /// The app of an app skill; null for the other tiers.
     pub app: Option<AppRef>,
+    /// (C-1174) Turned off for this agent (it may also be switched off by its owners: `enabled`).
+    pub off_for_agent: bool,
+    /// `disabled` when its owners switched it off, else `off_for_agent`, else `replaced`.
+    pub reason: NotAppliedReason,
+    /// (C-1175) This agent's use of the skill; null for an app skill.
+    pub usage: Option<SkillUsage>,
+}
+
+/// (C-1175) An agent's use of one skill.
+#[derive(Serialize, ToSchema, Clone, Default)]
+pub struct SkillUsage {
+    /// How many turns used it in the last 7 days.
+    pub week: i64,
+    /// The latest use within the 90 days uses are kept; null: not used.
+    pub last: Option<SkillLastUse>,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub struct SkillLastUse {
+    pub at: DateTime<Utc>,
+    /// Null when the caller may not read that conversation, or it no longer exists.
+    pub conversation: Option<ConversationRef>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -223,6 +277,9 @@ pub struct CreateSkillRequest {
     /// Immutable kebab-case directory name, at most 64 characters; `aurora-*` is reserved.
     /// Required unless `from_library` is given.
     pub name: Option<String>,
+    /// The display name: one line of plain text, at most 80 characters; blank or absent means
+    /// none.
+    pub title: Option<String>,
     /// Single line, at most 500 characters. Required unless `from_library` is given.
     pub description: Option<String>,
     /// Required unless `from_library` is given.
@@ -230,7 +287,7 @@ pub struct CreateSkillRequest {
     pub enabled: Option<bool>,
     /// (phase 4, P4-GSL, D-148) Add a skill from a git skill library instead of a body: the
     /// server reads exactly that commit and stores the skill pinned and read-only. Excludes
-    /// `name`, `description` and `body`.
+    /// `name`, `title`, `description` and `body`.
     pub from_library: Option<FromLibrary>,
 }
 
@@ -262,13 +319,16 @@ impl CreateSkillRequest {
     /// `from_library` excludes the manual fields.
     pub fn check_exclusive(&self) -> Result<(), aurora_core::ApiError> {
         if self.from_library.is_some()
-            && (self.name.is_some() || self.description.is_some() || self.body.is_some())
+            && (self.name.is_some()
+                || self.title.is_some()
+                || self.description.is_some()
+                || self.body.is_some())
         {
             return Err(aurora_core::ApiError::invalid_request(
                 "Invalid skill.",
                 vec![aurora_core::FieldError::new(
                     "/from_library",
-                    "cannot be combined with name, description or body",
+                    "cannot be combined with name, title, description or body",
                 )],
             ));
         }
@@ -278,6 +338,8 @@ impl CreateSkillRequest {
 
 #[derive(Deserialize, ToSchema)]
 pub struct UpdateSkillRequest {
+    /// The display name; `""` clears it, absent keeps it.
+    pub title: Option<String>,
     pub description: Option<String>,
     pub body: Option<String>,
     pub enabled: Option<bool>,

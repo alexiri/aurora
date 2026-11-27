@@ -2212,6 +2212,15 @@ async fn apply_in_tx(
                         (s.use_it_when.clone(), s.body.clone(), s.files.clone())
                     }
                 };
+                // The display name is not part of the skill's offered texts: a person's own
+                // name stays, and the version's is taken only where there is none.
+                let template_title = skills_domain::service::clean_title(
+                    diff.rendered
+                        .skills
+                        .iter()
+                        .find(|s| &s.name == key)
+                        .and_then(|s| s.title.as_deref()),
+                )?;
                 let existing = skills_repo::get_agent_named(tx, agent.id, key).await?;
                 let row = match existing {
                     // A library-sourced skill of the same name is never written here (C-1112);
@@ -2225,7 +2234,9 @@ async fn apply_in_tx(
                     Some(row) => {
                         // The apply replaces the skill's text, not the person's on/off
                         // choice (SEC-146 E): the existing row's `enabled` stays.
-                        skills_repo::update(tx, row.id, &use_it_when, &body, row.enabled).await?;
+                        let title = row.title.as_deref().or(template_title.as_deref());
+                        skills_repo::update(tx, row.id, &use_it_when, &body, row.enabled, title)
+                            .await?;
                         // The files are replaced as a set.
                         for f in skills_repo::files(tx, &[row.id]).await? {
                             skills_repo::delete_file(tx, row.id, &f.path).await?;
@@ -2242,6 +2253,7 @@ async fn apply_in_tx(
                             },
                             &NewSkill {
                                 name: key,
+                                title: template_title.as_deref(),
                                 description: &use_it_when,
                                 body: &body,
                                 enabled: true,
