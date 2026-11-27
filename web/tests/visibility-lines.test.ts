@@ -125,6 +125,31 @@ describe("visibilityLines", () => {
     ]);
   });
 
+  // (FIX-263) The emergency reader is not one of the people: a conversation that is not direct
+  // takes the non-direct line even though the thread is read-only for them.
+  it("an emergency reader: the non-direct line on a group conversation, the owner-view line on a direct chat", () => {
+    const emergency = {
+      id: "e1",
+      by: { id: "x", display_name: "Ada Lovelace" },
+      reason: "Legal hold",
+      opened_at: "2026-11-20T14:00:00Z",
+      expires_at: "2026-11-20T18:00:00Z",
+      ended_at: null,
+      active: true,
+    };
+    const reader = { ...base, ownDirect: false, ownerView: "the member", readerId: "x", myRole: null };
+    const audienceFour = { ...audience(4, [["a", "Ann"]], 1), emergency };
+    const emergencyLine = "Ada Lovelace, an organization owner, can read this workspace's conversations until 18:00 (emergency access).";
+    expect(visibilityLines({ ...reader, kind: "group", audience: audienceFour })).toEqual([
+      "All 4 people in this workspace can use this agent and read this conversation.",
+      emergencyLine,
+    ]);
+    expect(visibilityLines({ ...reader, kind: "direct", ownerView: "Ann", audience: audienceFour })).toEqual([
+      "Only Ann and the workspace's owners can see this conversation.",
+      emergencyLine,
+    ]);
+  });
+
   it("emergency access: no line while it is not active", () => {
     const baseAudience = audience(3, [["a", "Ann"]], 1);
     expect(visibilityLines({ ...base, audience: { ...baseAudience, emergency: null } })).toEqual([

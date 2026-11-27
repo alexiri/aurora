@@ -229,7 +229,7 @@ pub fn refused_attr(body: &serde_json::Value, attrs: &[&'static str]) -> Option<
 }
 
 /// (FIX-234 review round 3, D-480/C-1161) The personal-workspace rule for SCIM membership
-/// adds: a group bound to a personal workspace takes members only from that workspace's
+/// adds (and, since FIX-263/D-503, for the sign-in group sync): a group bound to a personal workspace takes members only from that workspace's
 /// person — an IdP driving the sync does not become the person. Answers `Some(first_name)`
 /// (of the person of the first personal workspace the group is bound to) when any user in
 /// `users` would be added there without being that person. Groups bound only to shared

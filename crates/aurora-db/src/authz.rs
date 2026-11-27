@@ -335,9 +335,9 @@ pub async fn can_use<'e, E: PgExecutor<'e>>(
 
 /// (FIX-230, D-473(a), C-1157) The person's access to `ws` **in their own right**: an active direct
 /// or group binding while an active org member and not suspended there (`own_workspace_access`).
-/// The implicit owner role of an org owner/admin does not count. Chat offers and auto-picks agents
-/// by this; authorization (`can_use`, `can_own`) is unchanged. Reads people tables through the
-/// view: call it from the API only, never from a function the gateway runs.
+/// Chat offers and auto-picks agents by this; since FIX-234 (D-477) authorization (`can_use`,
+/// `can_own`) rests on the same access, and no org role confers any. Reads people tables through
+/// the view: call it from the API only, never from a function the gateway runs.
 pub async fn own_access<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,
@@ -421,7 +421,8 @@ pub async fn can_own<'e, E: PgExecutor<'e>>(
         .is_some_and(|a| a.can_own()))
 }
 
-/// `can_approve` (phase 2, RFE-012, D-55): workspace `owner` or `approver`, or org owner/admin.
+/// `can_approve` (phase 2, RFE-012, D-55): workspace `owner` or `approver` in their own right
+/// (D-477: an org role confers no workspace right).
 pub async fn can_approve<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,
@@ -744,8 +745,8 @@ pub async fn hidden_conversations<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// RFE-021: does the workspace have at least one **active** user with `can_own` (workspace
-/// `owner` binding, or org `owner`/`admin`)? The fire-time authority of a workspace-anchored
+/// RFE-021: does the workspace have at least one **active** user with `can_own` (an `owner`
+/// binding in their own right, direct or through a group; D-477: no org role counts)? The fire-time authority of a workspace-anchored
 /// schedule or webhook (docs/04 §Fire-time authority). `false` when the workspace is missing.
 pub async fn workspace_has_active_owner<'e, E: PgExecutor<'e>>(
     exec: E,
