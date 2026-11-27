@@ -96,7 +96,12 @@ async fn download(
                 .get(reqwest::header::LOCATION)
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| failed("redirect without a target".into()))?;
-            logical = url::Url::parse(loc).map_err(|_| failed("bad redirect target".into()))?;
+            // A relative `Location` is legal HTTP: it is resolved against the URL that
+            // answered. The result is the next logical URL, so the token's origin rule and
+            // the https and destination checks apply to it like to an absolute one.
+            logical = logical
+                .join(loc)
+                .map_err(|_| failed("bad redirect target".into()))?;
             continue;
         }
         let status = res.status();

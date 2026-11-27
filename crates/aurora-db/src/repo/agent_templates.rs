@@ -401,8 +401,10 @@ pub struct CheckDone {
     pub next_in_secs: i64,
 }
 
-pub async fn finish_check(conn: &mut PgConnection, d: &CheckDone) -> Result<(), DbError> {
-    sqlx::query(
+/// Writes the check's outcome and releases the lease. `false`: nothing was written, because
+/// `owner` no longer holds the lease.
+pub async fn finish_check(conn: &mut PgConnection, d: &CheckDone) -> Result<bool, DbError> {
+    let done = sqlx::query(
         "UPDATE agent_template_sources SET
             status = $3,
             check_failed_at = CASE WHEN $3 = 'ok' THEN NULL ELSE now() END,
@@ -421,12 +423,17 @@ pub async fn finish_check(conn: &mut PgConnection, d: &CheckDone) -> Result<(), 
     .bind(d.next_in_secs)
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(done.rows_affected() > 0)
 }
 
 /// Set the head commit the last completed check read (C-1108 step 7, written with the check
-/// outcome).
-pub async fn set_head_sha(conn: &mut PgConnection, id: Uuid, sha: &str) -> Result<(), DbError> {
+/// outcome), or forget it (`None`) so the next check reads the head again. No lease guard of
+/// its own: the check's transaction locks the source row under its lease first.
+pub async fn set_head_sha(
+    conn: &mut PgConnection,
+    id: Uuid,
+    sha: Option<&str>,
+) -> Result<(), DbError> {
     sqlx::query(
         "UPDATE agent_template_sources SET last_head_sha = $2, updated_at = now() WHERE id = $1",
     )

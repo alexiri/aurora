@@ -1259,6 +1259,315 @@ async fn a_min_core_above_the_core_is_needs_newer_aurora() {
     );
 }
 
+// ---- source folders, the template list, retries, the lease and redirects -------------------------
+
+/// A source with a folder (`path`): the head is read below it, and the package is compared
+/// with the tree at `{path}/{template}`. A `.github` folder inside the template is skipped
+/// there too.
+#[tokio::test]
+async fn a_source_with_a_folder_accepts_a_version() {
+    let w = world().await;
+    w.git.add_repo("acme/tpl");
+    let mut changes = vec![
+        put(
+            "templates/aurora-templates.yaml".into(),
+            manifest_yaml().into_bytes(),
+        ),
+        put("README.md".into(), b"The repository.\n".to_vec()),
+        put(
+            "templates/service-monitor/.github/ci.yml".into(),
+            b"on: push\n".to_vec(),
+        ),
+    ];
+    for (p, b) in files("service-monitor", "1.0.0") {
+        changes.push(put(format!("templates/{p}"), b));
+    }
+    w.git.commit("acme/tpl", "main", &changes);
+    w.git.serve_file(
+        "pkg/service-monitor-1.0.0.zip",
+        pack("service-monitor", "1.0.0"),
+    );
+    let src = w.add_source("acme/tpl", json!({"path": "templates"})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+
+    let out = w.check(id).await;
+    assert_eq!(out["problems"], json!([]), "{out}");
+    assert_eq!(
+        out["ingested"],
+        json!([{"template_id": "service-monitor", "version": "1.0.0",
+                "status": "pending_approval", "status_reason": null}]),
+        "{out}"
+    );
+    let (s, v) = w
+        .call(
+            Method::GET,
+            "/v1/admin/agent-templates/service-monitor/versions/1.0.0",
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["content"]["instructions"], INSTRUCTIONS, "{v}");
+}
+
+/// Only folders holding a `template.yaml` are templates: `.github` (even with a
+/// `template.yaml` inside) and `docs` are neither listed nor reported.
+#[tokio::test]
+async fn only_folders_with_a_template_yaml_are_templates() {
+    let w = world().await;
+    w.git.add_repo("acme/tpl");
+    let mut changes = vec![
+        put("aurora-templates.yaml".into(), manifest_yaml().into_bytes()),
+        put(".github/workflows/x.yml".into(), b"on: push\n".to_vec()),
+        put(".github/template.yaml".into(), b"not a template\n".to_vec()),
+        put("docs/a.md".into(), b"# Docs\n".to_vec()),
+    ];
+    for dir in ["a", "b"] {
+        for (p, b) in files(dir, "1.0.0") {
+            changes.push(put(p, b));
+        }
+    }
+    w.git.commit("acme/tpl", "main", &changes);
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-template-sources/preview",
+            Some(json!({"url": format!("{GIT_ORIGIN}/acme/tpl")})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let listed: Vec<(&str, &Value)> = v["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["dir"].as_str().unwrap(), &t["problems"]))
+        .collect();
+    assert_eq!(listed, vec![("a", &json!([])), ("b", &json!([]))], "{v}");
+
+    for dir in ["a", "b"] {
+        w.git
+            .serve_file(&format!("pkg/{dir}-1.0.0.zip"), pack(dir, "1.0.0"));
+    }
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    let out = w.check(id).await;
+    assert_eq!(out["problems"], json!([]), "{out}");
+    assert_eq!(out["ingested"].as_array().unwrap().len(), 2, "{out}");
+}
+
+/// A folder that is no template does not count toward the per-source cap: with 100 templates,
+/// `.github` and `docs` (both sorting before them), every template is listed.
+#[tokio::test]
+async fn folders_without_a_template_do_not_count_toward_the_cap() {
+    let w = world().await;
+    w.git.add_repo("acme/tpl");
+    let mut changes = vec![
+        put("aurora-templates.yaml".into(), manifest_yaml().into_bytes()),
+        put(".github/workflows/x.yml".into(), b"on: push\n".to_vec()),
+        put("docs/a.md".into(), b"# Docs\n".to_vec()),
+    ];
+    for i in 0..aurora_core::limits::TEMPLATES_PER_SOURCE_MAX {
+        let dir = format!("t{i:03}");
+        changes.push(put(
+            format!("{dir}/template.yaml"),
+            template_yaml(&dir, "1.0.0").into_bytes(),
+        ));
+    }
+    w.git.commit("acme/tpl", "main", &changes);
+    let (s, v) = w
+        .call(
+            Method::POST,
+            "/v1/admin/agent-template-sources/preview",
+            Some(json!({"url": format!("{GIT_ORIGIN}/acme/tpl")})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let dirs: Vec<&str> = v["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["dir"].as_str().unwrap())
+        .collect();
+    assert_eq!(dirs.len(), aurora_core::limits::TEMPLATES_PER_SOURCE_MAX);
+    assert_eq!(dirs.last(), Some(&"t099"), "{dirs:?}");
+    assert_eq!(v["truncated"], false, "{v}");
+}
+
+/// Makes the database refuse one kind of write on `table` (`BEFORE <op>`), until
+/// [`allow_writes`].
+async fn refuse_writes(w: &W, table: &str, op: &str) {
+    sqlx::query(
+        "CREATE OR REPLACE FUNCTION aurora_tpl_refuse() RETURNS trigger AS $$
+         BEGIN RAISE EXCEPTION 'test: refused write'; END; $$ LANGUAGE plpgsql",
+    )
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER aurora_tpl_refuse_trg BEFORE {op} ON {table}
+         FOR EACH ROW EXECUTE FUNCTION aurora_tpl_refuse()"
+    )))
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+}
+
+async fn allow_writes(w: &W, table: &str) {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER aurora_tpl_refuse_trg ON {table}"
+    )))
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+}
+
+/// A version that could not be stored is offered again by the next check of the same head.
+#[tokio::test]
+async fn a_version_that_was_not_stored_is_offered_again_on_the_same_head() {
+    let w = world().await;
+    let head = w.seed("acme/tpl", "t", "1.0.0");
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+
+    refuse_writes(&w, "agent_template_versions", "INSERT").await;
+    let out = w.check(id).await;
+    assert_eq!(out["problems"][0]["code"], "template_not_stored", "{out}");
+    assert!(w.versions().await.is_empty());
+    let row = w.source(id).await;
+    assert!(row["last_head_sha"].is_null(), "{row}");
+    allow_writes(&w, "agent_template_versions").await;
+
+    let out = w.check(id).await;
+    assert_eq!(out["commit_sha"], head, "{out}");
+    assert_eq!(
+        out["ingested"],
+        json!([{"template_id": "t", "version": "1.0.0", "status": "pending_approval",
+                "status_reason": null}]),
+        "{out}"
+    );
+    assert_eq!(w.source(id).await["last_head_sha"], head);
+}
+
+/// The same when the head was already recorded by an earlier check: a later check of that
+/// head that fails to store something must not leave it recorded, or the shortcut would skip
+/// the retry.
+#[tokio::test]
+async fn a_failed_store_on_a_recorded_head_forgets_the_head() {
+    let w = world().await;
+    let head = w.seed("acme/tpl", "t", "1.0.0");
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+    // No package yet: the head is recorded and the version waits.
+    let out = w.check(id).await;
+    assert_eq!(out["waiting"].as_array().unwrap().len(), 1, "{out}");
+    assert_eq!(w.source(id).await["last_head_sha"], head);
+
+    // The next check of the same head cannot write the template row; the version leaves the
+    // waiting state in that same check, so nothing else would make a later check read.
+    w.git.serve_file("pkg/t-1.0.0.zip", pack("t", "1.0.0"));
+    refuse_writes(&w, "agent_templates", "UPDATE").await;
+    let out = w.check(id).await;
+    assert_eq!(out["problems"][0]["code"], "template_not_stored", "{out}");
+    assert_eq!(out["ingested"].as_array().unwrap().len(), 1, "{out}");
+    let row = w.source(id).await;
+    assert!(row["last_head_sha"].is_null(), "{row}");
+    allow_writes(&w, "agent_templates").await;
+
+    w.git.clear_requests();
+    let out = w.check(id).await;
+    assert_eq!(out["problems"], json!([]), "{out}");
+    assert_eq!(w.source(id).await["last_head_sha"], head);
+}
+
+/// A check whose lease is taken over while it downloads (after its last renewal, before its
+/// final transaction) writes nothing there: no version outcome, no head, no audit row, no
+/// notice.
+#[tokio::test]
+async fn a_lease_lost_before_the_final_write_writes_nothing() {
+    let w = world().await;
+    w.seed("acme/tpl", "t", "1.0.0");
+    // No package: the version stays `awaiting_package`, so the final transaction would
+    // write only a stay reason, the head and the check's own state — none of which the
+    // version's status guard protects.
+    w.git
+        .slow("pkg/t-1.0.0.zip", std::time::Duration::from_secs(2));
+    let src = w.add_source("acme/tpl", json!({})).await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+
+    let thief = async {
+        for _ in 0..600 {
+            if w.git.count("pkg/t-1.0.0.zip") > 0 {
+                sqlx::query(
+                    "UPDATE agent_template_sources
+                     SET lease_owner = '00000000-0000-0000-0000-000000000002'::uuid,
+                         check_lease_until = now() + interval '5 minutes'
+                     WHERE id = $1",
+                )
+                .bind(id)
+                .execute(w.h.pool())
+                .await
+                .unwrap();
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        panic!("the package was never requested");
+    };
+    let (out, ()) = tokio::join!(w.check(id), thief);
+    assert_eq!(out["status"], "failed", "{out}");
+
+    let row = w.source(id).await;
+    assert!(row["last_head_sha"].is_null(), "{row}");
+    assert_eq!(
+        w.versions().await,
+        vec![("1.0.0".into(), "awaiting_package".into(), None)]
+    );
+    assert_eq!(w.audit_critical("agent_template.ingest").await, 0);
+    assert_eq!(
+        w.count(&format!(
+            "SELECT count(*) FROM agent_template_sources
+             WHERE id = '{id}' AND lease_owner = '00000000-0000-0000-0000-000000000002'::uuid
+               AND last_checked_at IS NULL"
+        ))
+        .await,
+        1,
+        "the thief's lease or the source's check state changed"
+    );
+}
+
+/// A relative `Location` is followed against the URL that answered it, and stays on the
+/// repository's origin, so it keeps the source's token.
+#[tokio::test]
+async fn a_relative_redirect_is_followed() {
+    let w = world().await;
+    w.git.require_token("bot", "sekret");
+    w.seed("acme/tpl", "t", "1.0.0");
+    w.git.redirect("pkg/t-1.0.0.zip", "/files/moved.zip");
+    w.git.serve_file("files/moved.zip", pack("t", "1.0.0"));
+    let src = w
+        .add_source(
+            "acme/tpl",
+            json!({"token": "sekret", "token_username": "bot"}),
+        )
+        .await;
+    let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+
+    let out = w.check(id).await;
+    assert_eq!(
+        w.versions().await,
+        vec![("1.0.0".into(), "pending_approval".into(), None)],
+        "{out}"
+    );
+    let moved: Vec<_> = w
+        .git
+        .requests()
+        .into_iter()
+        .filter(|r| r.target.contains("files/moved.zip"))
+        .collect();
+    assert_eq!(moved.len(), 1, "{moved:?}");
+    assert!(moved[0].authorization.is_some(), "{moved:?}");
+}
+
 // ---- failures, the lease and the poll ----------------------------------------------------------
 
 #[tokio::test]

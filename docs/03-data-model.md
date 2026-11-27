@@ -936,7 +936,7 @@ One row per template repository an instance admin added. No signing key (D-435(b
 | homepage, contact | text null, text null | from the manifest's `repo` |
 | packages_url | text not null | the manifest's `packages.url` template (`{id}`, `{version}`) |
 | manifest | jsonb not null | the last accepted manifest as parsed (the dashboard reads this, never the live source) |
-| last_head_sha | text null | the head commit the last successful check compared |
+| last_head_sha | text null | the head commit the last successful check compared. A check that could not store something it read (`template_not_stored`) does not set it, and clears it when it already named that head, so the next check reads the head again |
 | update_interval | text not null default `1d` CHECK in (`6h`,`12h`,`1d`,`1w`,`2w`,`1mo`,`never`) | `never` = manual checks only |
 | status | text not null default `ok` CHECK in (`ok`,`check_failed`) | |
 | check_failed_at, check_failed_reason | timestamptz null, text null (≤ 200 chars) | sanitized; never a token or a URL with credentials |

@@ -32,9 +32,31 @@ pub fn read_failure(e: &crate::domains::skill_libraries::content::ReadError) -> 
     .with_details(json!({ "reason": reason }))
 }
 
+/// The path in the repository of `name` under the source's folder (`""` is the root). A
+/// template's stored `dir` is relative to that folder, so every read of a template's folder
+/// goes through here.
+#[must_use]
+pub fn in_folder(folder: &str, name: &str) -> String {
+    match folder.trim_matches('/') {
+        "" => name.to_owned(),
+        f => format!("{f}/{name}"),
+    }
+}
+
+/// The inverse of [`in_folder`]: a repository path relative to the source's folder, `None`
+/// when it is not below it.
+#[must_use]
+pub fn below_folder<'a>(folder: &str, path: &'a str) -> Option<&'a str> {
+    match folder.trim_matches('/') {
+        "" => Some(path),
+        f => path.strip_prefix(f)?.strip_prefix('/'),
+    }
+}
+
 /// One directory directly under the source's folder that holds a `template.yaml`.
 #[derive(Debug)]
 pub struct DirRead {
+    /// The directory's name, relative to the source's folder.
     pub dir: String,
     /// The `template.yaml` bytes (`None` when they could not be read: `problem` says why).
     pub meta: Option<Vec<u8>>,
@@ -94,19 +116,8 @@ pub async fn read_with(
     use crate::domains::skill_libraries::content::ReadError;
     let resolved = reader.resolve_full(reference).await?;
     let entries = reader.tree(&resolved.sha).await?;
-    let prefix = path.trim_matches('/');
-    fn rel<'a>(prefix: &str, p: &'a str) -> Option<&'a str> {
-        if prefix.is_empty() {
-            Some(p)
-        } else {
-            p.strip_prefix(prefix)?.strip_prefix('/')
-        }
-    } // The repository manifest at the folder's root (C-1103: required).
-    let manifest_name = format!(
-        "{}{}aurora-templates.yaml",
-        prefix,
-        if prefix.is_empty() { "" } else { "/" }
-    );
+    // The repository manifest at the folder's root (C-1103: required).
+    let manifest_name = in_folder(path, "aurora-templates.yaml");
     let manifest = match entries.iter().find(|e| e.path == manifest_name) {
         Some(e) if e.kind == "blob" => {
             let bytes = reader.blob(&e.blob).await?;
@@ -119,51 +130,36 @@ pub async fn read_with(
         }
         _ => None,
     };
-    // Template directories: depth 1 under the folder, in name order; a directory is a template
-    // when it holds a `template.yaml` (C-1103).
-    let mut dirs: Vec<String> = entries
-        .iter()
-        .filter(|e| e.kind == "tree")
-        .filter_map(|e| rel(prefix, &e.path))
-        .filter(|p| !p.contains('/'))
-        .map(str::to_owned)
-        .collect();
-    dirs.sort();
-    dirs.dedup();
+    // The templates (C-1103): the directories directly under the folder that hold a
+    // `template.yaml`, in name order. Every other folder is ignored, so it is neither listed
+    // nor counted toward the cap (the reader never lists the repository's CI metadata folder).
     let metas: BTreeMap<&str, &crate::domains::skill_libraries::content::TreeEntry> = entries
         .iter()
         .filter_map(|e| {
-            let r = rel(prefix, &e.path)?;
-            let (d, f) = r.split_once('/')?;
+            let (d, f) = below_folder(path, &e.path)?.split_once('/')?;
             (f == "template.yaml" && e.kind == "blob").then_some((d, e))
         })
         .collect();
-    let truncated = dirs.len() > limits::TEMPLATES_PER_SOURCE_MAX;
-    dirs.truncate(limits::TEMPLATES_PER_SOURCE_MAX);
-    let mut templates = Vec::with_capacity(dirs.len());
-    for dir in dirs {
-        match metas.get(dir.as_str()) {
-            Some(e) => {
-                let bytes = reader.blob(&e.blob).await?;
-                let (meta, problem) = if bytes.len() > limits::TEMPLATE_HELPER_FILE_MAX {
-                    (
-                        None,
-                        Some(format!(
-                            "template.yaml is larger than {} bytes",
-                            limits::TEMPLATE_HELPER_FILE_MAX
-                        )),
-                    )
-                } else {
-                    (Some(bytes), None)
-                };
-                templates.push(DirRead { dir, meta, problem });
-            }
-            None => templates.push(DirRead {
-                dir,
-                meta: None,
-                problem: Some("template.yaml is missing".into()),
-            }),
-        }
+    let truncated = metas.len() > limits::TEMPLATES_PER_SOURCE_MAX;
+    let mut templates = Vec::with_capacity(metas.len().min(limits::TEMPLATES_PER_SOURCE_MAX));
+    for (dir, e) in metas.into_iter().take(limits::TEMPLATES_PER_SOURCE_MAX) {
+        let bytes = reader.blob(&e.blob).await?;
+        let (meta, problem) = if bytes.len() > limits::TEMPLATE_HELPER_FILE_MAX {
+            (
+                None,
+                Some(format!(
+                    "template.yaml is larger than {} bytes",
+                    limits::TEMPLATE_HELPER_FILE_MAX
+                )),
+            )
+        } else {
+            (Some(bytes), None)
+        };
+        templates.push(DirRead {
+            dir: dir.to_owned(),
+            meta,
+            problem,
+        });
     }
     Ok(SourceRead {
         resolved,

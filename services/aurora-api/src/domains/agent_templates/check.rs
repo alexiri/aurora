@@ -57,16 +57,19 @@ pub struct Problem {
     pub message: String,
 }
 
+/// The problem code of [`row_problem`].
+const NOT_STORED: &str = "template_not_stored";
+
 /// A template's own write failed (a row-level failure, e.g. the database refusing one row):
-/// it becomes that template's problem and its row stays as it is (retried next check) — the
-/// source's other templates are still ingested. A database that is down for everything
-/// still aborts the check at the whole-check writes (the version reads, the final
-/// transaction), so this only ever eats one row's failure.
+/// it becomes that template's problem and its row stays as it is (retried by the next check:
+/// the head is then not recorded as read) — the source's other templates are still ingested.
+/// A database that is down for everything still aborts the check at the whole-check writes
+/// (the version reads, the final transaction), so this only ever eats one row's failure.
 fn row_problem(template_id: &str, dir: &str, message: &str) -> Problem {
     Problem {
         template_id: Some(template_id.to_owned()),
         dir: dir.to_owned(),
-        code: "template_not_stored".to_owned(),
+        code: NOT_STORED.to_owned(),
         message: sanitize::one_line(message, 200),
     }
 }
@@ -124,8 +127,11 @@ async fn read_head(
             git::profile(),
         )
         .map_err(|e| git::read_failure(&e))?;
-        let reader =
-            crate::domains::skill_libraries::content::Reader::with_profile(&g, "", git::profile());
+        let reader = crate::domains::skill_libraries::content::Reader::with_profile(
+            &g,
+            &source.path,
+            git::profile(),
+        );
         git::read_with(&reader, source.reference.as_deref(), &source.path)
             .await
             .map_err(|e| git::read_failure(&e))
@@ -138,9 +144,11 @@ async fn read_head(
         .map_err(|e| reason_of(&e))
 }
 
-/// Every file under `dir` at `commit_sha` (step 6's source comparison): the reader at that
-/// commit, each blob through the template profile. A version's tree is read at the commit the
-/// version was recorded with, never at a newer head.
+/// Every file of the template folder `dir` (relative to the source's folder, as stored) at
+/// `commit_sha` (step 6's source comparison): the reader at that commit, each blob through the
+/// template profile. A version's tree is read at the commit the version was recorded with,
+/// never at a newer head. The returned paths start with `{dir}/`, as the package's do: the
+/// source's folder is stripped.
 ///
 /// [`DirFailure::TooLarge`] is a definite outcome: the tree holds more files than a template
 /// may carry, answered after at most `TEMPLATE_FILES_MAX + 1` blobs were fetched — the rest
@@ -165,7 +173,7 @@ async fn read_dir_at(
     commit_sha: &str,
     dir: &str,
 ) -> Result<Vec<aurora_template::TreeFile>, DirFailure> {
-    let dir = dir.to_owned();
+    let repo_dir = git::in_folder(&source.path, dir);
     let run = async {
         let g = GitRepo::with_profile(
             &state.connect,
@@ -177,7 +185,7 @@ async fn read_dir_at(
         .map_err(|e| git::read_failure(&e))?;
         let reader = crate::domains::skill_libraries::content::Reader::with_profile(
             &g,
-            &dir,
+            &repo_dir,
             git::profile(),
         );
         let entries = reader
@@ -194,7 +202,12 @@ async fn read_dir_at(
             // the path relative to the template folder, as the library reader tests it relative
             // to the library folder: a template folder that lives under the repository's own
             // `.github` still reads, and a `.github` folder inside the template is still skipped.
-            if !is_content(&dir, &e.path) {
+            // The reader lists repository paths; everything from here on is relative to the
+            // source's folder. The reader only lists what is below the template folder.
+            let Some(path) = git::below_folder(&source.path, &e.path) else {
+                continue;
+            };
+            if !is_content(dir, path) {
                 continue;
             }
             // The file cap is enforced before the next blob is fetched: one past the cap
@@ -218,7 +231,7 @@ async fn read_dir_at(
                 .await
                 .map_err(|e| git::read_failure(&e))?;
             files.push(aurora_template::TreeFile {
-                path: e.path.clone(),
+                path: path.to_owned(),
                 bytes,
                 mode,
             });
@@ -276,7 +289,7 @@ async fn finish_ok(
         .acquire()
         .await
         .map_err(aurora_db::DbError::from)?;
-    repo::finish_check(
+    let owned = repo::finish_check(
         &mut c,
         &repo::CheckDone {
             id: source.id,
@@ -287,7 +300,24 @@ async fn finish_ok(
         },
     )
     .await?;
+    if !owned {
+        return Err(lease_lost(source));
+    }
     Ok(())
+}
+
+/// Another replica claimed the source while this check ran (or the source is gone): the check
+/// stops, and what it still had to write is not true any more.
+fn lease_lost(source: &SourceRow) -> ApiError {
+    tracing::warn!(source = %source.id, "template check: lease lost, nothing more is written");
+    check_superseded()
+}
+
+fn check_superseded() -> ApiError {
+    ApiError::conflict(
+        "template_check_in_progress",
+        "The source changed while this check was running.",
+    )
 }
 
 /// Records a failed check — including one that died before writing any outcome (the poll
@@ -312,6 +342,8 @@ pub(crate) async fn fail(
         .acquire()
         .await
         .map_err(aurora_db::DbError::from)?;
+    // After a lost lease this writes nothing (the new owner records its own outcome); the
+    // caller still answers `failed`.
     repo::finish_check(
         &mut c,
         &repo::CheckDone {
@@ -382,10 +414,7 @@ async fn renew_lease(state: &AppState, source: &SourceRow) -> Result<(), ApiErro
     )
     .await?;
     if !owned {
-        return Err(ApiError::conflict(
-            "template_check_in_progress",
-            "The source changed while this check was running.",
-        ));
+        return Err(lease_lost(source));
     }
     Ok(())
 }
@@ -418,7 +447,8 @@ pub async fn check_source(
         .any(|t| t.head_state == "needs_newer_aurora");
 
     // Step 1: the head is the stored one, nothing waits and nothing needs a newer core —
-    // the result is `up_to_date` and nothing else is read.
+    // the result is `up_to_date` and nothing else is read. A head a check could not store in
+    // full is never the stored one (step 7), so it is read again.
     if source.last_head_sha.as_deref() == Some(head.as_str()) && !has_awaiting && !needs_newer {
         finish_ok(
             state,
@@ -683,6 +713,19 @@ pub async fn check_source(
     // one critical `agent_template.ingest` row per version that left `awaiting_package`.
     let mut events: Vec<AuditEvent> = Vec::new();
     let mut tx = audit::begin(state).await?;
+    // The lease is asserted first, and the update locks the source's row: until this
+    // transaction ends nobody else can claim the source. A lost lease writes nothing here
+    // (the transaction is dropped, so it rolls back).
+    if !repo::extend_lease(
+        &mut tx,
+        source.id,
+        source.lease_owner.unwrap_or_default(),
+        limits::TEMPLATE_LEASE.as_secs_f64(),
+    )
+    .await?
+    {
+        return Err(lease_lost(source));
+    }
     for (row, template_id, out) in &done {
         match out {
             StepOut::Left(status, reason, content, content_sha, archive_sha, size) => {
@@ -702,10 +745,7 @@ pub async fn check_source(
                     // The row no longer waits for a package: another check (the lease was
                     // lost) or an admin has moved it since this check read it. Nothing this
                     // transaction writes is true any more — roll it all back (SEC-146).
-                    return Err(ApiError::conflict(
-                        "template_check_in_progress",
-                        "The source changed while this check was running.",
-                    ));
+                    return Err(check_superseded());
                 }
                 // (C-1022, C-1108) A version that now waits for review is a decision item:
                 // one notice per administrator, exactly once (this transaction).
@@ -757,16 +797,21 @@ pub async fn check_source(
                 .await?;
                 if matched == 0 {
                     // Lost lease (see the `Left` arm): abort.
-                    return Err(ApiError::conflict(
-                        "template_check_in_progress",
-                        "The source changed while this check was running.",
-                    ));
+                    return Err(check_superseded());
                 }
             }
         }
     }
-    repo::set_head_sha(&mut tx, source.id, &head).await?;
-    repo::finish_check(
+    // Something could not be stored: the head must not count as read, or the next check of
+    // the same head would stop at step 1 and the failed write would wait for the next push.
+    // An earlier check may already have recorded this head, so it is forgotten then.
+    let not_stored = problems.iter().any(|p| p.code == NOT_STORED);
+    if !not_stored {
+        repo::set_head_sha(&mut tx, source.id, Some(&head)).await?;
+    } else if source.last_head_sha.as_deref() == Some(head.as_str()) {
+        repo::set_head_sha(&mut tx, source.id, None).await?;
+    }
+    let owned = repo::finish_check(
         &mut tx,
         &repo::CheckDone {
             id: source.id,
@@ -783,6 +828,9 @@ pub async fn check_source(
         },
     )
     .await?;
+    if !owned {
+        return Err(lease_lost(source));
+    }
     audit::commit_critical_many(tx, &events).await?;
     let status = if ingested.is_empty() {
         "up_to_date"
