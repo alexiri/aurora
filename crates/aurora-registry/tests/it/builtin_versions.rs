@@ -105,11 +105,19 @@ fn sentry_2_0_0_replaces_1_0_2_without_widening_and_takes_over_the_old_apps() {
 /// version replaces 1.7.0 by itself: the restriction does not wait for an administrator.
 #[test]
 fn microsoft_365_1_8_0_is_tools_only_and_replaces_1_7_0_without_widening() {
-    check("microsoft-365", "1.7.0", "1.8.0");
+    // 1.9.0 supersedes 1.8.0; an install still on 1.7.0 takes the shipped version the same way.
+    check("microsoft-365", "1.7.0", "1.9.0");
     let new = read("../../plugins/builtin/microsoft-365/plugin.yaml");
     assert!(new.apps.iter().all(|a| a.grants.block_untooled));
     // `full` stays a grant: it means every tool.
     assert!(new.apps.iter().all(|a| !a.grants.custom_only));
+}
+
+/// (FIX-275) The event cards gained a preview of the invitation's body: more to read on a card
+/// widens nothing, so 1.9.0 replaces 1.8.0 by itself.
+#[test]
+fn microsoft_365_1_9_0_previews_the_invitation_and_replaces_1_8_0_without_widening() {
+    check("microsoft-365", "1.8.0", "1.9.0");
 }
 
 #[test]

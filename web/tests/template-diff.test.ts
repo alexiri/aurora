@@ -267,6 +267,28 @@ describe("diffTemplateContent", () => {
     expect(skills.changes.map((c) => [c.part, c.kind])).toEqual([["skill:a:file:x.bin", "removed"]]);
   });
 
+  it("the executable bit is a change by itself, and is said next to a content change", () => {
+    const run = (executable: boolean, text = "#!/bin/sh\n", sha = "a") => ({ ...file("run.sh", text), executable, sha256: sha.repeat(64) });
+    const only = diffTemplateContent(content({ helpers: [run(false)] }), content({ helpers: [run(true)] }));
+    expect(only.changes).toEqual([{ part: "helper:run.sh", group: "helpers", label: "Helper file run.sh", kind: "changed", attention: false, detail: "This file is now runnable." }]);
+    expect(only.unchanged).not.toContain("Helper files (1)");
+
+    const inSkill = diffTemplateContent(content({ skills: [skill("a", { files: [run(true)] })] }), content({ skills: [skill("a", { files: [run(false)] })] }));
+    expect(inSkill.changes.map((c) => [c.part, c.detail])).toEqual([["skill:a:file:run.sh", "This file is no longer runnable."]]);
+    expect(inSkill.summary).toBe("1 change: 1 skill");
+
+    const both = diffTemplateContent(content({ helpers: [run(false)] }), content({ helpers: [run(true, "#!/bin/sh\nrm x\n", "b")] }));
+    expect(both.changes[0]).toMatchObject({ old: "#!/bin/sh\n", new: "#!/bin/sh\nrm x\n", detail: "This file is now runnable." });
+
+    // A file that was not text before and is a script now: both are said.
+    const wasBinary = diffTemplateContent(content({ helpers: [{ ...run(false), text: null as unknown as string, sha256: "c".repeat(64) }] }), content({ helpers: [run(true)] }));
+    expect(wasBinary.changes[0]?.detail).toBe("It changed. It was not text before, so there is no line comparison. This file is now runnable.");
+
+    // A new or removed file has no earlier or later bit to compare with.
+    const added = diffTemplateContent(content(), content({ helpers: [run(true)] }));
+    expect(added.changes[0]?.detail).toBeUndefined();
+  });
+
   it("the avatar arriving and leaving is said in words", () => {
     expect(diffTemplateContent(content(), content({ has_avatar: true })).changes[0]).toMatchObject({ label: "Avatar", kind: "added", detail: "The template now carries an avatar." });
     expect(diffTemplateContent(content({ has_avatar: true }), content()).changes[0]).toMatchObject({ label: "Avatar", kind: "removed", detail: "The template no longer carries an avatar." });

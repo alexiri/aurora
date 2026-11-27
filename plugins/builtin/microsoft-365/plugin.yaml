@@ -1,6 +1,6 @@
 package:
   id: microsoft-365
-  version: 1.8.0
+  version: 1.9.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -127,9 +127,11 @@ apps:
       create_event:
         title: create a calendar event
         fields:
+          # Invitations go to the attendees, so the card previews their body as the mail card does.
           - { label: Subject, source: body, steps: [ { json: /subject } ] }
           - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
           - { label: Attendees, source: body, steps: [ { json: "/attendees/*/emailAddress/address" } ] }
+          - { label: Message, source: body, steps: [ { json: /body/content } ] }
         link: "https://outlook.office.com/calendar/"
       create_calendar_event:
         title: create a calendar event
@@ -138,6 +140,7 @@ apps:
           - { label: Subject, source: body, steps: [ { json: /subject } ] }
           - { label: Starts, source: body, steps: [ { json: /start/dateTime } ] }
           - { label: Attendees, source: body, steps: [ { json: "/attendees/*/emailAddress/address" } ] }
+          - { label: Message, source: body, steps: [ { json: /body/content } ] }
     agent:
       summary: "Mail and calendar through Microsoft Graph: read and send mail, find a free slot and schedule a meeting."
       instructions: |
