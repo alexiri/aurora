@@ -190,17 +190,28 @@ pub fn reason(s: &str, max: usize) -> String {
             }
             Pending::Nothing => {}
         }
-        // `Authorization:` and `Proxy-Authorization:`, however they are spelled (`-H…`,
-        // `--header=…`, quoted, JSON): a scheme glued to the name, or nothing after it, means
-        // the credential is a following word. Anything else is masked by the `:` rule below.
-        let bare: String = lower.chars().filter(|c| !matches!(c, '"' | '\'')).collect();
-        if let Some((_, after)) = bare.split_once("authorization:")
-            && (after.is_empty() || SCHEMES.contains(&after))
-        {
-            pending = Pending::Header;
-            out.push(word.to_owned());
+        // A word that **is** an `Authorization:` or `Proxy-Authorization:` header (`-H…`,
+        // `--header=…`, quoted or not). With a scheme or nothing behind the name, it holds no
+        // credential and the following word does; anything else glued to the name is one.
+        if let Some(value_at) = authorization_header(word) {
+            let value = &word[value_at..];
+            let bare = value.trim_matches(['"', '\'']).to_ascii_lowercase();
+            if bare.is_empty() || SCHEMES.contains(&bare.as_str()) {
+                pending = Pending::Header;
+                out.push(word.to_owned());
+            } else {
+                quoted = open_quote(value);
+                out.push(format!("{}***", &word[..value_at]));
+            }
             continue;
         }
+        // A word that only mentions the header (a JSON body, a URL) is masked like any other
+        // word below; when it ends in the name or a scheme, the following word is masked too.
+        let mentions = {
+            let bare: String = lower.chars().filter(|c| !matches!(c, '"' | '\'')).collect();
+            bare.rsplit_once("authorization:")
+                .is_some_and(|(_, after)| after.is_empty() || SCHEMES.contains(&after))
+        };
         if lower == "bearer" || lower == "basic" {
             pending = Pending::Header;
             out.push(word.to_owned());
@@ -268,9 +279,34 @@ pub fn reason(s: &str, max: usize) -> String {
         {
             pending = Pending::Header;
         }
+        if mentions {
+            pending = Pending::Header;
+        }
         out.push(w);
     }
     clamp(out.join(" "), max)
+}
+
+/// Where the value begins in a word that is an `Authorization:` header.
+fn authorization_header(word: &str) -> Option<usize> {
+    let quotes = ['"', '\''];
+    let mut rest = word.trim_start_matches(quotes);
+    if let Some(r) = rest.strip_prefix("-H") {
+        rest = r;
+    } else if rest
+        .get(.."--header=".len())
+        .is_some_and(|p| p.eq_ignore_ascii_case("--header="))
+    {
+        rest = &rest["--header=".len()..];
+    }
+    rest = rest.trim_start_matches(quotes);
+    ["authorization:", "proxy-authorization:"]
+        .iter()
+        .find(|name| {
+            rest.get(..name.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(name))
+        })
+        .map(|name| word.len() - rest.len() + name.len())
 }
 
 /// What [`reason`] still has to mask in the words that follow.
@@ -617,6 +653,52 @@ mod tests {
         assert_eq!(
             reason("ls -a src && ssh -p 22 host && sort -u names.txt", 200),
             "ls -a src && ssh -p 22 host && sort -u names.txt"
+        );
+    }
+
+    /// (SEC-165) A word that only mentions `authorization:` is masked like any other word, and
+    /// a credential glued to the header name is masked too.
+    #[test]
+    fn reason_masks_words_that_mention_authorization() {
+        let cases: [(&str, &[&str]); 7] = [
+            (
+                r#"curl -d '{"password":"hunter2","authorization":"Bearer S3CRETT"}' https://x"#,
+                &["hunter2", "S3CRETT"],
+            ),
+            ("curl https://bob:hunter2@h?authorization:", &["hunter2"]),
+            (
+                "echo aub_0123456789abcdef,authorization:",
+                &["0123456789abcdef"],
+            ),
+            ("curl -HAuthorization:S3CRET1 https://x", &["S3CRET1"]),
+            (
+                "curl --header=Authorization:S3CRET2 https://x",
+                &["S3CRET2"],
+            ),
+            (
+                "curl -H'Proxy-Authorization:S3CRET3' https://x",
+                &["S3CRET3"],
+            ),
+            (
+                "curl --header='Authorization:S3CRET4' https://x",
+                &["S3CRET4"],
+            ),
+        ];
+        let leaked: Vec<String> = cases
+            .iter()
+            .map(|(command, secrets)| (command, secrets, reason(command, 500)))
+            .filter(|(_, secrets, masked)| secrets.iter().any(|s| masked.contains(s)))
+            .map(|(command, _, masked)| format!("{command} -> {masked}"))
+            .collect();
+        assert!(leaked.is_empty(), "{leaked:#?}");
+        // The header's name and scheme stay readable.
+        assert_eq!(
+            reason("curl -HAuthorization:Bearer abc https://x", 200),
+            "curl -HAuthorization:Bearer *** https://x"
+        );
+        assert_eq!(
+            reason("curl --header=Authorization:abc https://x", 200),
+            "curl --header=Authorization:*** https://x"
         );
     }
 
