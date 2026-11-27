@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 use aurora_core::limits::{
     self, AVATAR_MAX, LIBRARY_FILE_MAX, MEMORY_CONTENT_MAX, SKILL_BODY_MAX, SKILL_DESCRIPTION_MAX,
+    SKILL_TITLE_MAX,
 };
 
 use crate::meta::{self, parse_meta_str};
@@ -677,6 +678,7 @@ fn parse_skills(
         }
         let mut skill = TemplateSkill {
             name: name.clone(),
+            title: None,
             use_it_when: String::new(),
             body: String::new(),
             files: Vec::new(),
@@ -772,6 +774,25 @@ fn parse_skill_md(
             format!("{}#/name", f.path),
             "the front-matter name must equal the directory name",
         )),
+    }
+    // The optional display name: one line of plain text; absent or blank is none.
+    if let Some(t) = value.get("title") {
+        let title = t.as_str().map(clean_text);
+        match title.as_deref().map(str::trim) {
+            Some(t) if t.chars().any(char::is_control) || t.chars().count() > SKILL_TITLE_MAX => {
+                problems.push(TemplateProblem::new(
+                    ProblemCode::TemplateSkillInvalid,
+                    format!("{}#/title", f.path),
+                    format!("title is one line of at most {SKILL_TITLE_MAX} characters"),
+                ));
+            }
+            Some(t) => skill.title = (!t.is_empty()).then(|| t.to_owned()),
+            None => problems.push(TemplateProblem::new(
+                ProblemCode::TemplateSkillInvalid,
+                format!("{}#/title", f.path),
+                format!("title is one line of at most {SKILL_TITLE_MAX} characters"),
+            )),
+        }
     }
     match value.get("use-it-when").and_then(serde_yaml::Value::as_str) {
         Some(w) => {
@@ -1415,6 +1436,44 @@ pub(crate) mod tests {
             mode: 0o100644,
         });
         assert!(read_tree("service-monitor", &files).is_ok());
+    }
+
+    /// (C-1173) `title` is optional: read when set, refused when it is no short single line,
+    /// and a template without one hashes as it did before titles existed.
+    #[test]
+    fn a_skill_title_is_optional_and_one_short_line() {
+        let with = |front: &str| {
+            let mut files = sample_files();
+            files[5] = file(
+                "service-monitor/skills/what-is-on/SKILL.md",
+                &format!("---\nname: what-is-on\n{front}use-it-when: x\n---\nbody\n"),
+            );
+            read_tree("service-monitor", &files)
+        };
+        let title = |front: &str| with(front).unwrap().skills[0].title.clone();
+        assert_eq!(title(""), None);
+        assert_eq!(title("title: \"  \"\n"), None);
+        assert_eq!(
+            title("title: \"  What is on  \"\n").as_deref(),
+            Some("What is on")
+        );
+        let plain = crate::hash::content_sha256(&with("").unwrap());
+        assert_eq!(
+            plain,
+            crate::hash::content_sha256(&with("title: \"\"\n").unwrap())
+        );
+        assert_ne!(
+            plain,
+            crate::hash::content_sha256(&with("title: What is on\n").unwrap())
+        );
+        let long = format!("title: {}\n", "x".repeat(81));
+        for bad in [long.as_str(), "title: \"one\\ntwo\"\n", "title: [a]\n"] {
+            let err = with(bad).unwrap_err();
+            assert!(
+                err.iter().any(|p| p.path.ends_with("SKILL.md#/title")),
+                "{bad}: {err:?}"
+            );
+        }
     }
 
     /// The skill service stores a description only as a single line (it rejects `\r` and

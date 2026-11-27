@@ -346,6 +346,7 @@ pub fn content_json(c: &aurora_template::TemplateContent) -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "skills": c.skills.iter().map(|s| json!({
             "name": s.name,
+            "title": s.title,
             "use_it_when": s.use_it_when,
             "body": s.body,
             "files": s.files.iter().map(file).collect::<Vec<_>>(),
@@ -533,6 +534,8 @@ pub(crate) fn content_from_json(v: &Value) -> Option<aurora_template::TemplateCo
     fn skill(x: &Value) -> Option<TemplateSkill> {
         Some(TemplateSkill {
             name: x.get("name")?.as_str()?.to_owned(),
+            // Absent in content stored before titles existed.
+            title: x.get("title").and_then(Value::as_str).map(str::to_owned),
             use_it_when: x.get("use_it_when")?.as_str()?.to_owned(),
             body: x.get("body")?.as_str()?.to_owned(),
             files: x

@@ -142,3 +142,111 @@ SEC-158 on Opus before merge.
 
 Commits; final field names; how the projection and the effective set now agree; which adapters report skill use and
 which cannot; the privacy and permission matrices tested; tests changed; commands and results.
+
+Lane `p5-skills-1` (Sonnet), 2026-11-27. Built; **not merged, awaiting the SEC-158 review.**
+
+**Commits** (branch `alexiri/p5-skills-1`): `7fd7cd59` (the work, committed as WIP before merging master), `e3de49ac`
+(merge of master with P5-MEMORY-1), `ca708f09` (web types, mocks, last test and doc fixes), and the commit that adds this
+report. Master has since gained FIX-269 and FIX-274: `git merge-tree` shows no conflict and nothing new there builds a
+struct this lane added a field to; the tests below did not run on top of them.
+
+**Shared conversation helper.** P5-MEMORY-1 had not merged when this lane needed it, so it was written here as an exact
+copy of that lane's file (`domains/conversations/reference.rs`, the `mod` line, `convs::get_many`), compared
+byte-for-byte with its commit `5112629d`. P5-MEMORY-1 merged first; the master merge took both without a change. This
+lane **reuses** `conversation_refs`. The FIX-262 `record_read` calls of the skill read routes are unchanged; no new
+skill read route was added (the effective route still needs the caller's own access).
+
+**Final names** (details in C-1173..C-1176): `Skill.title`, `Skill.used_by_agents`; `CreateSkillRequest.title`,
+`UpdateSkillRequest.title`; `PUT|DELETE /v1/agents/{agent}/skills/{skill_id}/off` (`turnAgentSkillOff`/`On`), 409
+`skill_not_inherited`; `EffectiveSkill.off_for_agent`/`usage`; `ShadowedSkill.off_for_agent`/`reason`
+(`replaced|disabled|off_for_agent`)/`usage`; `SkillUsage { week, last: { at, conversation } | null }`;
+`SkillLibrary.skills_offered`/`skills_unavailable`; browse `?tier=&agent=&workspace=`, `LibrarySkillItem.blocked
+{ reason, message }`, `LibraryCatalogue.budget { bytes, used }`; `tool.started.skill`; audit `skill.agent_off`/`on`.
+Migrations `000289` (title, `agent_skills_off`, the two library counts) and `000290` (`skill_uses`); no renumbering
+needed (000288 is on master).
+
+**How the effective set and the projection agree.** There is now one function, `aurora_db::repo::skills::resolve`, over
+`list_reaching` (which returns each row with `off_for_agent`). `service::effective` and `hosted::skills` (the
+projection) both take their winners from it, and the usage mapping does too. The old second SQL rule is gone. The skill
+tools and the eval fingerprint go through `service::effective`; app skills sit under its winners as before.
+`effective_set_and_projection_agree_over_every_switch_combination` checks 75 names (agent absent/on/off by owners ×
+workspace and organization absent/on/disabled/off for the agent/both) against an independently computed winner, in the
+effective set, the projection rows and the rendered folders.
+
+**Which adapters report skill use** (`12 §Skill use`): Claude Code (`Skill` tool, `Read`, shell read), Codex (shell
+read only: it has no read tool in its stream), Pi (`read`, `bash`), goose (text-editor `view`, shell), OpenCode
+(`skill`, `read`, `bash`). Not visible: a load a harness does without a tool call; goose skill-extension tools (not
+recognised); reads by scripts or hidden behind variables or pipelines. **Not verified against the pinned binaries:** the
+recorded fixtures contain no skill load, so the argument keys of Claude's `Skill` tool and OpenCode's `skill` tool and
+goose's `text_editor` shape are covered only by hand-written adapter tests. A wrong key means a use is not counted,
+never a wrong count.
+
+**Choices the brief did not spell out (for review).**
+1. A skill that is off is in `shadowed`, never in `items`; so `EffectiveSkill.off_for_agent` (named by C-1174) is
+   always false there. P5-SKILLS-3 builds its one list from both arrays.
+2. The 409 for an app skill cannot be reached: an app skill has no id.
+3. `skill.agent_off`/`on` are security-critical audit actions (committed with the change, 503 if unwritable).
+4. Templates: `title` is optional front matter, hashed into the version only when set. It is not part of the skill part
+   hash, so a title-only template change offers no update; an apply keeps the agent's own title and takes the
+   template's only when there is none. The template version review does not show titles.
+5. Library counts: create and re-address now read the `SKILL.md` files, as check does; a refresh reads the catalogue
+   when the head moved or counts are missing. "Check now" on a library nobody added from still does nothing (the job
+   claims only libraries in use); browsing updates its counts.
+6. `blocked: budget` uses the listing's size estimate (a filtered fetch may know only `SKILL.md`'s size); the add
+   checks the real size again.
+7. `LibrarySkillItem` has no `title` (library skills have none, C-1173).
+8. Skill loads in `turn.idle.events` count for the anchor turn.
+
+**Security notes (SEC-158).**
+
+| Rule | How | Test (`services/aurora-api/tests/it/`) |
+|---|---|---|
+| Only people who may edit the agent switch a skill off or on | `visible_agent`, the check of the agent's other writes | `skills_use.rs::off_applies_only_to_inherited_skills_that_reach_the_agent` (org admin without a binding 403, member outside the workspace 404, other organization 404 for PUT and DELETE; workspace member 204); `permission_matrix`, `route_inventory` |
+| Only for skills that reach the agent; never reveals another tenant's | reach is decided on an unlocked read before any row lock; one 404 message | same test: another agent's, another workspace's, another organization's skill and a random id give the same 404 and message; own skill 409; no row written |
+| Off only, one agent, audited once | `applies = enabled && !off` | `off_for_one_agent_leaves_the_others_and_is_audited_once`, the agreement test, `skills_app.rs::turning_an_inherited_skill_off_lets_the_app_skill_of_its_name_apply` |
+| A reported use counts only for the turn's agent and conversation | `own_turn` fences the report; agent and conversation come from the turn row; the name is checked as a folder name and resolved for that agent now; a failure rolls back only its savepoint | `a_reported_use_counts_for_the_turns_agent_and_only_for_a_skill_that_reaches_it`: another agent's turn is `invalid` with no row; invented `agent_id`/`conversation_id` ignored; another agent's, another organization's, unknown and path-like names record nothing; an off skill's name maps to the lower tier; one row per turn; duplicates; after-turn report |
+| `skill_get` counts only a skill that applies | `record_loaded(only = the row read)`; the tool call is fenced to an active turn of the agent | `skill_get_counts_one_use_per_turn_and_only_of_the_skill_that_applies` |
+| The last use names its conversation only to its readers | `conversation_refs` | `the_last_use_names_a_conversation_only_to_its_readers`: direct user and workspace owner see it; another member, by session and by API key, gets null and the title appears nowhere; deleted conversation null |
+| No cross-tenant answers from browse | the tier must belong to the organization browsed as and be visible | `skill_library.rs::browse_says_what_cannot_be_added_to_the_tier_and_its_budget` (other organization's agent and workspace, random id, unusable workspace: 404) |
+| Nothing but a folder name leaves the supervisor | `adapters/skill_use.rs` | its unit tests (repository skills folders, `..`, writes, `sed -i`, redirects name nothing) |
+
+For the reviewer: `used_by_agents` on an organization skill is a count any member of the organization can read (D-505(c),
+as `skill-3.png` draws it). A shell "read" is a heuristic over the command text; a false positive only adds a use of a
+skill that already reaches that agent.
+
+**Fail-first.** With the off rule, the report write, the reader check and `blocked` each deliberately broken in one
+build, exactly the six tests that depend on them failed (agreement, off-for-one, app-tier off, reported use,
+conversation privacy, browse blocked) and the other six new API tests passed. With skill detection disabled, 8 of 9
+supervisor tests failed (the ninth asserts that non-skill paths name nothing). Both breaks were restored from the commit.
+The title, count and usage-window tests assert fields that did not exist before; they were not run against old code.
+
+**Commands and results** (`scripts/dev/test.sh p5-skills-1 …`; the owner's minimal gate, no whole-crate runs):
+- `rust -p aurora-db` (migration, schema and spec filters): 17 run, 16 passed; the new migration test failed on a
+  column its own fixture invented, fixed, rerun 1/1.
+- `rust -p aurora-api`, before the master merge (skill, permission matrix, route inventory, retention, home, templates,
+  hosted, OpenAPI, fingerprint filters): 348 run, 346 passed; 2 new tests had mistakes in the test code, fixed. After
+  the merge (skill, memory, OpenAPI, matrix, inventory, retention): 183/183. `UPDATE_OPENAPI=1` on the merged tree
+  changed nothing.
+- `rust -p aurora-template` 36/36; `rust -p aurora-supervisor` (skill and stream filters) 59/59.
+- `web vitest tests/skill-libraries-ui.test.tsx tests/agent-export.test.ts tests/agent-import.test.tsx` 83/83.
+- `web playwright e2e/skill-libraries.spec.ts --project=mocked` 80/80 (1256, 768, 390 and 1280 px, both themes, axe,
+  no horizontal scroll).
+- `pnpm gen:api`, `pnpm typecheck`, eslint on touched files, `cargo fmt --all --check`,
+  `scripts/guards/run-all.sh`, `scripts/extract-schema.py --check`: all pass.
+- Not run: clippy, whole crates, the whole vitest suite (CI's).
+
+**Tests changed.** New: `skills_use.rs`, `aurora-db/tests/it/skill_titles_uses_migration.rs`, `skill_use.rs` units,
+one `skill` test per adapter, template title test, two library tests, one app-tier test, one export title test.
+Changed: `skill_library.rs` (title is read-only on library skills), `permission_matrix.rs`, `route_inventory.rs`,
+`agent_templates.rs` (a repo call's new argument), adapter assertions (the new field, `None`),
+`e2e/support/skill-libraries.ts` (counts), `e2e/skill-libraries.spec.ts` (the instance card now reads "5 skills · used
+by 2 organizations"; one new assertion for the organization card). No test removed, skipped or loosened. Production
+specs and `scripts/e2e`, `tests/e2e-hosted`: read by search; fields were only added, none needed a change.
+
+**Mockup comparison.** The pages of skill-1..5 are P5-SKILLS-3/4; this lane gives them their data (titles, off, source,
+shadows for Compare, usage, "used by", counts, `blocked`, budget). The only visible change is the count on the
+P5-SKILLS-2 library cards, captured at 1280 and 390 px in dark and light beside `after/skill-6.png`: the words match
+("17 skills · 2 used by Acme Labs"). Differences seen on that page, all outside this lane's change: sample names and
+numbers (mocks); "Default branch" where the mockup's library names `main`, and "Checked Just now" (mock data); the app
+shell (illustrative); a mock library in error and the "Shared with every organization" section (P5-SKILLS-2's states);
+the Next.js development badge in the screenshots.

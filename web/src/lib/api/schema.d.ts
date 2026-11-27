@@ -2794,6 +2794,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent}/skills/{skill_id}/off": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Turn an inherited (workspace or organization) skill off for this agent only; idempotent. */
+        put: operations["turnAgentSkillOff"];
+        post?: never;
+        /** Undo turning an inherited skill off for this agent; idempotent. */
+        delete: operations["turnAgentSkillOn"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent}/space-bindings": {
         parameters: {
             query?: never;
@@ -9115,6 +9133,13 @@ export interface components {
             agent_id: string;
             decision: components["schemas"]["Decision"];
         };
+        /** @enum {string} */
+        BlockedReason: "name_taken" | "budget" | "invalid";
+        BlockedSkill: {
+            /** @description A plain sentence saying why. */
+            message: string;
+            reason: components["schemas"]["BlockedReason"];
+        };
         BulkConnectionGrantItem: {
             /** Format: uuid */
             agent_id: string;
@@ -10237,6 +10262,11 @@ export interface components {
              *     Required unless `from_library` is given.
              */
             name?: string | null;
+            /**
+             * @description The display name: one line of plain text, at most 80 characters; blank or absent means
+             *     none.
+             */
+            title?: string | null;
         };
         CreateSshKeyRequest: {
             /** @description At most 80 characters; default: the key's comment, else "SSH key". */
@@ -10533,9 +10563,12 @@ export interface components {
             source?: components["schemas"]["SkillSource"] | null;
             /** @description `agent` | `workspace` | `org` | `app`. */
             tier: string;
+            title?: string | null;
             total_size: number;
             /** Format: date-time */
             updated_at?: string | null;
+            /** Format: int64 */
+            used_by_agents?: number | null;
             /** Format: uuid */
             workspace_id?: string | null;
         };
@@ -10613,10 +10646,16 @@ export interface components {
             app?: components["schemas"]["AppRef"] | null;
             /** @description Always true: a disabled skill never wins. */
             enabled: boolean;
+            /**
+             * @description (C-1174) Always false: a skill turned off for the agent is never in effect (it is in
+             *     `shadowed`).
+             */
+            off_for_agent: boolean;
             /** @description Every lower-tier skill of this name (enabled or not), app skills included. */
             shadows: components["schemas"]["TierRef"][];
             skill: components["schemas"]["EffectiveBody"];
             tier: string;
+            usage?: components["schemas"]["SkillUsage"] | null;
         };
         EffectiveSkills: {
             items: components["schemas"]["EffectiveSkill"][];
@@ -11843,7 +11882,13 @@ export interface components {
             /** @description The access level's id (`read` | `write` for a token method). */
             level: string;
         };
+        /** @description (C-1176) The tier's budget for library skills, in characters of body and files. */
+        LibraryBudget: {
+            bytes: number;
+            used: number;
+        };
         LibraryCatalogue: {
+            budget?: components["schemas"]["LibraryBudget"] | null;
             /** @description The commit the listing was read at: quote it when adding. */
             commit_sha: string;
             items: components["schemas"]["LibrarySkillItem"][];
@@ -11916,6 +11961,7 @@ export interface components {
         LibrarySkillItem: {
             /** @description Where this library's version of the skill is already added. */
             added: components["schemas"]["LibrarySkillPlacement"][];
+            blocked?: components["schemas"]["BlockedSkill"] | null;
             description?: string | null;
             files: number;
             name: string;
@@ -12528,6 +12574,11 @@ export interface components {
             /** Format: uuid */
             workspace_id?: string | null;
         };
+        /**
+         * @description Why a skill of the agent's tiers is not in effect.
+         * @enum {string}
+         */
+        NotAppliedReason: "replaced" | "disabled" | "off_for_agent";
         /** @description An OAuth client. `fields` carries non-secret fields only; secret values are sealed. */
         OAuthClient: {
             client_key: string;
@@ -14270,6 +14321,7 @@ export interface components {
                 files: components["schemas"]["SkillFile"][];
                 /** Format: uuid */
                 id: string;
+                /** @description The folder name (immutable). */
                 name: string;
                 /** Format: uuid */
                 org_id: string;
@@ -14283,10 +14335,21 @@ export interface components {
                 source?: components["schemas"]["SkillSource"] | null;
                 /** @description `agent` | `workspace` | `org`. */
                 tier: string;
+                /**
+                 * @description (C-1173) The display name, at most 80 characters of plain text; null for a skill
+                 *     without one (library and app skills have none).
+                 */
+                title?: string | null;
                 /** @description Body plus files, in characters (binary counted as base64 length). */
                 total_size: number;
                 /** Format: date-time */
                 updated_at: string;
+                /**
+                 * Format: int64
+                 * @description (C-1175) Workspace and organization skills: how many distinct agents used it in the last
+                 *     30 days; null for an agent's own skill.
+                 */
+                used_by_agents?: number | null;
                 /** Format: uuid */
                 workspace_id?: string | null;
             }[];
@@ -14324,6 +14387,17 @@ export interface components {
                 /** @description `org` | `instance`. */
                 scope: string;
                 skill_counts?: components["schemas"]["SkillCounts"] | null;
+                /**
+                 * Format: int32
+                 * @description (C-1176) Skill folders that can be added, at the last read of the repository (create,
+                 *     address change, browse or refresh); null before the first. Members see it too.
+                 */
+                skills_offered?: number | null;
+                /**
+                 * Format: int32
+                 * @description (C-1176) Skill folders that cannot be added (broken), at the same read.
+                 */
+                skills_unavailable?: number | null;
                 /** @description `active` | `paused` | `error` | `over_budget`. */
                 status: string;
                 /** @description Whether an access token is saved (never the token). */
@@ -16821,9 +16895,14 @@ export interface components {
         ShadowedSkill: {
             app?: components["schemas"]["AppRef"] | null;
             enabled: boolean;
+            /** @description (C-1174) Turned off for this agent (it may also be switched off by its owners: `enabled`). */
+            off_for_agent: boolean;
+            /** @description `disabled` when its owners switched it off, else `off_for_agent`, else `replaced`. */
+            reason: components["schemas"]["NotAppliedReason"];
             shadowed_by?: components["schemas"]["TierRef"] | null;
             skill: components["schemas"]["EffectiveBody"];
             tier: string;
+            usage?: components["schemas"]["SkillUsage"] | null;
         };
         SharedBotInfo: {
             display_name: string;
@@ -16936,6 +17015,7 @@ export interface components {
             files: components["schemas"]["SkillFile"][];
             /** Format: uuid */
             id: string;
+            /** @description The folder name (immutable). */
             name: string;
             /** Format: uuid */
             org_id: string;
@@ -16949,10 +17029,21 @@ export interface components {
             source?: components["schemas"]["SkillSource"] | null;
             /** @description `agent` | `workspace` | `org`. */
             tier: string;
+            /**
+             * @description (C-1173) The display name, at most 80 characters of plain text; null for a skill
+             *     without one (library and app skills have none).
+             */
+            title?: string | null;
             /** @description Body plus files, in characters (binary counted as base64 length). */
             total_size: number;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * Format: int64
+             * @description (C-1175) Workspace and organization skills: how many distinct agents used it in the last
+             *     30 days; null for an agent's own skill.
+             */
+            used_by_agents?: number | null;
             /** Format: uuid */
             workspace_id?: string | null;
         };
@@ -16975,6 +17066,11 @@ export interface components {
             path: string;
             /** @description Characters for text, base64 length for binary content. */
             size: number;
+        };
+        SkillLastUse: {
+            /** Format: date-time */
+            at: string;
+            conversation?: components["schemas"]["ConversationRef"] | null;
         };
         /**
          * @description A skill library (C-1122). Managers see every field; other members who can use a workspace of
@@ -17012,6 +17108,17 @@ export interface components {
             /** @description `org` | `instance`. */
             scope: string;
             skill_counts?: components["schemas"]["SkillCounts"] | null;
+            /**
+             * Format: int32
+             * @description (C-1176) Skill folders that can be added, at the last read of the repository (create,
+             *     address change, browse or refresh); null before the first. Members see it too.
+             */
+            skills_offered?: number | null;
+            /**
+             * Format: int32
+             * @description (C-1176) Skill folders that cannot be added (broken), at the same read.
+             */
+            skills_unavailable?: number | null;
             /** @description `active` | `paused` | `error` | `over_budget`. */
             status: string;
             /** @description Whether an access token is saved (never the token). */
@@ -17083,6 +17190,15 @@ export interface components {
             pinned_at?: string | null;
             repo?: string | null;
             update_pending: boolean;
+        };
+        /** @description (C-1175) An agent's use of one skill. */
+        SkillUsage: {
+            last?: components["schemas"]["SkillLastUse"] | null;
+            /**
+             * Format: int64
+             * @description How many turns used it in the last 7 days.
+             */
+            week: number;
         };
         /** @description One typed blank of the template that the agent fills in. */
         Slot: {
@@ -17977,6 +18093,8 @@ export interface components {
             body?: string | null;
             description?: string | null;
             enabled?: boolean | null;
+            /** @description The display name; `""` clears it, absent keeps it. */
+            title?: string | null;
         };
         UpdateTemplateRequest: {
             /** @description Withdraw (`false`) or offer again (`true`). */
@@ -30473,6 +30591,156 @@ export interface operations {
             };
             /** @description Too many requests: the per-principal rate limit */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    turnAgentSkillOff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Skill id */
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Off for this agent */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description skill_not_inherited */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    turnAgentSkillOn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Agent id */
+                agent: string;
+                /** @description Skill id */
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No longer off for this agent */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description skill_not_inherited */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description audit_unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -45526,6 +45794,13 @@ export interface operations {
                  *     that organization's skills the caller can see), optional for an organization library.
                  */
                 org?: string;
+                /**
+                 * @description (C-1176) Say what cannot be added to this tier: `agent` (with `agent`), `workspace`
+                 *     (with `workspace`) or `organization`. The tier must be of the organization browsed as.
+                 */
+                tier?: "agent" | "workspace" | "organization";
+                agent?: string;
+                workspace?: string;
             };
             header?: never;
             path: {

@@ -23,6 +23,7 @@ const library: Lib = {
   repo: "git.example.org/acme/agent-skills", ref: null, path: "skills", status: "active", token_set: false, token_updated_at: null,
   last_head_sha: SHA_B, last_refresh_at: now, last_error: null,
   skill_counts: { agent: 1, workspace: 0, org: 1 }, pending_updates: 1, created_at: now,
+  skills_offered: 17, skills_unavailable: 1,
 };
 
 // (P5-SKLIB-2, D-449) A library of the whole installation: listed in the organization's second section with its
@@ -32,12 +33,14 @@ export const instanceLibrary: Lib = {
   repo: "git.example.org/it/skills", ref: null, path: "", status: "active", token_set: true, token_updated_at: null,
   last_head_sha: SHA_B, last_refresh_at: now, last_error: null,
   skill_counts: { agent: 0, workspace: 0, org: 1 }, pending_updates: 1, created_at: now,
+  skills_offered: 5, skills_unavailable: 0,
 };
 
 // What an organization with no private libraries and a broken one sees in the statuses.
 const brokenLibrary: Lib = {
   ...library, id: id(702), label: "Private tools", url: "https://git.example.org/acme/private.git", repo: "git.example.org/acme/private", path: "",
   status: "error", last_error: "The repository needs an access token", last_head_sha: null, skill_counts: { agent: 0, workspace: 0, org: 0 }, pending_updates: 0,
+  skills_offered: null, skills_unavailable: null,
 };
 
 const orgSkill = {

@@ -363,6 +363,7 @@ impl Script {
                         call_id: call_id.clone(),
                         name,
                         summary,
+                        skill: None,
                     })
                     .await
                         && self

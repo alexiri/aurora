@@ -215,6 +215,13 @@ pub const SKILL_TOTAL_MAX: usize = 32_000;
 /// `skill_create` cannot grow what every home sync projects without bound.
 pub const SKILL_PER_AGENT_MAX: i64 = 50;
 pub const SKILL_FILES_MAX: i64 = 50;
+/// (P5-SKILLS-1, C-1173) Characters of a skill's display name.
+pub const SKILL_TITLE_MAX: usize = 80;
+/// (P5-SKILLS-1, C-1175, D-505) How long a skill use is kept, the window of an agent's "used N
+/// times this week", and the window of a skill's "used by N agents" (days).
+pub const SKILL_USE_RETENTION_DAYS: i32 = 90;
+pub const SKILL_USE_WEEK_DAYS: i32 = 7;
+pub const SKILL_USED_BY_DAYS: i32 = 30;
 /// (FIX-110) Queued peer tasks per ordered (sender, target) pair.
 pub const PEER_TASK_QUEUE_MAX: i64 = 10;
 // Git skill library (phase 4, P4-GSL, D-148, D-149; docs/02 §Limits).

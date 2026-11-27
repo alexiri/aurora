@@ -46,6 +46,11 @@ pub struct SkillLibrary {
     /// An instance library, in its manager's view only: how many organizations have a skill
     /// added from it (never which skills).
     pub orgs_using: Option<i64>,
+    /// (C-1176) Skill folders that can be added, at the last read of the repository (create,
+    /// address change, browse or refresh); null before the first. Members see it too.
+    pub skills_offered: Option<i32>,
+    /// (C-1176) Skill folders that cannot be added (broken), at the same read.
+    pub skills_unavailable: Option<i32>,
     pub created_at: Option<DateTime<Utc>>,
 }
 
@@ -161,6 +166,34 @@ pub struct LibrarySkillItem {
     pub files: usize,
     /// Where this library's version of the skill is already added.
     pub added: Vec<TierRef>,
+    /// (C-1176) Why it cannot be added to the tier the browse is for (`?tier=`); null when it
+    /// can, and without `?tier=`.
+    pub blocked: Option<BlockedSkill>,
+}
+
+#[derive(Serialize, ToSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockedReason {
+    /// The tier already has a skill of this folder name.
+    NameTaken,
+    /// Adding it would pass the tier's library budget (size or number of skills).
+    Budget,
+    /// The skill is broken in the repository (the item's `reason`).
+    Invalid,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub struct BlockedSkill {
+    pub reason: BlockedReason,
+    /// A plain sentence saying why.
+    pub message: String,
+}
+
+/// (C-1176) The tier's budget for library skills, in characters of body and files.
+#[derive(Serialize, ToSchema, Clone, Copy)]
+pub struct LibraryBudget {
+    pub bytes: usize,
+    pub used: usize,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -171,6 +204,8 @@ pub struct LibraryCatalogue {
     /// More than `LIBRARY_BROWSE_MAX` skills: the listing is cut; narrow the folder.
     pub truncated: bool,
     pub next_cursor: Option<String>,
+    /// The tier's budget; null without `?tier=`.
+    pub budget: Option<LibraryBudget>,
 }
 
 #[derive(Serialize, ToSchema)]

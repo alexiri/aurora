@@ -101,6 +101,24 @@ describe("the tree", () => {
     expect(back.skills[0]!.files.map((f) => [f.path, [...f.content]])).toEqual(e.skills[0]!.files.map((f) => [f.path, [...f.content]]));
   });
 
+  it("writes a skill's title only when it has one, and reads it back", async () => {
+    const data: AgentExport = {
+      ...sample,
+      skills: [
+        { name: "release-notes", title: "Release notes: the short ones", useItWhen: "x", body: "b", files: [] },
+        { name: "pdf", useItWhen: "y", body: "b", files: [] },
+      ],
+    };
+    const files = new Map(exportFiles(data, "daneel").map((f) => [f.name, new TextDecoder().decode(f.data)]));
+    expect(parseYaml(files.get("daneel/skills/release-notes/SKILL.md")!.split("---\n")[1]!)).toMatchObject({ title: "Release notes: the short ones" });
+    expect(files.get("daneel/skills/pdf/SKILL.md")).not.toContain("title");
+    const back = parseExport(await readZip(exportZip(data, "daneel", NOW).bytes));
+    expect(back.skills.map((s) => [s.name, s.title])).toEqual([
+      ["pdf", undefined],
+      ["release-notes", "Release notes: the short ones"],
+    ]);
+  });
+
   it("refuses a one-time schedule whose run_at is not a local time", () => {
     const enc = (s: string) => new TextEncoder().encode(s);
     const yaml = (runAt: string) => `kind: schedule\nname: x\nprompt: p\ncadence:\n  preset: once\n  run_at: "${runAt}"\ntime_zone: UTC\nenabled: false\n`;

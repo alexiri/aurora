@@ -19,6 +19,7 @@ use std::collections::HashSet;
 
 use serde_json::{Value, json};
 
+use crate::adapters::skill_use;
 use crate::harness::HarnessEvent;
 
 const SUMMARY_MAX: usize = 120;
@@ -54,6 +55,21 @@ fn platform_name(name: &str) -> String {
         format!("mcp__{name}")
     } else {
         name.to_owned()
+    }
+}
+
+/// (C-1175) The skill a call loads: a view of a skill's `SKILL.md` with goose's text editor, or
+/// a read command in its shell.
+fn loaded_skill(name: &str, args: Option<&Value>) -> Option<String> {
+    let tool = name.strip_prefix("developer__").unwrap_or(name);
+    match tool {
+        "text_editor"
+            if args.and_then(|a| a.get("command")).and_then(Value::as_str) == Some("view") =>
+        {
+            skill_use::of_read(args, super::SKILLS_DIR)
+        }
+        "shell" => skill_use::of_shell(args, super::SKILLS_DIR),
+        _ => None,
     }
 }
 
@@ -148,9 +164,11 @@ impl StreamMapper {
                     if !call.is_empty() && self.started.insert(call.to_owned()) {
                         self.open.push(call.to_owned());
                         let name = platform_name(name);
+                        let args = value.and_then(|v| v.get("arguments"));
                         out.events.push(HarnessEvent::ToolStarted {
                             call_id: call.to_owned(),
-                            summary: summary(&name, value.and_then(|v| v.get("arguments"))),
+                            summary: summary(&name, args),
+                            skill: loaded_skill(&name, args),
                             name,
                         });
                     }
@@ -286,6 +304,43 @@ mod tests {
         (ev, term)
     }
 
+    /// (C-1175) goose reads a skill with a text-editor view or a command in its shell.
+    #[test]
+    fn viewing_a_skill_md_names_the_skill() {
+        let req = |id: &str, name: &str, args: &str| {
+            format!(
+                r#"{{"type":"message","message":{{"id":"m{id}","role":"assistant","content":[{{"type":"toolRequest","id":"{id}","toolCall":{{"status":"success","value":{{"name":"{name}","arguments":{args}}}}}}}]}}}}"#
+            )
+        };
+        let path = r#""/workspace/.agents/skills/pdf/SKILL.md""#;
+        let lines = [
+            req(
+                "a",
+                "developer__text_editor",
+                &format!(r#"{{"command":"view","path":{path}}}"#),
+            ),
+            req(
+                "b",
+                "developer__text_editor",
+                &format!(r#"{{"command":"write","path":{path}}}"#),
+            ),
+            req(
+                "c",
+                "shell",
+                &format!(r#"{{"command":"cat {}"}}"#, path.trim_matches('"')),
+            ),
+        ];
+        let (ev, _) = run(&lines.iter().map(String::as_str).collect::<Vec<_>>());
+        let got: Vec<Option<String>> = ev
+            .iter()
+            .filter_map(|e| match e {
+                HarnessEvent::ToolStarted { skill, .. } => Some(skill.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(got, [Some("pdf".into()), None, Some("pdf".into())]);
+    }
+
     // Lines recorded from goose 1.59.2 (trimmed: the metadata objects are dropped).
     const TEXT1: &str = r#"{"type":"message","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"po"}]}}"#;
     const TEXT2: &str = r#"{"type":"message","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"ng"}]}}"#;
@@ -348,7 +403,8 @@ mod tests {
                 HarnessEvent::ToolStarted {
                     call_id: "toolu_1".into(),
                     name: "shell".into(),
-                    summary: "shell: echo hi".into()
+                    summary: "shell: echo hi".into(),
+                    skill: None
                 },
                 HarnessEvent::ToolFinished {
                     call_id: "toolu_1".into(),
@@ -358,7 +414,8 @@ mod tests {
                 HarnessEvent::ToolStarted {
                     call_id: "t2".into(),
                     name: "mcp__aurora__ping".into(),
-                    summary: "mcp__aurora__ping (1 args)".into()
+                    summary: "mcp__aurora__ping (1 args)".into(),
+                    skill: None
                 },
                 HarnessEvent::ToolFinished {
                     call_id: "t2".into(),

@@ -39,7 +39,8 @@ fn fail(e: ApiError) -> ToolError {
 
 /// (C-1133) An app skill as `skill_list` and `skill_get` show it: tier `app`, never editable.
 fn app_summary(s: &AppSkill) -> Value {
-    json!({"name": s.skill.name, "tier": "app", "scope": "app", "app_id": s.app_id,
+    json!({"name": s.skill.name, "title": Value::Null, "tier": "app", "scope": "app",
+        "app_id": s.app_id,
         "description": s.skill.description, "enabled": true,
         "files": s.skill.files.iter().map(|f| json!({"path": f.path, "size": f.size,
             "executable": f.executable})).collect::<Vec<_>>(),
@@ -49,7 +50,7 @@ fn app_summary(s: &AppSkill) -> Value {
 
 fn summary(v: &SkillView) -> Value {
     let tier = service::tier_of(&v.row);
-    json!({"name": v.row.name, "tier": tier,
+    json!({"name": v.row.name, "title": v.row.title, "tier": tier,
         "scope": if tier == "org" { "organization" } else { tier },
         "description": v.row.description, "enabled": v.row.enabled,
         "files": v.files.iter().map(|f| json!({"path": f.path, "size": f.size,
@@ -77,6 +78,12 @@ fn library_readonly(v: &SkillView) -> Result<(), ToolError> {
 fn name_schema() -> Value {
     json!({"type": "string", "description": "Skill name (kebab-case, at most 64 characters; \
         the aurora- prefix is reserved)."})
+}
+
+fn title_schema() -> Value {
+    json!({"type": "string", "maxLength": limits::SKILL_TITLE_MAX,
+        "description": "Optional display name people see (one line); the folder name stays. \
+            An empty string removes it."})
 }
 
 async fn agent_of(ctx: &ToolCallContext) -> Result<agents::AgentRow, ToolError> {
@@ -288,8 +295,32 @@ impl PlatformTool for Get {
         }
         let mut s = summary(&v);
         s["body"] = json!(v.row.body);
+        // (C-1175) Reading a skill's instructions is a use of it; reading one of its files is
+        // not, and neither is reading a skill that does not apply (an own skill switched off).
+        record_use(ctx, &v).await;
         out(s)
     }
+}
+
+/// Counts the read as a use of the skill by this agent in this turn. A failure to count never
+/// fails the read.
+async fn record_use(ctx: &ToolCallContext, v: &SkillView) {
+    let recorded = async {
+        let agent = agent_of(ctx).await.ok()?;
+        let mut conn = ctx.agent.pool.acquire().await.ok()?;
+        crate::domains::skills::usage::record_loaded(
+            &mut conn,
+            &agent,
+            ctx.conversation_id,
+            ctx.turn_id,
+            &v.row.name,
+            Some(v.row.id),
+        )
+        .await
+        .map_err(|e| tracing::warn!(error = %e, "a skill use was not recorded"))
+        .ok()
+    };
+    let _ = recorded.await;
 }
 
 struct Create;
@@ -298,6 +329,7 @@ struct Create;
 #[serde(deny_unknown_fields)]
 struct CreateArgs {
     name: String,
+    title: Option<String>,
     description: String,
     body: String,
 }
@@ -320,7 +352,7 @@ impl PlatformTool for Create {
     fn input_schema(&self) -> Value {
         json!({"type": "object", "additionalProperties": false,
             "required": ["name", "description", "body"],
-            "properties": {"name": name_schema(),
+            "properties": {"name": name_schema(), "title": title_schema(),
                 "description": {"type": "string", "maxLength": limits::SKILL_DESCRIPTION_MAX,
                     "description": "One line saying when to use the skill."},
                 "body": {"type": "string", "description": "Markdown instructions."}}})
@@ -337,6 +369,7 @@ impl PlatformTool for Create {
         let org = agent_of(ctx).await?.org_id;
         let n = NewSkill {
             name: &a.name,
+            title: a.title.as_deref(),
             description: &a.description,
             body: &a.body,
             enabled: true,
@@ -359,6 +392,7 @@ struct Update;
 #[serde(deny_unknown_fields)]
 struct UpdateArgs {
     name: String,
+    title: Option<String>,
     description: Option<String>,
     body: Option<String>,
     enabled: Option<bool>,
@@ -373,11 +407,12 @@ impl PlatformTool for Update {
         "skills"
     }
     fn description(&self, _: &ToolContext) -> String {
-        "Update the description, body or enabled flag of one of your own skills.".into()
+        "Update the display name, description, body or enabled flag of one of your own skills."
+            .into()
     }
     fn input_schema(&self) -> Value {
         json!({"type": "object", "additionalProperties": false, "required": ["name"],
-            "properties": {"name": name_schema(),
+            "properties": {"name": name_schema(), "title": title_schema(),
                 "description": {"type": "string", "maxLength": limits::SKILL_DESCRIPTION_MAX},
                 "body": {"type": "string"}, "enabled": {"type": "boolean"}}})
     }
@@ -393,6 +428,7 @@ impl PlatformTool for Update {
         let cur = own_skill(ctx, &a.name).await?;
         library_readonly(&cur)?;
         let p = Patch {
+            title: a.title.as_deref(),
             description: a.description.as_deref(),
             body: a.body.as_deref(),
             enabled: a.enabled,

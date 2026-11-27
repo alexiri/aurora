@@ -32,6 +32,8 @@ pub fn readonly() -> ApiError {
 
 pub struct NewSkill<'a> {
     pub name: &'a str,
+    /// The display name; blank means none.
+    pub title: Option<&'a str>,
     pub description: &'a str,
     pub body: &'a str,
     pub enabled: bool,
@@ -39,6 +41,8 @@ pub struct NewSkill<'a> {
 
 #[derive(Default)]
 pub struct Patch<'a> {
+    /// `Some("")` clears the display name.
+    pub title: Option<&'a str>,
     pub description: Option<&'a str>,
     pub body: Option<&'a str>,
     pub enabled: Option<bool>,
@@ -63,6 +67,24 @@ pub fn validate_name(name: &str) -> Result<(), ApiError> {
             Err(bad("/name", "the aurora- prefix is reserved"))
         }
     }
+}
+
+/// The stored form of a display name (C-1173): trimmed plain text of at most
+/// [`limits::SKILL_TITLE_MAX`] characters on one line; blank is none.
+pub(crate) fn clean_title(t: Option<&str>) -> Result<Option<String>, ApiError> {
+    let Some(t) = t.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    if t.chars().any(char::is_control) {
+        return Err(bad("/title", "must be a single line of plain text"));
+    }
+    if t.chars().count() > limits::SKILL_TITLE_MAX {
+        return Err(bad(
+            "/title",
+            &format!("at most {} characters", limits::SKILL_TITLE_MAX),
+        ));
+    }
+    Ok(Some(t.to_owned()))
 }
 
 fn validate_description(d: &str) -> Result<(), ApiError> {
@@ -159,15 +181,6 @@ pub fn tier_of(r: &SkillRow) -> &'static str {
     }
 }
 
-/// Precedence rank: lower wins (agent > workspace > org).
-fn rank(r: &SkillRow) -> u8 {
-    match tier_of(r) {
-        "agent" => 0,
-        "workspace" => 1,
-        _ => 2,
-    }
-}
-
 /// Bumps the sync generation of the agent (agent tier), of the workspace (workspace tier,
 /// reaching only its agents) or of every agent in the org.
 pub(crate) async fn bump(conn: &mut PgConnection, s: &SkillRow) -> Result<(), DbError> {
@@ -186,7 +199,10 @@ pub struct EffectiveItem {
 
 pub struct ShadowedItem {
     pub view: SkillView,
+    /// The skill's own switch.
     pub enabled: bool,
+    /// (C-1174) Turned off for this agent.
+    pub off_for_agent: bool,
     pub shadowed_by: Option<(Uuid, &'static str)>,
 }
 
@@ -195,57 +211,102 @@ pub struct Effective {
     pub shadowed: Vec<ShadowedItem>,
 }
 
-/// The effective set of an agent (RFE-020): per name the highest *enabled* tier wins
-/// (agent > workspace > org); a disabled skill never vetoes a lower tier.
+/// The effective set of an agent (RFE-020, C-1174): [`repo::resolve`], the one rule, with each
+/// skill's files. A skill turned off for the agent is never among `items`.
 pub async fn effective(pool: &PgPool, agent: &agents::AgentRow) -> Result<Effective, ApiError> {
     let mut c = pool.acquire().await.map_err(DbError::from)?;
-    let rows = repo::list_reaching(&mut c, agent.org_id, agent.workspace_id, agent.id).await?;
-    let mut views = view_many(&mut c, rows).await?;
-    // Group by name (rows are ordered by name); within a name order by tier rank.
-    views.sort_by(|a, b| {
-        (a.row.name.as_str(), rank(&a.row)).cmp(&(b.row.name.as_str(), rank(&b.row)))
-    });
+    let rows =
+        repo::list_reaching(&mut c, agent.org_id, agent.workspace_id, agent.id, None).await?;
+    let all: Vec<SkillRow> = rows.iter().map(|r| r.row.clone()).collect();
+    let mut views: std::collections::HashMap<Uuid, SkillView> = view_many(&mut c, all)
+        .await?
+        .into_iter()
+        .map(|v| (v.row.id, v))
+        .collect();
     let mut out = Effective {
         items: Vec::new(),
         shadowed: Vec::new(),
     };
-    let mut it = views.into_iter().peekable();
-    while let Some(first) = it.next() {
-        let mut group = vec![first];
-        while it.peek().is_some_and(|n| n.row.name == group[0].row.name) {
-            group.extend(it.next());
-        }
-        match group.iter().position(|v| v.row.enabled) {
-            Some(w) => {
-                let win = group.remove(w);
-                let by = (win.row.id, tier_of(&win.row));
-                let shadows = group
-                    .iter()
-                    .filter(|v| rank(&v.row) > rank(&win.row))
-                    .map(|v| (v.row.id, tier_of(&v.row)))
-                    .collect();
-                out.items.push(EffectiveItem { view: win, shadows });
-                for v in group {
-                    let enabled = v.row.enabled;
-                    out.shadowed.push(ShadowedItem {
-                        view: v,
-                        enabled,
-                        shadowed_by: Some(by),
-                    });
-                }
+    for group in repo::resolve(rows) {
+        let by = group.winner.as_ref().map(|w| (w.row.id, tier_of(&w.row)));
+        if let Some(win) = &group.winner {
+            let shadows = group
+                .others
+                .iter()
+                .filter(|o| repo::rank(&o.row) > repo::rank(&win.row))
+                .map(|o| (o.row.id, tier_of(&o.row)))
+                .collect();
+            if let Some(view) = views.remove(&win.row.id) {
+                out.items.push(EffectiveItem { view, shadows });
             }
-            None => {
-                for v in group {
-                    out.shadowed.push(ShadowedItem {
-                        view: v,
-                        enabled: false,
-                        shadowed_by: None,
-                    });
-                }
+        }
+        for o in group.others {
+            if let Some(view) = views.remove(&o.row.id) {
+                out.shadowed.push(ShadowedItem {
+                    view,
+                    enabled: o.row.enabled,
+                    off_for_agent: o.off_for_agent,
+                    shadowed_by: by,
+                });
             }
         }
     }
     Ok(out)
+}
+
+/// What a change of the per-agent switch did.
+pub enum SwitchOutcome {
+    Changed(Box<SkillRow>),
+    Unchanged,
+}
+
+/// (C-1174, D-499) Turns an inherited skill off (or back on) for one agent, inside `tx`. The
+/// caller has established that the person may edit the agent. The skill must reach the agent (a
+/// workspace or organization skill of its workspace or organization): anything else is the same
+/// 404 as an unknown id, so another tenant's skill is never revealed; the agent's own skill is
+/// 409 `skill_not_inherited`.
+///
+/// Lock order: the skill's row first, then the agent rows the bump updates, like a change or
+/// delete of an inherited skill.
+pub async fn switch_for_agent(
+    tx: &mut PgConnection,
+    agent: &agents::AgentRow,
+    skill: Uuid,
+    off: bool,
+    by: Uuid,
+) -> Result<SwitchOutcome, ApiError> {
+    // A skill's owner never changes, so reach is decided on an unlocked read: no row that does
+    // not reach the agent is ever locked.
+    let seen = repo::get(tx, skill).await?.ok_or_else(not_found)?;
+    let reaches = seen.org_id == agent.org_id
+        && match (seen.agent_id, seen.workspace_id) {
+            (Some(a), _) => a == agent.id,
+            (None, Some(w)) => w == agent.workspace_id,
+            (None, None) => true,
+        };
+    if !reaches {
+        return Err(not_found());
+    }
+    let row = repo::get_for_update(tx, skill)
+        .await?
+        .ok_or_else(not_found)?;
+    if row.agent_id.is_some() {
+        return Err(ApiError::conflict(
+            "skill_not_inherited",
+            "Only a workspace or organization skill can be turned off for one agent. This is the \
+             agent's own skill: switch the skill itself.",
+        ));
+    }
+    let changed = if off {
+        repo::set_off(tx, agent.id, skill, by).await?
+    } else {
+        repo::clear_off(tx, agent.id, skill).await?
+    };
+    if !changed {
+        return Ok(SwitchOutcome::Unchanged);
+    }
+    repo::bump_agent(tx, agent.id).await?;
+    Ok(SwitchOutcome::Changed(Box::new(row)))
 }
 
 /// The enabled agent-tier skills of the workspace's agents that override a workspace skill.
@@ -268,11 +329,20 @@ pub async fn overridden_in(
     ))
 }
 
-/// A DTO with `overridden_in` filled (workspace tier).
+/// A DTO with `overridden_in` (workspace tier) and `used_by_agents` (workspace and
+/// organization tiers) filled.
 pub async fn dto(pool: &PgPool, v: SkillView) -> Result<super::dto::Skill, ApiError> {
     let ov = overridden_in(pool, &v.row).await?;
+    let used_by = if v.row.agent_id.is_none() {
+        let mut c = pool.acquire().await.map_err(DbError::from)?;
+        let used = super::usage::used_by_agents(&mut c, &[v.row.id]).await?;
+        Some(used.get(&v.row.id).copied().unwrap_or(0))
+    } else {
+        None
+    };
     let mut s = super::dto::Skill::from(v);
     s.overridden_in = ov;
+    s.used_by_agents = used_by;
     Ok(s)
 }
 
@@ -419,6 +489,7 @@ pub async fn create(
     created_by: &str,
 ) -> Result<SkillView, ApiError> {
     validate_name(n.name)?;
+    clean_title(n.title)?;
     validate_description(n.description)?;
     validate_body(n.body)?;
     let mut tx = pool.begin().await.map_err(DbError::from)?;
@@ -451,6 +522,7 @@ pub(crate) async fn create_in_tx(
             ));
         }
     }
+    let title = clean_title(n.title)?;
     let row = repo::insert(
         tx,
         org,
@@ -460,6 +532,7 @@ pub(crate) async fn create_in_tx(
         n.body,
         n.enabled,
         created_by,
+        title.as_deref(),
     )
     .await
     .map_err(|e| match e {
@@ -495,9 +568,15 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
     let mut tx = pool.begin().await.map_err(DbError::from)?;
     let cur = lock_for_edit(&mut tx, id).await?;
     // (P4-GSL) enable/disable stays allowed; the content changes only by an approved update.
-    if cur.library_id.is_some() && (p.description.is_some() || p.body.is_some()) {
+    if cur.library_id.is_some()
+        && (p.title.is_some() || p.description.is_some() || p.body.is_some())
+    {
         return Err(readonly());
     }
+    let title = match p.title {
+        Some(t) => clean_title(Some(t))?,
+        None => cur.title.clone(),
+    };
     let body = p.body.unwrap_or(&cur.body);
     if p.body.is_some() {
         let files = repo::files(&mut tx, &[id]).await?;
@@ -509,6 +588,7 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
         p.description.unwrap_or(&cur.description),
         body,
         p.enabled.unwrap_or(cur.enabled),
+        title.as_deref(),
     )
     .await?;
     bump(&mut tx, &row).await?;

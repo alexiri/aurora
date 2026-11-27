@@ -1236,6 +1236,7 @@ A lock writes no `memory_revisions` row (it is not a content change); it is audi
 | agent_id | uuid null FK→agents (cascade) | set ⇒ agent-tier skill; null ⇒ org skill, or a workspace skill when `workspace_id` is set |
 | workspace_id | uuid null FK→workspaces (cascade) | (phase 3, RFE-020, D-64) non-null ⇒ **workspace-tier** skill (`10 §Skills`). CHECK `skills_one_tier`: `workspace_id IS NULL OR agent_id IS NULL` (agent skills keep it null; their workspace is the agent's). Tier = agent (`agent_id` set) \| workspace (`workspace_id` set) \| org (both null). Deleting the workspace deletes its skills |
 | name | text not null | `[a-z0-9]+(-[a-z0-9]+)*` ≤64, immutable; `aurora-*` reserved |
+| title | text null | (P5-SKILLS-1, C-1173, D-498) the display name: 1..80 characters of plain text on one line (`CHECK`: no control character); null ⇒ the folder name made readable. Library and app skills have none |
 | description | text not null | single line ≤500 |
 | body | text not null | `SKILL.md` body |
 | enabled | bool not null default true | |
@@ -1261,6 +1262,30 @@ Home-sync generation (`12 §Sync protocol`, I-32): a change to a workspace-tier 
 or its files bumps `workspaces.home_sync_generation` in the same transaction (part
 of every agent's desired generation, so it reaches every agent of that workspace and no
 other workspace); `skill_files` is unchanged.
+
+### `agent_skills_off` (P5-SKILLS-1, D-499, C-1174; an inherited skill turned off for one agent)
+| Column | Type | Notes |
+|---|---|---|
+| agent_id | uuid FK→agents (cascade) | pk part |
+| skill_id | uuid FK→skills (cascade) | pk part; a workspace or organization skill that reaches the agent (the service refuses anything else) |
+| set_by | uuid null FK→users (set null) | who turned it off |
+| set_at | timestamptz not null default now() | |
+| index | (skill_id) (`agent_skills_off_skill_idx`) | |
+
+The row means **off only**: the skill is treated as not enabled for that agent (a lower tier's skill of the same name may then apply). One rule (`repo::skills::resolve`) serves the effective set, the projection, the skill tools and the eval fingerprint. A change bumps the agent's home-sync generation.
+
+### `skill_uses` (P5-SKILLS-1, D-505, C-1175; each time an agent loads a skill)
+| Column | Type | Notes |
+|---|---|---|
+| skill_id | uuid not null FK→skills (cascade) | |
+| agent_id | uuid not null FK→agents (cascade) | |
+| conversation_id | uuid null FK→conversations (set null) | a deleted conversation keeps the use |
+| turn_id | uuid null FK→turns (set null) | |
+| at | timestamptz not null default now() | |
+| partial unique | (turn_id, skill_id) where turn_id not null (`skill_uses_turn_skill_uq`) | one use per turn and skill |
+| index | (agent_id, skill_id, at DESC); (skill_id, at); (conversation_id) where not null; (at) | the agent's view, "used by", pruning |
+
+Pruned after `SKILL_USE_RETENTION_DAYS` (90) by the daily retention pass.
 
 ### `skill_files`
 | Column | Type | Notes |
@@ -1290,6 +1315,7 @@ other workspace); `skill_files` is unchanged.
 | refresh_lease_until, lease_owner | timestamptz null, uuid null | the per-library lease of the refresh job (`LIBRARY_LEASE`) |
 | check_requested_at | timestamptz null | the last "Check now" (at most once per `LIBRARY_CHECK_NOW_INTERVAL`, 429 `library_check_too_soon`) (D-154) |
 | head_epoch | integer not null default 0 | bumped whenever an add clears `last_head_sha`; a refresh writes its head only if the epoch is the one it read (compare-and-set; FIX-096) |
+| skills_offered, skills_unavailable | integer null, integer null | (P5-SKILLS-1, C-1176) skill folders that can / cannot be added, at the last read of the repository (create, address change, browse, refresh); null before the first read since the columns exist (`CHECK` ≥ 0) |
 | created_by_user_id | uuid null FK→users (set null) | |
 | unique | (coalesce(org_id, nil uuid), label) (`skill_libraries_label_uq`); (coalesce(org_id, nil uuid), url, coalesce(ref, ''), path) where url is not null (`skill_libraries_url_uq`, 409 `library_exists`) | an instance library is one scope |
 | index | (org_id); (next_refresh_at) where status in (active, error, over_budget) | |

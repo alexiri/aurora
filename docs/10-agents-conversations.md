@@ -1034,6 +1034,23 @@ from searching the incoming message with score ≥ 0.1.
   agent skill that shadows a higher-tier one with `shadows`). Deleting a workspace
   deletes its skills (cascade).
   The dashboard shows, per agent, each skill's tier and what it shadows.
+- (P5-SKILLS-1, D-498, C-1173) A skill may have a **display name** (`title`, ≤ 80
+  characters of plain text on one line) beside its folder name; people write it in the
+  dashboard or API and agents with `skill_create`/`skill_update` (their own skills).
+  Library and app skills have none. It is not part of the projected `SKILL.md`.
+- (P5-SKILLS-1, D-499, C-1174, SEC-158) **Off for one agent.** Whoever may edit an agent
+  may turn a workspace or organization skill (library-added included) off for that agent
+  only, and back on; never its own skill (switch the skill itself) and never an app skill.
+  For that agent the skill is treated as not enabled — a lower tier's or an app's skill of
+  the same name may then apply — in the effective set, the projected files, the skill
+  tools and the configuration fingerprint (one rule, `repo::skills::resolve`). Off only:
+  nothing turns on what the skill's owners switched off. Audited; the agent's home syncs.
+- (P5-SKILLS-1, D-505, C-1175) **Use.** A use is the agent loading a skill: `skill_get`
+  of its instructions, or the harness's own skill loading as the supervisor reports it
+  (`12 §Skill use`). One per turn and skill, kept 90 days, for the skill that reaches the
+  agent at that moment. The agent's view says how often it was used this week and when it
+  was last used, naming that conversation only to its readers; workspace and organization
+  skills say how many agents used them in the last 30 days.
 - Name = directory name (immutable; `aurora-*` reserved). Single-line
 description (frontmatter the harness uses to decide when to load). Body ≤
 `SKILL_BODY_MAX`; body + files ≤ `SKILL_TOTAL_MAX` chars (binary counted as
@@ -1137,7 +1154,12 @@ org 4 MiB / 100; a skill that would exceed a budget is refused 422 `library_budg
 pending update larger than the headroom stays pending, flagged "over budget", until the person frees
 space or rejects it). Library skills count in the ordinary skill projection limits too.
 
-**Library skills are read-only.** `PATCH`/`PUT` of body, description or files → 409
+(P5-SKILLS-1, C-1176) A library says how many skills it offers and how many cannot be added
+(`skills_offered`, `skills_unavailable`, stored at each read). Browsing it for a tier says, per
+skill, why it cannot be added there (broken, name taken, over the tier's budget) and the tier's real
+budget and use.
+
+**Library skills are read-only.** `PATCH`/`PUT` of body, title, description or files → 409
 `library_skill_readonly`; **agent tools cannot update or delete them** (`skill_update`,
 `skill_delete` refuse with the same code; `skill_list`/`skill_get` show `source`). Allowed: enable or
 disable (as any skill), **remove** (delete), and **detach** (convert to an ordinary editable skill of

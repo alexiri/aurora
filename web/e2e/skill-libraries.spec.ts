@@ -93,6 +93,8 @@ for (const width of [1280, 390]) {
         expect(await cards.getByRole("button", { name }).evaluate((el) => el.getBoundingClientRect().right <= document.documentElement.clientWidth)).toBe(true);
       }
       await expect(cards.getByRole("link", { name: /Update available/ })).toBeVisible();
+      // (P5-SKILLS-1, C-1176) The card says how many skills the library offers.
+      await expect(cards.getByText("17 skills · 2 used by Acme Labs")).toBeVisible();
       // One card per row at 1256 and 390 px: the two cards share a left edge.
       const boxes = await Promise.all((await cards.locator(":scope > li").all()).map((li) => li.boundingBox()));
       expect(new Set(boxes.map((b) => Math.round(b!.x))).size).toBe(1);
@@ -176,7 +178,7 @@ for (const width of [1280, 390]) {
       await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Library settings", level: 3 })).toBeVisible();
       const cards = page.getByRole("list", { name: "Skill libraries of this instance" });
-      await expect(cards.getByText("Used by 2 organizations")).toBeVisible();
+      await expect(cards.getByText("5 skills · used by 2 organizations")).toBeVisible();
       await page.getByRole("button", { name: "Add a library" }).first().click();
       const dlg = page.getByRole("dialog", { name: "Add a library" });
       await dlg.getByLabel("Repository address", { exact: true }).fill("https://github.com/acme/skills/tree/main/skills");

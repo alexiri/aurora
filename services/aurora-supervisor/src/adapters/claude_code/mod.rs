@@ -49,6 +49,8 @@ use launcher::{ChildIo, Launcher, ProcessLauncher};
 use stream::StreamMapper;
 
 pub const PINNED_VERSION: &str = "2.1.319";
+/// (C-1140) Where Claude Code reads skills, relative to the home folder.
+pub const SKILLS_DIR: &str = ".claude/skills";
 const DEFAULT_HOLD: Duration = Duration::from_secs(30);
 /// How long a fresh child gets to emit `system/init` before the first message is sent anyway.
 /// CLI 2.1.319 emits no init until it has a user message, so waiting the full hold costs every
@@ -119,7 +121,7 @@ impl HarnessAdapter for ClaudeCodeAdapter {
             tool_events: true,
             platform_tools: true,
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
-            skills_dir: ".claude/skills".into(),
+            skills_dir: SKILLS_DIR.into(),
             instruction_files: vec!["CLAUDE.md".into(), "AGENTS.md".into()],
             model_roles: aurora_protocol::runner::harness_model_roles("claude-code")
                 .iter()

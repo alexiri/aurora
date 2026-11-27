@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::content::{self, Candidate, LoadError, ReadError, Reader};
 use super::git::GitRepo;
-use super::service::{open_token, row_url};
+use super::service::{Offered, catalogue, open_token, row_url};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 
@@ -278,7 +278,9 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
     repo::record_head(&mut c, lib.id, &head).await.map_err(db)?;
     // An unchanged head costs this one call, unless an organization is over budget for the library
     // (space may be free: its skipped proposals are compared again).
+    // (C-1176) A library whose counts are not stored yet is read once to store them.
     if lib.last_head_sha.as_deref() == Some(head.as_str())
+        && lib.skills_offered.is_some()
         && !repo::has_org_state(&mut c, lib.id).await.map_err(db)?
     {
         return Ok(Done { head, proposed: 0 });
@@ -302,6 +304,14 @@ async fn compare(state: &AppState, lib: &LibraryRow, _owner: Uuid) -> Result<Don
         }
     }
     reader.prefetch(&wanted).await?;
+    // (C-1176) What the library offers at this head. A failure keeps the previous counts: it
+    // never fails the pass that watches the added skills.
+    if let Ok(cat) = catalogue(&reader, &lib.path, head.clone()).await {
+        Offered::of(&cat.items)
+            .store(&mut c, lib.id)
+            .await
+            .map_err(db)?;
+    }
     let mut done = Done {
         head: head.clone(),
         proposed: 0,

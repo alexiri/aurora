@@ -1,6 +1,7 @@
 use super::app_skills;
 use super::dto::*;
 use super::service::{self, NewSkill, Owner, Patch};
+use super::usage;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::emergency_access::service::{ReadKind, record_read};
@@ -23,6 +24,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_agent_skills, create_agent_skill))
         .routes(routes!(effective_agent_skills))
+        .routes(routes!(turn_skill_off, turn_skill_on))
         .routes(routes!(list_org_skills, create_org_skill))
         .routes(routes!(list_workspace_skills, create_workspace_skill))
         .routes(routes!(get_skill, update_skill, delete_skill))
@@ -189,6 +191,7 @@ async fn create_agent_skill(
     let (name, description, body) = req.manual()?;
     let n = NewSkill {
         name,
+        title: req.title.as_deref(),
         description,
         body,
         enabled: req.enabled.unwrap_or(true),
@@ -235,13 +238,14 @@ async fn create_org_skill(
     let (name, description, body) = req.manual()?;
     let n = NewSkill {
         name,
+        title: req.title.as_deref(),
         description,
         body,
         enabled: req.enabled.unwrap_or(true),
     };
     let v = service::create(&s.pool, org, Owner::default(), &n, "user").await?;
     record(&c, &s, &v.row, "skill.create", None);
-    Ok((StatusCode::CREATED, Json(v.into())))
+    Ok((StatusCode::CREATED, Json(service::dto(&s.pool, v).await?)))
 }
 
 /// List a workspace's skills (workspace tier). The list is a C-1165 read (review LOW-9):
@@ -301,6 +305,7 @@ async fn create_workspace_skill(
     let (name, description, body) = req.manual()?;
     let n = NewSkill {
         name,
+        title: req.title.as_deref(),
         description,
         body,
         enabled: req.enabled.unwrap_or(true),
@@ -336,6 +341,16 @@ async fn effective_agent_skills(
         tier,
         app_id: None,
     };
+    // (C-1175) This agent's use of every stored skill that reaches it; a skill never used says
+    // so (`last: null`).
+    let ids: Vec<Uuid> = e
+        .items
+        .iter()
+        .map(|i| i.view.row.id)
+        .chain(e.shadowed.iter().map(|i| i.view.row.id))
+        .collect();
+    let usage = usage::of_agent(&s, &c, agent, &ids).await?;
+    let usage_of = |id: Uuid| Some(usage.get(&id).cloned().unwrap_or_default());
     let mut items = Vec::with_capacity(e.items.len() + apps.items.len());
     for i in e.items {
         let skill = service::dto(&s.pool, i.view).await?;
@@ -354,17 +369,29 @@ async fn effective_agent_skills(
             enabled: true,
             shadows,
             app: None,
+            off_for_agent: false,
+            usage: usage_of(skill.id),
             skill: skill.into(),
         });
     }
     let mut shadowed = Vec::with_capacity(e.shadowed.len());
     for i in e.shadowed {
         let skill = service::dto(&s.pool, i.view).await?;
+        let reason = if !i.enabled {
+            NotAppliedReason::Disabled
+        } else if i.off_for_agent {
+            NotAppliedReason::OffForAgent
+        } else {
+            NotAppliedReason::Replaced
+        };
         shadowed.push(ShadowedSkill {
             tier: skill.tier,
             enabled: i.enabled,
             shadowed_by: i.shadowed_by.map(tier_ref),
             app: None,
+            off_for_agent: i.off_for_agent,
+            reason,
+            usage: usage_of(skill.id),
             skill: skill.into(),
         });
     }
@@ -380,9 +407,11 @@ async fn effective_agent_skills(
         workspace_id: None,
         org_id: None,
         name: sk.skill.name.clone(),
+        title: None,
         description: sk.skill.description.clone(),
         body,
         enabled,
+        used_by_agents: None,
         files: sk
             .skill
             .files
@@ -406,6 +435,8 @@ async fn effective_agent_skills(
             enabled: true,
             shadows: Vec::new(),
             app: Some(app_names_of(sk)),
+            off_for_agent: false,
+            usage: None,
             skill: app_body(sk, body, true),
         });
     }
@@ -427,11 +458,80 @@ async fn effective_agent_skills(
                 },
             }),
             app: Some(app_names_of(sk)),
+            off_for_agent: false,
+            reason: NotAppliedReason::Replaced,
+            usage: None,
             skill: app_body(sk, body, true),
         });
     }
     items.sort_by(|a, b| a.skill.name.cmp(&b.skill.name));
     Ok(Json(EffectiveSkills { items, shadowed }))
+}
+
+/// The per-agent switch (C-1174): anyone who may edit the agent.
+async fn switch(
+    c: &Caller,
+    s: &AppState,
+    agent: Uuid,
+    skill: Uuid,
+    off: bool,
+) -> Result<StatusCode, ApiError> {
+    let a = visible_agent(c, s, agent).await?;
+    let mut tx = audit::begin(s).await?;
+    match service::switch_for_agent(&mut tx, &a, skill, off, c.user_id).await? {
+        service::SwitchOutcome::Unchanged => {}
+        service::SwitchOutcome::Changed(row) => {
+            let action = if off {
+                "skill.agent_off"
+            } else {
+                "skill.agent_on"
+            };
+            let ev = AuditEvent::by(c, action)
+                .org(a.org_id)
+                .workspace(a.workspace_id)
+                .target("skill", row.id)
+                .metadata(json!({"name": row.name, "scope": service::tier_of(&row),
+                    "agent_id": a.id}));
+            audit::commit_critical(tx, &ev).await?;
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Turn an inherited (workspace or organization) skill off for this agent only; idempotent.
+#[utoipa::path(put, path = "/agents/{agent}/skills/{skill_id}/off",
+    operation_id = "turnAgentSkillOff", tag = "skills",
+    params(("agent" = Uuid, Path, description = "Agent id"),
+        ("skill_id" = Uuid, Path, description = "Skill id")),
+    responses((status = 204, description = "Off for this agent"),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "skill_not_inherited", body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn turn_skill_off(
+    c: Caller,
+    State(s): State<AppState>,
+    Path((agent, skill)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    switch(&c, &s, agent, skill, true).await
+}
+
+/// Undo turning an inherited skill off for this agent; idempotent.
+#[utoipa::path(delete, path = "/agents/{agent}/skills/{skill_id}/off",
+    operation_id = "turnAgentSkillOn", tag = "skills",
+    params(("agent" = Uuid, Path, description = "Agent id"),
+        ("skill_id" = Uuid, Path, description = "Skill id")),
+    responses((status = 204, description = "No longer off for this agent"),
+        (status = 403, body = ErrorEnvelope), (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "skill_not_inherited", body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn turn_skill_on(
+    c: Caller,
+    State(s): State<AppState>,
+    Path((agent, skill)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    switch(&c, &s, agent, skill, false).await
 }
 
 /// Get one skill with its file metadata.
@@ -472,6 +572,7 @@ async fn update_skill(
     let cur = service::row(&s.pool, id).await?;
     authorize(&c, &s, &cur, true).await?;
     let p = Patch {
+        title: req.title.as_deref(),
         description: req.description.as_deref(),
         body: req.body.as_deref(),
         enabled: req.enabled,

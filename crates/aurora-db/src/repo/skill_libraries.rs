@@ -12,7 +12,7 @@ use uuid::Uuid;
 const LIB_COLS: &str = "id, org_id, label, url, repo, ref, path, status, \
     last_head_sha, last_refresh_at, next_refresh_at, refresh_failures, last_error, \
     refresh_lease_until, lease_owner, check_requested_at, created_by_user_id, created_at, \
-    updated_at, head_epoch, token_ref, token_updated_at";
+    updated_at, head_epoch, token_ref, token_updated_at, skills_offered, skills_unavailable";
 
 #[derive(Clone, sqlx::FromRow)]
 pub struct LibraryRow {
@@ -48,6 +48,9 @@ pub struct LibraryRow {
     /// reader, never returned (the `Debug` below leaves it out).
     pub token_ref: Option<String>,
     pub token_updated_at: Option<DateTime<Utc>>,
+    /// (P5-SKILLS-1, C-1176) Valid and invalid skill folders at the last read.
+    pub skills_offered: Option<i32>,
+    pub skills_unavailable: Option<i32>,
 }
 
 impl std::fmt::Debug for LibraryRow {
@@ -344,6 +347,25 @@ pub async fn patch_library(
     .bind(token_val)
     .fetch_one(conn)
     .await?)
+}
+
+/// Stores what a read of the library found (C-1176). `updated_at` stays: this is the
+/// repository's content, not a change of the library.
+pub async fn set_offered(
+    conn: &mut PgConnection,
+    id: Uuid,
+    offered: i32,
+    unavailable: i32,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE skill_libraries SET skills_offered = $2, skills_unavailable = $3 WHERE id = $1",
+    )
+    .bind(id)
+    .bind(offered)
+    .bind(unavailable)
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 pub async fn delete_library(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {

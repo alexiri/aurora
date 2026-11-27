@@ -45,6 +45,8 @@ use launcher::{Launcher, ProcessLauncher};
 use stream::StreamMapper;
 
 pub const PINNED_VERSION: &str = "0.167.0";
+/// (C-1140) Where the projection puts Codex's skills, relative to the home folder.
+pub const SKILLS_DIR: &str = ".codex/skills/aurora";
 
 #[derive(Clone)]
 pub struct CodexAdapter {
@@ -137,7 +139,7 @@ impl HarnessAdapter for CodexAdapter {
             dialects: vec!["openai_responses".into()],
             // A subdirectory of Codex's own skills dir: the read-only projection stays away from
             // the `.system` skills Codex seeds beside it.
-            skills_dir: ".codex/skills/aurora".into(),
+            skills_dir: SKILLS_DIR.into(),
             instruction_files: vec!["AGENTS.md".into()],
             // (P5-MODELS-1, D-303) Codex picks no model per task: roles are received and ignored.
             model_roles: vec![],

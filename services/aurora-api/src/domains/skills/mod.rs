@@ -7,6 +7,7 @@ pub mod dto;
 pub mod library;
 mod routes;
 pub mod service;
+pub mod usage;
 
 use crate::app::AppState;
 use utoipa_axum::router::OpenApiRouter;

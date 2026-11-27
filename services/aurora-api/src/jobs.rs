@@ -156,6 +156,8 @@ pub struct PruneReport {
     pub schedules_done: u64,
     /// (FIX-236, C-1164) Emergency access rows past their 400-day retention.
     pub emergency_access: u64,
+    /// (P5-SKILLS-1, C-1175) Skill uses past `SKILL_USE_RETENTION_DAYS`.
+    pub skill_uses: u64,
 }
 
 /// Run one batched delete until a batch comes back short (each statement removes at most
@@ -215,6 +217,14 @@ pub async fn run_retention_prune(pool: &PgPool) -> Result<PruneReport, aurora_db
             aurora_db::repo::emergency_access::prune(
                 pool,
                 aurora_core::limits::EMERGENCY_ACCESS_RETENTION_DAYS,
+            )
+        })
+        .await?,
+        skill_uses: drain(|| {
+            aurora_db::repo::skills::prune_uses(
+                pool,
+                aurora_core::limits::SKILL_USE_RETENTION_DAYS,
+                b,
             )
         })
         .await?,
