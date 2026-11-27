@@ -84,7 +84,7 @@ const EXIT_POLL: Duration = Duration::from_millis(200);
 /// dropped, or when the leader exits by itself (whatever it left behind dies with it). The child
 /// is waited for only after that, so its pid and group stay its own meanwhile.
 async fn watch_child(
-    mut child: tokio::process::Child,
+    mut child: crate::spawn::OwnedChild,
     mut tree: Option<ChildTree>,
     leader: Option<i32>,
     mut requests: mpsc::UnboundedReceiver<EndRequest>,
@@ -159,7 +159,7 @@ impl Launcher for ProcessLauncher {
             // starts shares the group, so releasing the session stops the background work too —
             // the same pattern as `ExecProc` in `crate::exec`.
             .process_group(0);
-        let mut child = cmd.spawn().map_err(|e| {
+        let mut child = crate::spawn::spawn(&mut cmd).map_err(|e| {
             HarnessError::new(
                 "harness_failed",
                 format!("cannot start {}: {e}", self.program.display()),

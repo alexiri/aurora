@@ -306,7 +306,7 @@ impl Script {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
-        let child = match c.spawn() {
+        let child = match crate::spawn::spawn(&mut c) {
             Ok(c) => c,
             Err(e) => return format!("shell: cannot start: {e}"),
         };

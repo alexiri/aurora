@@ -63,11 +63,12 @@ async fn pty_master_never_leaks_into_children() {
     assert!(mine >= 2, "the engine's own masters are missing ({mine})");
 
     // An ordinary child spawned after both terminals exist (the agent's harness path).
-    let mut child = aurora_supervisor::spawn::tokio_command("sleep", [("X", "1")])
-        .arg("30")
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
+    let mut child = aurora_supervisor::spawn::spawn(
+        aurora_supervisor::spawn::tokio_command("sleep", [("X", "1")])
+            .arg("30")
+            .kill_on_drop(true),
+    )
+    .unwrap();
     let pc = child.id().unwrap();
 
     for (name, pid) in [("shell 1", p1), ("shell 2", p2), ("later child", pc)] {

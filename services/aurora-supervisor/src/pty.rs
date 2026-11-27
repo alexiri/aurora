@@ -718,7 +718,7 @@ impl PtyEngine {
 pub(crate) struct PtySession {
     master: AsyncFd<OwnedFd>,
     /// Taken by `Drop`, which hands it to a detached reaper.
-    child: Option<tokio::process::Child>,
+    child: Option<crate::spawn::OwnedChild>,
 }
 
 /// Ending a session (the task finished or was aborted): the master closes with the drop (the
@@ -847,7 +847,7 @@ impl PtySession {
         // No `process_group(0)`: the bootstrap must *not* be a group leader, or `setsid`
         // would fail `EPERM` (it makes its own session — which subsumes the shell's own
         // process group).
-        let child = cmd.spawn()?;
+        let child = crate::spawn::spawn(&mut cmd)?;
         // The master fd is used through `AsyncFd` (poll-based, safe code): nonblocking reads
         // return `EAGAIN` when the shell has not produced output, which `AsyncFd` waits for.
         rustix::fs::fcntl_setfl(&master, rustix::fs::OFlags::NONBLOCK)?;
@@ -864,7 +864,7 @@ impl PtySession {
 
     /// The child handle, for the `tty` execs that report an exit status: after this `Drop`
     /// has nothing to hang up, so the taker owns ending the process group.
-    pub(crate) fn take_child(&mut self) -> Option<tokio::process::Child> {
+    pub(crate) fn take_child(&mut self) -> Option<crate::spawn::OwnedChild> {
         self.child.take()
     }
 

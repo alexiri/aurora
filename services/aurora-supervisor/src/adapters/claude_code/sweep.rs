@@ -18,7 +18,10 @@ compile_error!(
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
-use rustix::process::{Pid, Signal, kill_process, kill_process_group};
+use rustix::io::Errno;
+use rustix::process::{
+    Pid, PidfdFlags, Signal, kill_process, kill_process_group, pidfd_open, pidfd_send_signal,
+};
 use tokio::time::Instant;
 
 /// The environment variable that marks what one harness child started; its value is that
@@ -81,6 +84,36 @@ fn snapshot() -> Vec<Proc> {
 /// `true` once the leader exited — still unreaped, or already reaped.
 pub(super) fn exited(pid: i32) -> bool {
     stat_of(pid).is_none_or(|p| p.zombie)
+}
+
+/// Signals the instance `p`, never a later process with its pid.
+fn signal_instance(p: &Proc, signal: Signal) {
+    let Some(pid) = Pid::from_raw(p.pid) else {
+        return;
+    };
+    let same = || stat_of(p.pid).is_some_and(|now| now.start == p.start);
+    // The pidfd names whatever has the pid when it is opened; the start time read after that
+    // says that it is ours, and the descriptor cannot move to another process afterwards.
+    match pidfd_open(pid, PidfdFlags::empty()) {
+        Ok(fd) => {
+            if same()
+                && matches!(
+                    pidfd_send_signal(&fd, signal),
+                    Err(Errno::NOSYS | Errno::PERM)
+                )
+                && same()
+            {
+                let _ = kill_process(pid, signal);
+            }
+        }
+        Err(Errno::SRCH) => {}
+        // No pidfds here (an old kernel, a seccomp filter): the start time alone.
+        Err(_) => {
+            if same() {
+                let _ = kill_process(pid, signal);
+            }
+        }
+    }
 }
 
 /// What one harness child started. `root` is the child, which leads its own process group.
@@ -165,11 +198,7 @@ impl ChildTree {
             let _ = kill_process_group(g, signal);
         }
         for p in found {
-            if stat_of(p.pid).is_some_and(|now| now.start == p.start)
-                && let Some(pid) = Pid::from_raw(p.pid)
-            {
-                let _ = kill_process(pid, signal);
-            }
+            signal_instance(p, signal);
         }
     }
 
