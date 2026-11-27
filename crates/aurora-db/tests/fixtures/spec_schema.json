@@ -753,6 +753,10 @@
       "winner_app_id",
       "winner_package_id"
     ],
+    "idle_usage_events": [
+      "n",
+      "turn_id"
+    ],
     "instance_placement": [
       "default_org_id",
       "default_org_role",
@@ -2495,6 +2499,10 @@
       "id": "uuid not null",
       "winner_app_id": "text not null",
       "winner_package_id": "text not null"
+    },
+    "idle_usage_events": {
+      "n": "bigint",
+      "turn_id": "uuid"
     },
     "instance_placement": {
       "default_org_id": "uuid null",

@@ -3075,3 +3075,327 @@ async fn a_budget_close_by_message_waits_for_the_task_conversation_before_the_li
     tokio::join!(message, other);
     assert_eq!(d.rig.task_status(task).await, "expired");
 }
+
+// ------------------------------------------------- FIX-257: a person's turn in a task
+
+impl Duo {
+    /// End the receiving agent's first turn without the platform's turn-end hooks, so the task
+    /// stays `open`, and start a turn a person speaks in the task conversation:
+    /// `(task conversation, turn)`.
+    async fn persons_turn_in(&self, task: Uuid) -> (Uuid, Uuid) {
+        let pc = self.rig.peer_conversation(task).await;
+        if let Some(first) = self.rig.running_turn(pc).await {
+            self.rig.finish_turn(first).await;
+        }
+        let turn = self
+            .rig
+            .turn(pc, self.b, "person", Some(self.rig.p.id))
+            .await;
+        (pc, turn)
+    }
+
+    async fn end_turn(&self, turn: Uuid, status: &str) {
+        use aurora_api::domains::hosted::lifecycle;
+        let mut tx = self.rig.h.pool().begin().await.unwrap();
+        lifecycle::finish(&mut tx, turn, status, None, None, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    async fn expiry_of(&self, task: Uuid) -> chrono::DateTime<chrono::Utc> {
+        sqlx::query_scalar("SELECT expires_at FROM peer_tasks WHERE id = $1")
+            .bind(task)
+            .fetch_one(self.rig.h.pool())
+            .await
+            .unwrap()
+    }
+}
+
+/// (FIX-257) The end of a person's turn in a task conversation never closes the task: with
+/// nothing registered it stays `open` with its expiry; with an armed watch it goes `waiting`
+/// with the one notice, and the watch wakes it.
+#[tokio::test]
+async fn a_persons_turn_leaves_the_task_open_or_waiting_for_its_watch() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    let expires = d.expiry_of(task).await;
+    for status in ["done", "failed", "aborted"] {
+        let (_, turn) = d.persons_turn_in(task).await;
+        d.end_turn(turn, status).await;
+        assert_eq!(d.rig.task_status(task).await, "open", "{status}");
+    }
+    assert_eq!(d.expiry_of(task).await, expires);
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
+    assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 0);
+
+    let (_, turn) = d.persons_turn_in(task).await;
+    let w = d.arm_watch(task).await;
+    d.end_turn(turn, "done").await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 1);
+
+    let (out, pc) = d.fire_watch(task, &w).await;
+    assert_eq!(out.status, aurora_protocol::runner::ReportStatus::Applied);
+    assert_eq!(d.rig.task_status(task).await, "open");
+    d.assert_wake_turn_is_the_tasks_own(pc).await;
+}
+
+/// (FIX-257) A one-time wake-up and a pending approval hold the task at a person's turn end too.
+#[tokio::test]
+async fn a_persons_turn_end_waits_for_a_wake_up_or_a_pending_approval() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("check back").await["peer_task_id"]);
+    let (_, turn) = d.persons_turn_in(task).await;
+    d.arm_schedule(task).await;
+    d.end_turn(turn, "done").await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let (_, turn) = d.persons_turn_in(task).await;
+    d.approval(task).await;
+    d.end_turn(turn, "done").await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+}
+
+/// (FIX-257) A person's turn closes nothing, also where the task may not wait: over the waiting
+/// bound it stays `open` (the receiving agent's own turn end would cancel it).
+#[tokio::test]
+async fn a_persons_turn_over_the_waiting_bound_leaves_the_task_open() {
+    let d = duo().await;
+    for i in 0..5 {
+        let sender = d.rig.agent(d.rig.ws1, &format!("sender{i}")).await;
+        d.send_and_wait(sender, d.b, "@bravo").await;
+    }
+    let task = Rig::id(&d.send("one more").await["peer_task_id"]);
+    let (_, turn) = d.persons_turn_in(task).await;
+    d.arm_watch(task).await;
+    d.end_turn(turn, "done").await;
+    assert_eq!(d.rig.task_status(task).await, "open");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
+}
+
+// ------------------------------------------------- FIX-257: the origin that is a task conversation
+
+/// A task of `alpha` to `bravo`, and a second one that a person opened back to `alpha` from
+/// inside the first one's conversation (the same link): `(first, second, first's conversation)`.
+async fn task_opened_back(d: &Duo) -> (Uuid, Uuid, Uuid) {
+    let first = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let (pc, turn) = d.persons_turn_in(first).await;
+    let sent = d
+        .rig
+        .tool(
+            d.b,
+            pc,
+            Some(turn),
+            "message_agent",
+            json!({"agent": "@alpha", "text": "and back"}),
+        )
+        .await;
+    let second = Rig::id(&Rig::ok(&sent)["peer_task_id"]);
+    d.rig.finish_turn(turn).await;
+    (first, second, pc)
+}
+
+/// Returns once some backend waits for a lock that backend `pid` holds.
+async fn until_somebody_waits_for(pool: &sqlx::PgPool, pid: i32) {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                  WHERE $1 = ANY(pg_blocking_pids(pid)))",
+            )
+            .bind(pid)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("nobody waited for the held lock");
+}
+
+/// (FIX-257) Closing a task whose origin is a task conversation takes that conversation before
+/// the link: while its turn end holds it, the close waits holding neither the link nor the task.
+#[tokio::test]
+async fn a_close_waits_for_an_origin_task_conversation_before_the_link_and_task() {
+    use aurora_db::repo::conversations as convs;
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let (_, second, origin) = task_opened_back(&d).await;
+    let pc = d.rig.peer_conversation(second).await;
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, origin).await.unwrap());
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let close = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        peers::complete(&mut tx, d.a, pc, "done")
+            .await
+            .unwrap()
+            .unwrap();
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        lock_link_then_task(&mut turn_end, second).await;
+        turn_end.commit().await.unwrap();
+    };
+    tokio::join!(close, other);
+    assert_eq!(d.rig.task_status(second).await, "completed");
+    assert_eq!(d.rig.notices(origin, "peer_task_report").await.len(), 1);
+}
+
+/// (FIX-257) The same for the turn end that moves such a task to `waiting`: it holds neither the
+/// task row nor the link while it waits for the origin task conversation.
+#[tokio::test]
+async fn going_waiting_waits_for_an_origin_task_conversation_before_the_task() {
+    use aurora_api::domains::hosted::lifecycle;
+    use aurora_db::repo::conversations as convs;
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let (_, second, origin) = task_opened_back(&d).await;
+    let pc = d.rig.peer_conversation(second).await;
+    let turn = d.rig.running_turn(pc).await.unwrap();
+    d.arm_watch(second).await;
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, origin).await.unwrap());
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let finish = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        lifecycle::finish(&mut tx, turn, "done", None, None, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        lock_link_then_task(&mut turn_end, second).await;
+        turn_end.commit().await.unwrap();
+    };
+    tokio::join!(finish, other);
+    assert_eq!(d.rig.task_status(second).await, "waiting");
+}
+
+/// (FIX-257) Unlinking closes such a task too: it takes the origin task conversation before the
+/// link.
+#[tokio::test]
+async fn unlinking_waits_for_an_origin_task_conversation_before_the_link_and_task() {
+    use aurora_db::repo::conversations as convs;
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let (_, second, origin) = task_opened_back(&d).await;
+    let link: Uuid = sqlx::query_scalar("SELECT link_id FROM peer_tasks WHERE id = $1")
+        .bind(second)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, origin).await.unwrap());
+    let pid = backend_pid(&mut turn_end).await;
+    let uri = format!("/v1/agent-links/{link}");
+    let headers = [("cookie", d.rig.p.cookie.as_str()), ("origin", ORIGIN)];
+    let unlink = d.rig.h.send(http::Method::DELETE, &uri, &headers, None);
+    let other = async {
+        until_somebody_waits_for(pool, pid).await;
+        lock_link_then_task(&mut turn_end, second).await;
+        turn_end.commit().await.unwrap();
+    };
+    let ((status, _, body), ()) = tokio::join!(unlink, other);
+    assert_eq!(status.as_u16(), 204, "{body}");
+    // The task rows go with the link; the close line stays where the task was asked for.
+    assert_eq!(d.rig.notices(origin, "peer_task_closed").await.len(), 1);
+}
+
+/// (FIX-257) A person's message from a task conversation takes that conversation before the
+/// link, also when it only raises an approval there.
+#[tokio::test]
+async fn a_persons_message_from_a_task_conversation_locks_it_before_the_link() {
+    use aurora_db::repo::{agents, conversations as convs, turns};
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let first = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let (pc, turn) = d.persons_turn_in(first).await;
+    sqlx::query("UPDATE agent_links SET policy_a = 'ask'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let sender = agents::get(pool, d.b).await.unwrap().unwrap();
+    let conversation = convs::get(pool, pc).await.unwrap().unwrap();
+    let turn = turns::get(pool, turn).await.unwrap().unwrap();
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, pc).await.unwrap());
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let message = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        let out = peers::send_message(
+            &mut tx,
+            &peers::SendRequest {
+                sender: &sender,
+                conversation: &conversation,
+                turn: Some(&turn),
+                target: "@alpha",
+                text: "and back",
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(&out, peers::SendOutcome::PendingApproval(a) if a.len() == 1),
+            "{out:?}"
+        );
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        lock_link_then_task(&mut turn_end, first).await;
+        turn_end.commit().await.unwrap();
+    };
+    tokio::join!(message, other);
+}
+
+/// (FIX-257) Approving a message that was asked for in a task conversation writes the outcome
+/// there: it takes that conversation before the link.
+#[tokio::test]
+async fn approving_a_message_from_a_task_conversation_locks_it_before_the_link() {
+    use aurora_db::repo::conversations as convs;
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let first = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let (pc, turn) = d.persons_turn_in(first).await;
+    sqlx::query("UPDATE agent_links SET policy_a = 'ask'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let sent = d
+        .rig
+        .tool(
+            d.b,
+            pc,
+            Some(turn),
+            "message_agent",
+            json!({"agent": "@alpha", "text": "and back"}),
+        )
+        .await;
+    let approval = Rig::id(&Rig::ok(&sent)["approval_ids"][0]);
+    d.rig.finish_turn(turn).await;
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, pc).await.unwrap());
+    let pid = backend_pid(&mut turn_end).await;
+    let decide = d.rig.decide(&d.rig.p, approval, "approve");
+    let other = async {
+        until_somebody_waits_for(pool, pid).await;
+        lock_link_then_task(&mut turn_end, first).await;
+        turn_end.commit().await.unwrap();
+    };
+    let ((status, body), ()) = tokio::join!(decide, other);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["status"], "executed");
+}

@@ -41,6 +41,11 @@ impl ActionHandler for MessageAgent {
         ctx: &ActionContext<'_>,
     ) -> Result<ActionOutcome, ActionError> {
         let p: Payload = serde_json::from_value(ctx.approval.payload.clone()).map_err(internal)?;
+        // (FIX-257) The outcome is written into the conversation the request was made in; a task
+        // conversation is locked before the link.
+        peers::lock_if_task_conversation(tx, p.origin_conversation_id)
+            .await
+            .map_err(|e| internal(e.message()))?;
         let link = links::get_for_update(&mut *tx, p.link_id)
             .await
             .map_err(internal)?

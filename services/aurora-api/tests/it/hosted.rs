@@ -974,6 +974,109 @@ async fn idle_usage_is_added_to_the_usage_ledger_once() {
     assert_eq!(ledger(&r, lv.agent).await, (2, 300, 30), "spent is spent");
 }
 
+/// (FIX-257) Each idle run is counted by its own event, not by a high-water number: a report that
+/// arrives after a later one is still counted, and a repeat of either one is not.
+#[tokio::test]
+async fn idle_usage_delivered_later_first_is_counted_once_each() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idleorder").await;
+    let report =
+        |n: u64| json!({"kind": "turn.idle.events", "turn_id": turn, "events": [idle_usage(n)]});
+    r.report(&lv, report(7)).await;
+    r.report(&lv, report(3)).await;
+    assert_eq!(ledger(&r, lv.agent).await, (1, 200, 20), "both counted");
+    r.report(&lv, report(7)).await;
+    r.report(&lv, report(3)).await;
+    assert_eq!(ledger(&r, lv.agent).await, (1, 200, 20), "no repeat");
+}
+
+/// How many background-list rows the idle watch of the test conversation added.
+async fn idle_list_rows(r: &Rig) -> usize {
+    background_notices(r)
+        .await
+        .iter()
+        .filter(|(_, p)| p.get("event").is_some())
+        .count()
+}
+
+/// (FIX-257) The idle watch's background lists are bounded per anchor turn: a child that toggles
+/// short commands adds at most the cap's rows, then the one line the other caps use.
+#[tokio::test]
+async fn idle_background_lists_are_capped_per_anchor_turn() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlebgcap").await;
+    let events: Vec<Value> = (1..=80u64)
+        .map(|n| {
+            if n % 2 == 1 {
+                bg_event(n, &["sleep 1"])
+            } else {
+                bg_event(n, &[])
+            }
+        })
+        .collect();
+    let report = json!({"kind": "turn.idle.events", "turn_id": turn, "events": events});
+    r.report(&lv, report.clone()).await;
+    r.report(&lv, report).await;
+    assert_eq!(idle_list_rows(&r).await, 50);
+    let (_, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(capped.len(), 1, "{capped:?}");
+    assert_eq!(capped[0]["text"], "More activity was not recorded.");
+
+    // The after-the-turn entries have their own room, and add no second line.
+    r.report(&lv, idle_calls(&turn, 0, 101)).await;
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 100);
+    assert_eq!(capped.len(), 1, "{capped:?}");
+}
+
+/// (FIX-257) At the cap, the end of the list that stands is still recorded (nothing claims to run
+/// after it ended); no further list is.
+#[tokio::test]
+async fn idle_background_cap_still_records_the_end_of_the_standing_list() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlebgend").await;
+    let mut events: Vec<Value> = (1..=60u64)
+        .map(|n| bg_event(n, &[format!("job {n}").as_str()]))
+        .collect();
+    events.push(bg_event(61, &[]));
+    events.push(bg_event(62, &["job 62"]));
+    events.push(bg_event(63, &[]));
+    r.report(
+        &lv,
+        json!({"kind": "turn.idle.events", "turn_id": turn, "events": events}),
+    )
+    .await;
+    let lines = background_lines(&r).await;
+    assert_eq!(lines.len(), 51, "{lines:?}");
+    assert_eq!(lines[49], line("background_activity", &turn, &["job 50"]));
+    assert_eq!(lines[50], line("background_stopped", &turn, &[]));
+    assert_eq!(after_turn_entries(&r, lv.conv).await.1.len(), 1);
+}
+
+/// (FIX-257) The duplicate check of an idle list is served by an index on the event's name.
+#[tokio::test]
+async fn the_idle_list_duplicate_check_uses_an_index() {
+    let r = rig().await;
+    let mut tx = r.h.pool().begin().await.unwrap();
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let plan: Vec<String> = sqlx::query_scalar(
+        "EXPLAIN SELECT EXISTS (SELECT 1 FROM transcript_events
+           WHERE conversation_id = '00000000-0000-0000-0000-000000000000'
+             AND type = 'notice' AND payload->>'event' = 'x')",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert!(
+        plan.iter()
+            .any(|l| l.contains("transcript_events_notice_event_idx")),
+        "{plan:#?}"
+    );
+}
+
 /// (FIX-253 review, medium 5) In a peer task's conversation whose message budget is used up,
 /// nothing more is recorded and one line says so; the idle run's tokens are still counted.
 #[tokio::test]

@@ -2,21 +2,36 @@
 //! one report, queue promotion and the 60 s expiry sweep. Everything runs in the caller's
 //! transaction.
 //!
-//! **Lock order, for every path: task conversation → link → task → other conversations** (the
-//! origin's notice and follow-up turn, a promoted task's new conversation). A path takes what it
-//! needs in this order and never goes back to an earlier lock it does not already hold.
+//! **Lock order, for every path: task conversation → link → task → other conversations.** A path
+//! takes what it needs in this order and never goes back to an earlier lock it does not already
+//! hold. A task conversation is locked before any link, also when it is only the **origin** of
+//! the task at hand (a person can open a task from inside a task conversation, even back to the
+//! requester, on the same link): writing into it after the link would be the reverse of its own
+//! turn end. Where two are needed, the task conversation comes before the one it was opened
+//! from. "Other conversations" are therefore the origins that are no task conversation (the
+//! notice and the follow-up turn) and a promoted task's new conversation.
 //!
-//! - Conversation, link, task ([`lock_for_task_conversation`]): a wake, the re-check of a
-//!   waiting task, the requester's cancel route; a message sent from the task conversation
-//!   (`send_message` locks the conversation before the task's link). The delivery of an approval
+//! - Conversation, its task origins, link, task ([`lock_for_task_conversation`]): a wake, the
+//!   re-check of a waiting task, the requester's cancel route. The delivery of an approval
 //!   decision locks the conversation first and wakes through the same helper.
-//! - A turn end holds the conversation already. A close takes link, then task. Going `waiting`
-//!   updates the task row alone and takes no link after it.
-//! - Link, then task, without the task conversation ([`close_with_promotion`]), for paths that
-//!   never lock or write it: `complete_task`, `cancel_peer_task`, the channel card's cancel,
-//!   unlinking and the expiry sweep. They must not take it after the link: that is the reverse
-//!   of a turn end.
+//! - A message sent from a task conversation (`send_message`): the conversation, for a reply to
+//!   the requester also its task origin (the reply is written there, and a used-up budget closes
+//!   the task), then the link.
+//! - A turn end holds the conversation already. Before it goes `waiting` or closes the task it
+//!   takes the task origins. A close then takes link, then task; going `waiting` updates the
+//!   task row alone and takes no link after it.
+//! - **The close** ([`close_with_promotion`]): task origins, link, task — for `complete_task`,
+//!   `cancel_peer_task`, the channel card's cancel and the expiry sweep, which never lock or
+//!   write the closed task's own conversation (they must not take it after the link: that is the
+//!   reverse of a turn end), and again, already held, for the paths above.
+//! - Unlinking takes the task origins of everything it ends ([`lock_link_origins`]) before the
+//!   link; approving a `message_agent` request takes the conversation it was asked in
+//!   ([`lock_if_task_conversation`]) before the link.
 //! - Opening a task (`open_task`) holds the link and creates the task and its conversation.
+//!
+//! The origins are read before the link is held, so a task queued between that read and the link
+//! lock is not covered: should the same close promote and at once end it, and its origin's turn
+//! end run right then, Postgres aborts one of the two.
 
 use crate::domains::action_approvals::service as approvals;
 use crate::domains::conversations::service::{self as conv, NewMessage};
@@ -163,15 +178,17 @@ pub async fn send_message(
         .turn
         .filter(|t| t.speaker_kind == "person")
         .and_then(|t| t.speaker_user_id);
-    // (FIX-264) A message inside a task, sent from its conversation to the requesting agent:
-    // that conversation is locked before the task's link. Only then: for any other pair, a task
-    // opened from this conversation closes link first and then writes its notice here.
-    if speaker_person.is_none()
-        && repo::by_task_conversation(&mut *conn, r.conversation.id)
-            .await?
-            .is_some_and(|t| t.to_agent_id == r.sender.id && t.from_agent_id == target.id)
-    {
+    // (FIX-264, FIX-257) Sent from a task conversation: it is locked before the link, whoever
+    // speaks (an approval request or a cancelled task writes into it under the link). A reply
+    // inside the task also writes into the requester's conversation, perhaps a task's too.
+    if let Some(own) = repo::by_task_conversation(&mut *conn, r.conversation.id).await? {
         convs::lock(&mut *conn, r.conversation.id).await?;
+        if speaker_person.is_none()
+            && own.to_agent_id == r.sender.id
+            && own.from_agent_id == target.id
+        {
+            lock_task_origins(conn, own.id).await?;
+        }
     }
     let (link, _) = links::get_or_create(&mut *conn, r.sender.id, target.id, initial).await?;
     // Per-pair serialization point.
@@ -480,7 +497,7 @@ async fn message_in_task(
              you. Inside an open peer task you may reply to the requesting agent.",
         ));
     };
-    // The task conversation and the link are held since `send_message`; this adds the task.
+    // The conversations and the link are held since `send_message`; this adds the task.
     let Some(task) = lock_for_task_conversation(conn, &found).await? else {
         return Ok(refuse("The task no longer exists."));
     };
@@ -675,14 +692,15 @@ async fn post_report(
     Ok(())
 }
 
-/// Close a task (locking link, then task) and promote the next queued task of the pair when an
-/// task that held the pair's slot (`open` or `waiting`) ended. Returns the closed row, or `None`
-/// when it was already closed.
+/// Close a task (locking its task origins, then link, then task) and promote the next queued
+/// task of the pair when a task that held the pair's slot (`open` or `waiting`) ended. Returns
+/// the closed row, or `None` when it was already closed.
 pub async fn close_with_promotion(
     conn: &mut PgConnection,
     task: &PeerTaskRow,
     how: &Close<'_>,
 ) -> Result<Option<PeerTaskRow>, ApiError> {
+    lock_task_origins(conn, task.id).await?;
     links::get_for_update(&mut *conn, task.link_id).await?;
     let Some(cur) = repo::get_for_update(&mut *conn, task.id).await? else {
         return Ok(None);
@@ -1057,15 +1075,20 @@ pub async fn approval_notice(
 /// the wake later resumes it. Only the receiving agent's own registrations count: a watch or a
 /// schedule of another conversation never keeps this task alive. With nothing registered the
 /// task is cancelled as today ("finished without a report").
+///
+/// (FIX-257) A person's turn in the task conversation runs the same check, so the task does not
+/// stay `open` over a wake it registered — but it **never closes** the task: with nothing
+/// registered, or over a waiting bound, the task stays `open` with its expiry.
 pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<(), ApiError> {
     // (FIX-253) The wake turns count too: a watch or schedule fire, or an approval decision,
     // resumes the task conversation as the task's own turn (door `watch` / `schedule`, spoken by
     // the platform), so its end drives the task's state like the receiving agent's turn does.
-    if !matches!(
+    let by_person = t.speaker_kind == "person";
+    let tasks_own = matches!(
         t.door.get("kind").and_then(Value::as_str),
         Some("peer" | "watch" | "schedule")
-    ) || !matches!(t.speaker_kind.as_str(), "agent" | "system")
-    {
+    ) && matches!(t.speaker_kind.as_str(), "agent" | "system");
+    if !by_person && !tasks_own {
         return Ok(());
     }
     let Some(task) = repo::by_task_conversation(&mut *conn, t.conversation_id).await? else {
@@ -1087,10 +1110,17 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
         aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, t.conversation_id)
             .await?;
     let wake_registered = has_pending_approval || wake_registered(conn, t.conversation_id).await?;
+    if by_person && !wake_registered {
+        return Ok(());
+    }
+    // (FIX-257) Before the task row and the link: what follows writes into the origin.
+    lock_task_origins(conn, task.id).await?;
     // (FIX-253 review, medium 3) The number of waiting tasks is bounded: the task that would
     // exceed a bound is cancelled with a line saying why, instead of waiting.
     if wake_registered && let Some(why) = waiting_cap(conn, &task).await? {
-        close_with_promotion(conn, &task, &Close::Cancelled(Some(&why))).await?;
+        if !by_person {
+            close_with_promotion(conn, &task, &Close::Cancelled(Some(&why))).await?;
+        }
         return Ok(());
     }
     let waiting = if wake_registered {
@@ -1317,15 +1347,48 @@ async fn wake_task(
 }
 
 /// The locks of work inside a task conversation, in the order a turn end takes them (it holds the
-/// conversation before its peer-task hook runs): the task conversation, the link, the task. The
-/// other order deadlocks with a turn end. Returns the task as read under its lock.
+/// conversation before its peer-task hook runs): the task conversation, its task origins, the
+/// link, the task. The other order deadlocks with a turn end. Returns the task as read under its
+/// lock.
 async fn lock_for_task_conversation(
     conn: &mut PgConnection,
     found: &PeerTaskRow,
 ) -> Result<Option<PeerTaskRow>, ApiError> {
     convs::lock(&mut *conn, found.task_conversation_id).await?;
+    lock_task_origins(conn, found.id).await?;
     links::get_for_update(&mut *conn, found.link_id).await?;
     Ok(repo::get_for_update(&mut *conn, found.id).await?)
+}
+
+/// (FIX-257) The task conversations a close of `task` may write into, locked before the link.
+async fn lock_task_origins(conn: &mut PgConnection, task: Uuid) -> Result<(), ApiError> {
+    for conversation in repo::task_origins(&mut *conn, task).await? {
+        convs::lock(&mut *conn, conversation).await?;
+    }
+    Ok(())
+}
+
+/// (FIX-257) The same for unlinking a pair: before the link's row lock.
+pub async fn lock_link_origins(conn: &mut PgConnection, link: Uuid) -> Result<(), ApiError> {
+    for conversation in repo::link_origins(&mut *conn, link).await? {
+        convs::lock(&mut *conn, conversation).await?;
+    }
+    Ok(())
+}
+
+/// (FIX-257) Locks `conversation` if it is a task conversation: for a path that will write into
+/// it while it holds a link, before it takes the link.
+pub async fn lock_if_task_conversation(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+) -> Result<(), ApiError> {
+    if repo::by_task_conversation(&mut *conn, conversation)
+        .await?
+        .is_some()
+    {
+        convs::lock(&mut *conn, conversation).await?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------- nothing left to wait for

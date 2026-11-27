@@ -140,7 +140,10 @@ links and peer tasks`); the origin conversation gets one durable `notice`
 a check is set for HH:MM." — once per wait. The wake gives the task conversation
 its own turn (a watch fire or schedule fire as those turns do, the approval
 decision as a `peer`-doored system turn) and the task is back to `open`; the
-task's own grants and policy apply to every wake turn.
+task's own grants and policy apply to every wake turn. (FIX-257) The end of a
+person's own turn in the task conversation runs the same check: with a wake
+registered the task goes `waiting`, otherwise it stays `open` with its expiry;
+a person's turn never closes it (`07 §Agent links and peer tasks`).
 
 (phase 5, P5-REFINE-7, D-409, C-1073, C-1074) **Titles and folders.**
 - `title_source` says who named a conversation: `auto` (none yet, or the first line of the
@@ -473,7 +476,11 @@ its last tool call is written as durable `text` events before the `error` event 
   While a Stop is in flight no report changes the entry. An acknowledged release records
   `background_stopped` with "Background activity stopped.", also when the supervisor released the
   session on its own. Commands are masked (`aurora_core::sanitize::reason`). Other adapters
-  report nothing (their child has no such mode, or it is gone).
+  report nothing (their child has no such mode, or it is gone). (FIX-257) The lists among the
+  idle events add at most 50 rows per anchor turn; past that no new list is recorded and the
+  turn's one `after_turn_capped` "More activity was not recorded." notice says so. The end of
+  the list that stands is always recorded (so at most one row over), and the list a later turn
+  reports at its end is not capped.
 - **Worked after the turn (FIX-253, part B).** While the background work lasts, the supervisor
   watches the idle child (`12 §The idle reader`) and reports what it did as `turn.idle.events`
   anchored on the finished turn; the API records durable `after_turn.text`

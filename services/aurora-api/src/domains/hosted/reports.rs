@@ -426,6 +426,9 @@ const OUT_OF_BUDGET: &str = "More background activity happened but was not recor
 /// The most after-the-turn entries one anchor turn keeps, and one conversation in all.
 const AFTER_TURN_PER_ANCHOR: i64 = 500;
 const AFTER_TURN_PER_CONVERSATION: i64 = 2_000;
+/// (FIX-257) The most background-list rows the idle watch adds for one anchor turn; the end of
+/// the list that stands may add one more.
+const BACKGROUND_ROWS_PER_ANCHOR: i64 = 50;
 /// (FIX-253, part B) The most text one after-the-turn message keeps.
 const AFTER_TURN_TEXT_MAX: usize = 2000;
 
@@ -476,8 +479,8 @@ async fn idle_events(
     if turns::latest_finished(&mut *tx, cid).await? != Some(turn) {
         return Ok(res(r, ReportStatus::Invalid, Some("stale_anchor")));
     }
-    // (FIX-265) A changed background list is the entry itself, not an after-the-turn item: no
-    // cap or budget holds it back.
+    // (FIX-265) A changed background list is the entry itself, not an after-the-turn item: those
+    // caps and the budget do not hold it back. (FIX-257) It has its own cap per anchor turn.
     let (lists, sorted): (Vec<&NumberedEvent>, Vec<&NumberedEvent>) = sorted
         .into_iter()
         .partition(|e| e.event.kind.as_str() == "background");
@@ -613,6 +616,9 @@ async fn background_ended(
 /// flight only the supervisor's acknowledgement ends the entry — unless the report comes from
 /// another boot than the Stop's turn ran on (that child is gone, and its release is never
 /// answered). `event` names an idle event, so that a redelivered one records nothing again.
+/// (FIX-257) The idle watch adds [`BACKGROUND_ROWS_PER_ANCHOR`] rows per anchor turn, then no
+/// new list: one line says so. The end of the list that stands is always recorded, so the entry
+/// never claims that something runs after it ended.
 async fn background_report(
     tx: &mut PgConnection,
     cid: Uuid,
@@ -682,6 +688,9 @@ async fn background_report(
     }) {
         return Ok(());
     }
+    if event.is_some() && idle_list_rows(tx, cid, turn).await? >= BACKGROUND_ROWS_PER_ANCHOR {
+        return note_not_recorded(tx, cid, turn, "turn", CAPPED).await;
+    }
     let list: Vec<String> = items
         .iter()
         .map(|i| format!("`{}`", i["command"].as_str().unwrap_or_default()))
@@ -697,6 +706,21 @@ async fn background_report(
     }
     conv::append_event(tx, cid, Some(turn), "notice", &p).await?;
     Ok(())
+}
+
+/// (FIX-257) The rows the idle watch of `turn` added to the background entry (only they carry
+/// an event name).
+async fn idle_list_rows(tx: &mut PgConnection, cid: Uuid, turn: Uuid) -> Result<i64, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM transcript_events
+         WHERE turn_id = $2 AND conversation_id = $1 AND type = 'notice'
+           AND payload->>'event' IS NOT NULL",
+    )
+    .bind(cid)
+    .bind(turn)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(aurora_db::DbError::from)?)
 }
 
 /// Clears a background Stop's request from the conversation's finished turns.
