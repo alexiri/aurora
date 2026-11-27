@@ -120,7 +120,7 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     expect(within(table).queryAllByRole("textbox")).toHaveLength(0);
   });
 
-  it("starts the Skill libraries group with a row that says how many the instance shares and links to Manage (P5-SKLIB-3)", async () => {
+  it("groups the three library settings as Library settings, with no row about the libraries themselves (D-506(c))", async () => {
     mockFetch({
       "GET /v1/admin/settings/skills": () =>
         json(
@@ -131,17 +131,13 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
             { ...base, key: "skills.library.bytes_per_agent", value: 1048576, source: "default", default: 1048576, schema: schema("int") },
           ]),
         ),
-      "GET /v1/admin/skill-libraries": () => json(200, { items: [{ id: "l1", scope: "instance", label: "Company skills", status: "active" }, { id: "l2", scope: "instance", label: "Other", status: "paused" }], next_cursor: null }),
     });
     render(wrap("skills"));
-    const card = (await screen.findByRole("heading", { name: "Skill libraries", level: 3 })).closest("section") as HTMLElement;
-    expect(within(card).getByText("Git repositories of skills that organizations and this instance offer to agents.")).toBeTruthy();
-    // the first row of the group, before the settings
-    const row = card.querySelector("#skill-libraries") as HTMLElement;
-    expect(row).toBeTruthy();
-    expect(card.querySelector("div.divide-y")?.firstElementChild).toBe(row);
-    expect(await within(row).findByText("2 shared with every organization")).toBeTruthy();
-    expect(within(row).getByRole("link", { name: "Manage skill libraries" }).getAttribute("href")).toBe("/admin/skill-libraries");
+    const card = (await screen.findByRole("heading", { name: "Library settings", level: 3 })).closest("section") as HTMLElement;
+    expect(within(card).getByText("Whether skill libraries are on, how often Aurora reads them and how much a library skill may hold.")).toBeTruthy();
+    expect(card.querySelector("#skill-libraries")).toBeNull();
+    expect(within(card).queryByRole("link", { name: "Manage skill libraries" })).toBeNull();
+    expect(within(card).queryByText(/shared with every organization/)).toBeNull();
   });
 
   it("shows one Unavailable card, and no form, for a terminal the deployment does not provide; with it, saves the clocks", async () => {

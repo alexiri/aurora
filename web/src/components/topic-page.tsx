@@ -36,7 +36,8 @@ export function TopicPage<T extends string>({
   level?: PageLevel;
   tabs: readonly TopicTab<T>[];
   idBase: string;
-  actions?: ReactNode;
+  /** The header's actions; a function gets the selected tab, for an action that belongs to one tab. */
+  actions?: ReactNode | ((tab: T) => ReactNode);
   width?: string;
   /** Content above the tab bar's panel, for a page without tabs. */
   children?: ReactNode;
@@ -46,7 +47,7 @@ export function TopicPage<T extends string>({
   const current = tabs.find((t) => t.id === tab) ?? tabs[0];
   return (
     <div className={`${width} space-y-4`.trim()}>
-      <PageHeader title={title} description={description} level={level} actions={actions} className="mb-2" />
+      <PageHeader title={title} description={description} level={level} actions={typeof actions === "function" ? actions(current?.id as T) : actions} className="mb-2" />
       {tabs.length > 1 ? (
         <Tabs
           items={tabs.map((t) => ({ value: t.id, label: t.label }))}

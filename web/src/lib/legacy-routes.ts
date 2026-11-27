@@ -40,9 +40,12 @@ const ADMIN: [RegExp, Rule][] = [
       const tab = s.get("tab");
       if (tab === "computers") return adminRoutes.platform("computers");
       if (tab === "byo") return adminRoutes.agentPolicy("byo");
-      return adminRoutes.agentPolicy("defaults"); // defaults, skills, and an address with no tab
+      if (tab === "skills") return adminRoutes.skills();
+      return adminRoutes.agentPolicy("defaults"); // defaults, and an address with no tab
     },
   ],
+  // (D-506(c)) The instance's skill libraries moved to Administration › Skills.
+  [/^\/admin\/skill-libraries$/, () => adminRoutes.skills()],
   [/^\/admin\/ai-models$/, (_m, s) => (s.get("tab") === "rules" ? adminRoutes.agentPolicy("ai-keys") : null)],
   [/^\/admin\/internet-access$/, (_m, s) => (s.get("tab") === "limits" ? adminRoutes.agentPolicy("internet-access") : null)],
   [/^\/admin\/users$/, () => adminRoutes.people("users")],
@@ -139,10 +142,13 @@ export function legacyTarget(pathname: string, searchInput: string | URLSearchPa
       return join(o.aiModels(), search, hash);
     case "policy":
       return join(o.internetAccess(), search, hash);
-    case "skills":
-      return join(o.agents("skills"), search, hash);
+    // (D-506(a), C-1177) The organization's skills have their own page; the old tab under Agents and both old
+    // libraries addresses lead there. `/o/<org>/skills` itself is the page again.
+    case "agents":
+      return tab === "skills" ? join(o.skills(), search, hash, ["tab"]) : null;
+    case "agents/skills/libraries":
     case "skills/libraries":
-      return join(o.skillLibraries(), search, hash);
+      return join(o.skills("libraries"), search, hash, ["tab"]);
     case "settings/previews":
       return join(o.agents("byo"), search, hash);
     case "channels":
@@ -188,8 +194,9 @@ export const STATIC_REDIRECTS: { source: string; destination: string }[] = [
   { source: "/o/:org/groups/:id", destination: "/o/:org/people/groups/:id" },
   { source: "/o/:org/settings/directory", destination: "/o/:org/people?tab=directory-sync" },
   { source: "/o/:org/policy", destination: "/o/:org/internet-access" },
-  { source: "/o/:org/skills", destination: "/o/:org/agents?tab=skills" },
-  { source: "/o/:org/skills/libraries", destination: "/o/:org/agents/skills/libraries" },
+  { source: "/o/:org/skills/libraries", destination: "/o/:org/skills?tab=libraries" },
+  { source: "/o/:org/agents/skills/libraries", destination: "/o/:org/skills?tab=libraries" },
+  { source: "/admin/skill-libraries", destination: "/admin/skills" },
   { source: "/o/:org/settings/previews", destination: "/o/:org/agents?tab=byo" },
   { source: "/o/:org/channels", destination: "/o/:org/chat-platforms" },
   { source: "/o/:org/instances", destination: "/o/:org/apps?tab=self-hosted" },

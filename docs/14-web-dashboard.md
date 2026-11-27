@@ -1426,7 +1426,9 @@ guides keep working.
 - (P5-REFINE-3, D-406) **Altitude** narrows these lists at Use: a workspace member, an approver and the
   owner of a personal workspace see Overview, Agents and Approvals (where they may approve); an
   organization member sees Workspaces. The rest needs Set up (§Altitudes). A direct link to a hidden topic
-  still opens it.
+  still opens it. (D-506(b), P5-SKILLS-2) **Skills is the exception for the people who own it:** a workspace's
+  owner (team or personal) has **Skills** in the rail at Use, and an organization's owners and admins have
+  **Skills** in the Manage area's sub-nav at every altitude. Members and approvers keep the view above.
 
 **What a person sees of something they cannot do** (C-961, one rule for every page):
 - The page's **main action** (for example **Give <Agent> an app**, **Add**, **Add rule**, **Add people**)
@@ -1509,7 +1511,7 @@ guide links, ladder rows and the organization's accounts.
   | `secrets` | Platform › Secret stores |
   | `agents`, `approvals` | What agents may do › Defaults |
   | `terminal`, `previews` | Platform › Computers |
-  | `skills` | What agents may do › Defaults (the **Skill libraries** group: a first row "Skill libraries — <n> shared with every organization" with **Manage**, then the refresh settings) |
+  | `skills` | Skills (`/admin/skills`, D-506(c): the **Library settings** group under the instance's libraries) |
   | `retention` | Data › Retention |
   | `limits` | Platform › Rate limits |
   | `outgoing_webhooks` (P5-WEBHOOK) | Apps & accounts › Advanced |
@@ -1628,7 +1630,7 @@ every other topic is owners/admins and is not listed for a member.)
 - **Manage <org>, an area, not a second rail** (P5-REFINE-17, rec 8). On `/o/<org>/…` (not `/w/…`) the rail stays the
   **workspace rail** of the workspace the person was in (remembered per browser tab; else their personal workspace; else
   the first). The page area carries a **← Back to <workspace>** link, the **Manage <org>** header (the only place the
-  organization is named) and a sub-nav: Overview · Agents · People · Apps & accounts · Chat platforms · AI models ·
+  organization is named) and a sub-nav: Overview · Agents · Skills · People · Apps & accounts · Chat platforms · AI models ·
   Internet access · Data · Settings (a column on a desktop, a select on a phone; filtered by role with
   `visibleTopics("org", …)`: a member keeps Overview, AI models and Internet access). The switcher's **Manage <org>** row
   (was "Organization settings") opens the Overview; its last row **New organization** opens a dialog (shown where sign-up
@@ -1665,8 +1667,8 @@ every other topic is owners/admins and is not listed for a member.)
   ‘Block tracker’" / "Alice added ‘A’ and removed ‘B’" / "Alice changed 3 rules" with the person's avatar, **Current**
   or **Roll back to this**; a version with no change list reads "Alice published version 4".
 - **Agents** opens on **Agents** (every agent by workspace: team workspaces A–Z, then personal ones by owner), then
-  **Bring your own** (with Previews as a second section) and **Skills**, the last two Expert (behind "Show more
-  controls"). The list reads each workspace's agents until the organization-wide route (C-1090) lands. (phase 6,
+  **Bring your own** (with Previews as a second section), Expert (behind "Show more
+  controls"); skills have their own page (**Skills**, below). The list reads each workspace's agents until the organization-wide route (C-1090) lands. (phase 6,
   P6-TPL-4, C-1115) A **Templates** tab follows (owners and admins): the sentence "Workspace members can create agents
   from these templates. Turning one off hides it; agents already made from it keep working." and every offered template
   with its summary and a switch **Offered in <org>**; a member reads the sentence with who changes it (D-390), and the
@@ -1763,26 +1765,34 @@ every other topic is owners/admins and is not listed for a member.)
   <team>" and offers three buttons: **Attach an agent** (workspaces the viewer can own or use,
   shared presence by default, the existing attach route), **Link your Mattermost account**
   (`/account/channels`), **Open a DM with @bot** (`https://<server>/<team>/messages/@<bot>`).
-- **Skill libraries** (`/o/<org>/agents/skills/libraries`, phase 4, P4-GSL, D-148; rewritten in phase 5, P5-SKLIB-3,
-  D-450, C-1129; org owners/admins, others are sent where `OrgGate` sends them). The header has **Add a library**
-  and a link to Organization skills, and the page has two sections:
-  - **Your organization's libraries**: one `LibrariesTable` (`components/skills/libraries/`) on `DataTable`,
-    which becomes one card per row below 900 px. Columns: Label; Repository (`host/path` in monospace,
-    plain text, never a link, with **Copy address** for the clone address); Branch or tag ("Default branch"
-    when none); Folder ("Repository root" when empty); Status; Last checked (relative time and the commit's
-    first 7 characters); Skills in use ("1 agent · 2 workspace · 3 org"); Pending updates (a link to the
-    organization's Skills page, where the updates are reviewed, when above zero); actions **Check now**,
-    **Edit**, **Pause/Resume** and **Delete** (confirm: "N skills keep their content and become editable
-    skills"). With none: "No libraries yet" and "Add a git repository of skills; people then add the skills
-    they want to their agents, workspaces or the organization." with the button.
+- **Skills** (`/o/<org>/skills`, `?tab=skills|libraries`; D-506, C-1177, P5-SKILLS-2; org owners/admins, others are
+  sent where `OrgGate` sends them): the heading **Skills**, "What every agent in <org> can do, and where it comes
+  from.", and the tabs **Skills** (default) · **Libraries**; its own **Skills** entry in the Manage sub-nav. On the
+  Skills tab the header has **Add skill** (opens the create form in the list below; no menu until P5-SKILLS-3, so
+  **Add from library…** stays above the list). The old addresses `/o/<org>/agents?tab=skills`,
+  `/o/<org>/agents/skills/libraries` and `/o/<org>/skills/libraries` redirect here.
+  - **Libraries** tab (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450, C-1129): "Libraries are git repositories
+    of skills. Add one, then pick the skills <org> should use." with **Add a library**, then the organization's
+    libraries as cards (`LibraryCards`, `components/skills/libraries/`, in the `CardGrid`: one per row below a
+    content width of 896 px, never a table and never a sideways scroll). A card: a tile, the label, the repository
+    (`host/path` in monospace, plain text, never a link), one **state chip** and the "…" menu; a facts line
+    ("Branch <name>" or "Default branch"; "Checked <when>" or "Not checked yet"; "<n> skills · <m> used by <org>" or
+    "· none used yet", where `n` is C-1176's `skills_offered` and is left out while the server does not send it, and
+    `m` counts the organization's skills added from the library at all three levels; "Pinned <sha7>" when the
+    organization-level skills from it share one commit, "Pinned at <n> commits" when they do not, nothing when there
+    is none); the sanitized reason when it needs attention; **Check now** (off while paused) and **Edit**. The "…"
+    menu: **Browse skills** (the library browser of Add from library in read mode; off unless the library is
+    readable), **Pause**/**Resume**, **Delete…** (confirm: "N skills keep their content and become editable
+    skills"). With none: "No libraries yet" and "Add a git repository of skills; people then add the skills they
+    want to their agents, workspaces or the organization." with the button.
   - **Shared with every organization** (shown only when the instance shares at least one): the instance's
-    libraries, read-only, with this organization's own counts and status; the only action is **Browse**,
-    which opens the library browser of Add from library in read mode (no **Add**). An organization
-    cannot hide one (Q-SKLIB-1: not in this version).
-  - **Statuses in words** (`LibraryStatus`, `LIBRARY_STATUS` in `lib/labels.ts`): Active; Paused; "Can't be
-    read" with the sanitized reason beneath; "Needs an access token" when that is the reason; "Pending
-    updates over budget"; a library migrated without an address says "Enter the repository's git address"
-    and offers **Set address**.
+    libraries as cards, read-only, with this organization's own counts and status; the only action is
+    **Browse skills** (no **Add**). An organization cannot hide one (Q-SKLIB-1: not in this version).
+  - **State chips** (`LibraryStateChip`, `LIBRARY_STATUS` in `lib/labels.ts`): **Up to date**; **Update
+    available** (updates are waiting: the chip links to the Skills tab, where they are reviewed); **Paused**;
+    **Needs attention** with the reason on the card (the sanitized reason; "The repository needs an access token"
+    when that is it; a library migrated without an address says "Enter the repository's git address" and offers
+    **Set address** instead of Check now and Edit); **Over budget**. Amber only where the viewer can act (D-384).
   - **Add a library** is a two-step dialog that stores nothing until the last button. Step 1 *Where is it?*:
     Repository address (required; hint: "The address you clone, or the repository's page. For example
     https://gitlab.example.org/team/skills or https://github.com/acme/skills/tree/main/skills"), Branch or
@@ -1805,9 +1815,11 @@ every other topic is owners/admins and is not listed for a member.)
     of `url`); the access token shows "A token is saved (since <date>)." with **Replace** (a secret field and
     a user name) and **Remove** (confirm), or "No token." with **Add a token**. Saving makes the server read
     the repository again; its failure keeps the dialog open with the reason.
-  No library exists until an admin creates one; with none, the org Skills page shows an inline "Add a
-  library" call to action only to owners/admins, and its header link also says **Add a library**.
-- **Skills**: org skills editor (tier badge "Organization"; phase 3, RFE-020: states that workspace and agent skills with the same name take precedence).
+  No library exists until an admin creates one; with none, the Skills tab shows an inline "Add a
+  library" call to action (it opens the Libraries tab).
+  - **Skills** tab: the org skills editor (tier badge "Organization"; phase 3, RFE-020: states that workspace and
+    agent skills with the same name take precedence, in the closed **How skills combine** fold). P5-SKILLS-3 replaces
+    the list.
 - **Retention** (phase 2, RFE-010/015): conversation and attachment windows,
   attachment quota with the storage breakdown (by workspace and direction), a
   usage bar with the 80 %/100 % notices, validation against the instance maximum.
@@ -2196,7 +2208,7 @@ every other topic is owners/admins and is not listed for a member.)
     have it (`GET …/grants`), "Remove" per agent (agent-side `DELETE`) and the
     same add picker.
 - **Policy** — workspace rules editor. (phase 3, RFE-023) Its Default Rule control carries the same note ("Does not affect LLM endpoints — see Governance"); simulate shows `default_rule_skipped_llm_host` when the carve-out applied.
-- **Skills** (phase 3, RFE-020; phase 4, P4-GSL: also **Add from library…**, library badges, read-only library skills and the update review, as on the agent Skills tab, with `can_own` as the authority) — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
+- **Skills** (phase 3, RFE-020; phase 4, P4-GSL: also **Add from library…**, library badges, read-only library skills and the update review, as on the agent Skills tab, with `can_own` as the authority; D-506, P5-SKILLS-2: the same page frame as the organization's — the heading **Skills**, "Skills every agent in <Workspace> can use" and, for owners, **Add skill** in the header; its owners have it in the rail without "Show more controls") — workspace skills editor (owners; members read-only): same editor as the agent tier, a banner "Applies to every agent in this workspace", and a per-skill list of the agents it reaches and any agent-level skill that overrides it.
 - **Activity** — request log (decision, rule name, app/tool, conversation
   link), usage ((phase 5, P5-USAGE-2) the **Usage** tab, §Usage below). (phase 5, P5-MODELS-3, C-879, C-880) The request log shows an LLM request's model
   (`llm_model`). Usage, wherever it is shown (a turn's details, and the usage view once its route
@@ -2282,7 +2294,7 @@ table view; durations "3 h 20 min", "45 min", "under 1 min"; dates as the dashbo
 "UTC" in the opening sentence only.
 
 ### Instance administration (`/admin/*`, instance admins only)
-(phase 5, P5-REFINE-18, second part) **The rail in two halves** (`ADMIN_RAIL_GROUPS`, `lib/routes.ts`): **Overview**, then **POLICY FOR EVERYONE** (What agents may do = `/admin/internet-access`, Apps, Chat platforms, People & sign-in, Data) and **THIS INSTALLATION** (Health & runners = `/admin/platform`, AI endpoints = `/admin/ai-models`, **Set in Helm**, All settings). (Page merge, lane B) **What agents may do is one page with five tabs**, `?tab=internet-access|ai-keys|byo|defaults|templates`: Internet access (the preset card first, then where organizations stand), AI keys and rules (the old AI models › Rules), Bring your own (the old Agents › BYO), Defaults (the old Agents › Defaults and Skills, as two groups), and Agent templates (phase 6, P6-TPL-4, the paragraph below). (P5-SKLIB-3, D-450(b), C-1129) **The Skills group is now "Skill libraries"** ("Git repositories of skills that organizations and this instance offer to agents.") and starts with a row "Skill libraries — <n> shared with every organization" with **Manage**, which opens the sub-page **`/admin/skill-libraries`** (`adminRoutes.skillLibraries()`; instance admins, others get the admin guard's answer; the rail keeps What agents may do selected): breadcrumb "What agents may do › Skill libraries", the description "Libraries here are offered to every organization. People add skills from them with the same permissions as any skill, and each organization approves its own updates.", **Add a library**, and the same `LibrariesTable` and add/edit dialogs as the organization's page (`scope="instance"`, with one more column, **Organizations using it**, the count only, never which skills), "No libraries yet" with the button when there are none. All settings lists sections, not sub-pages, so it has no entry of its own. **Health & runners** has `?tab=health|runners|computers|secret-stores|email|limits`: Health is Overview's health view on its own page, Computers the old Agents › Computers. **AI endpoints** is the endpoints alone. The old Agents topic is gone from the rail. Old addresses redirect (`legacy-routes.ts`, a `LegacyGate` on the three pages that kept a path): `/admin/agents` (no tab, `defaults`, `skills`) → `…/internet-access?tab=defaults`, `?tab=byo` → `?tab=byo`, `?tab=computers` → `/admin/platform?tab=computers`; `/admin/ai-models?tab=rules` → `?tab=ai-keys`; `/admin/internet-access?tab=limits` → `?tab=internet-access`; `/admin/settings/<section>` follows the table above. **Set in Helm** (`/admin/set-in-helm`, `components/admin/set-in-helm-view.tsx`) lists every locked value from the settings index: the setting in words, its current value in words, "Set in your Helm values" with the key in `<code>`, and a link to where it is used; every "Set by the installation" pill (`LockPill`) links to its row (`#<key>`), the long "remove it from your values" text is gone from the pages, and the All settings notice is one line linking here.
+(phase 5, P5-REFINE-18, second part) **The rail in two halves** (`ADMIN_RAIL_GROUPS`, `lib/routes.ts`): **Overview**, then **POLICY FOR EVERYONE** (What agents may do = `/admin/internet-access`, Apps, Skills = `/admin/skills`, Chat platforms, People & sign-in, Data) and **THIS INSTALLATION** (Health & runners = `/admin/platform`, AI endpoints = `/admin/ai-models`, **Set in Helm**, All settings). (Page merge, lane B) **What agents may do is one page with five tabs**, `?tab=internet-access|ai-keys|byo|defaults|templates`: Internet access (the preset card first, then where organizations stand), AI keys and rules (the old AI models › Rules), Bring your own (the old Agents › BYO), Defaults (the old Agents › Defaults), and Agent templates (phase 6, P6-TPL-4, the paragraph below). (D-506(c), C-1177, P5-SKILLS-2) **Skills is its own Administration page, `/admin/skills`** (`adminRoutes.skills()`; instance admins, others get the admin guard's answer): the heading **Skills**; the section **Libraries** with "Libraries here are offered to every organization. People add skills from them with the same permissions as any skill, and each organization approves its own updates.", **Add a library** and the instance's libraries as the same cards and add/edit dialogs as the organization's (the facts line counts "used by <n> organizations", never which skills; no Browse skills, which needs an organization to browse as), "No libraries yet" with the button when there are none; then the **Library settings** group (libraries on or off, refresh interval, size cap) with the Save bar. All settings sends the `skills` section here, and `/admin/skill-libraries` and `/admin/agents?tab=skills` redirect here. **Health & runners** has `?tab=health|runners|computers|secret-stores|email|limits`: Health is Overview's health view on its own page, Computers the old Agents › Computers. **AI endpoints** is the endpoints alone. The old Agents topic is gone from the rail. Old addresses redirect (`legacy-routes.ts`, a `LegacyGate` on the three pages that kept a path): `/admin/agents` (no tab, `defaults`) → `…/internet-access?tab=defaults`, `?tab=skills` → `/admin/skills`, `?tab=byo` → `?tab=byo`, `?tab=computers` → `/admin/platform?tab=computers`; `/admin/ai-models?tab=rules` → `?tab=ai-keys`; `/admin/internet-access?tab=limits` → `?tab=internet-access`; `/admin/settings/<section>` follows the table above. **Set in Helm** (`/admin/set-in-helm`, `components/admin/set-in-helm-view.tsx`) lists every locked value from the settings index: the setting in words, its current value in words, "Set in your Helm values" with the key in `<code>`, and a link to where it is used; every "Set by the installation" pill (`LockPill`) links to its row (`#<key>`), the long "remove it from your values" text is gone from the pages, and the All settings notice is one line linking here.
 (phase 6, P6-TPL-4, C-1114, C-1115) **What agents may do › Agent templates** (`?tab=templates`, after Defaults; instance admins) has two sections. **Template repositories** lists the git addresses an instance admin added — repository (`repo`, "Default branch" or the branch or tag, folder), the last head as `sha7`, the schedule, last checked with its status, the template count — with **Check now**, **Edit** (schedule, branch, folder, and an access token that is replaced, never shown) and **Remove** ("Agents made from these templates keep working and do not change."). **Add a repository** is the skill library's two-step dialog (C-1129): Repository address, Branch or tag, Folder and the fold "This repository is private", then **Check** — a single read that stores nothing — and what Aurora found: the repository's name and description, the branch and `sha7`, and each template with its version and state, problems in words; **Add repository** stores it. **Templates** lists what the repositories hold: name and summary, source, offered version, the chips **Waiting for review** (with the count, linking to the review page), **Waiting for its package** (since when) and **Removed from the repository**, the apps and skill libraries it needs ("Not installed here" / "Not added here"), and **Withdraw** / **Offer again**; a head with problems shows "The repository's newest version has problems" with the list. **Review** of a waiting version is its own page: everything of the version in full, marked "Text from <source> at <sha7>. The package matches the repository at <sha7>." — first **About this template**, the README.md as its source text with a **Preview** toggle that renders it the way people will see it (C-1116: no raw HTML, images shown as their alt text, only `https:`/`mailto:` links — external, in a new tab, marked — relative links as plain text, headings shifted under the page's own), then instructions, skills with their files, helper files in full (executable marked), skills from libraries, memories ("Locked: <Agent> can read it but not change it."), automations, apps with their level or tools, and inputs. **What changed since <current version>** (FIX-247, FIX-250) is kept short: a one-line summary in words ("4 changes: Instructions, 1 skill, a new app, a new schedule."), then a **Look at these first** block (a labelled region) with the changes that widen what the agent can do or reach — a new or widened app, a new schedule or webhook, a new library skill reference, a new helper file, a changed input, an unlocked memory, a raised minimum Aurora version (compared in order: the first differing part of the version decides) — each entry linking to the section it belongs to. (FIX-271) Every change is visible in its section: removed skills, skill files and helper files follow the current ones, marked **Removed**; a new skill's body and Use it when read as added; a binary file that changed is said in words; locking or unlocking a memory is said beside it. While the comparison loads the block's place shows a loading line and **Approve** is disabled; if it fails an error with a retry takes its place and Approve stays disabled; if the offered version has no content the page says there is no comparison. With several versions waiting, the templates list says "N waiting:" and links each, oldest first. The diffs themselves sit inside the sections they belong to — *About this template*, *Instructions*, each *Skill* and each of its files, *Skills from libraries*, *Helper files*, *Memories*, *Apps*, *Automations*, *Inputs* — as the shared folded `DiffView` (§Visual design › Shared primitives): a changed part shows its diff first, with **Show the current text** for the full text of the version under review; a section or part nothing touched is collapsed to one line "Unchanged" that expands to the text. A first version says "This is the first version: nothing to compare with." and shows the sections as today; identical content says "Nothing changed: this version matches <current version>."; the current version itself shows no diff. The full content below is unchanged; "People keep using <current version> until you approve this one."; **Approve** sends the `content_sha256` the page showed (409 reloads the review and says the version changed), **Reject** asks to confirm. **Organization › Agents › Templates** (owners and admins; `?tab=templates`) says on top "Workspace members can create agents from these templates. Turning one off hides it; agents already made from it keep working." and lists every offered template with its summary and a switch **Offered in <org>**; a member reads the same sentence with who changes it, and the instance's kill switch (the org routes answer 404 `templates_disabled`) reads "Agent templates are turned off on this instance."
 (phase 5, P5-REFINE-18, second part) **Organization presets**: `OrgPolicyPresets` (`components/policy/org-policy-presets.tsx`) shows the same three cards on **organization AI models** (key posture, outside agents) and **organization Internet access** (posture, browser connections). Choosing one writes the organization's governance document (one PUT); a card looser than what the instance admin set is disabled with "Set by the instance admin". The checklist carries one line under its five rows, "What agents may do · Open · Change" (not counted), linking to the card (`/admin/internet-access#presets`).
 (phase 5, P5-REFINE-18, second part) **Errors and saving in words**: a refused save puts each message under its field in the field's own unit ("Enter 5 minutes or more.", "Row 1: that isn't a website name. Try docs.example.org.", "That isn't a valid address range. Use a form like 10.0.0.0/24."), scrolls to the first bad field, and lists the config and environment names only under **Technical details** (`fieldErrorWords`, `technicalNames` in `lib/settings-words.ts`); a private-address refusal says "Aurora can't reach private addresses. Ask whoever installed Aurora to allow it." The saved sentence names what changed ("Saved. New agents use these defaults." on Agent defaults).
@@ -2523,7 +2535,7 @@ which wraps it with the id given.
 | Id | Control | Altitude | Now / Later |
 |---|---|---|---|
 | `chat` | Chat, Approvals, Overview, Give an app, an account's access choice, Files, the agent's summary and timeline | Use | no wrapper |
-| `rail.skills`, `rail.apps`, `rail.internet`, `rail.activity`, `rail.people`, `rail.settings` | rail topics other than Overview, Agents, Approvals | Set up | Now (`visibleTopics`) |
+| `rail.skills`, `rail.apps`, `rail.internet`, `rail.activity`, `rail.people`, `rail.settings` | rail topics other than Overview, Agents, Approvals | Set up (D-506(b): `rail.skills` is Use for the workspace's owners; the organization's Skills is listed to its owners and admins at every altitude) | Now (`visibleTopics`) |
 | `rail.platform` | Administration topics | Expert (default for instance admins) | Now (no hiding; marks the rule) |
 | `agent.instructions` | Name, Instructions, Model | Use | no wrapper |
 | `agent.memory`, `agent.skills` | Memory, Skills pages | Use (P5-REFINE-12 #8; no row, no wrapper) | no wrapper |
@@ -3350,7 +3362,7 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   workspace** asks for the visible name.
 - **Apps** keeps its grid of square cards with **Search apps** and the groups **Connected**, **Ready to connect**, **Needs an
   admin first** (A to Z; empty groups not drawn); the line for an app that needs an admin is "An admin sets up <what>
-  once" (a role, never a name). **Skills** opens with what a skill is and keeps the precedence in the closed **How skills
+  once" (a role, never a name). **Skills** opens with "Skills every agent in <Workspace> can use" (D-506, P5-SKILLS-2) and keeps the precedence in the closed **How skills
   combine** fold (the shared `Fold` primitive, `components/ui/fold.tsx`). **Approvals** shows "Nothing is waiting for you."
   once and, below it, a closed fold **What an approval looks like** holding the example card (built from the real question,
   never counted or sent; each answer explains itself; never amber, D-441), only while nothing is waiting.

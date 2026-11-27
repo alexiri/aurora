@@ -43,7 +43,7 @@ describe("labels (rec 13)", () => {
   });
 
   it("says every skill library status in words (P5-SKLIB-3, D-450(e))", () => {
-    expect(["active", "paused", "error", "over_budget"].map((s) => label(LIBRARY_STATUS, s))).toEqual(["Active", "Paused", "Can't be read", "Pending updates over budget"]);
+    expect(["active", "paused", "error", "over_budget"].map((s) => label(LIBRARY_STATUS, s))).toEqual(["Up to date", "Paused", "Needs attention", "Over budget"]);
   });
 
   it("has an audit sentence for every named audit action, and says so plainly when one is missing", () => {

@@ -54,13 +54,28 @@ export function TierBadge({ tier }: { tier: SkillTier }) {
  * Editable list + editor for one tier (agent, workspace or organization). `readOnly` is the member view of a
  * workspace tier: the list and every skill open, nothing can be changed (writes are `can_own`, the API enforces it).
  */
-export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { scope: SkillScope; readOnly?: boolean; orgId?: string; agentName?: string }) {
+export function SkillsEditor({
+  scope,
+  readOnly = false,
+  orgId,
+  agentName,
+  create,
+}: {
+  scope: SkillScope;
+  readOnly?: boolean;
+  orgId?: string;
+  agentName?: string;
+  /** A page that starts a new skill from its own header: it owns whether the form is open, and the editor shows no "New skill" button. */
+  create?: { open: boolean; onOpenChange: (open: boolean) => void };
+}) {
   const agentList = useAgentSkills(scope.kind === "agent" ? scope.id : "");
   const wsList = useWorkspaceSkills(scope.kind === "workspace" ? scope.id : undefined);
   const orgList = useOrgSkills(scope.kind === "organization" ? scope.id : undefined);
   const list = scope.kind === "agent" ? agentList : scope.kind === "workspace" ? wsList : orgList;
   const [selected, setSelected] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [ownCreating, setOwnCreating] = useState(false);
+  const creating = create ? create.open : ownCreating;
+  const setCreating = create ? create.onOpenChange : setOwnCreating;
   const items = list.data?.items ?? [];
   const current = items.find((s) => s.id === selected);
   const tier: BudgetTier = scope.kind === "organization" ? "org" : scope.kind;
@@ -76,7 +91,7 @@ export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { sc
         <div className="flex flex-wrap justify-end gap-2">
           <AddFromLibrary scope={scope} orgId={orgId} tier={tier} usage={usage} onAdded={(id) => { setCreating(false); setSelected(id); }} />
           {/* The empty state carries its own New skill (one action). */}
-          {items.length > 0 || creating ? <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>New skill</Button> : null}
+          {!create && (items.length > 0 || creating) ? <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>New skill</Button> : null}
         </div>
       )}
       <PendingUpdatesNotice scope={scope} enabled={!readOnly && libraryItems.length > 0} />
@@ -87,7 +102,7 @@ export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { sc
           title="No skills yet"
           when="Skills are instructions an agent can load when a task needs them."
           action={
-            readOnly ? undefined : (
+            readOnly || create ? undefined : (
               <Button type="button" onClick={() => { setCreating(true); setSelected(null); }}>
                 New skill
               </Button>
@@ -105,7 +120,7 @@ export function SkillsEditor({ scope, readOnly = false, orgId, agentName }: { sc
             <li key={s.id} className="min-w-0">
               <button
                 type="button"
-                aria-current={selected === s.id}
+                aria-current={!creating && selected === s.id}
                 className="block w-full min-w-0 overflow-hidden rounded-control px-3 py-2 text-left text-sm text-ink hover:bg-subtle aria-[current=true]:bg-subtle aria-[current=true]:font-semibold"
                 onClick={() => { setSelected(s.id); setCreating(false); }}
               >

@@ -20,7 +20,6 @@ import { OrgDangerSections, GeneralForm, PreviewsForm } from "@/components/org/s
 import { OrgRetentionForm } from "@/components/org/retention-form";
 import { OrgStorageView } from "@/components/org/storage-view";
 import { OrgInternet } from "@/components/internet/org-internet";
-import { OrgSkills } from "@/components/skills/org-skills";
 import { OrgTemplates, ORG_TEMPLATES_SENTENCE } from "@/components/templates/org-templates";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { EmbeddedPage, PageHeader } from "@/components/ui/page-header";
@@ -90,13 +89,12 @@ function MemberTemplates({ org }: { org: Org }) {
 
 /**
  * (P5-REFINE-17, org-6) Agents opens on the list of every agent in the organization; Bring your own (with Previews as a
- * second section) and Skills are Expert, behind "Show more controls".
+ * second section) is Expert, behind "Show more controls". Skills has its own page (D-506(a)).
  */
 function AdminOrgAgents({ org, slug }: { org: Org; slug: string }) {
   const alt = useAltitude();
   const showByo = alt.allows(ALTITUDE_REGISTRY["org.byo"].altitude);
-  const showSkills = alt.allows(ALTITUDE_REGISTRY["org.skills"].altitude);
-  const hidden = (showByo ? 0 : 1) + (showSkills ? 0 : 1);
+  const hidden = showByo ? 0 : 1;
   const tabs: TopicTab<Tabs<"orgAgents">>[] = [
     { id: "agents", label: "Agents", content: <OrgAgentsList orgId={org.id} orgSlug={slug} /> },
     ...(showByo
@@ -115,7 +113,6 @@ function AdminOrgAgents({ org, slug }: { org: Org; slug: string }) {
           },
         ]
       : []),
-    ...(showSkills ? [{ id: "skills" as const, label: "Skills", content: <OrgSkills /> }] : []),
     // (P6-TPL-4, C-1115) The organization's offered templates, one switch each.
     { id: "templates", label: "Templates", content: <OrgTemplates orgId={org.id} orgName={org.name} /> },
   ];

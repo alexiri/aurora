@@ -44,9 +44,9 @@ export interface AltitudeView {
 }
 
 // (P5-REFINE-18 #1) In the rail's order: Overview · policy for everyone · this installation.
-const ADMIN_TOPICS: AdminTopic[] = ["overview", "internet-access", "apps", "chat-platforms", "people", "data", "platform", "ai-models", "set-in-helm", "settings"];
+const ADMIN_TOPICS: AdminTopic[] = ["overview", "internet-access", "apps", "skills", "chat-platforms", "people", "data", "platform", "ai-models", "set-in-helm", "settings"];
 // (P5-REFINE-17, rec 8) The Manage <org> sub-nav: Overview first (the organization's own address), then the topics.
-const ORG_TOPICS: OrgTopic[] = ["overview", "agents", "people", "apps", "chat-platforms", "ai-models", "internet-access", "data", "settings"];
+const ORG_TOPICS: OrgTopic[] = ["overview", "agents", "skills", "people", "apps", "chat-platforms", "ai-models", "internet-access", "data", "settings"];
 const ORG_MEMBER_TOPICS: OrgTopic[] = ["overview", "ai-models", "internet-access"];
 
 export function visibleTopics(level: "admin", roles: ViewerRoles, alt?: AltitudeView): AdminTopic[];
@@ -60,8 +60,9 @@ export function visibleTopics(level: Level, roles: ViewerRoles, alt?: AltitudeVi
     // An instance admin acting in an organization sees its pages exactly as its owner would.
     const role = roles.org ?? (roles.instanceAdmin ? "owner" : undefined);
     const list = role === "owner" || role === "admin" ? ORG_TOPICS : role === "member" ? ORG_MEMBER_TOPICS : [];
-    // At Use an organization member lists Overview only; AI models and Internet access need Set up.
-    return setup ? list : list.filter((t) => t === "overview");
+    // At Use an organization member lists Overview only; AI models and Internet access need Set up. Skills is listed to
+    // the people who own it (owners and admins) at every altitude (D-506(b)); a member's list has no Skills.
+    return setup ? list : list.filter((t) => t === "overview" || t === "skills");
   }
   const role = roles.workspace ?? (roles.instanceAdmin ? "owner" : undefined);
   if (!role) return [];
@@ -76,6 +77,7 @@ export function visibleTopics(level: Level, roles: ViewerRoles, alt?: AltitudeVi
     "activity",
     ...(role === "owner" ? (["people", "settings"] as const) : []),
   ];
-  // At Use: Overview, Agents and Approvals (where the role may approve).
-  return setup ? all : all.filter((t) => t === "overview" || t === "agents" || t === "approvals");
+  // At Use: Overview, Agents and Approvals (where the role may approve), and Skills for the workspace's owners, who
+  // write them (D-506(b)); team and personal workspaces alike.
+  return setup ? all : all.filter((t) => t === "overview" || t === "agents" || t === "approvals" || (t === "skills" && role === "owner"));
 }
