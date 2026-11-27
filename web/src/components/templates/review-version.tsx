@@ -29,6 +29,8 @@ import {
 import { diffTemplateContent, type TemplateChange, type TemplateDiff } from "@/lib/template-diff";
 import { adminRoutes } from "@/lib/routes";
 import { formatCount } from "@/lib/format-date";
+// Not a hook, whatever its name says.
+import { useItToLine as itToLine } from "@/lib/skill-name";
 
 import { TemplateReadme } from "./template-readme";
 import { useAppName, versionStatusWords } from "./words";
@@ -269,14 +271,14 @@ function RemovedFiles({ changes, skill }: { changes: TemplateChange[]; skill: st
     });
 }
 
-/** A skill this version no longer carries: its Use it when, its body and every file, all marked Removed. */
+/** A skill this version no longer carries: when to use it, its body and every file, all marked Removed. */
 function RemovedSkill({ name, change, changes }: { name: string; change: TemplateChange; changes: TemplateChange[] }) {
   return (
     <section aria-label={`Removed skill ${name}`} className="space-y-2 rounded-card border border-line bg-surface p-4">
       <p className="font-medium text-ink">
         {name} <Badge tone="neutral">Removed</Badge>
       </p>
-      <p className="text-sm text-ink-2">Use it when: {change.useItWhen}</p>
+      <p className="text-sm text-ink-2">{itToLine(change.useItWhen ?? "")}</p>
       <DiffView old={change.old ?? ""} next="" label={`Diff of Skill ${name} body`} fileName={`Skill ${name} body`} status="removed" />
       <RemovedFiles changes={changes} skill={name} />
     </section>
@@ -286,7 +288,7 @@ function RemovedSkill({ name, change, changes }: { name: string; change: Templat
 /** One skill and its files: the folded diffs of the parts that changed, every part nothing touched
  * as one line "Unchanged"; a skill nothing touched collapses whole. A new skill reads as added. */
 function SkillCard({ s, changes, comparing }: { s: TemplateContentView["skills"][number]; changes: TemplateChange[] | null; comparing: boolean }) {
-  // A new skill is one change (`skill:<name>`, its body as the new text): the body and the Use it when are both added.
+  // A new skill is one change (`skill:<name>`, its body as the new text): the body and "when to use it" are both added.
   const added = changes?.find((c) => c.part === `skill:${s.name}` && c.kind === "added") ?? null;
   const body = added ?? changes?.find((c) => c.part === `skill:${s.name}:body`) ?? null;
   const use = added ? { old: "", new: added.useItWhen } : (changes?.find((c) => c.part === `skill:${s.name}:use_it_when`) ?? null);
@@ -297,7 +299,7 @@ function SkillCard({ s, changes, comparing }: { s: TemplateContentView["skills"]
         {header}
         <Fold summary="Unchanged" data-testid="diff-unchanged">
           <div className="space-y-2 pt-2">
-            <p className="text-sm text-ink-2">Use it when: {s.use_it_when}</p>
+            <p className="text-sm text-ink-2">{itToLine(s.use_it_when)}</p>
             <pre aria-label={`Skill ${s.name} body`} className="max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 font-mono text-xs text-ink [overflow-wrap:anywhere]">
               {s.body}
             </pre>
@@ -312,10 +314,10 @@ function SkillCard({ s, changes, comparing }: { s: TemplateContentView["skills"]
   return (
     <section aria-label={`Skill ${s.name}`} className="space-y-2 rounded-card border border-line bg-surface p-4">
       {header}
-      <p className="text-sm text-ink-2">Use it when: {s.use_it_when}</p>
+      <p className="text-sm text-ink-2">{itToLine(s.use_it_when)}</p>
       {comparing && changes != null ? (
         <div className="space-y-2">
-          {use ? <DiffView old={use.old ?? ""} next={use.new ?? ""} label={`Diff of Skill ${s.name} · Use it when`} status={added ? "added" : null} /> : null}
+          {use ? <DiffView old={use.old ?? ""} next={use.new ?? ""} label={`Diff of Skill ${s.name} · When to use it`} status={added ? "added" : null} /> : null}
           <PartText change={body} label={`Skill ${s.name} body`} current={s.body} />
           {s.files.map((f) => (
             <ComparedFile key={f.path} f={f} change={changes.find((c) => c.part === `skill:${s.name}:file:${f.path}`) ?? null} label={`File ${f.path} of skill ${s.name}`} />

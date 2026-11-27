@@ -4,19 +4,35 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 
 import { api } from "./client";
 import type { components } from "./schema";
-import type { SkillScope } from "./skills";
 import { unwrap } from "./unwrap";
 
-export type SkillLibrary = components["schemas"]["SkillLibrary"];
-export type CreateSkillLibraryRequest = components["schemas"]["CreateSkillLibraryRequest"];
-export type PatchSkillLibraryRequest = components["schemas"]["PatchSkillLibraryRequest"];
-export type LibraryCatalogue = components["schemas"]["LibraryCatalogue"];
-export type LibrarySkillItem = components["schemas"]["LibrarySkillItem"];
-export type LibrarySkillContent = components["schemas"]["LibrarySkillContent"];
-export type SkillLibraryInfo = components["schemas"]["SkillLibraryInfo"];
-export type LibraryUpdate = components["schemas"]["LibraryUpdateView"];
-export type LibraryDiff = components["schemas"]["LibraryDiff"];
-export type PendingUpdate = components["schemas"]["PendingLibraryUpdate"];
+type Schemas = components["schemas"];
+
+// FIX-278's contract, kept here until `schema.d.ts` has it: regenerate the schema and drop these local additions.
+/** Why a library skill is invalid, or couldn't be judged; the words are in `lib/labels.ts`. */
+export type SkillInvalidReason =
+  | "too_large"
+  | "body_too_large"
+  | "file_too_large"
+  | "too_many_files"
+  | "unsupported_path"
+  | "unsupported_entry"
+  | "skill_md"
+  | "bad_name"
+  | "unknown_size";
+type WithReasonCode = { reason_code?: SkillInvalidReason | null };
+
+/** `default_branch` is the branch a library with no `ref` follows; null when the server doesn't know it yet. */
+export type SkillLibrary = Schemas["SkillLibrary"] & { default_branch?: string | null };
+export type CreateSkillLibraryRequest = Schemas["CreateSkillLibraryRequest"];
+export type PatchSkillLibraryRequest = Schemas["PatchSkillLibraryRequest"];
+/** `size` is null only for a skill the server couldn't judge within its fetch caps. */
+export type LibrarySkillItem = Omit<Schemas["LibrarySkillItem"], "size"> & WithReasonCode & { size: number | null };
+export type LibraryCatalogue = Omit<Schemas["LibraryCatalogue"], "items"> & { items: LibrarySkillItem[] };
+export type LibrarySkillContent = Schemas["LibrarySkillContent"] & WithReasonCode;
+export type LibraryUpdate = Schemas["LibraryUpdateView"] & WithReasonCode;
+export type SkillLibraryInfo = Omit<Schemas["SkillLibraryInfo"], "update"> & { update?: LibraryUpdate | null };
+export type LibraryDiff = Schemas["LibraryDiff"];
 
 /** The tiers that keep skills, each with its own library budget (the server says how large, C-1176). */
 export type BudgetTier = "agent" | "workspace" | "org";
@@ -38,7 +54,6 @@ export const libraryKeys = {
   catalogue: (id: string, q: string, org: string, target: BrowseFor | null) => ["skill-libraries", id, "skills", q, org, target] as const,
   content: (id: string, path: string, commit: string, org: string) => ["skill-libraries", id, "skill", path, commit, org] as const,
   info: (skill: string) => ["skills", skill, "library"] as const,
-  pending: (scope: SkillScope) => ["skill-library-updates", scope.kind, scope.id] as const,
 };
 
 /** Admins get every field; other members who can use a workspace get `id`, `label` and `status` of active libraries. */
@@ -125,7 +140,7 @@ export function useLibraryCatalogue(id: string | undefined, q: string, org: stri
   return useInfiniteQuery({
     queryKey: libraryKeys.catalogue(id ?? "", q, org ?? "", target ?? null),
     initialPageParam: "",
-    queryFn: ({ pageParam }) =>
+    queryFn: ({ pageParam }): Promise<LibraryCatalogue> =>
       unwrap(
         api.GET("/v1/skill-libraries/{id}/skills", {
           params: { path: { id: id! }, query: { q: q || undefined, cursor: pageParam || undefined, org, ...target } },
@@ -142,7 +157,7 @@ export function useLibraryCatalogue(id: string | undefined, q: string, org: stri
 export function useLibrarySkill(id: string | undefined, path: string | undefined, commit: string | undefined, org: string | undefined) {
   return useQuery({
     queryKey: libraryKeys.content(id ?? "", path ?? "", commit ?? "", org ?? ""),
-    queryFn: () =>
+    queryFn: (): Promise<LibrarySkillContent> =>
       unwrap(
         api.GET("/v1/skill-libraries/{id}/skills/{path}", {
           params: { path: { id: id!, path: path! }, query: { commit_sha: commit, org } },
@@ -157,23 +172,8 @@ export function useLibrarySkill(id: string | undefined, path: string | undefined
 export function useSkillLibraryInfo(skill: string | undefined) {
   return useQuery({
     queryKey: libraryKeys.info(skill ?? ""),
-    queryFn: () => unwrap(api.GET("/v1/skills/{id}/library", { params: { path: { id: skill! } } })),
+    queryFn: (): Promise<SkillLibraryInfo> => unwrap(api.GET("/v1/skills/{id}/library", { params: { path: { id: skill! } } })),
     enabled: !!skill,
-    retry: false,
-  });
-}
-
-/** Pending proposed updates the caller may decide at one scope (badges, "Update available"). */
-export function usePendingLibraryUpdates(scope: SkillScope, enabled = true) {
-  return useQuery({
-    queryKey: libraryKeys.pending(scope),
-    queryFn: () =>
-      scope.kind === "agent"
-        ? unwrap(api.GET("/v1/agents/{agent}/skill-library-updates", { params: { path: { agent: scope.id } } }))
-        : scope.kind === "workspace"
-          ? unwrap(api.GET("/v1/workspaces/{ws}/skill-library-updates", { params: { path: { ws: scope.id } } }))
-          : unwrap(api.GET("/v1/orgs/{org}/skill-library-updates", { params: { path: { org: scope.id } } })),
-    enabled,
     retry: false,
   });
 }
@@ -182,7 +182,6 @@ function useRefreshAfterDecision(skill: string) {
   const qc = useQueryClient();
   return async () => {
     await qc.invalidateQueries({ queryKey: libraryKeys.info(skill) });
-    await qc.invalidateQueries({ queryKey: ["skill-library-updates"] });
     await qc.invalidateQueries({ predicate: (q) => q.queryKey.includes("skills") });
     await qc.invalidateQueries({ queryKey: ["orgs"] });
   };

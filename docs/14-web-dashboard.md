@@ -1864,7 +1864,8 @@ every other topic is owners/admins and is not listed for a member.)
     libraries as cards (`LibraryCards`, `components/skills/libraries/`, in the `CardGrid`: one per row below a
     content width of 896 px, never a table and never a sideways scroll). A card: a tile, the label, the repository
     (`host/path` in monospace, plain text, never a link), one **state chip** and the "…" menu; a facts line
-    ("Branch <name>" or "Default branch"; "Checked <when>" or "Not checked yet"; "<n> skills · <m> used by <org>" or
+    ("Branch <name>" — the one set, else the library's `default_branch`, a full commit id shortened — or "Default
+    branch" while neither is known; "Checked <when>" or "Not checked yet"; "<n> skills · <m> used by <org>" or
     "· none used yet", where `n` is C-1176's `skills_offered` and is left out while the server does not send it, and
     `m` counts the organization's skills added from the library at all three levels; "Pinned <sha7>" when the
     organization-level skills from it share one commit, "Pinned at <n> commits" when they do not, nothing when there
@@ -2977,8 +2978,9 @@ agent's, the workspace's and the organization's pages.
   · From <Org> · Off; workspace and organization: All · Written here · From libraries · Off); columns **Skill · Source
   · For <Agent | workspace | Org>**, sorted by name, a row stacked where the list is narrower than 36 rem. One source
   chip per row (<Agent> · Workspace · <Org> · Workspace · Library · <Org> · Library · Library · <label> · App; on the
-  level pages Written here or Library · <label>), an **Update available** mark on a library skill with one waiting, and
-  on the level pages "Used by n agents". The agent's rows are its effective set plus what is off; a skill another
+  level pages Written here or Library · <label>), an **Update available** mark on a library skill whose waiting update
+  the viewer may decide (the notice above the list counts exactly those rows of the page), a description of at most
+  two lines (the panel has all of it), and on the level pages "Used by n agents". The agent's rows are its effective set plus what is off; a skill another
   level's skill of the same name replaces has no row: the winner says "<Agent>’s version replaces the workspace’s ·
   **Compare**" (a dialog with the `DiffView` of the two). The switch of an inherited skill is the per-agent off
   (C-1174), of the agent's own skill (and on the level pages) the skill's own; what its owners switched off is off and

@@ -344,6 +344,9 @@ describe("the four-step page (C-1116)", () => {
     }
     expect(textOf("review-instructions")).toContain("Triage carefully.");
     expect(textOf("review-skills")).toContain("Read the queue. Sort it.");
+    // (FIX-279) A skill's text stands on its own, as the skill pages show it: no "Use it when:" before it.
+    expect(textOf("review-skills")).toContain("TriageThe queue is long.");
+    expect(document.body.textContent).not.toMatch(/Use it when/);
     expect(textOf("review-helpers")).toContain("triage.py");
     expect(textOf("review-memories")).toContain("Be brief.");
     // The library skills: the commit head in seven characters, as data.

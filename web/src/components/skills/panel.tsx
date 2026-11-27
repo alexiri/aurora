@@ -19,17 +19,7 @@ import { useItToLine } from "@/lib/skill-name";
 import { SkillFileTree } from "./files";
 import { UpdateReviewDialog } from "./library";
 import { SkillSwitch, SourceChip } from "./list";
-import { isLibrary, isOutsideText, libraryLabel,managers, pageScope, pageSubject, pageTier, usageWords, type SkillPage, type SkillRow } from "./model";
-
-/** What the viewer may do with a skill on this page. */
-export function skillRights(page: SkillPage, row: SkillRow) {
-  // Whether this page is where the skill is kept, and the viewer may write there.
-  const here =
-    page.kind === "agent" ? row.tier === "agent" && !page.readOnly : row.tier === pageTier(page) && (page.kind === "organization" || page.canOwn);
-  const library = isLibrary(row.skill);
-  const canDecide = row.tier === "app" ? false : page.kind === "agent" ? page.canDecide[row.tier] : here;
-  return { here, library, canDecide, edit: here && !library };
-}
+import { isOutsideText, libraryLabel, managers, pageScope, pageSubject, skillRights, updateToReview, usageWords, type SkillPage, type SkillRow } from "./model";
 
 /** The sentences of the lock box, for a skill with no fields on this page; null for one that can be edited here. */
 function lockSentences(page: SkillPage, row: SkillRow): ReactNode[] | null {
@@ -223,9 +213,7 @@ export function SkillPanel({
             </div>
           </div>
         ) : null}
-        {rights.library && rights.canDecide && skill.source?.update_pending && skill.id && (row.tier === "agent" || row.tier === "workspace" || row.tier === "org") ? (
-          <UpdateAvailable skill={skill as Skill} tier={row.tier} />
-        ) : null}
+        {updateToReview(page, row) && row.tier !== "app" ? <UpdateAvailable skill={skill as Skill} tier={row.tier} /> : null}
         {skill.source?.detached ? (
           <p className="break-words text-xs text-muted">
             Was from {skill.source.repo} at {shortSha(skill.source.commit_sha)}. Updates are stopped.

@@ -251,6 +251,19 @@ for (const scheme of ["light", "dark"] as const) {
       expect(errors).toEqual([]);
     });
 
+    // (FIX-279) The two texts wrap: nothing to scroll sideways to, and no button cut off.
+    test("Compare wraps its diffs", async ({ page }) => {
+      const { errors } = await open(page, scheme);
+      await row(page, "release-notes").getByRole("button", { name: "Compare Release notes" }).click();
+      const dialog = page.getByRole("dialog", { name: "Compare Release notes" });
+      const boxes = dialog.getByTestId("diff-box");
+      await expect(boxes).toHaveCount(2);
+      expect(Math.max(...(await boxes.evaluateAll((els) => els.map((el) => el.scrollWidth - el.clientWidth))))).toBeLessThanOrEqual(0);
+      await shot(page, `skill-1-compare-${width}-${scheme}`);
+      await clean(page, "compare");
+      expect(errors).toEqual([]);
+    });
+
     test("add a skill from a library on a narrow screen", async ({ page }) => {
       const { errors, mock } = await open(page, scheme);
       await page.getByRole("button", { name: "Add skill" }).click();

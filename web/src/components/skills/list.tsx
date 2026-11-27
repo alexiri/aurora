@@ -17,6 +17,7 @@ import {
   pageSubject,
   replaceWords,
   sourceChip,
+  updateToReview,
   usedByWords,
   type SkillFilter,
   type SkillPage,
@@ -139,7 +140,8 @@ export function SkillTable({ page, rows, selected, busyKey, onSelect, onToggle, 
                 <button type="button" aria-current={selected === row.key ? "true" : undefined} className="block max-w-full text-left after:absolute after:inset-0" onClick={() => onSelect(row.key)}>
                   <span className={cn("block break-words text-sm font-semibold", row.on ? "text-ink" : "text-muted")}>{row.name}</span>
                 </button>
-                <p className="break-words text-xs text-ink-2">{descriptionSentence(row.skill.description)}</p>
+                {/* Two lines in the list; the panel has the whole text. */}
+                <p className="line-clamp-2 break-words text-xs text-ink-2">{descriptionSentence(row.skill.description)}</p>
                 {typeof usedBy === "number" ? <p className="text-xs text-muted">{usedByWords(usedBy)}</p> : null}
                 {row.fixedWhy ? <p className="text-xs text-muted">{row.fixedWhy}</p> : null}
                 {replaces ? (
@@ -153,7 +155,7 @@ export function SkillTable({ page, rows, selected, busyKey, onSelect, onToggle, 
               </div>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 @xl:justify-end">
                 <SourceChip page={page} row={row} />
-                {row.skill.source?.update_pending && !row.skill.source.detached ? <Badge className="text-xs">Update available</Badge> : null}
+                {updateToReview(page, row) ? <Badge className="text-xs">Update available</Badge> : null}
               </div>
               <div className="relative z-10 justify-self-start">
                 <SkillSwitch page={page} row={row} busy={busyKey === row.key} onToggle={onToggle} />

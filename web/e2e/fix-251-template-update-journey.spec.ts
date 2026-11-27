@@ -215,8 +215,18 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(dlg.getByRole("button", { name: "Apply" })).toBeEnabled();
         await dlg.getByRole("button", { name: "Apply" }).click();
 
-        // The applies: the merged part bound to its merge hash; the conflict part with one
-        // resolution per hunk, in the offer's order.
+        // The last close ends the walkthrough: back on the unfiltered page, both agents listed,
+        // nothing marked. It follows the last apply's answer, so every write is in by then (a click
+        // returns before its request is sent).
+        await expect(dlg).toBeHidden();
+        await expect(page).toHaveURL(/\/o\/acme\/w\/main\/agents$/);
+        await expect(page.getByRole("link", { name: "Daneel", exact: true })).toBeVisible();
+        await expect(page.getByRole("link", { name: "Kojo", exact: true })).toBeVisible();
+        await expect(page.getByTestId("needs-update")).toHaveCount(0);
+        await expect(page.getByTestId("agent-needs-update")).toHaveCount(0);
+
+        // The applies, exactly these two: the merged part bound to its merge hash; the conflict part
+        // with one resolution per hunk, in the offer's order.
         expect(journey.writes).toEqual([
           {
             key: `POST /v1/agents/${id(11)}/template/apply`,
@@ -240,10 +250,6 @@ for (const scheme of ["light", "dark"] as const) {
           },
         ]);
 
-        // The last close ends the walkthrough: back on the unfiltered page, nothing marked.
-        await expect(page).toHaveURL(/\/o\/acme\/w\/main\/agents$/);
-        await expect(page.getByTestId("needs-update")).toHaveCount(0);
-        await expect(page.getByTestId("agent-needs-update")).toHaveCount(0);
         expect(await overflow(page), "Agents overflows horizontally").toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
         expect(errors).toEqual([]);

@@ -38,6 +38,19 @@ for (const width of [1256, 768, 390]) {
   });
 }
 
+test.describe("update review on a phone", () => {
+  test.use({ viewport: { width: 390, height: 900 } });
+  // (FIX-279) The diffs wrap, the 120-character word included: no box scrolls sideways and cuts its buttons.
+  for (const scheme of ["light", "dark"] as const) {
+    test(`no diff scrolls sideways (${scheme})`, async ({ page }) => {
+      await openLibraryScreen(page, "review", scheme);
+      const boxes = page.getByRole("dialog").getByTestId("diff-box");
+      await expect(boxes).toHaveCount(3);
+      expect(Math.max(...(await boxes.evaluateAll((els) => els.map((el) => el.scrollWidth - el.clientWidth))))).toBeLessThanOrEqual(0);
+    });
+  }
+});
+
 test.describe("library catalogue paging", () => {
   test.use({ viewport: { width: 1280, height: 900 } });
   test("Load more lists the skills of the next page (FIX-100)", async ({ page }) => {

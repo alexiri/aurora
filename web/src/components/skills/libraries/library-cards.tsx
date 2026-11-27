@@ -25,7 +25,13 @@ import { LibraryStateChip, libraryReason, needsAddress } from "./library-status"
 
 const total = (l: SkillLibrary) => (l.skill_counts ? l.skill_counts.agent + l.skill_counts.workspace + l.skill_counts.org : 0);
 
-const skillsWord = (n: number) => `${n} ${n === 1 ? "skill" : "skills"}`;
+/** The branch or tag the library follows (the default one when none is set, if known); a commit id is shortened. */
+function branchName(l: SkillLibrary): string | null {
+  const name = l.ref || l.default_branch || null;
+  return name && /^[0-9a-f]{40}$/i.test(name) ? shortSha(name) : name;
+}
+
+const skillsWord =(n: number) => `${n} ${n === 1 ? "skill" : "skills"}`;
 
 /** How many skills the library offered at its last check (C-1176), when the server says. */
 function offered(l: SkillLibrary): number | null {
@@ -138,9 +144,9 @@ export function LibraryCards({
                 </div>
                 <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-2">
                   <li>
-                    {l.ref ? (
+                    {branchName(l) ? (
                       <>
-                        Branch <b className="font-mono text-xs font-semibold">{l.ref}</b>
+                        Branch <b className="font-mono text-xs font-semibold">{branchName(l)}</b>
                       </>
                     ) : (
                       "Default branch"

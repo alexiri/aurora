@@ -3027,6 +3027,20 @@ names, and copy the route rows into `05`, the tables into `03`, the rules into `
   `/admin/settings/skills` go to `/admin/skills`. The redirects with a fixed destination are answered by
   `next.config.ts`; the `?tab=` ones by the dashboard before the old page renders.)
 
+### Phase 5 — P5-NAV (the Navigation review; D-507, D-508)
+
+Design target: `docs/design/navigation/`. No API change: the lanes complete this entry in place with the routes as built
+and copy them into `14`.
+
+- C-1178 **Dashboard routes of the places model** (D-508; P5-NAV-2, P5-NAV-3). `/o/<org>/workspaces` is new (Manage <Org> ›
+  Workspaces: every workspace of the organization, with New workspace, for owners, admins and instance admins). A
+  member (no owner/admin role in the organization, not an instance admin) who opens any Manage address `/o/<org>` or
+  `/o/<org>/<topic>` (not `/o/<org>/w/…`) is redirected to their last workspace in that organization, or their first,
+  or `/` when they have none there; the redirect is a navigation decision only — every API route keeps its own
+  authorization. Agent addresses are unchanged (`…/agents/<handle>?tab=…`, D-507(e)). The back line of a place reads
+  where you came from from the tab's session storage (the pattern of `aurora.admin-return`, `lib/nav/manage-return.ts`),
+  never from the URL.
+
 ## Shared schemas
 
 _Defined alongside the milestone sections above._

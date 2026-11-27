@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { AUDIT_ACTION, AUDIT_SENTENCE, auditWords, COVERED, GATEWAY_DECISION, HARNESS, harnessVisible, label, LIBRARY_STATUS, PEER_TASK_STATUS, SANDBOX_PHASE } from "@/lib/labels";
+import { AUDIT_ACTION, AUDIT_SENTENCE, auditWords, COVERED, GATEWAY_DECISION, HARNESS, harnessVisible, label, LIBRARY_STATUS, PEER_TASK_STATUS, SANDBOX_PHASE, SKILL_INVALID_REASON, skillInvalidWords } from "@/lib/labels";
 
 const SCHEMA = readFileSync(join(__dirname, "..", "src", "lib", "api", "schema.d.ts"), "utf8");
 
@@ -44,6 +44,18 @@ describe("labels (rec 13)", () => {
 
   it("says every skill library status in words (P5-SKLIB-3, D-450(e))", () => {
     expect(["active", "paused", "error", "over_budget"].map((s) => label(LIBRARY_STATUS, s))).toEqual(["Up to date", "Paused", "Needs attention", "Over budget"]);
+  });
+
+  it("says every reason a library skill can't be added in a sentence, and a plain one for a code it does not know (FIX-279)", () => {
+    const codes = ["too_large", "body_too_large", "file_too_large", "too_many_files", "unsupported_path", "unsupported_entry", "skill_md", "bad_name", "unknown_size"];
+    expect(Object.keys(SKILL_INVALID_REASON).sort()).toEqual([...codes].sort());
+    const sentences = codes.map((c) => skillInvalidWords(c));
+    for (const text of sentences) expect(text).toMatch(/^\p{Lu}.*\.$/u);
+    expect(new Set(sentences).size).toBe(codes.length);
+    expect(skillInvalidWords("too_large")).toBe("This skill is larger than 32,000 characters, the most a skill may hold.");
+    expect(skillInvalidWords("made_up")).toBe("This skill can’t be added.");
+    expect(skillInvalidWords(null)).toBe("This skill can’t be added.");
+    expect(skillInvalidWords("constructor")).toBe("This skill can’t be added.");
   });
 
   it("says a waiting peer task in words (FIX-253, D-490(b))", () => {
