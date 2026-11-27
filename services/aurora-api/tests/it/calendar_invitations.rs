@@ -5,8 +5,9 @@ use crate::common::*;
 use aurora_api::domains::auth::mail::{Mail, MailError, Mailer};
 use aurora_api::domains::tools::{ToolCallContext, ToolContext, catalogue, registry};
 use aurora_protocol::tools::{ToolContent, ToolResult};
+use chrono::{Datelike, NaiveDate, TimeDelta, TimeZone, Utc, Weekday};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -152,9 +153,37 @@ fn code(r: &ToolResult) -> String {
 }
 
 fn event() -> Value {
-    json!({"title": "Design review", "start": "2026-12-01T09:00:00", "end": "2026-12-01T10:00:00",
+    json!({"title": "Design review", "start": local(0, 9), "end": local(0, 10),
            "timezone": "Europe/Zurich", "location": "Room 4", "description": "Bring notes",
            "reminder_minutes": 15})
+}
+
+/// The day of `event()`: the first Tuesday at least two weeks from now. The tools only accept an
+/// event within five years of now. Fixed once per process, so every use in a test agrees.
+static EVENT_DAY: LazyLock<NaiveDate> = LazyLock::new(|| {
+    let mut day = Utc::now().date_naive() + TimeDelta::days(14);
+    while day.weekday() != Weekday::Tue {
+        day += TimeDelta::days(1);
+    }
+    day
+});
+
+fn day(offset: i64) -> NaiveDate {
+    *EVENT_DAY + TimeDelta::days(offset)
+}
+
+/// `hour:00` local time, `offset` days after the event's day, as the tools take it.
+fn local(offset: i64, hour: u32) -> String {
+    format!("{}T{hour:02}:00:00", day(offset))
+}
+
+/// The UTC `DTSTART` line of 09:00 in Zurich, `offset` days after the event's day.
+fn dtstart_utc(offset: i64) -> String {
+    let at = chrono_tz::Europe::Zurich
+        .from_local_datetime(&day(offset).and_hms_opt(9, 0, 0).unwrap())
+        .unwrap()
+        .with_timezone(&Utc);
+    format!("DTSTART:{}", at.format("%Y%m%dT%H%M%SZ"))
 }
 
 fn with(mut v: Value, k: &str, x: Value) -> Value {
@@ -227,12 +256,11 @@ async fn invite_update_cancel_and_list() {
     let m = &sent[0];
     assert_eq!(m.to, "grace@example.org");
     assert_eq!(m.from_name.as_deref(), Some("Agent ada (Aurora)"));
-    assert!(
-        m.subject
-            .starts_with("Invitation: Design review — Tue 1 Dec 2026, 09:00–10:00 Europe/Zurich"),
-        "{}",
-        m.subject
+    let subject = format!(
+        "Invitation: Design review — {}, 09:00–10:00 Europe/Zurich",
+        day(0).format("%a %-d %b %Y")
     );
+    assert!(m.subject.starts_with(&subject), "{}", m.subject);
     assert!(m.body.starts_with("Agent ada proposes this event. Accept it to add it to your calendar; Decline or ignore it otherwise."), "{}", m.body);
     let cal = m.calendar.as_ref().unwrap();
     assert_eq!(cal.method, "REQUEST");
@@ -243,7 +271,7 @@ async fn invite_update_cancel_and_list() {
     );
     assert_eq!(prop(&ics, "SEQUENCE"), "SEQUENCE:0");
     assert_eq!(prop(&ics, "METHOD"), "METHOD:REQUEST");
-    assert_eq!(prop(&ics, "DTSTART"), "DTSTART:20261201T080000Z");
+    assert_eq!(prop(&ics, "DTSTART"), dtstart_utc(0));
     assert_eq!(
         prop(&ics, "ORGANIZER"),
         "ORGANIZER;CN=\"Agent ada (Aurora)\":mailto:aurora@example.org"
@@ -285,13 +313,9 @@ async fn invite_update_cancel_and_list() {
 
     // Update: same UID, SEQUENCE + 1, the new time.
     let upd = with(
-        with(
-            with(event(), "id", json!(id)),
-            "start",
-            json!("2026-12-02T09:00:00"),
-        ),
+        with(with(event(), "id", json!(id)), "start", json!(local(1, 9))),
         "end",
-        json!("2026-12-02T10:00:00"),
+        json!(local(1, 10)),
     );
     let v = ok(&run(&ctx, "calendar_invite_update", upd).await);
     assert_eq!(
@@ -303,7 +327,7 @@ async fn invite_update_cancel_and_list() {
     let ics2 = ics_of(&sent[1]);
     assert_eq!(prop(&ics2, "UID"), uid);
     assert_eq!(prop(&ics2, "SEQUENCE"), "SEQUENCE:1");
-    assert_eq!(prop(&ics2, "DTSTART"), "DTSTART:20261202T080000Z");
+    assert_eq!(prop(&ics2, "DTSTART"), dtstart_utc(1));
     assert_eq!(sent[1].calendar.as_ref().unwrap().method, "REQUEST");
 
     // List: this agent's invitations to this person.
@@ -311,7 +335,7 @@ async fn invite_update_cancel_and_list() {
     let items = l["items"].as_array().unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["id"], json!(id));
-    assert_eq!(items[0]["start"], "2026-12-02T09:00:00");
+    assert_eq!(items[0]["start"], local(1, 9));
     assert_eq!(items[0]["timezone"], "Europe/Zurich");
     assert_eq!(items[0]["status"], "sent");
 
@@ -504,7 +528,7 @@ async fn refusals() {
     let r = run(
         &pctx,
         "calendar_invite",
-        with(event(), "end", json!("2026-12-01T08:00:00")),
+        with(event(), "end", json!(local(0, 8))),
     )
     .await;
     assert_eq!(code(&r), "invalid_arguments");
@@ -880,7 +904,10 @@ async fn a_repeating_invitation_carries_its_time_zone() {
     );
     assert_eq!(
         prop(&ics, "DTSTART"),
-        "DTSTART;TZID=Europe/Zurich:20261201T090000"
+        format!(
+            "DTSTART;TZID=Europe/Zurich:{}T090000",
+            day(0).format("%Y%m%d")
+        )
     );
     assert_eq!(prop(&ics, "RRULE"), "RRULE:FREQ=WEEKLY;BYDAY=TU;COUNT=30");
     let (rep,): (Value,) =

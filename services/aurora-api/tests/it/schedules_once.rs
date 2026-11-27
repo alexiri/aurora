@@ -24,6 +24,21 @@ fn tomorrow(tz: Tz) -> String {
         .to_string()
 }
 
+/// The next date after today, `YYYY-MM-DD`, on which 02:30 happens twice in `tz` (clocks go
+/// back).
+fn next_fall_back(tz: Tz) -> String {
+    let today = Utc::now().with_timezone(&tz).date_naive();
+    (1..=400)
+        .map(|n| today + Duration::days(n))
+        .find(|d| {
+            let local = d.and_hms_opt(2, 30, 0).unwrap();
+            tz.from_local_datetime(&local).earliest() != tz.from_local_datetime(&local).latest()
+        })
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
 /// The instant of a local `YYYY-MM-DDTHH:MM` in `tz` (the earlier one when ambiguous).
 fn instant(local: &str, tz: Tz) -> DateTime<Utc> {
     let n = NaiveDateTime::parse_from_str(local, "%Y-%m-%dT%H:%M").unwrap();
@@ -212,15 +227,19 @@ async fn one_time_create_validate_patch_and_preview() {
         assert_eq!(p, path, "{body}: {v}");
         assert!(m.contains(msg), "{body}: {m}");
     }
-    // Clocks go back in Zurich on 2027-10-31: 02:30 is the earlier instant (CEST, 00:30Z).
+    // The next day clocks go back in Zurich: 02:30 is the earlier instant (CEST, 00:30Z).
+    let back = next_fall_back(ZURICH);
     let (s, v) = create(
         &r,
         agent,
-        json!({"name": "fb", "prompt": "p", "run_at": "2027-10-31T02:30", "timezone": "Europe/Zurich"}),
+        json!({"name": "fb", "prompt": "p", "run_at": format!("{back}T02:30"), "timezone": "Europe/Zurich"}),
     )
     .await;
     assert_eq!(s, 201, "{v}");
-    assert_eq!(at(&v["next_runs"][0]), at(&json!("2027-10-31T00:30:00Z")));
+    assert_eq!(
+        at(&v["next_runs"][0]),
+        at(&json!(format!("{back}T00:30:00Z")))
+    );
 
     // A zone-only patch keeps 09:00 local.
     let (s, v) = patch(&r, &id, json!({"timezone": "America/New_York"})).await;
