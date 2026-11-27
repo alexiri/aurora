@@ -391,6 +391,10 @@ pub async fn patch_with(
         reschedule = true;
     }
     let row = repo::update(&mut tx, &r, reschedule).await?;
+    // (FIX-253) Switched off, or no longer one-time: the same re-check as for a delete.
+    if let Some(origin) = row.origin_conversation_id {
+        crate::domains::peer_tasks::service::recheck_waiting(&mut tx, origin).await?;
+    }
     tx.commit().await.map_err(aurora_db::DbError::from)?;
     Ok(row)
 }
@@ -399,8 +403,15 @@ pub async fn patch_with(
 /// deleted in the same transaction.
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let origin = repo::get(&mut *tx, id)
+        .await?
+        .and_then(|r| r.origin_conversation_id);
     if !delete_tx(&mut tx, id).await? {
         return Err(not_found());
+    }
+    // (FIX-253) A deleted wake-up may have been the last thing a waiting peer task waited for.
+    if let Some(origin) = origin {
+        crate::domains::peer_tasks::service::recheck_waiting(&mut tx, origin).await?;
     }
     tx.commit().await.map_err(aurora_db::DbError::from)?;
     Ok(())

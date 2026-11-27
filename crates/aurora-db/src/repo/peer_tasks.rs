@@ -293,6 +293,50 @@ pub async fn overdue_ids<'e, E: PgExecutor<'e>>(exec: E, limit: i64) -> Result<V
     .await?)
 }
 
+/// (FIX-253) `waiting` tasks that look as if nothing is left to wake them: no armed watch, no
+/// open one-time wake-up and no pending approval in the task conversation. Candidates only: the
+/// caller re-checks each under its lock.
+pub async fn waiting_without_wake_ids<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT t.id FROM peer_tasks t WHERE t.status = 'waiting'
+           AND NOT EXISTS (SELECT 1 FROM watches w
+                WHERE w.conversation_id = t.task_conversation_id AND w.status = 'armed')
+           AND NOT EXISTS (SELECT 1 FROM schedules s
+                WHERE s.origin_conversation_id = t.task_conversation_id AND s.enabled
+                  AND s.completed_at IS NULL AND s.run_at IS NOT NULL AND s.cron IS NULL)
+           AND NOT EXISTS (SELECT 1 FROM approvals a
+                WHERE a.conversation_id = t.task_conversation_id AND a.status = 'pending')
+         ORDER BY t.updated_at, t.id LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (FIX-253) Whether an approval of this task conversation was answered (or expired) and the
+/// requester has not been told yet: its wake is still on the way.
+pub async fn has_undelivered_decision<'e, E: PgExecutor<'e>>(
+    exec: E,
+    task_conversation: Uuid,
+    origin_conversation: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM approvals a
+          WHERE a.conversation_id = $1 AND a.status IN ('approved', 'denied', 'expired')
+            AND NOT EXISTS (SELECT 1 FROM transcript_events e
+                 WHERE e.conversation_id = $2 AND e.type = 'notice'
+                   AND e.payload->>'code' = 'peer_approval_decided'
+                   AND e.payload->>'approval_id' = a.id::text))",
+    )
+    .bind(task_conversation)
+    .bind(origin_conversation)
+    .fetch_one(exec)
+    .await?)
+}
+
 /// (FIX-253, D-490(b)) Move an `open` task to `waiting` (the end of the receiving turn while one
 /// of the wake registrations stands). Fenced: `None` when the task is not `open` any more, so
 /// the caller posts the waiting notice only when this returns `Some`.

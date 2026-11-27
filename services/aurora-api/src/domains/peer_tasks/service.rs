@@ -1237,9 +1237,56 @@ pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Resu
     Ok(Wake::Resumed)
 }
 
+// ---------------------------------------------------------------- nothing left to wait for
+
+/// (FIX-253 review, low 6) Whether a wake is still to come for the task: a registration, a
+/// pending approval, or an answered approval whose wake has not been delivered yet.
+async fn expects_wake(conn: &mut PgConnection, task: &PeerTaskRow) -> Result<bool, ApiError> {
+    let conversation = task.task_conversation_id;
+    Ok(
+        aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, conversation).await?
+            || wake_registered(conn, conversation).await?
+            || repo::has_undelivered_decision(
+                &mut *conn,
+                conversation,
+                task.origin_conversation_id,
+            )
+            .await?,
+    )
+}
+
+/// (FIX-253 review, low 6) Re-evaluate the `waiting` task behind `conversation` after a wake-up
+/// of it may have ended without firing: with nothing left to wake it, it is cancelled with the
+/// usual report. Anything else is left alone. Returns whether it was cancelled.
+pub async fn recheck_waiting(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+) -> Result<bool, ApiError> {
+    let Some(found) = repo::by_task_conversation(&mut *conn, conversation).await? else {
+        return Ok(false);
+    };
+    if found.status != "waiting" {
+        return Ok(false);
+    }
+    links::get_for_update(&mut *conn, found.link_id).await?;
+    let Some(task) = repo::get_for_update(&mut *conn, found.id).await? else {
+        return Ok(false);
+    };
+    if task.status != "waiting" || expects_wake(conn, &task).await? {
+        return Ok(false);
+    }
+    let why = "nothing is left to wake it: its watch or wake-up ended without firing";
+    Ok(
+        close_with_promotion(conn, &task, &Close::Cancelled(Some(why)))
+            .await?
+            .is_some(),
+    )
+}
+
 // ---------------------------------------------------------------- expiry
 
-/// Close tasks past their TTL (every 60 s, idempotent). Returns how many were closed.
+/// Close tasks past their TTL, and `waiting` tasks with nothing left to wake them (every 60 s,
+/// idempotent). Returns how many were closed.
 pub async fn sweep(pool: &PgPool) -> Result<usize, ApiError> {
     let mut closed = 0;
     for id in repo::overdue_ids(pool, SWEEP_BATCH).await? {
@@ -1251,6 +1298,18 @@ pub async fn sweep(pool: &PgPool) -> Result<usize, ApiError> {
             .await?
             .is_some()
         {
+            closed += 1;
+        }
+        tx.commit().await.map_err(DbError::from)?;
+    }
+    // (FIX-253 review, low 6) The ways a wake-up ends without firing that no route reports (a
+    // watch lost with its sandbox, a deleted process).
+    for id in repo::waiting_without_wake_ids(pool, SWEEP_BATCH).await? {
+        let mut tx = pool.begin().await.map_err(DbError::from)?;
+        let Some(task) = repo::get(&mut *tx, id).await? else {
+            continue;
+        };
+        if recheck_waiting(&mut tx, task.task_conversation_id).await? {
             closed += 1;
         }
         tx.commit().await.map_err(DbError::from)?;

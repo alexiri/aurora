@@ -292,6 +292,9 @@ async fn fire_due(
             None,
         )
         .await?;
+        if let Some(origin) = row.origin_conversation_id {
+            crate::domains::peer_tasks::service::recheck_waiting(conn, origin).await?;
+        }
         return Ok(());
     }
     let Some(expr) = row.cron.as_deref() else {

@@ -2284,6 +2284,79 @@ async fn a_requester_has_at_most_ten_waiting_tasks() {
     );
 }
 
+impl Duo {
+    /// A task of this duo that is waiting on one schedule: `(task, schedule)`.
+    async fn waiting_on_a_schedule(&self, text: &str) -> (Uuid, Uuid) {
+        let task = Rig::id(&self.send(text).await["peer_task_id"]);
+        let schedule = self.arm_schedule(task).await;
+        self.finish_receiving_turn(task).await;
+        assert_eq!(self.rig.task_status(task).await, "waiting");
+        (task, schedule)
+    }
+}
+
+/// (FIX-253 review, low 6) A wake-up deleted or switched off after the turn ended leaves nothing
+/// to wake the task: it is cancelled at once with the usual report. With another wake-up left it
+/// keeps waiting.
+#[tokio::test]
+async fn deleting_or_disabling_the_last_wake_up_cancels_the_waiting_task() {
+    use aurora_api::domains::schedules::service as schedules;
+    let d = duo().await;
+    let (task, first) = d.waiting_on_a_schedule("check back").await;
+    let second = d.arm_schedule(task).await;
+    schedules::delete(d.rig.h.pool(), first).await.unwrap();
+    assert_eq!(d.rig.task_status(task).await, "waiting", "one is left");
+    schedules::delete(d.rig.h.pool(), second).await.unwrap();
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    let line = d.last_close_line(d.conv).await;
+    assert!(line.contains("nothing is left to wake it"), "{line}");
+
+    // Switched off by a person (the schedule route).
+    let (task, schedule) = d.waiting_on_a_schedule("check back again").await;
+    let (status, _, body) = d
+        .rig
+        .h
+        .send(
+            http::Method::PATCH,
+            &format!("/v1/schedules/{schedule}"),
+            &[("cookie", d.rig.p.cookie.as_str()), ("origin", ORIGIN)],
+            Some(json!({"enabled": false})),
+        )
+        .await;
+    assert_eq!(status.as_u16(), 200, "{body}");
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+}
+
+/// (FIX-253 review, low 6) A wake-up the platform ends without firing (the watch lost with its
+/// sandbox; a schedule switched off at fire time) is found by the sweep or at once: the waiting
+/// task is cancelled with the report. A task with something left is never touched.
+#[tokio::test]
+async fn a_watch_that_ends_without_firing_cancels_the_waiting_task() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(peers::sweep(d.rig.h.pool()).await.unwrap(), 0);
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    sqlx::query("UPDATE watches SET status = 'lost' WHERE id = $1")
+        .bind(w.watch)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(peers::sweep(d.rig.h.pool()).await.unwrap(), 1);
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    let line = d.last_close_line(d.conv).await;
+    assert!(line.contains("nothing is left to wake it"), "{line}");
+
+    // A pending approval is still something to wait for.
+    let task = Rig::id(&d.send("push it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    d.report_approval(id).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(peers::sweep(d.rig.h.pool()).await.unwrap(), 0);
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+}
+
 /// (FIX-253, D-490(b)) With no registration the task is cancelled as today, and the FIX-252
 /// pending approval is the third waiting cause (no extra notice beyond FIX-252's own).
 #[tokio::test]
