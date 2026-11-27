@@ -165,6 +165,25 @@ describe("push service worker", () => {
     expect(stray.options.data.url, "a path outside Aurora becomes the home page").toBe("/");
   });
 
+  it("self_grant and emergency_access: fixed text and the dashboard path they were given (FIX-234, FIX-236)", async () => {
+    const people = "/o/acme/w/main/people";
+    const grant = await push(JSON.stringify({ v: 1, type: "self_grant", url: people }));
+    expect(grant.title).toBe("Aurora — someone gave themselves workspace access");
+    expect(grant.options.data.url).toBe(people);
+    const open = await push(JSON.stringify({ v: 1, type: "emergency_access", url: "/o/acme/w/main", reason: "SECRET-CANARY" }));
+    expect(open.title).toBe("Aurora — an owner opened emergency read access");
+    expect(open.options.body).toBe("Open the workspace for details.");
+    expect(open.options.tag).toBe("aurora-emergency-access");
+    expect(open.options.data.url).toBe("/o/acme/w/main");
+    expect(JSON.stringify(open)).not.toContain("SECRET-CANARY");
+    const named = await push(
+      JSON.stringify({ v: 1, type: "emergency_access", url: "/o/acme/w/main", title: "Emergency read access to Main" }),
+    );
+    expect(named.title).toBe("Aurora — Emergency read access to Main");
+    const stray = await push(JSON.stringify({ v: 1, type: "emergency_access", url: "https://evil.example/o/acme" }));
+    expect(stray.options.data.url).toBe("/");
+  });
+
   it("workspace_lifecycle and org_lifecycle: fixed text, the sentence only when carried (FIX-244, D-486)", async () => {
     const ws = await push(JSON.stringify({ v: 1, type: "workspace_lifecycle", url: "/o/acme/w/main" }));
     expect(ws.title).toBe("Aurora — your workspace changed");

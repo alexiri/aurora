@@ -642,6 +642,49 @@ async fn a_lifecycle_push_carries_a_dashboard_path_and_the_sentence_only_with_de
     assert!(all[2..].iter().all(|(_, p)| p["url"] == "/"), "{all:?}");
 }
 
+/// (FIX-234, C-1161) A self-grant notice's push opens the workspace's People page as a dashboard
+/// **path**; the e-mail carries the same path behind the external URL.
+#[tokio::test]
+async fn a_self_grant_push_carries_the_people_pages_path() {
+    let w = world().await;
+    let owner = person(&w, "owner@x.io", "owner").await;
+    let admin = w.h.user("adm@x.io", false).await;
+    w.h.member(w.f.org, admin, "admin", "active").await;
+    let (session, tok) = w.h.good_session(admin).await;
+    let admin = P {
+        id: admin,
+        cookie: cookie(&tok),
+        session,
+    };
+    register(&w, &owner, "/push/plain", false).await;
+
+    let (s, _, v) = call(
+        &w,
+        &admin,
+        Method::PUT,
+        &format!("/v1/workspaces/{}/access/{}", w.f.ws, admin.id),
+        Some(json!({"role": "member"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+
+    let got = w.mock.wait_for(1, Duration::from_secs(5)).await;
+    assert_eq!(got.len(), 1, "{got:?}");
+    let p = got[0].json().unwrap();
+    let slug: String = sqlx::query_scalar("SELECT slug FROM workspaces WHERE id = $1")
+        .bind(w.f.ws)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let target = format!("/o/{}/w/{slug}/people", org_slug(&w).await);
+    assert_eq!(p["type"], "self_grant", "{p}");
+    assert_eq!(p["url"], target, "{p}");
+    let mail = w.h.mail.sent();
+    let m = mail.iter().find(|m| m.to == "owner@x.io").unwrap();
+    let base = w.h.state.config.external_url.trim_end_matches('/');
+    assert_eq!(m.link, format!("{base}{target}"), "{m:?}");
+}
+
 #[tokio::test]
 async fn delivery_follows_the_decider_the_watcher_and_the_session_at_send_time() {
     let w = world().await;
