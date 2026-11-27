@@ -253,7 +253,7 @@ pub(crate) async fn write_add_in_tx(
 ) -> Result<(SkillRow, AuditEvent), ApiError> {
     // The agent's row comes before the budget lock: a template apply holds it when it gets here.
     if let Some(agent) = owner.agent {
-        aurora_db::repo::agents::get_for_update(&mut *tx, agent).await?;
+        aurora_db::repo::agents::lock_for_write(&mut *tx, agent).await?;
     }
     lock_budget(tx, org, owner).await?;
     check_budget(state, tx, org, owner, p.loaded.size, None).await?;

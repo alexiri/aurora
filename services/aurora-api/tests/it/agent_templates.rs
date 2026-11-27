@@ -4186,6 +4186,102 @@ async fn an_apply_waits_for_a_helper_removal_under_way_and_sees_it() {
     assert_eq!(status, 409, "{answer}");
 }
 
+/// Insert a row that references the agent (a skill of its own, through the repo), as a turn or
+/// a conversation does: its foreign-key check must not wait. Bounded, so a wait fails the test.
+async fn insert_referencing_agent(u: &Upd, name: &str) {
+    let insert = async {
+        let org: Uuid = sqlx::query_scalar("SELECT org_id FROM agents WHERE id = $1")
+            .bind(u.agent)
+            .fetch_one(u.w.h.pool())
+            .await
+            .unwrap();
+        let mut conn = u.w.h.pool().acquire().await.unwrap();
+        aurora_db::repo::skills::insert(
+            &mut conn,
+            org,
+            aurora_db::repo::skills::Owner {
+                agent: Some(u.agent),
+                workspace: None,
+            },
+            name,
+            "Probe.",
+            "Probe.",
+            true,
+            "user",
+        )
+        .await
+        .unwrap();
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), insert)
+        .await
+        .expect("an insert referencing the agent waited on the agent lock");
+}
+
+/// The agent lock of the writers serializes them with each other and lets foreign-key checks
+/// through: a row referencing the agent is inserted while it is held.
+#[tokio::test]
+async fn the_agent_write_lock_serializes_writers_and_not_references() {
+    let u = upd_world().await;
+    let mut holder = u.w.h.pool().begin().await.unwrap();
+    aurora_db::repo::agents::lock_for_write(&mut *holder, u.agent)
+        .await
+        .unwrap();
+
+    insert_referencing_agent(&u, "probe").await;
+
+    // A second writer waits for the holder.
+    let mut second = u.w.h.pool().begin().await.unwrap();
+    let done = AtomicBool::new(false);
+    let take = async {
+        let row = aurora_db::repo::agents::lock_for_write(&mut *second, u.agent).await;
+        done.store(true, Ordering::SeqCst);
+        row
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 1, &done).await;
+        assert!(!done.load(Ordering::SeqCst), "the second writer waits");
+        holder.rollback().await.unwrap();
+    };
+    let (row, ()) = tokio::join!(take, release);
+    assert!(row.unwrap().is_some());
+}
+
+/// While an apply is under way — here after it re-created a skill, which takes the lock again —
+/// rows referencing the agent (its turns, conversations, memories) are not held up.
+#[tokio::test]
+async fn an_apply_under_way_does_not_hold_up_rows_referencing_the_agent() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(
+        part_state(&v, "skill", "backup"),
+        Some("removed_here"),
+        "{v}"
+    );
+    let body = json!({
+        "version": "2.0.0",
+        "content_sha256": v["update"]["content_sha256"],
+        "parts": [{"kind": "skill", "key": "backup"}, {"kind": "helpers", "key": ""}],
+    });
+    // The apply stops at the held helper row, its transaction open.
+    let mut blocker = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent_helper_files WHERE agent_id = $1 FOR UPDATE")
+        .bind(u.agent)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let never = AtomicBool::new(false);
+    let apply = u.w.apply(&u.owner, u.agent, body);
+    let probe = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        insert_referencing_agent(&u, "probe").await;
+        blocker.rollback().await.unwrap();
+    };
+    let ((status, answer), ()) = tokio::join!(apply, probe);
+    assert_eq!(status, 200, "{answer}");
+}
+
 /// Resolutions that do not match the offer's conflict hunks are refused, and so is a part
 /// applied without its merge hash (FIX-251).
 #[tokio::test]

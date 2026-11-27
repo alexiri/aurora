@@ -440,7 +440,7 @@ pub(crate) async fn create_in_tx(
     // (FIX-110) The per-agent cap is checked under the agent row lock (the pattern
     // `schedules::service::create` uses), so concurrent creates cannot overshoot it.
     if let Some(agent) = owner.agent {
-        agents::get_for_update(&mut *tx, agent).await?;
+        agents::lock_for_write(&mut *tx, agent).await?;
         if repo::count_agent_own(&mut *tx, agent).await? >= limits::SKILL_PER_AGENT_MAX {
             return Err(ApiError::conflict(
                 "skill_limit_reached",
@@ -480,7 +480,7 @@ pub(crate) async fn lock_for_edit(conn: &mut PgConnection, id: Uuid) -> Result<S
     // The owner of a skill never changes, so this unlocked read is enough to find it.
     let owner = repo::get(conn, id).await?.ok_or_else(not_found)?.agent_id;
     if let Some(agent) = owner {
-        agents::get_for_update(&mut *conn, agent).await?;
+        agents::lock_for_write(&mut *conn, agent).await?;
     }
     repo::get_for_update(conn, id).await?.ok_or_else(not_found)
 }

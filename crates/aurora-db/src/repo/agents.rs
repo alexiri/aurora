@@ -91,15 +91,20 @@ pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<Agen
     .await?)
 }
 
-/// [`get`] with the row locked until the transaction ends. A template apply holds it while it
-/// compares and writes an agent's parts, and every manual writer of such a part takes it
-/// **first**, before any row of the part itself, so the two serialize and cannot deadlock.
-pub async fn get_for_update<'e, E: PgExecutor<'e>>(
+/// [`get`] with the row locked for writing until the transaction ends. A template apply holds
+/// it while it compares and writes an agent's parts, and every manual writer of such a part
+/// takes it **first**, before any row of the part itself, so the two serialize and cannot
+/// deadlock. `FOR NO KEY UPDATE`, never `FOR UPDATE`: it conflicts with itself, with
+/// `FOR UPDATE` and with an `UPDATE` of the row, but not with the `FOR KEY SHARE` of a
+/// foreign-key check, so the agent's turns, conversations, events and memories are inserted
+/// while it is held (an apply may hold it across slow reads). Not for deleting the row or
+/// changing a key column.
+pub async fn lock_for_write<'e, E: PgExecutor<'e>>(
     exec: E,
     id: Uuid,
 ) -> Result<Option<AgentRow>, DbError> {
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLS} FROM agents WHERE id = $1 FOR UPDATE"
+        "SELECT {COLS} FROM agents WHERE id = $1 FOR NO KEY UPDATE"
     )))
     .bind(id)
     .fetch_optional(exec)
