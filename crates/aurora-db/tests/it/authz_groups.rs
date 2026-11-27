@@ -668,7 +668,7 @@ async fn idp_sync_stops_at_the_per_user_cap_and_is_stable() {
     }
     let values: Vec<String> = (0..101).map(|n| format!("v{n}")).collect();
     let mut c = pool.acquire().await.unwrap();
-    let out = groups::sync_idp_memberships_report(&mut c, u, "cern", &values)
+    let out = groups::sync_idp_memberships_report(&mut c, u, "cern", &values, &[])
         .await
         .unwrap();
     assert_eq!(out.changes.len(), 100);
@@ -682,7 +682,7 @@ async fn idp_sync_stops_at_the_per_user_cap_and_is_stable() {
             .unwrap()
     );
     // a second sync keeps the same rows and adds/removes nothing
-    let again = groups::sync_idp_memberships_report(&mut c, u, "cern", &values)
+    let again = groups::sync_idp_memberships_report(&mut c, u, "cern", &values, &[])
         .await
         .unwrap();
     assert!(again.changes.is_empty());

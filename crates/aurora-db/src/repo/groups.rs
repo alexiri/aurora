@@ -462,20 +462,20 @@ pub async fn sync_idp_memberships(
     provider: &str,
     values: &[String],
 ) -> Result<Vec<SyncChange>, DbError> {
-    Ok(sync_idp_memberships_report(conn, user, provider, values)
-        .await?
-        .changes)
+    Ok(
+        sync_idp_memberships_report(conn, user, provider, values, &[])
+            .await?
+            .changes,
+    )
 }
 
-/// [`sync_idp_memberships`] plus the per-org count of groups skipped at the cap. Takes the org
-/// lock ([`lock_org`], in org-id order, before any group row lock) of every org with a group of
-/// this provider the user is an active member of, so the cap cannot race the dashboard add.
-pub async fn sync_idp_memberships_report(
+/// Takes the org lock ([`lock_org`], in org-id order, before any group row lock) of every org
+/// with a group of `provider` the user is an active member of: the sign-in sync's lock.
+pub async fn lock_idp_sync_orgs(
     conn: &mut PgConnection,
     user: Uuid,
     provider: &str,
-    values: &[String],
-) -> Result<SyncOutcome, DbError> {
+) -> Result<(), DbError> {
     let orgs: Vec<Uuid> = sqlx::query_scalar(
         "SELECT DISTINCT g.org_id FROM groups g \
            JOIN org_members om ON om.org_id = g.org_id AND om.user_id = $1 \
@@ -489,6 +489,45 @@ pub async fn sync_idp_memberships_report(
     for org in orgs {
         lock_org(&mut *conn, org).await?;
     }
+    Ok(())
+}
+
+/// The groups the sync would **add** the user to (linked to `provider` with a claimed value, in
+/// an org the user is active in, not yet a member), as `(group, org)` in group-id order and
+/// before any limit. The caller applies its own refusals and passes them back as `skip`.
+pub async fn idp_sync_new_groups(
+    conn: &mut PgConnection,
+    user: Uuid,
+    provider: &str,
+    values: &[String],
+) -> Result<Vec<(Uuid, Uuid)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT g.id, g.org_id FROM groups g \
+           JOIN org_members om ON om.org_id = g.org_id AND om.user_id = $1 \
+                AND om.status = 'active' \
+          WHERE g.source = 'idp' AND g.idp_provider = $2 AND g.idp_value = ANY($3) \
+            AND NOT EXISTS (SELECT 1 FROM group_members x \
+                             WHERE x.group_id = g.id AND x.user_id = $1) \
+          ORDER BY g.id",
+    )
+    .bind(user)
+    .bind(provider)
+    .bind(values)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
+/// [`sync_idp_memberships`] plus the per-org count of groups skipped at the cap. Takes the
+/// sync's org locks ([`lock_idp_sync_orgs`]), so the cap cannot race the dashboard add. The
+/// groups in `skip` are never added (and do not count as skipped at the cap).
+pub async fn sync_idp_memberships_report(
+    conn: &mut PgConnection,
+    user: Uuid,
+    provider: &str,
+    values: &[String],
+    skip: &[Uuid],
+) -> Result<SyncOutcome, DbError> {
+    lock_idp_sync_orgs(&mut *conn, user, provider).await?;
     // Only orgs where the user is an active member: a suspended member's rows stay.
     let removed: Vec<(Uuid, Uuid, String)> = sqlx::query_as(
         "DELETE FROM group_members gm USING groups g \
@@ -526,6 +565,7 @@ pub async fn sync_idp_memberships_report(
               WHERE g.source = 'idp' AND g.idp_provider = $2 AND g.idp_value = ANY($3) \
                 AND NOT EXISTS (SELECT 1 FROM group_members x \
                                  WHERE x.group_id = g.id AND x.user_id = $1) \
+                AND NOT (g.id = ANY($6)) \
                 AND (SELECT count(*) FROM group_members z WHERE z.group_id = g.id) < $5) \
          INSERT INTO group_members (group_id, org_id, user_id, source, synced_at) \
          SELECT c.id, c.org_id, $1, 'idp', now() FROM cand c \
@@ -539,6 +579,7 @@ pub async fn sync_idp_memberships_report(
     .bind(values)
     .bind(GROUPS_PER_USER)
     .bind(GROUP_MEMBERS_MAX)
+    .bind(skip)
     .fetch_all(&mut *conn)
     .await?;
     let cap_skipped: Vec<(Uuid, i64)> = sqlx::query_as(
@@ -546,6 +587,7 @@ pub async fn sync_idp_memberships_report(
            JOIN org_members om ON om.org_id = g.org_id AND om.user_id = $1 \
                 AND om.status = 'active' \
           WHERE g.source = 'idp' AND g.idp_provider = $2 AND g.idp_value = ANY($3) \
+            AND NOT (g.id = ANY($4)) \
             AND NOT EXISTS (SELECT 1 FROM group_members x \
                              WHERE x.group_id = g.id AND x.user_id = $1) \
           GROUP BY g.org_id ORDER BY g.org_id",
@@ -553,6 +595,7 @@ pub async fn sync_idp_memberships_report(
     .bind(user)
     .bind(provider)
     .bind(values)
+    .bind(skip)
     .fetch_all(&mut *conn)
     .await?;
     let mut changes: Vec<SyncChange> = removed

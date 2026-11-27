@@ -10,8 +10,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 /// `U` = SQL expression of the user, `a`/`w` = approval and its workspace aliases: the access law
-/// for `can_approve` (workspace owner/approver or org owner/admin) intersected with conversation
-/// visibility (RFE-009). Mirrors `approvals::may_decide`.
+/// for `can_approve` (workspace owner/approver in their own right; D-477: no org role)
+/// intersected with conversation visibility (RFE-009). Mirrors `approvals::may_decide`.
 pub(crate) fn may_decide(user: &str) -> String {
     format!(
         "(EXISTS (SELECT 1 FROM effective_workspace_access ea \
@@ -216,7 +216,9 @@ pub async fn unseen(
 /// about the wait through their own channels once the delay passes — unless a live surface
 /// already shows the card, the deciders' rule: the origin card posted to the thread they asked
 /// in, or a watcher row of their own seen within `ttl_secs` (they are looking at the approvals
-/// page). Only users who have not turned approval e-mails off.
+/// page). Only users who have not turned approval e-mails off, and who can still use the sending
+/// agent's workspace (FIX-264: the `can_use` the task checks when it runs; an active member of
+/// the organization with access there).
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct RequesterUnseen {
     pub id: Uuid,
@@ -261,6 +263,9 @@ pub async fn unseen_for_requesters(
          WHERE a.status = 'pending' AND a.deadline > now() \
            AND a.created_at <= now() - make_interval(secs => $1) \
            AND u.disabled_at IS NULL AND u.approval_email_enabled \
+           AND EXISTS (SELECT 1 FROM agents fa \
+                         JOIN effective_workspace_access fe ON fe.workspace_id = fa.workspace_id \
+                         WHERE fa.id = pt.from_agent_id AND fe.user_id = u.id) \
            AND NOT EXISTS (SELECT 1 FROM approval_notifications n \
                            WHERE n.approval_id = a.id AND n.user_id = u.id \
                              AND n.stage = 'initial') \

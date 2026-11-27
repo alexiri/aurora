@@ -30,8 +30,10 @@ async fn cancel_peer_task(
     State(s): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<PeerTask>, ApiError> {
-    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
-    let row = match peers::cancel_by_requester(&mut conn, c.user_id, id).await? {
+    // (FIX-264) One transaction: the close, its report, the abandoned approval and the
+    // promotion land together or not at all (an error below drops it, which rolls back).
+    let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    let row = match peers::cancel_by_requester(&mut tx, c.user_id, id).await? {
         peers::RequesterCancel::Done(t) => t,
         peers::RequesterCancel::AlreadyClosed => {
             return Err(ApiError::conflict(
@@ -43,6 +45,7 @@ async fn cancel_peer_task(
             return Err(ApiError::not_found("Peer task not found."));
         }
     };
+    tx.commit().await.map_err(aurora_db::DbError::from)?;
     // The task's workspace is the sending agent's; the audit row names the task. The requester
     // identity was already checked by `cancel_by_requester`, so the agent row is only read for
     // the audit labels — the requester can always cancel, whatever their access is now.

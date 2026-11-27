@@ -511,6 +511,66 @@ impl Harness {
         .unwrap();
         (id, tok)
     }
+    /// (FIX-256) The lock order, membership before binding: while another transaction holds
+    /// `user`'s membership row of `org`, `act` waits, and nothing holds a lock on the
+    /// person's binding in `ws`. Releases the membership and returns what `act` returned.
+    pub async fn while_membership_is_held<T>(
+        &self,
+        org: Uuid,
+        ws: Uuid,
+        user: Uuid,
+        act: impl std::future::Future<Output = T>,
+    ) -> T {
+        let mut held = self.pool().begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM org_members WHERE org_id = $1 AND user_id = $2 FOR UPDATE")
+            .bind(org)
+            .bind(user)
+            .fetch_one(&mut *held)
+            .await
+            .unwrap();
+        let probe = async {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                let waiting: i64 = sqlx::query_scalar(
+                    "SELECT count(*) FROM pg_stat_activity \
+                     WHERE datname = current_database() AND wait_event_type = 'Lock'",
+                )
+                .fetch_one(self.pool())
+                .await
+                .unwrap();
+                if waiting > 0 {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "nothing waited for the held membership"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            let mut other = self.pool().begin().await.unwrap();
+            let binding = sqlx::query(
+                "SELECT 1 FROM workspace_access WHERE workspace_id = $1 AND user_id = $2 \
+                 FOR UPDATE NOWAIT",
+            )
+            .bind(ws)
+            .bind(user)
+            .fetch_one(&mut *other)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+            other.rollback().await.unwrap();
+            held.commit().await.unwrap();
+            binding
+        };
+        let (out, binding) = tokio::join!(act, probe);
+        assert_eq!(
+            binding,
+            Ok(()),
+            "the waiter holds the binding while it waits for the membership"
+        );
+        out
+    }
+
     pub async fn good_session(&self, user: Uuid) -> (Uuid, String) {
         self.session(user, 0, 3600, false).await
     }

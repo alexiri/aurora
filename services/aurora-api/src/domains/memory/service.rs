@@ -1,4 +1,4 @@
-use super::dto::MemoryRevision;
+use super::actor::StoredActor;
 use crate::app::AppState;
 use aurora_core::{ApiError, limits};
 use aurora_db::DbError;
@@ -18,6 +18,9 @@ pub struct Author {
     /// `user` | `agent`.
     pub kind: &'static str,
     pub user_id: Option<Uuid>,
+    /// (P5-MEMORY-1) The API key a person's write came through; null for a session and an agent.
+    pub api_key_id: Option<Uuid>,
+    /// An agent's name. A person's label is their display name, looked up at write time.
     pub label: String,
 }
 
@@ -49,6 +52,10 @@ pub enum Source {
         name: String,
         version: String,
     },
+    /// A person brought an older revision back.
+    Restore {
+        restored_from: i32,
+    },
 }
 
 impl Source {
@@ -63,6 +70,9 @@ impl Source {
             Self::Harvest => json!({"source": "harvest"}),
             Self::Template { name, version } => {
                 json!({"source": "template", "template": name, "template_version": version})
+            }
+            Self::Restore { restored_from } => {
+                json!({"source": "restore", "restored_from": restored_from})
             }
         }
     }
@@ -187,6 +197,7 @@ pub async fn save_in_tx(
     {
         return Err(memory_locked_error());
     }
+    let actor = StoredActor::of_write(author, source).to_value();
     let (row, created, op) = match existing {
         Some(_) if w.create_only => {
             return Err(ApiError::conflict(
@@ -209,6 +220,7 @@ pub async fn save_in_tx(
                     blank_none(w.title),
                     blank_none(w.description),
                     w.content,
+                    &actor,
                 )
                 .await?,
                 false,
@@ -238,6 +250,7 @@ pub async fn save_in_tx(
                     w.content,
                     w.locked,
                     author.user_id,
+                    &actor,
                 )
                 .await?,
                 true,
@@ -264,6 +277,7 @@ async fn snapshot(
             author_kind: author.kind,
             author_user_id: author.user_id,
             author_label: &author.label,
+            author_api_key_id: author.api_key_id,
             provenance,
         },
     )
@@ -338,16 +352,12 @@ pub async fn revisions(
     pool: &PgPool,
     agent: Uuid,
     key: &str,
-) -> Result<Vec<MemoryRevision>, ApiError> {
+) -> Result<(Uuid, Vec<repo::RevisionRow>), ApiError> {
     let mut conn = pool.acquire().await.map_err(DbError::from)?;
     let m = repo::get(&mut conn, agent, key)
         .await?
         .ok_or_else(|| ApiError::not_found("Memory not found."))?;
-    Ok(repo::revisions(&mut conn, m.id)
-        .await?
-        .into_iter()
-        .map(Into::into)
-        .collect())
+    Ok((m.id, repo::revisions(&mut conn, m.id).await?))
 }
 
 /// Restores an older revision as a new revision (`op = restore`).
@@ -374,22 +384,19 @@ pub async fn restore(
             "A redacted revision cannot be restored.",
         ));
     }
+    let source = Source::Restore {
+        restored_from: revision,
+    };
     let row = repo::update(
         &mut tx,
         cur.id,
         rev.title.as_deref(),
         rev.description.as_deref(),
         &rev.content,
+        &StoredActor::of_write(author, &source).to_value(),
     )
     .await?;
-    snapshot(
-        &mut tx,
-        &row,
-        "restore",
-        author,
-        &json!({"source": "restore", "restored_from": revision}),
-    )
-    .await?;
+    snapshot(&mut tx, &row, "restore", author, &source.provenance()).await?;
     tx.commit().await.map_err(DbError::from)?;
     Ok(row)
 }
@@ -448,15 +455,23 @@ pub async fn search(pool: &PgPool, agent: Uuid, q: &str) -> Result<Vec<repo::Sea
     .await?)
 }
 
+/// The turn-start recall of one message: the snippets to deliver and the memories they came from
+/// (the caller records those as used once the turn is delivered, C-1169).
+#[derive(Default)]
+pub struct Recalled {
+    pub snippets: Vec<String>,
+    pub memories: Vec<Uuid>,
+}
+
 /// Turn-start recall snippets (docs/10): up to `MEMORY_SNIPPETS` hits for the incoming message
 /// with score >= `MEMORY_SNIPPET_MIN_SCORE`, each `key: text` clamped to `MEMORY_SNIPPET_CHARS`.
 pub async fn recall_snippets(
     conn: &mut PgConnection,
     agent: Uuid,
     message: &str,
-) -> Result<Vec<String>, ApiError> {
+) -> Result<Recalled, ApiError> {
     let Some(q) = query_text(message) else {
-        return Ok(vec![]);
+        return Ok(Recalled::default());
     };
     let lang = repo::language_of_agent(conn, agent).await?;
     let hits = repo::search(
@@ -468,13 +483,26 @@ pub async fn recall_snippets(
         i64::from(limits::MEMORY_SNIPPETS),
     )
     .await?;
-    Ok(hits
-        .into_iter()
-        .map(|h| {
-            let text = h.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
-            clamp(&format!("{}: {text}", h.key), limits::MEMORY_SNIPPET_CHARS)
-        })
-        .collect())
+    Ok(Recalled {
+        memories: hits.iter().map(|h| h.id).collect(),
+        snippets: hits
+            .into_iter()
+            .map(|h| {
+                clamp(
+                    &format!("{}: {}", h.key, h.snippet),
+                    limits::MEMORY_SNIPPET_CHARS,
+                )
+            })
+            .collect(),
+    })
+}
+
+/// (C-1169) Records that the agent used these memories in `conversation`. Best effort: a failed
+/// record is logged and never fails the turn or the tool call.
+pub async fn mark_used(pool: &PgPool, memories: &[Uuid], conversation: Uuid) {
+    if let Err(e) = repo::mark_used(pool, memories, conversation).await {
+        tracing::warn!(error = %e, "recording a memory's use failed");
+    }
 }
 
 /// `POST /v1/runner/memory-writes`: harvested agent edits. The agent is derived from the
@@ -515,6 +543,7 @@ pub async fn memory_write(
     let author = Author {
         kind: "agent",
         user_id: None,
+        api_key_id: None,
         label: agent.name,
     };
     let (row, _) = save(&s.pool, agent.id, &w, &author, &Source::Harvest).await?;

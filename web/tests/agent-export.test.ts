@@ -218,7 +218,7 @@ describe("what never leaves", () => {
       anchor: "workspace", created_by: { id: "u-777", display_name: "Ada Lovelace", email: "ada@example.test" }, last_delivery_at: null,
     };
     mockFetch({
-      "GET /v1/agents/a1/memories": () => json(200, { items: [{ key: "likes-tea", content: "Ada likes tea.", index_line: "x", revision: 3, updated_at: "2026-11-01T09:00:00Z", created_at: "2026-10-01T09:00:00Z" }], next_cursor: null }),
+      "GET /v1/agents/a1/memories": () => json(200, { items: [{ key: "likes-tea", content: "Ada likes tea.", index_line: "x", revision: 3, updated_at: "2026-11-01T09:00:00Z", created_at: "2026-10-01T09:00:00Z", added_by: { kind: "unknown" }, changed_by: { kind: "unknown" }, last_used: null }], next_cursor: null }),
       "GET /v1/agents/a1/skills": () =>
         json(200, { items: [{ id: "sk-123456", name: "release-notes", description: "When asked what shipped", body: "# Notes", files: [{ path: "bin/run.sh", size: 9, executable: true }, { path: "blob.bin", size: 4, executable: false }], org_id: "org-999" }], next_cursor: null }),
       // The skill's other files, as stored (C-1099).

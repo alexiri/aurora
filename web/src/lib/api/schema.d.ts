@@ -7720,6 +7720,26 @@ export interface components {
         ActionDecisionBody: {
             decision: components["schemas"]["ActionDecision"];
         };
+        ActorAgent: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        ActorApiKey: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
+        ActorPerson: {
+            /** @description Never an e-mail address. */
+            display_name: string;
+            /** Format: uuid */
+            id: string;
+        };
+        ActorTemplate: {
+            name: string;
+            version: string;
+        };
         AddByEmailRequest: {
             email: string;
             role: components["schemas"]["WorkspaceRole"];
@@ -9912,6 +9932,13 @@ export interface components {
             name: string;
             /** Format: int64 */
             thread_count: number;
+        };
+        /** @description A conversation the caller may read. */
+        ConversationRef: {
+            /** Format: uuid */
+            id: string;
+            /** @description Null for a conversation nobody has titled. */
+            title?: string | null;
         };
         /** @description `counters` of `GET /v1/admin/overview` (C-402). */
         CountersInfo: {
@@ -12223,6 +12250,10 @@ export interface components {
             removed: string[];
         };
         Memory: {
+            /** @description (P5-MEMORY-1, C-1169) Who created the memory. */
+            added_by: components["schemas"]["MemoryActor"];
+            /** @description Who wrote its current content. */
+            changed_by: components["schemas"]["MemoryActor"];
             content: string;
             /** Format: date-time */
             created_at: string;
@@ -12230,6 +12261,7 @@ export interface components {
             /** @description `key: line` as shown in the memory index. */
             index_line: string;
             key: string;
+            last_used?: components["schemas"]["MemoryLastUsed"] | null;
             /** @description (P6-MEMLOCK, C-1148) The agent can read but not change or delete a locked memory. */
             locked: boolean;
             /**
@@ -12244,37 +12276,85 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /**
+         * @description (P5-MEMORY-1, C-1169, D-497) Who added, changed or wrote a memory. The fields that do not
+         *     apply to `kind` are null: `person` for `person`, `api_key` (the key's person) and `template`
+         *     (who created or applied it); `api_key` for `api_key`, null when an older record did not keep
+         *     which key; `agent` for `agent`.
+         */
+        MemoryActor: {
+            agent?: components["schemas"]["ActorAgent"] | null;
+            api_key?: components["schemas"]["ActorApiKey"] | null;
+            conversation?: components["schemas"]["ConversationRef"] | null;
+            kind: components["schemas"]["MemoryActorKind"];
+            person?: components["schemas"]["ActorPerson"] | null;
+            template?: components["schemas"]["ActorTemplate"] | null;
+        };
+        /**
+         * @description (P5-MEMORY-1, C-1169) What kind of writer a [`MemoryActor`] is.
+         * @enum {string}
+         */
+        MemoryActorKind: "person" | "api_key" | "agent" | "template" | "import" | "unknown";
+        /** @description (P5-MEMORY-1, C-1169, D-497(b)) The agent's latest recorded use of a memory. */
+        MemoryLastUsed: {
+            /** Format: date-time */
+            at: string;
+            conversation?: components["schemas"]["ConversationRef"] | null;
+        };
         MemoryLockedBy: {
             display_name: string;
             /** Format: uuid */
             id: string;
         };
         MemoryRevision: {
+            /** @description (P5-MEMORY-1, C-1170) Who wrote this revision. */
+            author: components["schemas"]["MemoryActor"];
             /** @description `user` | `agent` | `system`. */
             author_kind: string;
+            /**
+             * @description Deprecated: use `author`. The author's display name (an agent's name), never an e-mail
+             *     address.
+             */
             author_label: string;
             /** @description Null when redacted. */
             content?: string | null;
             /** Format: date-time */
             created_at: string;
-            /** @description `dashboard` | `api` | `tool` | `harvest` | `restore`. */
+            /** @description `dashboard` | `api` | `tool` | `harvest` | `template` | `restore`. */
             provenance: string;
             redacted: boolean;
+            /**
+             * Format: int32
+             * @description (C-1170) For a restore: the revision whose content was brought back.
+             */
+            restored_from?: number | null;
             /** Format: int32 */
             revision: number;
+            /** @description (C-1170) How it was written. */
+            via: components["schemas"]["MemoryVia"];
         };
         MemorySearchHit: {
+            /** @description `[start, end)` offsets into `snippet`, in UTF-16 code units. */
+            highlights: number[][];
             key: string;
             /** @description (P6-MEMLOCK, C-1149) The hit's memory is locked. */
             locked: boolean;
             /** Format: float */
             score: number;
+            /** @description (P5-MEMORY-1, C-1171) Plain text on one line (at most 800 characters), never markup. */
             snippet: string;
             title?: string | null;
+            /** @description The same offsets into `title`, or into `key` when the memory has no title. */
+            title_highlights: number[][];
         };
         MemorySearchResponse: {
             items: components["schemas"]["MemorySearchHit"][];
         };
+        /**
+         * @description (P5-MEMORY-1, C-1170) How a revision was written.
+         * @enum {string}
+         */
+        MemoryVia: "dashboard" | "api" | "conversation" | "harvest" | "template" | "restore" | "import";
         /** @description (FIX-251) One conflict hunk of a part's merge. */
         MergeConflict: {
             /** @description The agent's current text of the hunk (Keep mine). */
@@ -13663,6 +13743,10 @@ export interface components {
         };
         Page_Memory: {
             items: {
+                /** @description (P5-MEMORY-1, C-1169) Who created the memory. */
+                added_by: components["schemas"]["MemoryActor"];
+                /** @description Who wrote its current content. */
+                changed_by: components["schemas"]["MemoryActor"];
                 content: string;
                 /** Format: date-time */
                 created_at: string;
@@ -13670,6 +13754,7 @@ export interface components {
                 /** @description `key: line` as shown in the memory index. */
                 index_line: string;
                 key: string;
+                last_used?: components["schemas"]["MemoryLastUsed"] | null;
                 /** @description (P6-MEMLOCK, C-1148) The agent can read but not change or delete a locked memory. */
                 locked: boolean;
                 /**
@@ -13688,18 +13773,31 @@ export interface components {
         };
         Page_MemoryRevision: {
             items: {
+                /** @description (P5-MEMORY-1, C-1170) Who wrote this revision. */
+                author: components["schemas"]["MemoryActor"];
                 /** @description `user` | `agent` | `system`. */
                 author_kind: string;
+                /**
+                 * @description Deprecated: use `author`. The author's display name (an agent's name), never an e-mail
+                 *     address.
+                 */
                 author_label: string;
                 /** @description Null when redacted. */
                 content?: string | null;
                 /** Format: date-time */
                 created_at: string;
-                /** @description `dashboard` | `api` | `tool` | `harvest` | `restore`. */
+                /** @description `dashboard` | `api` | `tool` | `harvest` | `template` | `restore`. */
                 provenance: string;
                 redacted: boolean;
+                /**
+                 * Format: int32
+                 * @description (C-1170) For a restore: the revision whose content was brought back.
+                 */
+                restored_from?: number | null;
                 /** Format: int32 */
                 revision: number;
+                /** @description (C-1170) How it was written. */
+                via: components["schemas"]["MemoryVia"];
             }[];
             next_cursor?: string | null;
         };
@@ -13826,7 +13924,7 @@ export interface components {
                 origin_conversation_id?: string | null;
                 report?: string | null;
                 requester?: components["schemas"]["PeerTaskRequester"] | null;
-                /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+                /** @description `queued` | `open` | `waiting` | `completed` | `cancelled` | `expired` */
                 status: string;
                 /** Format: uuid */
                 task_conversation_id: string;
@@ -14637,7 +14735,7 @@ export interface components {
             origin_conversation_id?: string | null;
             report?: string | null;
             requester?: components["schemas"]["PeerTaskRequester"] | null;
-            /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+            /** @description `queued` | `open` | `waiting` | `completed` | `cancelled` | `expired` */
             status: string;
             /** Format: uuid */
             task_conversation_id: string;
@@ -28713,6 +28811,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     getMemory: {
@@ -29065,6 +29172,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
+            /** @description audit_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     redactMemoryRevision: {
@@ -29234,7 +29350,7 @@ export interface operations {
     listPeerTasks: {
         parameters: {
             query?: {
-                /** @description `queued` | `open` | `completed` | `cancelled` | `expired` */
+                /** @description `queued` | `open` | `waiting` | `completed` | `cancelled` | `expired` */
                 status?: string;
                 limit?: number;
                 cursor?: string;
@@ -34861,8 +34977,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description reminder_not_offered */
+            /** @description reminder_not_offered, conversation_archived, schedule_limit_reached, task_wakeup_cap */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description frozen */
+            423: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -44122,6 +44247,15 @@ export interface operations {
             };
             /** @description schedule_completed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description schedule_has_end, wakeup_after_end */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -45,17 +45,18 @@ pub(super) async fn visible_agent(
     Ok(row)
 }
 
-/// Workspace skills: `ReadAuth` reads (404 invisible; C-1165, review LOW-9), `can_own` writes
+/// Workspace skills by access in the caller's own right (`c.workspace`, so an emergency reader
+/// does not pass; their reads go through [`authorize_read`]): 404 invisible, `can_own` writes
 /// (403 for a member).
 async fn workspace_auth(c: &Caller, s: &AppState, ws: Uuid, write: bool) -> Result<(), ApiError> {
     let a = c.workspace(s, ws).await?;
     if write { require_own(&a) } else { Ok(()) }
 }
 
-/// Agent skills follow the agent's workspace; workspace skills: `ReadAuth` reads (the list and
-/// the detail; review LOW-9), `can_own` writes; org skills: any active member reads,
-/// owner/admin writes. The skill FILE routes keep own access (review LOW-9 names the two
-/// reads only).
+/// Agent skills follow the agent's workspace; workspace skills: [`workspace_auth`]; org skills:
+/// any active member reads, owner/admin writes. The list and the detail reads take `ReadAuth`
+/// instead ([`authorize_read`], review LOW-9); the skill FILE routes keep own access (that
+/// review names the two reads only).
 pub(super) async fn authorize(
     c: &Caller,
     s: &AppState,

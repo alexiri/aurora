@@ -57,6 +57,58 @@ describe("direct conversation visibility (RFE-009, FIX-235 D-479)", () => {
     expect((await screen.findAllByText(/All 2 people in this workspace can use this agent and read this conversation\./)).length).toBeGreaterThan(0);
   });
 
+  it("(FIX-263) an emergency reader of a group conversation is told that all its people read it", async () => {
+    const g = conv("g1", "group", { title: "Team room" });
+    mock([g]);
+    wrap(
+      <ChatPane
+        agentId="a1"
+        wsId="w"
+        base="/o/x/w/y"
+        convId="g1"
+        direct={null}
+        conversation={g}
+        emergency
+        audience={{ people: 4, owners: [{ id: "u9", display_name: "Ann" }], owners_total: 1, emergency_active_more: 0 }}
+        myRole={null}
+        readerId="x"
+      />,
+    );
+    expect((await screen.findAllByText(/All 4 people in this workspace can use this agent and read this conversation\./)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/can see this conversation/)).toBeNull();
+  });
+
+  // (FIX-263) The emergency reader is not one of the people, so "Only you" never shows to them.
+  it.each([
+    [1, "One person in this workspace can use this agent and read this conversation."],
+    [0, "Nobody in this workspace can use this agent right now."],
+  ])("(FIX-263) an emergency reader of a group conversation in a workspace of %i", async (people, line) => {
+    const g = conv("g1", "group", { title: "Team room" });
+    mock([g]);
+    const emergency = {
+      id: "e1", by: { id: "x", display_name: "Ada Lovelace" }, reason: "Legal hold",
+      opened_at: "2026-11-20T14:00:00Z", expires_at: "2026-11-20T18:00:00Z", ended_at: null, active: true,
+    };
+    wrap(
+      <ChatPane
+        agentId="a1"
+        wsId="w"
+        base="/o/x/w/y"
+        convId="g1"
+        direct={null}
+        conversation={g}
+        emergency
+        audience={{ people, owners: [], owners_total: 0, emergency, emergency_active_more: 0 }}
+        myRole={null}
+        readerId="x"
+      />,
+    );
+    // The line, followed by the emergency line, in the header's meta and under the greeting.
+    const both = (text: string) => text.includes(`${line} Ada Lovelace, an organization owner, can read this workspace's conversations until`);
+    expect((await screen.findAllByText((text) => both(text))).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Only you can use this agent/)).toBeNull();
+  });
+
   it("gives owners a read-only group for other members' direct conversations", async () => {
     mock([
       conv("mine", "direct", { direct_user_id: "me" }),

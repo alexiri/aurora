@@ -440,6 +440,7 @@ generically.
 | `turn.send_now_failed`                                       | yes     | `{ turn_id, outcome: "nothing_running"\|"unsupported" }` (FIX-225, C-1156)          |
 | `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 5 (D-138, moved from phase 4), RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
 | `action_approval.pending` / `.decided`                       | yes     | `{ id, summary, decision? }`                                                        |
+| `memory.saved` / `memory.refused`                            | yes     | (phase 5, P5-MEMORY-1, C-1172) platform-authored, after a `memory_save`: `.saved` `{ turn_id, key, title, preview, revision, created, previous_revision }`; `.refused` `{ turn_id, key, title, preview, code: "memory_locked"\|"memory_limit_reached"\|"invalid"\|"not_allowed", message }` (§Memory) |
 | `attachment`                                                 | yes     | `{ turn_id, attachment_id, filename, size, caption? }` (agent `send_file`)          |
 | `notice`                                                     | yes     | `{ code, text }` — platform-authored only                                           |
 | `error`                                                      | yes     | `{ turn_id, code, message, detail? }` ((phase 5, P5-REFINE-7, C-1076) `detail`: the technical line, ≤ 2 000 characters) |
@@ -946,6 +947,21 @@ file does **not** delete the memory (use the tool). A locked memory is never
 uploaded: the supervisor restores the exact bytes it installed and tells the
 agent once per changed digest that the change was undone.
 
+- **Where a memory came from and when it was used** (P5-MEMORY-1, D-497,
+C-1169, C-1170, SEC-157): each memory records who **added** it and who **last
+changed** it (a person, an API key and its person, the agent with its
+conversation, a template, or `unknown` for older data) as ids; names are looked
+up when shown, a person by display name and never by e-mail. **Used** means the
+agent read it with `memory_get` (a search hit counts once it is opened) or the
+turn-start recall of a delivered turn included it; reading the projected file
+is not seen, and dashboard or API reads never count. The last use is written at
+most once per memory, conversation and hour. A conversation is named only to
+people who may read it; others see the actor or the time without it.
+- **What the agent remembered, in the chat** (C-1172): after `memory_save`
+saves or is refused, the API appends `memory.saved` or `memory.refused` to the
+turn's transcript (§Transcript events), whatever the harness; the refusal
+reason is in plain words and the tool error keeps its code.
+
 ### Memory language (Proposal 03)
 
 - `workspaces.memory_language` (default `english`) is one of the Postgres
@@ -983,6 +999,10 @@ score = greatest(rank(<memory_language>), rank('simple'),
                  case when key ILIKE %q% or title ILIKE %q% then 0.5 else 0 end)
 ```
 
+- (P5-MEMORY-1, C-1171) Snippets are **plain text**: matches are marked with two
+control characters (removed from the stored text first, so content cannot forge
+them) which become UTF-16 highlight ranges for the API; the agent's tool and the
+recall get the text alone. Markdown marks are reduced as for message search.
 - `memory_search`: top `MEMORY_SEARCH_HITS` by score &gt; 0, with a snippet.
   (P6-MEMLOCK, C-1149) Each hit carries `locked`, and in the index line of a
 locked memory the key is followed by ` (locked)`.
@@ -1296,6 +1316,13 @@ thread link, the answer is posted there too (`13 §Mirror`).
   that task conversation while the task is not closed (`queued`/`open`); a closed task's
   conversation is nobody's chat any more, so the run keeps its own run thread. The Web Push never
   fires for these (the claim requires the creator's direct chat).
+  (FIX-264) **The task's limits hold for all its work.** Any tool call in a task conversation
+  with no person speaking (the peer's turn, a wake-up, watch or decision turn, or a call outside
+  a turn) may change or delete only schedules made from that conversation, and never gives one a
+  `cron`. **`ends_at` is a hard end:** the fire path checks it, and the end of the task behind
+  the origin conversation, before any fire, repeating schedules included, and disables the
+  schedule (`task_ended`). A schedule with `ends_at` takes no `cron` (422 `schedule_has_end`,
+  field `/cron`), and no `run_at` at or after it, on create or change (422 `wakeup_after_end`).
 
 ## Webhooks
 

@@ -968,7 +968,11 @@ async fn create_in_tx(
     let author = memory::Author {
         kind: "user",
         user_id: Some(caller.user_id),
-        label: caller.email.clone(),
+        api_key_id: match caller.principal {
+            crate::http::auth::Principal::ApiKey { id, .. } => Some(id),
+            _ => None,
+        },
+        label: String::new(),
     };
     let source = memory::Source::Template {
         name: p.plan.name.clone(),

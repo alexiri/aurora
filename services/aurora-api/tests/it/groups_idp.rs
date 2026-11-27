@@ -643,3 +643,74 @@ fn fix083_orphaned_idp_providers_are_named_by_id_only() {
     );
     assert!(orphaned_providers(&linked, &["mock".to_owned(), "gone".to_owned()]).is_empty());
 }
+
+/// (FIX-263, D-503) A claim-linked group bound to a personal workspace takes only that
+/// workspace's person from the sign-in sync: anyone else who holds the claim is skipped (no
+/// row, no audit row), the sign-in goes on and their other groups are still synced.
+#[tokio::test]
+async fn fix263_the_sync_adds_only_the_person_to_a_group_bound_to_their_personal_workspace() {
+    let idp = MockIdp::start().await;
+    let h = harness(&idp, SignupMode::InviteOnly, admit, &[]).await;
+    let as_person = |sub: &str, email: &str, groups: Value| {
+        claims(&idp, groups);
+        idp.identity(sub, email, true);
+    };
+    // Bob signs in once: the org and Bob's membership exist.
+    as_person("bob", "bob@example.com", json!([]));
+    sign_in(&h).await;
+    let org = org_id(&h).await;
+    let bob: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'bob@example.com'")
+        .fetch_one(h.pool())
+        .await
+        .unwrap();
+    let ws = h.workspace_owned_by(org, bob).await;
+    sqlx::query("UPDATE workspaces SET personal_owner_user_id = $2, personal = true WHERE id = $1")
+        .bind(ws)
+        .bind(bob)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    let bound = idp_group(&h, org, "bobs", "mock", "eg-bobs").await;
+    let open = idp_group(&h, org, "open", "mock", "eg-open").await;
+    sqlx::query(
+        "INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) \
+         VALUES ($1, $2, $3, 'member')",
+    )
+    .bind(bound)
+    .bind(ws)
+    .bind(org)
+    .execute(h.pool())
+    .await
+    .unwrap();
+
+    // Carol holds the claim: signed in, in the unbound group only.
+    as_person("carol", "carol@example.com", json!(["eg-bobs", "eg-open"]));
+    sign_in(&h).await;
+    assert_eq!((members(&h, bound).await, members(&h, open).await), (0, 1));
+    assert_eq!(
+        count(
+            &h,
+            &format!(
+                "SELECT count(*) FROM audit_log WHERE action = 'group_member.add' \
+                 AND target_id = '{bound}'"
+            )
+        )
+        .await,
+        0
+    );
+
+    // Bob holds it too: added.
+    as_person("bob", "bob@example.com", json!(["eg-bobs"]));
+    sign_in(&h).await;
+    assert_eq!(
+        count(
+            &h,
+            &format!(
+                "SELECT count(*) FROM group_members WHERE group_id = '{bound}' AND user_id = '{bob}'"
+            )
+        )
+        .await,
+        1
+    );
+    assert_eq!(members(&h, bound).await, 1);
+}

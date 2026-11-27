@@ -55,12 +55,24 @@ export function visibilityLines(input: VisibilityInput): string[] {
   const emergencyLine = emergency?.active ? emergencyVisibilityLine(emergency) : null;
 
   // An owner reading another person's direct chat: the read-only view's line, unchanged.
-  if (ownerView) {
+  // (FIX-263) Only for a direct chat: a shared conversation is read by all its people, so a
+  // read-only (emergency) reader of one gets the non-direct line like everyone else.
+  if (ownerView && kind === "direct") {
     const lines = [`Only ${ownerView} and the workspace's owners can see this conversation.`];
     return emergencyLine ? [...lines, emergencyLine] : lines;
   }
 
   const n = audience?.people ?? 0;
+  if (n < 2 && !myRole) {
+    // (FIX-263) The reader is not one of the workspace's people (an emergency reader), so
+    // "Only you" is never theirs. Without an `audience` there is nothing to say.
+    if (!audience) return [];
+    const line =
+      n === 1
+        ? "One person in this workspace can use this agent and read this conversation."
+        : "Nobody in this workspace can use this agent right now.";
+    return emergencyLine ? [line, emergencyLine] : [line];
+  }
   if (n < 2) {
     const lines = ["Only you can use this agent and read its conversations."];
     return emergencyLine ? [...lines, emergencyLine] : lines;

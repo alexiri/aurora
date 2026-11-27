@@ -671,6 +671,24 @@ pub async fn lifting_suspension(
     Ok(self_grant)
 }
 
+pub fn binding_not_found() -> ApiError {
+    ApiError::not_found("Binding not found.")
+}
+
+// (FIX-256) **Lock order: the membership row, then the binding row.** A transaction that takes
+// both for one person takes `org_members` first, so no two of these paths can deadlock:
+// - the binding `PATCH` and `DELETE` routes: `members::lock_if_active` (`FOR SHARE`), then
+//   `workspaces::lock_binding`;
+// - removing a member (`members::remove`, `members::strip_keeping_membership`: administrator,
+//   SCIM, claim sync) locks the membership `FOR UPDATE` before it deletes a binding;
+// - the sign-in claim sync takes `idp_roles::org_row` before `idp_roles::ws_row`;
+// - suspending or reactivating a member writes the membership before any binding.
+//
+// (D-492) A binding is addressable only while its person is an active member of the
+// organization: the row kept for somebody who left (or is suspended in the organization)
+// answers like an unknown one, before any change. So the routes lock the membership first and
+// decide only once they know that a binding exists.
+
 /// The turn end of a workspace suspension (P5-APIGAP-4, C-1051).
 const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
     crate::domains::scim::deprovision::TurnEnd {
@@ -700,9 +718,14 @@ pub async fn set_access_status(
     use super::dto::AccessStatus;
     let (org, ws, personal_of, caller) = (a.org_id, a.workspace_id, a.personal_of, c.user_id);
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
+    // Membership before binding (the lock order above).
+    let addressable = members::lock_if_active(&mut tx, org, target).await?;
     let Some((role, cur, idp_role)) = workspaces::lock_binding(&mut tx, ws, target).await? else {
-        return Err(ApiError::not_found("Binding not found."));
+        return Err(binding_not_found());
     };
+    if !addressable {
+        return Err(binding_not_found());
+    }
     if cur == status.as_str() {
         return Ok(());
     }

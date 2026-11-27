@@ -464,6 +464,11 @@ async fn workspace_visibility_and_ownership() {
     )
     .await;
     assert_eq!(s, 204);
+    // (FIX-256) `m` is still suspended in the organization: the binding is not addressable
+    // until they are an active member again.
+    let (s, _) = call(&h, &ot, Method::DELETE, &format!("{wsu}/access/{m}"), None).await;
+    assert_eq!(s, 404);
+    h.set_member_status(org, m, "active").await;
     let (s, _) = call(&h, &ot, Method::DELETE, &format!("{wsu}/access/{m}"), None).await;
     assert_eq!(s, 204);
     let (s, _) = call(&h, &ot, Method::DELETE, &format!("{wsu}/access/{m}"), None).await;

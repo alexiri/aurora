@@ -582,8 +582,16 @@ pub async fn get(state: &AppState, id: Uuid) -> Result<LibraryRow, ApiError> {
 /// (D-449). Every status is returned; the caller hides what its audience may not see.
 pub async fn list_for_org(state: &AppState, org: Uuid) -> Result<Vec<LibraryRow>, ApiError> {
     let mut c = state.pool.acquire().await.map_err(DbError::from)?;
-    let mut rows = repo::list_libraries(&mut c, org).await?;
-    rows.extend(repo::list_instance_libraries(&mut c).await?);
+    list_for_org_on(&mut c, org).await
+}
+
+/// [`list_for_org`] on a connection the caller already holds.
+pub(crate) async fn list_for_org_on(
+    c: &mut sqlx::PgConnection,
+    org: Uuid,
+) -> Result<Vec<LibraryRow>, ApiError> {
+    let mut rows = repo::list_libraries(c, org).await?;
+    rows.extend(repo::list_instance_libraries(c).await?);
     Ok(rows)
 }
 
@@ -995,7 +1003,14 @@ fn git_for<'a>(
         .map_err(|e| read_failure(&e))
 }
 
-fn fingerprint(row: &LibraryRow) -> String {
+/// The commit of the library's cached listing, if one is cached for this row as it is now.
+/// Reads memory only, never the repository.
+pub(crate) fn cached_commit(state: &AppState, row: &LibraryRow) -> Option<String> {
+    cached_listing(&state.library, row).map(|l| l.commit_sha.clone())
+}
+
+/// What of a library row decides where its content is read from and as whom.
+pub(crate) fn fingerprint(row: &LibraryRow) -> String {
     format!(
         "{:?}|{:?}|{}|{:?}",
         row.url, row.reference, row.path, row.token_updated_at

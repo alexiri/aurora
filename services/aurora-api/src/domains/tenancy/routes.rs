@@ -561,15 +561,19 @@ async fn workspace_audience(
     caller: Uuid,
 ) -> Result<crate::domains::tenancy::dto::WorkspaceAudience, ApiError> {
     use crate::domains::tenancy::dto::{WorkspaceAudience, WorkspaceAudienceOwner};
-    let people: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM own_workspace_access WHERE workspace_id = $1")
-            .bind(ws)
-            .fetch_one(&s.pool)
-            .await
-            .map_err(DbError::from)?;
+    // (FIX-263) A disabled account is not one of the people: it cannot sign in to use or read.
+    let people: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM own_workspace_access o \
+         JOIN users u ON u.id = o.user_id AND u.disabled_at IS NULL \
+         WHERE o.workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_one(&s.pool)
+    .await
+    .map_err(DbError::from)?;
     let owners: Vec<(Uuid, String)> = sqlx::query_as(
         "SELECT o.user_id, u.display_name FROM own_workspace_access o \
-         JOIN users u ON u.id = o.user_id \
+         JOIN users u ON u.id = o.user_id AND u.disabled_at IS NULL \
          WHERE o.workspace_id = $1 AND o.role = 'owner' \
          ORDER BY u.display_name, o.user_id",
     )
@@ -985,7 +989,7 @@ async fn patch_access(
     service::set_access_status(&s, &c, &a, user, req.status, ev).await?;
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?
-        .ok_or_else(|| ApiError::not_found("Binding not found."))?;
+        .ok_or_else(service::binding_not_found)?;
     Ok(Json(row.into()))
 }
 
@@ -1017,13 +1021,20 @@ async fn delete_access(
     // RFE-021: reassignment and the unbind commit or roll back together.
     let mut tx = s.pool.begin().await.map_err(aurora_db::DbError::from)?;
     // (FIX-261, D-501) Removing a suspended binding lifts the suspension, so group access
-    // applies again: the rules of restoring it. Lock the row first, as `set_access_status` does.
+    // applies again: the rules of restoring it. Lock the rows first, as `set_access_status`
+    // does: the membership, then the binding (`service`, the lock order).
     let mut self_grant_of = None;
-    if let Some((role, status, _)) = workspaces::lock_binding(&mut tx, ws, user).await?
-        && status == AccessStatus::Suspended.as_str()
-        && service::lifting_suspension(&s, &mut tx, &c, &a, user).await?
-    {
-        self_grant_of = Some(role);
+    let addressable = aurora_db::repo::members::lock_if_active(&mut tx, a.org_id, user).await?;
+    if let Some((role, status, _)) = workspaces::lock_binding(&mut tx, ws, user).await? {
+        // (FIX-256) A departed member's kept row is not addressable.
+        if !addressable {
+            return Err(service::binding_not_found());
+        }
+        if status == AccessStatus::Suspended.as_str()
+            && service::lifting_suspension(&s, &mut tx, &c, &a, user).await?
+        {
+            self_grant_of = Some(role);
+        }
     }
     if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {
         return Err(crate::domains::admin::service::managed_by_idp());
@@ -1048,7 +1059,7 @@ async fn delete_access(
         reassign_all(&mut tx, &acting, user, to, true, true, None).await?;
     }
     if !workspaces::unbind_user(&mut *tx, ws, user).await? {
-        return Err(ApiError::not_found("Binding not found."));
+        return Err(service::binding_not_found());
     }
     // RFE-005: a speaker who loses `can_use` stops binding to `user` rules immediately.
     aurora_db::repo::notify_auth_revoked(&mut *tx, "user", user).await?;

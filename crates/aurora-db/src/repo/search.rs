@@ -731,6 +731,16 @@ pub fn snippet(
     body_start_is_cut: bool,
     body_end_is_cut: bool,
 ) -> (String, Vec<[usize; 2]>) {
+    snippet_bounded(raw, body_start_is_cut, body_end_is_cut, SNIPPET_MAX_CHARS)
+}
+
+/// [`snippet`] with another length bound (memory search and recall, C-1171).
+pub fn snippet_bounded(
+    raw: &str,
+    body_start_is_cut: bool,
+    body_end_is_cut: bool,
+    max_chars: usize,
+) -> (String, Vec<[usize; 2]>) {
     let mut text = String::new();
     let mut units = 0usize;
     let mut ranges: Vec<[usize; 2]> = Vec::new();
@@ -752,7 +762,7 @@ pub fn snippet(
             }
             c if c.is_control() && c != '\n' && c != '\t' => {}
             c => {
-                if chars >= SNIPPET_MAX_CHARS {
+                if chars >= max_chars {
                     break;
                 }
                 let c = if c == '\n' || c == '\t' { ' ' } else { c };

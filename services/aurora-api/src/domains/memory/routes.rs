@@ -1,15 +1,17 @@
+use super::actor::{self, StoredActor};
 use super::dto::*;
 use super::service::{self, Author, Source, Write};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent};
 use crate::domains::emergency_access::service::{ReadKind, record_read};
-use crate::http::auth::Caller;
+use crate::http::auth::{Caller, Principal};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
 use aurora_core::{ApiError, limits};
 use aurora_db::authz::ReadAuth;
 use aurora_db::repo::agents;
+use aurora_db::repo::memory::{MemoryRow, RevisionRow};
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde_json::json;
@@ -38,19 +40,92 @@ async fn visible_agent(c: &Caller, s: &AppState, id: Uuid) -> Result<agents::Age
 /// [`visible_agent`] for a *read* (C-1165): the emergency reader of the workspace lists and
 /// reads the agent's memory. Never for a write. The caller records what it returns
 /// ([`record_read`] with this authority).
-async fn visible_agent_read(c: &Caller, s: &AppState, id: Uuid) -> Result<ReadAuth, ApiError> {
+async fn visible_agent_read(
+    c: &Caller,
+    s: &AppState,
+    id: Uuid,
+) -> Result<(agents::AgentRow, ReadAuth), ApiError> {
     let row = agents::get(&s.pool, id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
-    c.workspace_read(s, row.workspace_id).await
+    let read = c.workspace_read(s, row.workspace_id).await?;
+    Ok((row, read))
+}
+
+/// The emergency record of a route that needs **own** access (revisions, search: a grant alone
+/// does not open them; [`visible_agent`] has already refused that). A caller who holds own access
+/// *and* an active grant reads under the grant too (D-478(b)), so what they read is recorded like
+/// any other memory read (D-502): before the body, 503 `audit_unavailable` if it cannot be.
+async fn record_own_read(
+    c: &Caller,
+    s: &AppState,
+    agent: &agents::AgentRow,
+    target: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let read = c.workspace_read(s, agent.workspace_id).await?;
+    record_read(
+        s,
+        &AuditActor::from_caller(c),
+        &read,
+        ReadKind::Memory,
+        target,
+    )
+    .await
 }
 
 fn author(c: &Caller) -> Author {
     Author {
         kind: "user",
         user_id: Some(c.user_id),
-        label: c.email.clone(),
+        api_key_id: match c.principal {
+            Principal::ApiKey { id, .. } => Some(id),
+            _ => None,
+        },
+        // A person's label is their display name, looked up when the revision is written.
+        label: String::new(),
     }
+}
+
+/// The rows as the caller may see them: names looked up, conversations named only to their
+/// readers (SEC-157).
+async fn present(
+    c: &Caller,
+    s: &AppState,
+    agent: &agents::AgentRow,
+    rows: Vec<MemoryRow>,
+) -> Result<Vec<Memory>, ApiError> {
+    let actors: Vec<(StoredActor, StoredActor)> = rows
+        .iter()
+        .map(|m| {
+            (
+                StoredActor::parse(&m.added_by),
+                StoredActor::parse(&m.changed_by),
+            )
+        })
+        .collect();
+    let used: Vec<Uuid> = rows
+        .iter()
+        .filter_map(|m| m.last_used_conversation_id)
+        .collect();
+    let names = actor::names(s, c, agent, actors.iter().flat_map(|(a, b)| [a, b]), &used).await?;
+    Ok(rows
+        .into_iter()
+        .zip(&actors)
+        .map(|(m, (added, changed))| Memory::present(m, added, changed, &names))
+        .collect())
+}
+
+async fn present_one(
+    c: &Caller,
+    s: &AppState,
+    agent: &agents::AgentRow,
+    row: MemoryRow,
+) -> Result<Json<Memory>, ApiError> {
+    present(c, s, agent, vec![row])
+        .await?
+        .pop()
+        .map(Json)
+        .ok_or_else(|| ApiError::internal("memory vanished"))
 }
 
 fn source(c: &Caller) -> Source {
@@ -83,12 +158,9 @@ async fn list_memories(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Memory>>, ApiError> {
-    let read = visible_agent_read(&c, &s, agent).await?;
-    let items = service::list(&s.pool, agent)
-        .await?
-        .into_iter()
-        .map(Memory::from)
-        .collect();
+    let (a, read) = visible_agent_read(&c, &s, agent).await?;
+    let rows = service::list(&s.pool, agent).await?;
+    let items = present(&c, &s, &a, rows).await?;
     record_read(
         &s,
         &AuditActor::from_caller(&c),
@@ -131,14 +203,15 @@ async fn create_memory(
     };
     let (row, _) = service::save(&s.pool, agent, &w, &author(&c), &source(&c)).await?;
     record(&c, &s, &a, "memory.save", &row.key);
-    Ok((StatusCode::CREATED, Json(row.into())))
+    Ok((StatusCode::CREATED, present_one(&c, &s, &a, row).await?))
 }
 
 /// Search memories in the workspace memory language.
 #[utoipa::path(get, path = "/agents/{agent}/memories/search", operation_id = "searchMemories",
     tag = "memory", params(("agent" = Uuid, Path, description = "Agent id"), SearchParams),
     responses((status = 200, body = MemorySearchResponse), (status = 400, body = ErrorEnvelope),
-        (status = 404, body = ErrorEnvelope)),
+        (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn search_memories(
     c: Caller,
@@ -146,12 +219,13 @@ async fn search_memories(
     Path(agent): Path<Uuid>,
     Query(p): Query<SearchParams>,
 ) -> Result<Json<MemorySearchResponse>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    let a = visible_agent(&c, &s, agent).await?;
     let items = service::search(&s.pool, agent, &p.q)
         .await?
         .into_iter()
         .map(Into::into)
         .collect();
+    record_own_read(&c, &s, &a, None).await?;
     Ok(Json(MemorySearchResponse { items }))
 }
 
@@ -167,17 +241,19 @@ async fn get_memory(
     State(s): State<AppState>,
     Path((agent, key)): Path<(Uuid, String)>,
 ) -> Result<Json<Memory>, ApiError> {
-    let read = visible_agent_read(&c, &s, agent).await?;
+    let (a, read) = visible_agent_read(&c, &s, agent).await?;
     let row = service::get(&s.pool, agent, &key).await?;
+    let id = row.id;
+    let body = present_one(&c, &s, &a, row).await?;
     record_read(
         &s,
         &AuditActor::from_caller(&c),
         &read,
         ReadKind::Memory,
-        Some(row.id),
+        Some(id),
     )
     .await?;
-    Ok(Json(row.into()))
+    Ok(body)
 }
 
 /// Replace a memory's title, description and content; creates it when the key is new.
@@ -208,7 +284,7 @@ async fn put_memory(
     };
     let (row, _) = service::save(&s.pool, agent, &w, &author(&c), &source(&c)).await?;
     record(&c, &s, &a, "memory.save", &row.key);
-    Ok(Json(row.into()))
+    present_one(&c, &s, &a, row).await
 }
 
 /// Delete a memory and its revisions.
@@ -257,23 +333,33 @@ async fn set_memory_locked(
         };
         record(&c, &s, &a, action, &key);
     }
-    Ok(Json(row.into()))
+    present_one(&c, &s, &a, row).await
 }
 
 /// Revisions, newest first (at most `MEMORY_REVISIONS_KEPT`).
 #[utoipa::path(get, path = "/agents/{agent}/memories/{key}/revisions",
     operation_id = "listMemoryRevisions", tag = "memory",
     params(("agent" = Uuid, Path, description = "Agent id"), ("key" = String, Path, description = "Memory key")),
-    responses((status = 200, body = Page<MemoryRevision>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<MemoryRevision>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_revisions(
     c: Caller,
     State(s): State<AppState>,
     Path((agent, key)): Path<(Uuid, String)>,
 ) -> Result<Json<Page<MemoryRevision>>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    let a = visible_agent(&c, &s, agent).await?;
+    let (memory, rows) = service::revisions(&s.pool, agent, &key).await?;
+    let actors: Vec<StoredActor> = rows.iter().map(StoredActor::of_revision).collect();
+    let names = actor::names(&s, &c, &a, &actors, &[]).await?;
+    let items = rows
+        .into_iter()
+        .zip(&actors)
+        .map(|(r, who): (RevisionRow, _)| MemoryRevision::present(r, who, &names))
+        .collect();
+    record_own_read(&c, &s, &a, Some(memory)).await?;
     Ok(Json(Page {
-        items: service::revisions(&s.pool, agent, &key).await?,
+        items,
         next_cursor: None,
     }))
 }
@@ -295,7 +381,7 @@ async fn restore_memory(
     let a = visible_agent(&c, &s, agent).await?;
     let row = service::restore(&s.pool, agent, &key, req.revision, &author(&c)).await?;
     record(&c, &s, &a, "memory.restore", &key);
-    Ok(Json(row.into()))
+    present_one(&c, &s, &a, row).await
 }
 
 /// Redact a non-latest revision's content in place (audited).
