@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { formatCount } from "@/lib/format-date";
+import { skillDisplayName } from "@/lib/skill-name";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +18,6 @@ import {
   LIBRARY_BUDGET,
   shortSha,
   useApproveLibraryUpdate,
-  useDetachLibrarySkill,
   useLibraryCatalogue,
   useLibrarySkill,
   usePendingLibraryUpdates,
@@ -34,26 +34,7 @@ import { TIER_LABEL, useCreateSkill, type Skill, type SkillScope, type SkillTier
 
 import { DiffView as FileDiffView } from "@/components/ui/diff-view";
 
-type Source = NonNullable<Skill["source"]>;
-
-/** Everything from a repository is untrusted text: it is only ever rendered as React text nodes (never as markup or links). */
-export function LibraryBadge({ source }: { source: Source }) {
-  if (source.detached) {
-    return (
-      <Badge>
-        Detached · was {source.repo}@{shortSha(source.commit_sha)}
-      </Badge>
-    );
-  }
-  return (
-    <>
-      <Badge>
-        Library · {source.repo} · {shortSha(source.commit_sha)}
-      </Badge>
-      {source.update_pending ? <Badge>Update available</Badge> : null}
-    </>
-  );
-}
+// Everything from a repository is untrusted text: here it is only ever rendered as React text nodes.
 
 /** "N updates are waiting": the pending proposals this scope's authority may decide. */
 export function PendingUpdatesNotice({ scope, enabled }: { scope: SkillScope; enabled: boolean }) {
@@ -65,11 +46,6 @@ export function PendingUpdatesNotice({ scope, enabled }: { scope: SkillScope; en
       {n === 1 ? "1 update from a skill library is waiting for review." : `${n} updates from skill libraries are waiting for review.`} Open a skill marked &quot;Update available&quot;.
     </Notice>
   );
-}
-
-/** Banner on a read-only library skill. */
-export function LibraryManagedNotice() {
-  return <Notice role="status">Managed by a skill library; edit it in the repository or detach it.</Notice>;
 }
 
 const AUTHORITY: Record<BudgetTier, string> = {
@@ -128,7 +104,7 @@ export function UpdateReviewDialog({
   open,
   onOpenChange,
 }: {
-  skill: Skill;
+  skill: Pick<Skill, "id" | "name" | "title">;
   tier: BudgetTier;
   canDecide: boolean;
   open: boolean;
@@ -144,7 +120,7 @@ export function UpdateReviewDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        title={`Update to ${skill.name}`}
+        title={`Update to ${skillDisplayName(skill.name, skill.title)}`}
         description="Review exactly what the agents will be told. Nothing changes until it is approved."
         size="2xl"
       >
@@ -218,46 +194,6 @@ export function UpdateReviewDialog({
         ) : null}
       </DialogContent>
     </Dialog>
-  );
-}
-
-/** Actions of a library skill: update review, detach (confirm). Remove is the ordinary delete. */
-export function LibrarySkillActions({ skill, tier, canDecide }: { skill: Skill; tier: BudgetTier; canDecide: boolean }) {
-  const [review, setReview] = useState(false);
-  const [confirm, setConfirm] = useState(false);
-  const detach = useDetachLibrarySkill(skill.id);
-  const source = skill.source;
-  if (!source || source.detached) return null;
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <LibraryBadge source={source} />
-        {source.update_pending ? (
-          <Button type="button" size="sm" variant="outline" onClick={() => setReview(true)}>
-            Review update
-          </Button>
-        ) : null}
-        {canDecide ? (
-          confirm ? (
-            <>
-              <Button type="button" size="sm" variant="danger" disabled={detach.isPending} onClick={() => detach.mutate(undefined, { onSuccess: () => setConfirm(false) })}>
-                Confirm detach
-              </Button>
-              <Button type="button" size="sm" variant="ghost" onClick={() => setConfirm(false)}>
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <Button type="button" size="sm" variant="outline" onClick={() => setConfirm(true)}>
-              Detach
-            </Button>
-          )
-        ) : null}
-      </div>
-      {confirm ? <Notice role="status">Detaching makes this an ordinary editable skill. The repository will no longer propose updates to it.</Notice> : null}
-      <ErrorNotice error={detach.error} />
-      <UpdateReviewDialog skill={skill} tier={tier} canDecide={canDecide} open={review} onOpenChange={setReview} />
-    </div>
   );
 }
 
@@ -370,41 +306,45 @@ export function activeLibraries(items: SkillLibrary[] | undefined): { own: Skill
   return { own: active.filter((l) => l.scope !== "instance"), shared: active.filter((l) => l.scope === "instance") };
 }
 
+/** Whether there is any library to add from: the organization's or one the instance shares, active. */
+export function useCanAddFromLibrary(orgId: string | undefined): boolean {
+  const groups = activeLibraries(useSkillLibraries(orgId).data?.items);
+  return !!orgId && groups.own.length + groups.shared.length > 0;
+}
+
 /**
- * "Add from library…" (docs/14): picker → searchable list at the library's current commit → full preview
- * of what would be stored → Add (pinned to that commit). Shown when the org or the instance has an active library.
- * `usage` is the tier's library-sourced bytes and count, to disable Add when it would not fit.
+ * **Add from a library** (docs/14), opened from the Add skill menu: picker → searchable list at the library's current
+ * commit → full preview of what would be stored → Add (pinned to that commit). `usage` is the tier's library-sourced
+ * bytes and count, to disable Add when it would not fit.
  */
 export function AddFromLibrary({
   scope,
   orgId,
   tier,
   usage,
+  open,
+  onOpenChange,
   onAdded,
 }: {
   scope: SkillScope;
   orgId: string | undefined;
   tier: BudgetTier;
   usage: { bytes: number; count: number };
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onAdded: (id: string) => void;
 }) {
   const libs = useSkillLibraries(orgId);
   const groups = activeLibraries(libs.data?.items);
-  const [open, setOpen] = useState(false);
   if (!orgId || groups.own.length + groups.shared.length === 0) return null;
   return (
-    <>
-      <Button type="button" variant="outline" onClick={() => setOpen(true)}>
-        Add from library…
-      </Button>
-      <LibraryBrowserDialog
-        orgId={orgId}
-        groups={groups}
-        open={open}
-        onOpenChange={setOpen}
-        adding={{ scope, tier, usage, onAdded: (id) => { setOpen(false); onAdded(id); } }}
-      />
-    </>
+    <LibraryBrowserDialog
+      orgId={orgId}
+      groups={groups}
+      open={open}
+      onOpenChange={onOpenChange}
+      adding={{ scope, tier, usage, onAdded: (id) => { onOpenChange(false); onAdded(id); } }}
+    />
   );
 }
 

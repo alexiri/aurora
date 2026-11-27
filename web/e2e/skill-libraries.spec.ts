@@ -80,7 +80,8 @@ for (const width of [1280, 390]) {
       await expect(page.getByText("What every agent in Acme Labs can do, and where it comes from.")).toBeVisible();
       await expect(page.getByRole("tab")).toHaveText(["Skills", "Libraries"]);
       await page.getByRole("button", { name: "Add skill" }).click();
-      await expect(page.getByLabel("Use it when…")).toBeVisible();
+      await page.getByRole("menuitem", { name: "Write a new skill" }).click();
+      await expect(page.getByLabel("When should agents use it?")).toBeVisible();
       await page.getByRole("tab", { name: "Libraries" }).click();
       await expect(page).toHaveURL(/\/o\/acme\/skills\?tab=libraries$/);
       await expect(page.getByRole("button", { name: "Add skill" })).toHaveCount(0);

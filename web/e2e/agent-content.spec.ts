@@ -8,7 +8,7 @@ import { CANVAS, overflow, titled, type Scheme } from "./support/open";
 // P5-APPSKILL-3 (C-1136, C-1139; 14 §Plugins, 24 §9): the "For agents" section of a package and of its pending-version
 // review — the skills and their files, scripts and change marks, the one line above Approve, a file opened as plain
 // text, hostile text as inert data, both themes, no horizontal page scroll at 390 px (a 64 KiB file of 400-character
-// lines scrolls inside its viewer), no serious axe violation — and an agent's Skills page with the "From apps" group.
+// lines scrolls inside its viewer), no serious axe violation — and an agent's Skills page with an app's skill.
 // The API is mocked.
 
 const PKG = "00000000-0000-4000-8000-0000000009a0";
@@ -167,7 +167,7 @@ test.describe("the review", () => {
   });
 });
 
-// The agent's Skills page: app skills under "From apps", read-only, a shadowed one naming its winner.
+// The agent's Skills page: an app's skill is a read-only row of the one list; a replaced one is no row of its own.
 const APP = { app_id: "skills-demo", name: "Skills demo", version: "1.1.0" };
 const appBody = (name: string, over: Record<string, unknown> = {}) => ({
   id: null, org_id: null, agent_id: null, workspace_id: null, created_at: null, updated_at: null,
@@ -179,7 +179,7 @@ for (const width of [390, 768, 1280]) {
   test.describe(`agent Skills page with app skills (${width} px)`, () => {
     test.use({ viewport: { width, height: 900 } });
     for (const scheme of ["light", "dark"] as const) {
-      test(`From apps is read-only, no horizontal scroll, accessible (${scheme})`, async ({ page }) => {
+      test(`an app's skill is read-only, no horizontal scroll, accessible (${scheme})`, async ({ page }) => {
         const errors: string[] = [];
         page.on("pageerror", (e) => errors.push(e.message));
         await mockWithTerminal(page, { output: new Uint8Array(), resizes: [] });
@@ -204,21 +204,26 @@ for (const width of [390, 768, 1280]) {
         );
         await page.emulateMedia({ colorScheme: scheme });
         await page.goto("/o/acme/w/main/agents/daneel?tab=skills");
-        const group = page.getByRole("list", { name: "Skills from apps" });
-        await expect(group).toBeVisible();
+        // (P5-SKILLS-3) One list: the app's skill is a row like any other, and the replaced one has none.
+        const list = page.getByRole("list", { name: "Skills", exact: true });
+        await expect(list).toBeVisible();
         await expect.poll(() => page.locator("html").getAttribute("data-theme"), { timeout: 20_000 }).toBe(scheme);
         await titled(page);
         expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(CANVAS[scheme]);
-        const row = group.getByTestId("app-skill-skills-demo-api");
-        await expect(row).toContainText("From the Skills demo app · 1.1.0");
-        await expect(row.getByText("Script", { exact: true })).toBeHidden(); // inside the closed fold
-        await row.getByText("Read the skill").click();
-        await expect(row.getByText("Script", { exact: true })).toBeVisible();
-        await expect(row.getByRole("region", { name: "Instructions of skills-demo-api" })).toContainText("<b>text</b>");
-        // Read-only: nothing to edit, switch off or delete in the row.
-        expect(await row.getByRole("button").count()).toBe(0);
+        await expect(list.getByRole("listitem")).toHaveCount(1);
+        const row = list.getByTestId("skill-row-skills-demo-api");
+        await expect(row.getByTestId("source-chip")).toHaveText("App");
+        await expect(row.getByText("On", { exact: true })).toBeVisible();
+        // Read-only: nothing to switch off in the row, and no field in its panel.
         expect(await row.getByRole("switch").count()).toBe(0);
-        await expect(page.getByRole("list", { name: "Skills not applied" })).toContainText("Shadowed by the agent skill");
+        await row.getByRole("button", { name: "Skills demo api" }).click();
+        const panel = page.getByRole("article", { name: "Skills demo api" });
+        await expect(panel.getByTestId("skill-lock")).toHaveText("Comes with the Skills demo app.");
+        await expect(panel.getByText("Executable", { exact: true })).toBeVisible();
+        await panel.getByRole("button", { name: "SKILL.md" }).click();
+        await expect(panel.getByRole("region", { name: "File SKILL.md" })).toContainText("<b>text</b>");
+        expect(await panel.getByRole("textbox").count()).toBe(0);
+        expect(await panel.getByRole("button", { name: "Edit" }).count()).toBe(0);
         expect(await overflow(page), "page overflows horizontally").toBeLessThanOrEqual(0);
         const { violations } = await new AxeBuilder({ page }).analyze();
         const bad = violations

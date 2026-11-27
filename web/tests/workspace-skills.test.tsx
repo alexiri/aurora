@@ -1,249 +1,125 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { EffectiveSkillsView, SkillsEditor } from "@/components/skills/skills-view";
 import { WorkspaceSkills } from "@/components/skills/workspace-skills";
-import type { Skill } from "@/lib/api/skills";
-import { wrap } from "./support/render";
 import { json } from "./support/api";
+import { wrap } from "./support/render";
+import { librarySource, me, menuItems, openMenu, routes, skill } from "./support/skills";
+
+// RFE-020 and P5-SKILLS-3: a workspace's Skills page is the same list and panel as the agent's, with the workspace's
+// own switch, how many agents use each skill, and the members' read-only view.
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ org: "acme", ws: "main" }),
   useSearchParams: () => new URLSearchParams(),
 }));
 
-type Handler = (req: Request) => Response | Promise<Response>;
-function mockFetch(routes: Record<string, Handler>) {
-  const fn = vi.fn(async (input: Request | string | URL) => {
-    const req = input as Request;
-    const url = new URL(req.url, "http://localhost");
-    const h = routes[`${req.method} ${decodeURIComponent(url.pathname)}`];
-    return h ? h(req) : json(404, { error: { code: "not_found", message: "nf" } });
-  });
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
-
-const T = "2026-01-01T00:00:00Z";
-function skill(over: Partial<Skill> & Pick<Skill, "id" | "name" | "tier">): Skill {
-  return {
-    scope: over.tier === "org" ? "organization" : over.tier,
-    agent_id: over.tier === "agent" ? "a1" : null,
-    workspace_id: over.tier === "workspace" ? "w1" : null,
-    org_id: "o1",
-    description: `${over.name} description`,
-    body: `${over.name} body`,
-    enabled: true,
-    files: [],
-    total_size: 10,
-    overridden_in: null,
-    created_at: T,
-    updated_at: T,
-    ...over,
-  } as Skill;
-}
+beforeEach(() => window.history.replaceState(null, "", "/o/acme/w/main/skills"));
 
 const deploy = skill({
   id: "ws1",
   name: "deploy-checklist",
   tier: "workspace",
+  used_by_agents: 6,
   overridden_in: [{ agent: { id: "a2", handle: "daneel", name: "Daneel" }, skill_id: "ag2" }],
   files: [{ path: "run.sh", size: 9, executable: true }],
 });
+const recipes = skill({ id: "ws2", name: "internal-comms", tier: "workspace", enabled: false, used_by_agents: 1, source: librarySource({ label: "Acme team recipes" }) });
 
-describe("workspace skills page", () => {
-  const resolve = () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" }, workspace: { id: "w1", slug: "main", name: "Main" } });
-  const ws = (role: string) => () => json(200, { id: "w1", org_id: "o1", slug: "main", name: "Main", my_role: role });
-
-  it("owner creates a workspace skill through the workspace route", async () => {
-    let created: unknown = null;
-    mockFetch({
-      "GET /v1/resolve": resolve,
-      "GET /v1/workspaces/w1": ws("owner"),
-      "GET /v1/workspaces/w1/skills": () => json(200, { items: [], next_cursor: null }),
-      "POST /v1/workspaces/w1/skills": async (r) => {
-        created = await r.json();
-        return json(201, skill({ id: "new", name: "release-notes", tier: "workspace" }));
-      },
-    });
-    wrap(<WorkspaceSkills />);
-    // (D-506) The header's Add skill is the one way to start a new skill, also while the list is empty.
-    expect(await screen.findByText("No skills yet")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "New skill" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Add skill" }));
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Release notes" } });
-    fireEvent.change(screen.getByLabelText("Use it when…"), { target: { value: "Write release notes" } });
-    fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "steps" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(created).toEqual({ name: "release-notes", description: "Write release notes", body: "steps", enabled: true }));
-  });
-
-  it("opens with what a skill is, keeps the precedence in a closed fold, and never says home sync (workspace-10)", async () => {
-    mockFetch({
-      "GET /v1/resolve": resolve,
-      "GET /v1/workspaces/w1": ws("owner"),
-      "GET /v1/workspaces/w1/skills": () => json(200, { items: [], next_cursor: null }),
-    });
-    wrap(<WorkspaceSkills />);
-    expect(await screen.findByRole("heading", { name: "Skills" })).toBeTruthy();
-    expect(screen.getByText("Skills every agent in Main can use")).toBeTruthy();
-    const fold = screen.getByTestId("skills-combine");
-    expect(fold).not.toHaveAttribute("open");
-    expect(fold).toHaveTextContent("If both have a skill with the same name, the workspace's version is used.");
-    expect(document.body.textContent).not.toMatch(/home sync/i);
-  });
-
-  it("owner sees who overrides the skill and can edit", async () => {
-    mockFetch({
-      "GET /v1/resolve": resolve,
-      "GET /v1/workspaces/w1": ws("owner"),
-      "GET /v1/workspaces/w1/skills": () => json(200, { items: [deploy], next_cursor: null }),
-    });
-    wrap(<WorkspaceSkills />);
-    fireEvent.click(await screen.findByRole("button", { name: /Deploy checklist/ }));
-    expect(await screen.findByText(/Overridden by an agent skill of the same name in/)).toBeTruthy();
-    expect(screen.getByText("daneel")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Delete" })).toBeTruthy();
-  });
-
-  it("member opens a workspace skill read-only: no create, save, delete or file controls", async () => {
-    const fn = mockFetch({
-      "GET /v1/resolve": resolve,
-      "GET /v1/workspaces/w1": ws("member"),
-      "GET /v1/workspaces/w1/skills": () => json(200, { items: [deploy], next_cursor: null }),
-    });
-    wrap(<WorkspaceSkills />);
-    fireEvent.click(await screen.findByRole("button", { name: /Deploy checklist/ }));
-    expect(await screen.findByText(/Only workspace owners can change them/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "New skill" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add skill" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Save file" })).toBeNull();
-    expect(screen.queryByLabelText("Replace run.sh")).toBeNull();
-    expect((screen.getByLabelText("Instructions") as HTMLTextAreaElement).readOnly).toBe(true);
-    expect(fn.mock.calls.some(([r]) => r instanceof Request && r.method !== "GET")).toBe(false);
-  });
+const base = (role: string, items: unknown[], extra: Parameters<typeof routes>[0] = {}) => ({
+  "GET /v1/me": () => json(200, me()),
+  "GET /v1/resolve": () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" }, workspace: { id: "w1", slug: "main", name: "Main" } }),
+  "GET /v1/workspaces/w1": () => json(200, { id: "w1", org_id: "o1", slug: "main", name: "Main", my_role: role }),
+  "GET /v1/workspaces/w1/skills": () => json(200, { items, next_cursor: null }),
+  "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [] }),
+  "GET /v1/workspaces/w1/skill-library-updates": () => json(200, { items: [] }),
+  ...extra,
 });
 
-describe("agent Skills tab: effective set", () => {
-  const mine = skill({ id: "ag1", name: "triage", tier: "agent" });
-  const org = skill({ id: "org1", name: "style-guide", tier: "org" });
-  const orgDeploy = skill({ id: "org2", name: "deploy-checklist", tier: "org" });
-  const effective = {
-    items: [
-      { skill: deploy, tier: "workspace", enabled: true, shadows: [{ id: "org2", tier: "org" }] },
-      { skill: mine, tier: "agent", enabled: true, shadows: [] },
-      { skill: org, tier: "org", enabled: true, shadows: [] },
-    ],
-    shadowed: [
-      { skill: orgDeploy, tier: "org", enabled: true, shadowed_by: { id: "ws1", tier: "workspace" } },
-      { skill: skill({ id: "off", name: "old-one", tier: "workspace", enabled: false }), tier: "workspace", enabled: false, shadowed_by: null },
-    ],
-  };
+const row = (name: string) => screen.getByTestId(`skill-row-${name}`);
+const list = () => screen.findByRole("list", { name: "Skills" });
+const open = async (name: string) => {
+  await list();
+  fireEvent.click(within(row(name)).getAllByRole("button")[0]!);
+};
 
-  it("shows tier badges, what a skill overrides, what is shadowed, and opens read-only", async () => {
-    mockFetch({ "GET /v1/agents/a1/skills/effective": () => json(200, effective) });
-    wrap(<EffectiveSkillsView agentId="a1" />);
-    await screen.findByRole("button", { name: "Open style-guide (Organization)" });
-    const received = screen.getByRole("list", { name: "Received skills" });
-    const rows = within(received).getAllByRole("listitem");
-    expect(rows).toHaveLength(3);
-    expect(within(rows[0]!).getByText("Workspace")).toBeTruthy();
-    expect(within(rows[0]!).getByText("Overrides organization skill")).toBeTruthy();
-    expect(within(rows[1]!).getByText("Agent")).toBeTruthy();
-    expect(within(rows[2]!).getByText("Organization")).toBeTruthy();
-    const notApplied = screen.getByRole("list", { name: "Skills not applied" });
-    expect(within(notApplied).getByText("Shadowed by the workspace skill")).toBeTruthy();
-    expect(within(notApplied).getByText("Disabled")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Open style-guide (Organization)" }));
-    expect((await screen.findByLabelText("Instructions") as HTMLTextAreaElement).readOnly).toBe(true);
-    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+describe("workspace skills page", () => {
+  it("is the one list: For <Workspace>, written here or from libraries, used by how many agents", async () => {
+    const calls = routes(base("owner", [deploy, recipes]));
+    wrap(<WorkspaceSkills />);
+    await list();
+    expect(screen.getByText("Skills every agent in Main can use")).toBeTruthy();
+    expect(screen.getByText("For Main")).toBeTruthy();
+    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["All 2", "Written here 1", "From libraries 1", "Off 1"]);
+    expect(within(row("deploy-checklist")).getByText("Used by 6 agents")).toBeTruthy();
+    expect(within(row("internal-comms")).getByText("Used by 1 agent")).toBeTruthy();
+    expect(within(row("deploy-checklist")).getByTestId("source-chip").textContent).toBe("Written here");
+    expect(within(row("internal-comms")).getByTestId("source-chip").textContent).toBe("Library · Acme team recipes");
+    expect(within(row("deploy-checklist")).getByRole("switch", { name: "Turn off for Main: Deploy checklist" })).toBeChecked();
+    expect(document.body.textContent).not.toMatch(/home sync|organization's agents/i);
+    // a workspace list asks for no agent's skills (no GET /v1/agents//skills)
+    expect(calls.filter((c) => c.path.startsWith("/v1/agents/"))).toEqual([]);
   });
 
-  it("lists app skills read-only under From apps, with the app and version, and names the winner of a shadowed one", async () => {
-    const appBody = (name: string, files: Array<{ path: string; size: number; executable: boolean }> = []) => ({
-      id: null,
-      org_id: null,
-      agent_id: null,
-      workspace_id: null,
-      created_at: null,
-      updated_at: null,
-      tier: "app",
-      scope: "app",
-      name,
-      description: `${name} description`,
-      body: `# ${name}\n<img src=x onerror="window.__pwned=1">`,
-      enabled: true,
-      files,
-      total_size: 10,
-      overridden_in: null,
-    });
-    const app = { app_id: "git", name: "Git", version: "1.2.0" };
-    const withApps = {
-      items: [
-        ...effective.items,
-        { skill: appBody("git-api", [{ path: "scripts/run.sh", size: 12, executable: true }]), tier: "app", enabled: true, shadows: [], app },
-      ],
-      shadowed: [
-        ...effective.shadowed,
-        { skill: appBody("triage"), tier: "app", enabled: true, shadowed_by: { id: "ag1", tier: "agent", app_id: null }, app },
-      ],
-    };
-    mockFetch({ "GET /v1/agents/a1/skills/effective": () => json(200, withApps) });
-    const { container } = wrap(<EffectiveSkillsView agentId="a1" />);
-    const apps = await screen.findByRole("list", { name: "Skills from apps" });
-    expect(screen.getByRole("heading", { name: "From apps" })).toBeTruthy();
-    const row = within(apps).getByTestId("app-skill-git-api");
-    expect(within(row).getByText("From the Git app · 1.2.0")).toBeTruthy();
-    expect(within(row).getByText("Script")).toBeTruthy();
-    // Read-only: no button of any kind in the row except the fold's summary; no edit, disable, delete.
-    expect(within(row).queryByRole("button")).toBeNull();
-    expect(within(row).queryByRole("switch")).toBeNull();
-    expect(within(row).queryByRole("checkbox")).toBeNull();
-    // The body is text, not markup.
-    expect(within(row).getByRole("region", { name: "Instructions of git-api" })).toHaveTextContent('<img src=x onerror="window.__pwned=1">');
-    expect(container.querySelector("img")).toBeNull();
-    // A shadowed app skill names its winner, and has no controls either.
-    const notApplied = screen.getByRole("list", { name: "Skills not applied" });
-    const shadowedRow = within(notApplied).getByTestId("app-skill-triage");
-    expect(within(shadowedRow).getByText("Shadowed by the agent skill")).toBeTruthy();
-    expect(within(shadowedRow).queryByRole("button")).toBeNull();
-    // The database tiers are unchanged and still open to read.
-    expect(within(screen.getByRole("list", { name: "Received skills" })).getAllByRole("listitem")).toHaveLength(3);
+  it("the switch is the skill's own", async () => {
+    const calls = routes(base("owner", [deploy], { "PATCH /v1/skills/ws1": () => json(200, { ...deploy, enabled: false }) }));
+    wrap(<WorkspaceSkills />);
+    await list();
+    fireEvent.click(within(row("deploy-checklist")).getByRole("switch"));
+    await waitFor(() => expect(calls.find((c) => c.method === "PATCH")?.body).toBe('{"enabled":false}'));
   });
 
-  it("an app skill that loses to another app names that app", async () => {
-    const body = { id: null, org_id: null, agent_id: null, workspace_id: null, created_at: null, updated_at: null, tier: "app", scope: "app", name: "jira-x", description: "d", body: "b", enabled: true, files: [], total_size: 1, overridden_in: null };
-    const jira = { app_id: "jira", name: "Jira", version: "1.0.0" };
-    const jiraDc = { app_id: "jira-dc", name: "Jira Data Center", version: "2.0.0" };
-    mockFetch({
-      "GET /v1/agents/a1/skills/effective": () =>
-        json(200, {
-          items: [{ skill: body, tier: "app", enabled: true, shadows: [{ tier: "app", id: null, app_id: "jira" }], app: jiraDc }],
-          shadowed: [{ skill: body, tier: "app", enabled: true, shadowed_by: { tier: "app", id: null, app_id: "jira-dc" }, app: jira }],
-        }),
-    });
-    wrap(<EffectiveSkillsView agentId="a1" />);
-    const notApplied = await screen.findByRole("list", { name: "Skills not applied" });
-    expect(within(notApplied).getByText("Shadowed by the Jira Data Center app's skill")).toBeTruthy();
+  it("owner creates a workspace skill through the workspace route, from the header's Add skill", async () => {
+    const calls = routes(base("owner", [], { "POST /v1/workspaces/w1/skills": () => json(201, skill({ id: "new", name: "release-notes", tier: "workspace" })) }));
+    wrap(<WorkspaceSkills />);
+    expect(await screen.findByText("No skills yet")).toBeTruthy();
+    openMenu("Add skill");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Write a new skill" }));
+    const form = await screen.findByRole("form", { name: "New skill" });
+    fireEvent.change(within(form).getByLabelText("Name"), { target: { value: "Release notes" } });
+    fireEvent.change(within(form).getByLabelText("When should agents use it?"), { target: { value: "Write release notes" } });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Instructions" }), { target: { value: "steps" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(JSON.parse(calls.find((c) => c.method === "POST")!.body)).toEqual({ name: "release-notes", title: "Release notes", description: "Write release notes", body: "steps", enabled: true });
   });
 
-  it("the agent's own list stays editable", async () => {
-    mockFetch({ "GET /v1/agents/a1/skills": () => json(200, { items: [mine], next_cursor: null }) });
-    wrap(<SkillsEditor scope={{ kind: "agent", id: "a1" }} />);
-    fireEvent.click(await screen.findByRole("button", { name: /triage/ }));
-    expect(await screen.findByRole("button", { name: "Save" })).toBeTruthy();
+  it("keeps the precedence under a closed How skills combine", async () => {
+    routes(base("owner", [deploy]));
+    wrap(<WorkspaceSkills />);
+    await list();
+    const how = screen.getByRole("button", { name: "How skills combine" });
+    expect(how).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("skills-combine")).toHaveTextContent("If both have a skill with the same name, the workspace's version is used.");
   });
 
-  it("a workspace list asks for no agent's skills (no GET /v1/agents//skills, P5-POLISH-11 pass 2)", async () => {
-    const fn = mockFetch({ "GET /v1/workspaces/w1/skills": () => json(200, { items: [deploy], next_cursor: null }) });
-    wrap(<SkillsEditor scope={{ kind: "workspace", id: "w1" }} />);
-    expect(await screen.findByRole("button", { name: /Deploy checklist/ })).toBeTruthy();
-    const paths = fn.mock.calls.map(([input]) => decodeURIComponent(new URL((input as Request).url, "http://localhost").pathname));
-    expect(paths.filter((p) => p.startsWith("/v1/agents/"))).toEqual([]);
+  it("owner sees who overrides the skill, can edit it, and removes it from this workspace", async () => {
+    routes(base("owner", [deploy]));
+    wrap(<WorkspaceSkills />);
+    await open("deploy-checklist");
+    const p = await screen.findByRole("article", { name: "Deploy checklist" });
+    expect(within(p).getByText(/Overridden by an agent skill of the same name in/)).toBeTruthy();
+    expect(within(p).getByText("daneel")).toBeTruthy();
+    expect(within(p).getByRole("button", { name: "Edit" })).toBeTruthy();
+    expect(within(p).getByTestId("skill-usage").textContent).toBe("Used by 6 agents");
+    // there is no chat to try it in from here
+    expect(within(p).queryByRole("link", { name: "Try it in chat" })).toBeNull();
+    openMenu("More actions for Deploy checklist");
+    expect(menuItems()).toEqual(["Remove from this workspace…"]);
+  });
+
+  it("a member opens a skill read-only: the lock line, no fields, nothing to write", async () => {
+    const calls = routes(base("member", [deploy]));
+    wrap(<WorkspaceSkills />);
+    await list();
+    expect(screen.queryByRole("button", { name: "Add skill" })).toBeNull();
+    expect(within(row("deploy-checklist")).getByRole("switch")).toBeDisabled();
+    await open("deploy-checklist");
+    const p = await screen.findByRole("article", { name: "Deploy checklist" });
+    expect(within(p).getByTestId("skill-lock").textContent).toBe("Managed by the workspace’s owners.");
+    expect(within(p).queryAllByRole("textbox")).toEqual([]);
+    for (const name of ["Edit", "Save", "Delete"]) expect(within(p).queryByRole("button", { name })).toBeNull();
+    expect(within(p).queryByRole("button", { name: /More actions/ })).toBeNull();
+    expect(calls.some((c) => c.method !== "GET")).toBe(false);
   });
 });

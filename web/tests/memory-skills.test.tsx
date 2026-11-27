@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { RevisionHistory } from "@/components/memory/memory-tab";
 import { SizeMeter } from "@/components/memory/size-meter";
-import { SkillsEditor } from "@/components/skills/skills-view";
+import { SkillsTab } from "@/components/skills/skills-tab";
 import { canRedact, meter, type Memory, type MemoryRevision } from "@/lib/api/memory";
 import { buildTree, validateSkillName, validateSkillPath } from "@/lib/api/skills";
 import { wrap } from "./support/render";
@@ -75,6 +75,12 @@ describe("skill paths", () => {
     expect(validateSkillPath("/etc/x")).not.toBeNull();
     expect(validateSkillPath("a//b")).not.toBeNull();
     expect(validateSkillPath("scripts/run.sh")).toBeNull();
+    // the server's own rules (P5-SKILLS-3)
+    expect(validateSkillPath("a/b/c/d.sh")).toBeNull();
+    expect(validateSkillPath("a/b/c/d/e.sh")).not.toBeNull();
+    expect(validateSkillPath("my file.md")).not.toBeNull();
+    expect(validateSkillPath("docs/Skill.md")).not.toBeNull();
+    expect(validateSkillPath("a".repeat(201))).not.toBeNull();
   });
   it("validates names and builds a tree", () => {
     expect(validateSkillName("aurora-x")).not.toBeNull();
@@ -87,33 +93,22 @@ describe("skill paths", () => {
 
 describe("skill files", () => {
   const skill = {
-    id: "s1", scope: "agent", agent_id: "a1", org_id: "o1", name: "demo", description: "d", body: "b", enabled: true,
-    files: [], total_size: 40_000, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    id: "s1", scope: "agent", tier: "agent", agent_id: "a1", org_id: "o1", name: "demo", description: "d", body: "b", enabled: true,
+    files: [{ path: "big.txt", size: 39_999, executable: false }], total_size: 40_000, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
   };
-  it("rejects bad path client-side and sends the executable bit on upload", async () => {
-    let query = "";
-    let body = "";
+  // (P5-SKILLS-3) The path rules and the executable bit of the Add file dialog are in `skill-form.test.tsx`.
+  it("says in the editor when the instructions and files are over the total, and saves nothing", async () => {
+    window.history.replaceState(null, "", "/");
     const fn = mockFetch({
-      "GET /v1/agents/a1/skills": () => json(200, { items: [skill], next_cursor: null }),
-      "PUT /v1/skills/s1/files/scripts/run.sh": async (r) => {
-        query = new URL(r.url).search;
-        body = await r.text();
-        return json(200, skill);
-      },
+      "GET /v1/agents/a1/skills/effective": () => json(200, { items: [{ skill, tier: "agent", enabled: true, shadows: [], off_for_agent: false, usage: null }], shadowed: [] }),
     });
-    wrap(<SkillsEditor scope={{ kind: "agent", id: "a1" }} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Demo/ }));
-    expect(await screen.findByText(/Total size: 40,000 \/ 32,000/)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("File path"), { target: { value: "../evil" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save file" }));
-    expect((await screen.findAllByRole("alert")).some((a) => a.textContent?.includes(".."))).toBe(true);
-    expect(fn.mock.calls.some(([r]) => (r as Request).method === "PUT")).toBe(false);
-
-    fireEvent.change(screen.getByLabelText("File path"), { target: { value: "scripts/run.sh" } });
-    fireEvent.change(screen.getByLabelText("Or type text content"), { target: { value: "echo hi" } });
-    fireEvent.click(screen.getByLabelText("Executable"));
-    fireEvent.click(screen.getByRole("button", { name: "Save file" }));
-        await waitFor(() => expect(query).toBe("?executable=true"));
-    expect(body).toBe("echo hi");
+    wrap(<SkillsTab agentId="a1" agentName="Dani" />);
+    fireEvent.click(await screen.findByRole("button", { name: "demo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(await screen.findByText("A skill's instructions and files can total at most 32,000 characters.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Demo two" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    // `/v1/me` is fetched by its path; everything else is a Request.
+    expect(fn.mock.calls.filter(([r]) => r instanceof Request && r.method !== "GET")).toEqual([]);
   });
 });

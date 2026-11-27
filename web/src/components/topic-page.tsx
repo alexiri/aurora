@@ -14,7 +14,7 @@ export interface TopicTab<T extends string = string> {
 }
 
 /** Query parameters that belong to one tab's dialogs and filters: switching tabs drops them. */
-const TAB_SCOPED_PARAMS = ["connect", "reconnect", "kind", "package", "client_key", "add"];
+const TAB_SCOPED_PARAMS = ["connect", "reconnect", "kind", "package", "client_key", "add", "skill"];
 
 /**
  * One topic page (`14 §Topics per level`): the header with its level badge, at most four tabs addressed by

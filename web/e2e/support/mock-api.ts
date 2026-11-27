@@ -523,6 +523,8 @@ export async function mockApi(
     // provide, and limits with a Helm rate class and the allowed-private list.
     // (P5-SKLIB-3) The instance's own skill libraries: none until a spec (e2e/support/skill-libraries.ts) adds some.
     if (p === "/v1/admin/skill-libraries") return json({ items: [], next_cursor: null });
+    // (P5-SKILLS-3) The agent's Skills page is its effective set: none until a spec (e2e/support/skills.ts) adds some.
+    if (/^\/v1\/agents\/[^/]+\/skills\/effective$/.test(p)) return json({ items: [], shadowed: [] });
     if (p === "/v1/admin/settings/agents" || p === "/v1/admin/settings/terminal" || p === "/v1/admin/settings/limits" || p === "/v1/admin/settings/skills") {
       const sch = (kind: string, o: Record<string, unknown> = {}) => ({ kind, min: null, max: null, max_len: null, options: null, item_kind: null, ...o });
       const k = { locked: false, helm_key: "config.x", list: null, id_field: null, entries: null, source: "default", default: null, secret: null };

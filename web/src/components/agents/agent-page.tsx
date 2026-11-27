@@ -82,8 +82,13 @@ export function AgentPage() {
   const [requestedTab, setTab] = useTabParam<AgentPageId>(AGENT_PAGE_IDS, "chat", {
     initial: (p) => (p.has("c") ? "chat" : null),
     // `c` belongs to Chat and `path` to Files (P5-FILES-2): leaving a page takes its own parameter along.
-    // `memory` and `history` belong to Memory (C-1177).
-    drop: (t) => [...(t === "chat" ? [] : ["c"]), ...(t === "files" ? [] : ["path"]), ...(t === "memory" ? [] : ["memory", "history"])],
+    // `memory` and `history` belong to Memory, `skill` to Skills (C-1177).
+    drop: (t) => [
+      ...(t === "chat" ? [] : ["c"]),
+      ...(t === "files" ? [] : ["path"]),
+      ...(t === "memory" ? [] : ["memory", "history"]),
+      ...(t === "skills" ? [] : ["skill"]),
+    ],
   });
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
@@ -318,7 +323,9 @@ export function AgentPage() {
             />
           ) : null}
           {tab === "memory" && !byo ? <MemoryTab agentId={agent.id} agentName={agent.name} readOnly={emergency} /> : null}
-          {tab === "skills" && !byo && workspace.data ? <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} agentName={agent.name} readOnly={emergency} /> : null}
+          {tab === "skills" && !byo && workspace.data ? (
+            <SkillsTab agentId={agent.id} orgId={workspace.data.org_id} wsId={workspace.data.id} handle={agent.handle} agentName={agent.name} readOnly={emergency} />
+          ) : null}
           {tab === "evals" && !byo ? <EvalsTab agentId={agent.id} frozen={agent.frozen !== null} canOwn={canOwn} defaultTimezone={workspace.data?.timezone} /> : null}
           {/* (P5-REFINE-14) Schedules, Webhooks and Channels are one page; the old ids open it filtered to their kind. */}
           {tab === "automations" && !byo && workspace.data ? (
