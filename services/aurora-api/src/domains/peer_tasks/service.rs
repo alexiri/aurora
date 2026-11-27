@@ -1103,11 +1103,16 @@ async fn wake_registered(conn: &mut PgConnection, conversation: Uuid) -> Result<
     if watch_registered(conn, conversation).await? {
         return Ok(true);
     }
+    // (FIX-253 review, low 7) The receiving agent's own wake-up only: `ends_at` (the task's
+    // deadline) is recorded by that agent's `schedule_create` in the task and by nothing a
+    // person does.
     Ok(sqlx::query_scalar(
         "SELECT EXISTS (
             SELECT 1 FROM schedules s
+            JOIN peer_tasks t ON t.task_conversation_id = s.origin_conversation_id
             WHERE s.origin_conversation_id = $1 AND s.run_at IS NOT NULL AND s.cron IS NULL
               AND s.completed_at IS NULL AND s.enabled
+              AND s.agent_id = t.to_agent_id AND s.ends_at IS NOT NULL
          )",
     )
     .bind(conversation)
@@ -1138,8 +1143,10 @@ async fn next_wake(
 ) -> Result<Option<String>, ApiError> {
     let row: Option<(Option<chrono::DateTime<chrono::Utc>>, String)> = sqlx::query_as(
         "SELECT s.next_fire_at, s.timezone FROM schedules s
+          JOIN peer_tasks t ON t.task_conversation_id = s.origin_conversation_id
           WHERE s.origin_conversation_id = $1 AND s.run_at IS NOT NULL AND s.cron IS NULL
             AND s.completed_at IS NULL AND s.enabled
+            AND s.agent_id = t.to_agent_id AND s.ends_at IS NOT NULL
           ORDER BY s.next_fire_at LIMIT 1",
     )
     .bind(conversation)

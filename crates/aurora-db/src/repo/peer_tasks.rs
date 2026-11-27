@@ -306,7 +306,8 @@ pub async fn waiting_without_wake_ids<'e, E: PgExecutor<'e>>(
                 WHERE w.conversation_id = t.task_conversation_id AND w.status = 'armed')
            AND NOT EXISTS (SELECT 1 FROM schedules s
                 WHERE s.origin_conversation_id = t.task_conversation_id AND s.enabled
-                  AND s.completed_at IS NULL AND s.run_at IS NOT NULL AND s.cron IS NULL)
+                  AND s.completed_at IS NULL AND s.run_at IS NOT NULL AND s.cron IS NULL
+                  AND s.agent_id = t.to_agent_id AND s.ends_at IS NOT NULL)
            AND NOT EXISTS (SELECT 1 FROM approvals a
                 WHERE a.conversation_id = t.task_conversation_id AND a.status = 'pending')
          ORDER BY t.updated_at, t.id LIMIT $1",

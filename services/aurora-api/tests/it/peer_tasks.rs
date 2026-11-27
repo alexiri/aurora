@@ -1344,12 +1344,14 @@ impl Duo {
             "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, enabled,
                 anchor, creator_user_id, origin_conversation_id, next_fire_at, run_at, ends_at)
              VALUES ($1,$2,'Check','look again',NULL,'UTC',true,'creator',$3,$4,
-                now() + interval '15 minutes', now() + interval '15 minutes', NULL)",
+                now() + interval '15 minutes', now() + interval '15 minutes',
+                (SELECT expires_at FROM peer_tasks WHERE id = $5))",
         )
         .bind(id)
         .bind(self.b)
         .bind(self.rig.p.id)
         .bind(pc)
+        .bind(task)
         .execute(self.rig.h.pool())
         .await
         .unwrap();
@@ -2141,14 +2143,16 @@ impl Duo {
         let pc = self.rig.peer_conversation(task).await;
         sqlx::query(
             "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, enabled,
-                anchor, creator_user_id, origin_conversation_id, next_fire_at, run_at)
+                anchor, creator_user_id, origin_conversation_id, next_fire_at, run_at, ends_at)
              VALUES ($1,$2,'Check','look again',NULL,'UTC',true,'creator',$3,$4,
-                now() + interval '15 minutes', now() + interval '15 minutes')",
+                now() + interval '15 minutes', now() + interval '15 minutes',
+                (SELECT expires_at FROM peer_tasks WHERE id = $5))",
         )
         .bind(Uuid::now_v7())
         .bind(receiver)
         .bind(self.rig.p.id)
         .bind(pc)
+        .bind(task)
         .execute(self.rig.h.pool())
         .await
         .unwrap();
@@ -2354,6 +2358,41 @@ async fn a_watch_that_ends_without_firing_cancels_the_waiting_task() {
     d.report_approval(id).await;
     d.finish_receiving_turn(task).await;
     assert_eq!(peers::sweep(d.rig.h.pool()).await.unwrap(), 0);
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+}
+
+/// (FIX-253 review, low 7) Only the receiving agent's own wake-up keeps its task waiting: a
+/// one-time schedule a person set in the same conversation (the reminder button, which carries
+/// no task deadline) does not.
+#[tokio::test]
+async fn a_persons_schedule_in_the_task_conversation_does_not_keep_the_task_waiting() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("check back").await["peer_task_id"]);
+    let schedule = d.arm_schedule(task).await;
+    sqlx::query("UPDATE schedules SET ends_at = NULL WHERE id = $1")
+        .bind(schedule)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 0);
+
+    // What the receiving agent's own `schedule_create` records does keep it waiting.
+    let task = Rig::id(&d.send("check back again").await["peer_task_id"]);
+    let run_at = (chrono::Utc::now() + chrono::Duration::hours(1))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+    let made = d
+        .as_b(
+            task,
+            "schedule_create",
+            json!({"name": "Check", "prompt": "look again", "run_at": run_at,
+                "timezone": "UTC"}),
+        )
+        .await;
+    Rig::ok(&made);
+    d.finish_receiving_turn(task).await;
     assert_eq!(d.rig.task_status(task).await, "waiting");
 }
 

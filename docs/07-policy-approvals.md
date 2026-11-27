@@ -1001,7 +1001,9 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   (words from `14 §Vocabulary`; a pending approval adds none beyond
   FIX-252's card, and the notice shows once per wait, not per turn). Only the
   receiving agent's own registrations count: a watch or a schedule of another
-  conversation never keeps the task alive, and a registration removed before
+  conversation never keeps the task alive, nor does a schedule a person set in
+  the task conversation (the agent's own wake-up is the one that carries the
+  task's deadline), and a registration removed before
   the turn ends (a deleted schedule, a finished watch) still cancels the task
   as today ("finished without a report"). `waiting` holds no worker and no
   sandbox — it is a state in the database. **The wake resumes the task**: the
