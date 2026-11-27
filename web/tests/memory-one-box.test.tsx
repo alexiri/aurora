@@ -54,7 +54,9 @@ describe("memory keys are made by Aurora (behaviour-1)", () => {
 
 const mem = (over: Record<string, unknown> = {}) => ({
   key: "bobs-tea", title: "Bob's tea", description: null, content: "Bob prefers green tea in the morning.",
-  index_line: "bobs-tea: Bob's tea", revision: 1, created_at: "2026-11-20T10:00:00Z", updated_at: "2026-11-20T10:00:00Z", ...over,
+  index_line: "bobs-tea: Bob's tea", revision: 1, created_at: "2026-11-20T10:00:00Z", updated_at: "2026-11-20T10:00:00Z",
+  added_by: { kind: "person", person: { id: "u1", display_name: "Ada" } },
+  changed_by: { kind: "person", person: { id: "u1", display_name: "Ada" } }, last_used: null, ...over,
 });
 
 const lockedMem = () =>

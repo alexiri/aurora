@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! BE-060: memory API, revisions, search, recall, tools and harvest.
 
+use crate::common::bearer;
 use crate::runner_rig::{Rig, rig};
 use aurora_api::domains::memory;
 use http::Method;
@@ -288,7 +289,10 @@ async fn recall_composition() {
         assert_eq!(r.put(a, k, c).await.0, 200);
     }
     let mut conn = r.h.pool().acquire().await.unwrap();
-    let snippets = memory::recall_snippets(&mut conn, a, "cat").await.unwrap();
+    let snippets = memory::recall_snippets(&mut conn, a, "cat")
+        .await
+        .unwrap()
+        .snippets;
     assert_eq!(snippets.len(), 3, "{snippets:?}");
     assert!(
         snippets
@@ -299,12 +303,14 @@ async fn recall_composition() {
         memory::recall_snippets(&mut conn, a, "quantum")
             .await
             .unwrap()
+            .snippets
             .is_empty()
     );
     assert!(
         memory::recall_snippets(&mut conn, a, "  ")
             .await
             .unwrap()
+            .snippets
             .is_empty()
     );
 }
@@ -671,12 +677,13 @@ async fn locked_memory_routes_and_the_agent_refusal() {
         )
         .await;
     assert_eq!(v["ok"], json!(false), "{v}");
-    assert_eq!(v["error"]["message"], json!(LOCKED_MESSAGE));
+    let refusal = format!("memory_locked: {LOCKED_MESSAGE}");
+    assert_eq!(v["error"]["message"], json!(refusal));
     assert_eq!(revs_of_ta("note".into()).await, 1);
     // Tool delete on a locked key: refused, the row is still there.
     let v = r.tool(&b, "memory_delete", json!({"key": "note"})).await;
     assert_eq!(v["ok"], json!(false), "{v}");
-    assert_eq!(v["error"]["message"], json!(LOCKED_MESSAGE));
+    assert_eq!(v["error"]["message"], json!(refusal));
     let (s, _) = r
         .user(Method::GET, &format!("/v1/agents/{ta}/memories/note"), None)
         .await;
@@ -779,6 +786,7 @@ async fn a_lock_committing_first_wins_over_a_waiting_agent_write() {
         let author = memory::Author {
             kind: "agent",
             user_id: None,
+            api_key_id: None,
             label: "A".into(),
         };
         memory::service::save(&pool, a, &w, &author, &memory::Source::Harvest).await
@@ -798,4 +806,887 @@ async fn a_lock_committing_first_wins_over_a_waiting_agent_write() {
         .await
         .unwrap();
     assert!(locked);
+}
+
+// ---------------------------------------------------------------- P5-MEMORY-1
+// Provenance, "used", revisions, search highlights, the transcript events and who may be told a
+// conversation's name (C-1169..C-1172, D-497, SEC-157).
+
+async fn set_name(pool: &sqlx::PgPool, email: &str, name: &str) -> Uuid {
+    sqlx::query_scalar("UPDATE users SET display_name = $2 WHERE email = $1 RETURNING id")
+        .bind(email)
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A member of the rig's organization with a workspace role (or none) and a session.
+async fn person(
+    r: &Rig,
+    email: &str,
+    name: &str,
+    org_role: &str,
+    ws_role: Option<&str>,
+) -> (Uuid, String) {
+    let id = r.h.user(email, false).await;
+    set_name(r.h.pool(), email, name).await;
+    r.h.member(r.org, id, org_role, "active").await;
+    if let Some(role) = ws_role {
+        r.h.bind_ws(r.ws, id, role).await;
+    }
+    let (_, tok) = r.h.good_session(id).await;
+    (id, tok)
+}
+
+impl Rig {
+    async fn get_ok(&self, tok: &str, uri: &str) -> Value {
+        let (s, v) = self.h.call_tok(tok, Method::GET, uri, None).await;
+        assert_eq!(s, 200, "{uri}: {v}");
+        v
+    }
+
+    async fn bearer_call(
+        &self,
+        tok: &str,
+        m: Method,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        let (s, _, v) = self
+            .h
+            .send(m, uri, &[("authorization", &bearer(tok))], body)
+            .await;
+        (s.as_u16(), v)
+    }
+
+    async fn events_of(&self, conv: Uuid, ty: &str) -> Vec<Value> {
+        sqlx::query_scalar(
+            "SELECT payload FROM transcript_events WHERE conversation_id = $1 AND type = $2
+             ORDER BY seq",
+        )
+        .bind(conv)
+        .bind(ty)
+        .fetch_all(self.h.pool())
+        .await
+        .unwrap()
+    }
+}
+
+fn one<'a>(v: &'a Value, key: &str) -> &'a Value {
+    v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["key"] == key)
+        .unwrap_or_else(|| panic!("no memory {key}: {v}"))
+}
+
+#[tokio::test]
+async fn provenance_is_written_on_every_path() {
+    let r = rig().await;
+    let b = r.booted("prov").await;
+    let a = b.agent;
+    let base = format!("/v1/agents/{a}/memories");
+    let bob = set_name(r.h.pool(), "o@x.io", "Bob Builder").await;
+    let (key_id, key) = r.h.api_key(bob, r.org, Some(r.ws), false).await;
+    sqlx::query("UPDATE api_keys SET name = 'Bob''s scripts' WHERE id = $1")
+        .bind(key_id)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+
+    // The dashboard: the person, by name.
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &base,
+            Some(json!({"key": "by-hand", "content": "x"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    for who in ["added_by", "changed_by"] {
+        assert_eq!(v[who]["kind"], "person", "{v}");
+        assert_eq!(
+            v[who]["person"],
+            json!({"id": bob, "display_name": "Bob Builder"})
+        );
+        assert_eq!(v[who]["api_key"], Value::Null);
+        assert_eq!(v[who]["conversation"], Value::Null);
+    }
+    assert_eq!(v["last_used"], Value::Null);
+
+    // An API key: the key by name, and its person.
+    let (s, v) = r
+        .bearer_call(
+            &key,
+            Method::POST,
+            &base,
+            Some(json!({"key": "by-key", "content": "x"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    assert_eq!(v["added_by"]["kind"], "api_key", "{v}");
+    assert_eq!(
+        v["added_by"]["api_key"],
+        json!({"id": key_id, "name": "Bob's scripts"})
+    );
+    assert_eq!(v["added_by"]["person"]["display_name"], "Bob Builder");
+
+    // The agent through the tool: the agent and the conversation (readable by a workspace
+    // member: an `api` conversation).
+    let t = r
+        .tool(
+            &b,
+            "memory_save",
+            json!({"key": "learned", "title": "Learned", "content": "y"}),
+        )
+        .await;
+    assert_eq!(t["ok"], true, "{t}");
+    assert_eq!(t["content"][0]["value"]["title"], "Learned", "{t}");
+    let (_, v) = r.user(Method::GET, &base, None).await;
+    let m = one(&v, "learned");
+    assert_eq!(m["added_by"]["kind"], "agent", "{m}");
+    assert_eq!(m["added_by"]["agent"], json!({"id": a, "name": "prov"}));
+    assert_eq!(m["added_by"]["conversation"]["id"], json!(b.conv), "{m}");
+    assert_eq!(m["added_by"]["person"], Value::Null);
+
+    // A person changes the agent's memory: the adder stays, the changer is the person.
+    let (s, v) = r.put(a, "learned", "z").await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["added_by"]["kind"], "agent", "{v}");
+    assert_eq!(v["changed_by"]["kind"], "person", "{v}");
+
+    // The harvest: the agent, in no conversation.
+    let (s, v) = r
+        .post(
+            Some(r.replica),
+            "/v1/runner/memory-writes",
+            json!({"sandbox_id": b.sandbox, "boot_id": b.boot, "key": "harvested", "content": "h"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = r
+        .user(Method::GET, &format!("{base}/harvested"), None)
+        .await;
+    assert_eq!(v["added_by"]["kind"], "agent");
+    assert_eq!(v["added_by"]["conversation"], Value::Null);
+
+    // A restore through the key changes only the last changer.
+    let (s, v) = r
+        .bearer_call(
+            &key,
+            Method::POST,
+            &format!("{base}/learned/restore"),
+            Some(json!({"revision": 1})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["added_by"]["kind"], "agent");
+    assert_eq!(v["changed_by"]["kind"], "api_key", "{v}");
+
+    // A lock is not a change.
+    let (_, v) = r
+        .user(
+            Method::PUT,
+            &format!("{base}/by-key/locked"),
+            Some(json!({"locked": true})),
+        )
+        .await;
+    assert_eq!(v["changed_by"]["kind"], "api_key", "{v}");
+}
+
+#[tokio::test]
+async fn revisions_carry_names_and_via_never_an_email() {
+    let r = rig().await;
+    let b = r.booted("revs").await;
+    let a = b.agent;
+    let base = format!("/v1/agents/{a}/memories/note");
+    let bob = set_name(r.h.pool(), "o@x.io", "Bob Builder").await;
+    let (key_id, key) = r.h.api_key(bob, r.org, Some(r.ws), false).await;
+    assert_eq!(r.put(a, "note", "v1").await.0, 200);
+    let t = r
+        .tool(&b, "memory_save", json!({"key": "note", "content": "v2"}))
+        .await;
+    assert_eq!(t["ok"], true, "{t}");
+    let (s, v) = r
+        .bearer_call(&key, Method::PUT, &base, Some(json!({"content": "v3"})))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _) = r
+        .user(
+            Method::POST,
+            &format!("{base}/restore"),
+            Some(json!({"revision": 1})),
+        )
+        .await;
+    assert_eq!(s, 200);
+    // An older API revision: the key was not recorded.
+    sqlx::query(
+        "UPDATE memory_revisions SET author_api_key_id = NULL, author_label = 'o@x.io'
+          WHERE revision = 3",
+    )
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (s, v) = r
+        .user(Method::GET, &format!("{base}/revisions"), None)
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert!(
+        !v.to_string().contains('@'),
+        "an address in the revisions: {v}"
+    );
+    let rev = |n: i64| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["revision"] == n)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(rev(1)["via"], "dashboard");
+    assert_eq!(rev(1)["author"]["kind"], "person");
+    assert_eq!(rev(1)["author_label"], "Bob Builder");
+    assert_eq!(rev(1)["restored_from"], Value::Null);
+    assert_eq!(rev(2)["via"], "conversation");
+    assert_eq!(rev(2)["author"]["kind"], "agent");
+    assert_eq!(rev(2)["author"]["conversation"]["id"], json!(b.conv));
+    assert_eq!(rev(2)["author_label"], "revs");
+    assert_eq!(rev(3)["via"], "api");
+    assert_eq!(rev(3)["author"]["kind"], "api_key");
+    assert_eq!(rev(3)["author"]["api_key"], Value::Null);
+    assert_eq!(rev(3)["author"]["person"]["display_name"], "Bob Builder");
+    assert_eq!(rev(4)["via"], "restore");
+    assert_eq!(rev(4)["restored_from"], 1);
+    assert_eq!(rev(4)["author"]["kind"], "person");
+
+    // New API-key revisions record the key; the stored label is never the address.
+    let (s, v) = r
+        .bearer_call(&key, Method::PUT, &base, Some(json!({"content": "v5"})))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (label, recorded): (String, Option<Uuid>) = sqlx::query_as(
+        "SELECT author_label, author_api_key_id FROM memory_revisions WHERE revision = 5",
+    )
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!((label.as_str(), recorded), ("Bob Builder", Some(key_id)));
+
+    // A name that is the address (an identity provider sent none) shows its local part only.
+    set_name(r.h.pool(), "o@x.io", "o@x.io").await;
+    let (_, v) = r
+        .user(Method::GET, &format!("{base}/revisions"), None)
+        .await;
+    assert!(!v.to_string().contains("o@x.io"), "{v}");
+    assert_eq!(v["items"][0]["author"]["person"]["display_name"], "o");
+}
+
+/// (SEC-157) A conversation is named to exactly the callers the conversation routes would let
+/// read it; everyone else gets null. Checked against `GET /v1/conversations/{id}` for each.
+#[tokio::test]
+async fn a_conversation_is_named_only_to_its_readers() {
+    let r = rig().await;
+    let a = r.agent("daneel").await;
+    let base = format!("/v1/agents/{a}/memories");
+    let (bob, bob_tok) = person(&r, "bob@x.io", "Bob Builder", "member", Some("member")).await;
+    let (carol, carol_tok) = person(&r, "carol@x.io", "Carol", "member", Some("member")).await;
+    let (_, owner_tok) = person(&r, "dana@x.io", "Dana", "member", Some("owner")).await;
+    let (opener, opener_tok) = person(&r, "olive@x.io", "Olive", "owner", None).await;
+
+    // Bob's agent learned a memory in Bob's direct chat, and used it there.
+    let conv = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref,
+            direct_user_id, title, last_activity_at)
+         VALUES ($1,$2,$3,'direct',$1::text,$4,'Release prep', now())",
+    )
+    .bind(conv)
+    .bind(a)
+    .bind(r.ws)
+    .bind(bob)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(r.put(a, "learned", "x").await.0, 200);
+    let actor = json!({"kind": "agent", "conversation_id": conv});
+    sqlx::query(
+        "UPDATE memories SET added_by = $2, changed_by = $2, last_used_at = now(),
+            last_used_conversation_id = $3 WHERE agent_id = $1",
+    )
+    .bind(a)
+    .bind(&actor)
+    .bind(conv)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE memory_revisions SET author_kind = 'agent', author_user_id = NULL,
+            provenance = jsonb_build_object('source', 'tool', 'conversation_id', $1::uuid)",
+    )
+    .bind(conv)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+
+    let named = json!({"id": conv, "title": "Release prep"});
+    let check = |m: &Value, want: bool| {
+        let expect = if want { named.clone() } else { Value::Null };
+        for at in ["added_by", "changed_by", "last_used"] {
+            assert_eq!(m[at]["conversation"], expect, "{at}: {m}");
+        }
+        // The actor and the use still show.
+        assert_eq!(m["added_by"]["kind"], "agent");
+        assert!(m["last_used"]["at"].is_string());
+        if !want {
+            assert!(!m.to_string().contains("Release prep"), "{m}");
+            assert!(!m.to_string().contains(&conv.to_string()), "{m}");
+        }
+    };
+    let conv_uri = format!("/v1/conversations/{conv}");
+    // Bob (the person of the chat) and a workspace owner read it; Carol, a member, does not.
+    for (tok, want) in [(&bob_tok, true), (&owner_tok, true), (&carol_tok, false)] {
+        let (s, _) = r.h.call_tok(tok, Method::GET, &conv_uri, None).await;
+        assert_eq!(s == 200, want, "the route and the reference agree");
+        check(one(&r.get_ok(tok, &base).await, "learned"), want);
+        check(&r.get_ok(tok, &format!("{base}/learned")).await, want);
+        let revs = r.get_ok(tok, &format!("{base}/learned/revisions")).await;
+        let expect = if want { named.clone() } else { Value::Null };
+        assert_eq!(revs["items"][0]["author"]["conversation"], expect, "{revs}");
+    }
+
+    // API keys follow their person: Bob's key is named it, Carol's is not.
+    for (user, want) in [(bob, true), (carol, false)] {
+        let (_, key) = r.h.api_key(user, r.org, Some(r.ws), false).await;
+        let (s, _) = r.bearer_call(&key, Method::GET, &conv_uri, None).await;
+        assert_eq!(s == 200, want);
+        let (s, v) = r.bearer_call(&key, Method::GET, &base, None).await;
+        assert_eq!(s, 200, "{v}");
+        check(one(&v, "learned"), want);
+    }
+
+    // An organization owner without own access is refused, until an emergency grant opens;
+    // their organization key never uses it.
+    let (s, _) = r.h.call_tok(&opener_tok, Method::GET, &base, None).await;
+    assert_eq!(s, 403);
+    let (s, v) =
+        r.h.call_tok(
+            &opener_tok,
+            Method::POST,
+            &format!("/v1/workspaces/{}/emergency-access", r.ws),
+            Some(json!({"reason": "looking at a broken agent"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let views = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM audit_log
+              WHERE action = 'conversation.emergency_view' AND target_id = $1",
+        )
+        .bind(conv.to_string())
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap()
+    };
+    assert_eq!(views().await, 0);
+    check(one(&r.get_ok(&opener_tok, &base).await, "learned"), true);
+    // Naming it is a recorded view of the conversation.
+    assert_eq!(views().await, 1);
+    let (_, org_key) = r.h.api_key(opener, r.org, None, false).await;
+    let (s, v) = r.bearer_call(&org_key, Method::GET, &base, None).await;
+    assert_eq!(s, 403, "{v}");
+
+    // A deleted conversation is not named to anyone.
+    sqlx::query("DELETE FROM conversations WHERE id = $1")
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    check(one(&r.get_ok(&bob_tok, &base).await, "learned"), false);
+}
+
+#[tokio::test]
+async fn last_use_is_written_by_the_agent_only_and_at_most_hourly() {
+    let r = rig().await;
+    let b = r.booted("used").await;
+    let a = b.agent;
+    let base = format!("/v1/agents/{a}/memories");
+    assert_eq!(r.put(a, "note", "rotation every monday").await.0, 200);
+    // The row's version changes with every write of it.
+    let version = || async {
+        sqlx::query_as::<_, (String, chrono::DateTime<chrono::Utc>)>(
+            "SELECT xmin::text, updated_at FROM memories WHERE agent_id = $1 AND key = 'note'",
+        )
+        .bind(a)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap()
+    };
+    let used = || async {
+        let (s, v) = r.user(Method::GET, &format!("{base}/note"), None).await;
+        assert_eq!(s, 200, "{v}");
+        v["last_used"].clone()
+    };
+
+    // Dashboard reads, the agent's list and its search never count.
+    let before = version().await;
+    for uri in [
+        base.clone(),
+        format!("{base}/note"),
+        format!("{base}/note/revisions"),
+    ] {
+        assert_eq!(r.user(Method::GET, &uri, None).await.0, 200);
+    }
+    r.search(a, "rotation").await;
+    r.tool(&b, "memory_list", json!({})).await;
+    r.tool(&b, "memory_search", json!({"query": "rotation"}))
+        .await;
+    assert_eq!(used().await, Value::Null);
+    assert_eq!(version().await, before);
+
+    // memory_get records it, without touching updated_at.
+    let t = r.tool(&b, "memory_get", json!({"key": "note"})).await;
+    assert_eq!(t["ok"], true, "{t}");
+    let first = used().await;
+    assert_eq!(first["conversation"]["id"], json!(b.conv), "{first}");
+    let written = version().await;
+    assert_ne!(written.0, before.0);
+    assert_eq!(written.1, before.1, "a use is not a change");
+
+    // A second one in the same hour and conversation writes nothing.
+    r.tool(&b, "memory_get", json!({"key": "note"})).await;
+    assert_eq!(version().await, written);
+    assert_eq!(used().await, first);
+
+    // Another conversation writes once; back in the first one, still within its hour, nothing.
+    let other = r.booted("used-elsewhere").await;
+    let conv2 = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'api',$1::text, now())",
+    )
+    .bind(conv2)
+    .bind(a)
+    .bind(r.ws)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    drop(other);
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM memories WHERE agent_id = $1")
+        .bind(a)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    let n = aurora_db::repo::memory::mark_used(r.h.pool(), &[id], conv2)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let second = version().await;
+    r.tool(&b, "memory_get", json!({"key": "note"})).await;
+    assert_eq!(version().await, second);
+    assert_eq!(used().await["conversation"]["id"], json!(conv2));
+
+    // An hour later the same conversation writes again.
+    sqlx::query(
+        "UPDATE memories SET last_used_marks = jsonb_build_object($2::text, now() - interval '61 minutes')
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(b.conv)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    r.tool(&b, "memory_get", json!({"key": "note"})).await;
+    assert_eq!(used().await["conversation"]["id"], json!(b.conv));
+    // The old mark of the other conversation was dropped with it.
+    let marks: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memories, jsonb_object_keys(last_used_marks) WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(marks, 1);
+}
+
+/// UTF-16 `[start, end)` of `text`.
+fn utf16_slice(text: &str, range: &Value) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let at = |i: usize| usize::try_from(range[i].as_u64().unwrap()).unwrap();
+    String::from_utf16(&units[at(0)..at(1)]).unwrap()
+}
+
+#[tokio::test]
+async fn search_snippets_are_plain_text_with_ranges() {
+    let r = rig().await;
+    let b = r.booted("oncall").await;
+    let a = b.agent;
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &format!("/v1/agents/{a}/memories"),
+            Some(json!({"key": "oncall-rotation", "title": "On-call rotation",
+                "description": "Who is on call and how to reach them",
+                "content": "Rotation changes every Monday at 09:00.\n\n- This week: **Carol** (primary), Dana (secondary).\n- Next week: Eli (primary), Bob (secondary).\n- Page through Opsgenie team `platform-oncall`."})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let hits = r.search(a, "rotation").await;
+    let h = &hits[0];
+    let snippet = h["snippet"].as_str().unwrap();
+    assert!(!snippet.contains('<'), "{snippet:?}");
+    assert!(!snippet.chars().any(char::is_control), "{snippet:?}");
+    assert!(
+        snippet.starts_with("Rotation changes every Monday at 09:00. This week: Carol"),
+        "{snippet:?}"
+    );
+    assert_eq!(h["highlights"][0], json!([0, 8]), "{h}");
+    assert_eq!(utf16_slice(snippet, &h["highlights"][0]), "Rotation");
+    let title = h["title"].as_str().unwrap();
+    assert_eq!(utf16_slice(title, &h["title_highlights"][0]), "rotation");
+
+    // The agent's tool and the turn-start recall get the same plain text.
+    let t = r
+        .tool(&b, "memory_search", json!({"query": "rotation"}))
+        .await;
+    let text = t.to_string();
+    assert!(!text.contains("<b>") && !text.contains("\\u0001"), "{text}");
+    assert!(
+        t["content"][0]["value"]["hits"][0]["snippet"]
+            .as_str()
+            .unwrap()
+            .starts_with("Rotation changes"),
+        "{t}"
+    );
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let recalled = aurora_db::repo::memory::search(&mut conn, a, "english", "rotation", 0.0, 3)
+        .await
+        .unwrap();
+    assert!(!recalled[0].snippet.contains('<'));
+
+    // An untitled memory marks the key; a substring match of the key is marked too.
+    assert_eq!(r.put(a, "carol-tea", "Green tea, no sugar.").await.0, 200);
+    let hits = r.search(a, "tea").await;
+    let h = hits.iter().find(|h| h["key"] == "carol-tea").unwrap();
+    assert_eq!(utf16_slice("carol-tea", &h["title_highlights"][0]), "tea");
+    let hits = r.search(a, "rol-te").await;
+    assert_eq!(
+        utf16_slice("carol-tea", &hits[0]["title_highlights"][0]),
+        "rol-te"
+    );
+    // Content cannot forge a highlight.
+    assert_eq!(
+        r.put(a, "forged", "plain \u{1}fake\u{2} zebra").await.0,
+        200
+    );
+    let hits = r.search(a, "zebra").await;
+    let s = hits[0]["snippet"].as_str().unwrap();
+    assert_eq!(
+        hits[0]["highlights"].as_array().unwrap().len(),
+        1,
+        "{hits:?}"
+    );
+    assert_eq!(utf16_slice(s, &hits[0]["highlights"][0]), "zebra");
+}
+
+#[tokio::test]
+async fn memory_save_says_what_happened_in_the_transcript() {
+    let r = rig().await;
+    let b = r.booted("daneel").await;
+    let a = b.agent;
+    let long = format!("Needs read access\nto the prod folder. {}", "x".repeat(400));
+    let t = r
+        .tool(
+            &b,
+            "memory_save",
+            json!({"key": "grafana-sa", "title": "Grafana service account", "content": long}),
+        )
+        .await;
+    assert_eq!(t["ok"], true, "{t}");
+    let saved = r.events_of(b.conv, "memory.saved").await;
+    assert_eq!(saved.len(), 1);
+    let p = &saved[0];
+    assert_eq!(p["turn_id"], json!(b.turn));
+    assert_eq!(p["key"], "grafana-sa");
+    assert_eq!(p["title"], "Grafana service account");
+    assert_eq!(p["revision"], 1);
+    assert_eq!(p["created"], true);
+    assert_eq!(p["previous_revision"], Value::Null);
+    let preview = p["preview"].as_str().unwrap();
+    assert!(
+        preview.starts_with("Needs read access to the prod folder. xxx"),
+        "{preview}"
+    );
+    assert!(preview.chars().count() <= 200 && !preview.contains('\n'));
+
+    // A change names the revision it replaced; an untitled memory is called by its key.
+    r.tool(
+        &b,
+        "memory_save",
+        json!({"key": "grafana-sa", "content": "granted"}),
+    )
+    .await;
+    let p = r.events_of(b.conv, "memory.saved").await.remove(1);
+    assert_eq!(
+        (
+            p["created"].clone(),
+            p["previous_revision"].clone(),
+            p["revision"].clone()
+        ),
+        (json!(false), json!(1), json!(2))
+    );
+    assert_eq!(p["title"], "grafana-sa");
+
+    // Refused by a lock: the reason in plain words and what the agent wanted to add.
+    let (s, _) = r
+        .user(
+            Method::POST,
+            &format!("/v1/agents/{a}/memories"),
+            Some(json!({"key": "jira-projects", "title": "Jira project keys",
+                        "content": "PLAT, OPS", "locked": true})),
+        )
+        .await;
+    assert_eq!(s, 201);
+    let t = r
+        .tool(
+            &b,
+            "memory_save",
+            json!({"key": "jira-projects", "content": "PLAT is the board"}),
+        )
+        .await;
+    assert_eq!(t["error"]["code"], "tool_failed", "{t}");
+    assert!(
+        t["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("memory_locked: This memory is locked"),
+        "{t}"
+    );
+    let refused = r.events_of(b.conv, "memory.refused").await;
+    assert_eq!(refused.len(), 1);
+    let p = &refused[0];
+    assert_eq!(p["code"], "memory_locked");
+    assert_eq!(p["turn_id"], json!(b.turn));
+    assert_eq!(p["key"], "jira-projects");
+    assert_eq!(p["title"], "Jira project keys");
+    assert_eq!(p["preview"], "PLAT is the board");
+    assert_eq!(
+        p["message"],
+        "“Jira project keys” is locked, so daneel can't change it."
+    );
+
+    // An invalid write.
+    r.tool(
+        &b,
+        "memory_save",
+        json!({"key": "big", "content": "x".repeat(12_001)}),
+    )
+    .await;
+    let p = r.events_of(b.conv, "memory.refused").await.remove(1);
+    assert_eq!(p["code"], "invalid", "{p}");
+    assert_eq!(p["title"], Value::Null);
+    assert!(
+        p["message"]
+            .as_str()
+            .unwrap()
+            .contains("at most 12000 characters"),
+        "{p}"
+    );
+
+    // The cap.
+    for i in 0..100 {
+        sqlx::query(
+            "INSERT INTO memories (id, agent_id, key, content, revision) VALUES ($1,$2,$3,'c',1)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(Uuid::now_v7())
+        .bind(a)
+        .bind(format!("k{i}"))
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    }
+    let t = r
+        .tool(
+            &b,
+            "memory_save",
+            json!({"key": "one-more", "content": "c"}),
+        )
+        .await;
+    assert!(
+        t["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("memory_limit_reached: "),
+        "{t}"
+    );
+    let p = r.events_of(b.conv, "memory.refused").await.remove(2);
+    assert_eq!(p["code"], "memory_limit_reached");
+
+    // An evaluation run is read-only, and says so.
+    sqlx::query("UPDATE conversations SET kind = 'eval' WHERE id = $1")
+        .bind(b.conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let t = r
+        .tool(
+            &b,
+            "memory_save",
+            json!({"key": "eval-note", "content": "c"}),
+        )
+        .await;
+    assert_eq!(t["error"]["code"], "eval_read_only", "{t}");
+    let p = r.events_of(b.conv, "memory.refused").await.remove(3);
+    assert_eq!(p["code"], "not_allowed");
+}
+
+/// The events sit in the transcript API in order after the tool call, only the conversation's
+/// readers get them, and a redaction clears what they quote.
+#[tokio::test]
+async fn memory_events_follow_the_tool_call_and_the_transcript_rules() {
+    let r = crate::hosted::rig().await;
+    let lv = r.boot("daneel").await;
+    let turn = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    let report = |n: u64, kind: &str, data: Value| {
+        let mut e = data;
+        e["kind"] = json!(kind);
+        json!({"kind": "turn.events", "turn_id": turn, "events": [{"n": n, "event": e}]})
+    };
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        report(
+            1,
+            "tool.started",
+            json!({"call_id": "c1", "name": "mcp__aurora__memory_save", "summary": "(2 args)"}),
+        ),
+    )
+    .await;
+    let (s, v) = r
+        .runner(
+            Some(r.rep),
+            "/v1/runner/tool-calls",
+            json!({"sandbox_id": lv.sb, "boot_id": lv.boot, "call_id": "c1",
+                   "conversation_id": lv.conv, "turn_id": turn, "tool": "memory_save",
+                   "args": {"key": "secret-plan", "content": "SECRET-MEMORY-TEXT"}}),
+        )
+        .await;
+    assert_eq!((s, v["ok"].clone()), (200, json!(true)), "{v}");
+    r.report(
+        &lv,
+        report(2, "tool.finished", json!({"call_id": "c1", "ok": true})),
+    )
+    .await;
+    let uri = format!("/v1/conversations/{}/events", lv.conv);
+    let (s, v) = r.user_call(Method::GET, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    let types: Vec<&str> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["type"].as_str().unwrap())
+        .collect();
+    let pos = |t: &str| {
+        types
+            .iter()
+            .position(|x| *x == t)
+            .unwrap_or_else(|| panic!("{types:?}"))
+    };
+    assert!(pos("tool.started") < pos("memory.saved"), "{types:?}");
+    assert!(pos("memory.saved") < pos("tool.finished"), "{types:?}");
+
+    // Another member of the workspace cannot read this direct chat, so not its events either.
+    let carol = r.h.user("carol@x.io", false).await;
+    r.h.member(r.org, carol, "member", "active").await;
+    r.h.bind_ws(r.ws, carol, "member").await;
+    let (_, carol_tok) = r.h.good_session(carol).await;
+    let (s, v) = r.h.call_tok(&carol_tok, Method::GET, &uri, None).await;
+    assert_eq!(s, 404, "{v}");
+    assert!(!v.to_string().contains("SECRET-MEMORY-TEXT"));
+
+    // A redaction of the turn clears the quoted memory.
+    let (s, v) = r
+        .user_call(
+            Method::POST,
+            &format!("/v1/turns/{turn}/redact"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, v) = r.user_call(Method::GET, &uri, None).await;
+    assert!(!v.to_string().contains("SECRET-MEMORY-TEXT"), "{v}");
+    assert!(!v.to_string().contains("secret-plan"), "{v}");
+}
+
+/// (C-1169) The turn-start recall counts as a use of every memory it includes, once the turn is
+/// delivered.
+#[tokio::test]
+async fn the_turn_start_recall_records_a_use() {
+    let r = crate::hosted::rig().await;
+    let lv = r.boot("daneel").await;
+    let first = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": first}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": first, "status": "done"}),
+    )
+    .await;
+    for (key, title, content) in [
+        ("zebra", "Zebra paddock", "the zebra lives in the paddock"),
+        ("tax", "Tax", "taxes are due"),
+    ] {
+        let (s, v) = r
+            .user_call(
+                Method::PUT,
+                &format!("/v1/agents/{}/memories/{key}", lv.agent),
+                Some(json!({"title": title, "content": content})),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+    }
+    // The memory writes ask for a home sync before the next delivery.
+    r.say(lv.conv, "zebra paddock").await;
+    let mut delivered = None;
+    for _ in 0..3 {
+        let items = r.work().await;
+        if let Some(d) = items.iter().find(|i| i["kind"] == "turn.deliver") {
+            delivered = Some(d.clone());
+            break;
+        }
+        if let Some(g) = items
+            .iter()
+            .filter(|i| i["kind"] == "home.sync")
+            .filter_map(|i| i["generation"].as_u64())
+            .next_back()
+        {
+            r.report(&lv, json!({"kind": "home.synced", "generation": g}))
+                .await;
+        }
+    }
+    let delivered = delivered.expect("turn.deliver");
+    let snippets = delivered["input"]["recall"]["snippets"].to_string();
+    assert!(
+        snippets.contains("zebra: zebra lives in the paddock"),
+        "{snippets}"
+    );
+    assert!(!snippets.contains("<b>"), "{snippets}");
+    let (s, v) = r
+        .user_call(
+            Method::GET,
+            &format!("/v1/agents/{}/memories", lv.agent),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(
+        one(&v, "zebra")["last_used"]["conversation"]["id"],
+        json!(lv.conv),
+        "{v}"
+    );
+    assert_eq!(one(&v, "tax")["last_used"], Value::Null);
 }

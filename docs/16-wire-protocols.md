@@ -210,6 +210,15 @@ ok: true, content: [{ type: "text", text } | { type: "json", value }] }` or
 `{ call_id, ok: false, error: { code, message } }`. Local tools (`process_*`)
 never leave the supervisor.
 
+(phase 5, P5-MEMORY-1, C-1172) After a `memory_save` call saved or was refused,
+the API itself appends one transcript event to the call's conversation and turn,
+whatever the harness (the supervisor and adapters send nothing new):
+`memory.saved` `{ turn_id, key, title, preview, revision, created,
+previous_revision }` or `memory.refused` `{ turn_id, key, title, preview, code,
+message }` (`10 §Transcript events`). The tool error of a refusal keeps its code
+in the message (`tool_failed: memory_locked: …`), and the `memory_save` result
+carries `{ key, title, revision, created }`.
+
 MCP surface: `tools/list` answered from the synced catalogue (+ local tools);
 `tools/call` as above; no MCP resources or prompts in phase 0. (phase 5, P5-GUIDE-7, D-297,
 C-654) `ToolDescriptor` gains optional `family` and `exposure` (`core` / `on_demand`, omitted =

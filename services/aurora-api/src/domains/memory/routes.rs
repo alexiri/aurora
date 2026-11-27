@@ -1,13 +1,15 @@
+use super::actor::{self, StoredActor};
 use super::dto::*;
 use super::service::{self, Author, Source, Write};
 use crate::app::AppState;
 use crate::audit::{self, AuditEvent};
-use crate::http::auth::Caller;
+use crate::http::auth::{Caller, Principal};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
 use crate::http::pagination::Page;
 use aurora_core::{ApiError, limits};
 use aurora_db::repo::agents;
+use aurora_db::repo::memory::{MemoryRow, RevisionRow};
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde_json::json;
@@ -51,8 +53,55 @@ fn author(c: &Caller) -> Author {
     Author {
         kind: "user",
         user_id: Some(c.user_id),
-        label: c.email.clone(),
+        api_key_id: match c.principal {
+            Principal::ApiKey { id, .. } => Some(id),
+            _ => None,
+        },
+        // A person's label is their display name, looked up when the revision is written.
+        label: String::new(),
     }
+}
+
+/// The rows as the caller may see them: names looked up, conversations named only to their
+/// readers (SEC-157).
+async fn present(
+    c: &Caller,
+    s: &AppState,
+    agent: &agents::AgentRow,
+    rows: Vec<MemoryRow>,
+) -> Result<Vec<Memory>, ApiError> {
+    let actors: Vec<(StoredActor, StoredActor)> = rows
+        .iter()
+        .map(|m| {
+            (
+                StoredActor::parse(&m.added_by),
+                StoredActor::parse(&m.changed_by),
+            )
+        })
+        .collect();
+    let used: Vec<Uuid> = rows
+        .iter()
+        .filter_map(|m| m.last_used_conversation_id)
+        .collect();
+    let names = actor::names(s, c, agent, actors.iter().flat_map(|(a, b)| [a, b]), &used).await?;
+    Ok(rows
+        .into_iter()
+        .zip(&actors)
+        .map(|(m, (added, changed))| Memory::present(m, added, changed, &names))
+        .collect())
+}
+
+async fn present_one(
+    c: &Caller,
+    s: &AppState,
+    agent: &agents::AgentRow,
+    row: MemoryRow,
+) -> Result<Json<Memory>, ApiError> {
+    present(c, s, agent, vec![row])
+        .await?
+        .pop()
+        .map(Json)
+        .ok_or_else(|| ApiError::internal("memory vanished"))
 }
 
 fn source(c: &Caller) -> Source {
@@ -84,12 +133,9 @@ async fn list_memories(
     State(s): State<AppState>,
     Path(agent): Path<Uuid>,
 ) -> Result<Json<Page<Memory>>, ApiError> {
-    visible_agent_read(&c, &s, agent).await?;
-    let items = service::list(&s.pool, agent)
-        .await?
-        .into_iter()
-        .map(Memory::from)
-        .collect();
+    let a = visible_agent_read(&c, &s, agent).await?;
+    let rows = service::list(&s.pool, agent).await?;
+    let items = present(&c, &s, &a, rows).await?;
     Ok(Json(Page {
         items,
         next_cursor: None,
@@ -124,7 +170,7 @@ async fn create_memory(
     };
     let (row, _) = service::save(&s.pool, agent, &w, &author(&c), &source(&c)).await?;
     record(&c, &s, &a, "memory.save", &row.key);
-    Ok((StatusCode::CREATED, Json(row.into())))
+    Ok((StatusCode::CREATED, present_one(&c, &s, &a, row).await?))
 }
 
 /// Search memories in the workspace memory language.
@@ -159,8 +205,9 @@ async fn get_memory(
     State(s): State<AppState>,
     Path((agent, key)): Path<(Uuid, String)>,
 ) -> Result<Json<Memory>, ApiError> {
-    visible_agent_read(&c, &s, agent).await?;
-    Ok(Json(service::get(&s.pool, agent, &key).await?.into()))
+    let a = visible_agent_read(&c, &s, agent).await?;
+    let row = service::get(&s.pool, agent, &key).await?;
+    present_one(&c, &s, &a, row).await
 }
 
 /// Replace a memory's title, description and content; creates it when the key is new.
@@ -191,7 +238,7 @@ async fn put_memory(
     };
     let (row, _) = service::save(&s.pool, agent, &w, &author(&c), &source(&c)).await?;
     record(&c, &s, &a, "memory.save", &row.key);
-    Ok(Json(row.into()))
+    present_one(&c, &s, &a, row).await
 }
 
 /// Delete a memory and its revisions.
@@ -240,7 +287,7 @@ async fn set_memory_locked(
         };
         record(&c, &s, &a, action, &key);
     }
-    Ok(Json(row.into()))
+    present_one(&c, &s, &a, row).await
 }
 
 /// Revisions, newest first (at most `MEMORY_REVISIONS_KEPT`).
@@ -254,9 +301,17 @@ async fn list_revisions(
     State(s): State<AppState>,
     Path((agent, key)): Path<(Uuid, String)>,
 ) -> Result<Json<Page<MemoryRevision>>, ApiError> {
-    visible_agent(&c, &s, agent).await?;
+    let a = visible_agent(&c, &s, agent).await?;
+    let rows = service::revisions(&s.pool, agent, &key).await?;
+    let actors: Vec<StoredActor> = rows.iter().map(StoredActor::of_revision).collect();
+    let names = actor::names(&s, &c, &a, &actors, &[]).await?;
+    let items = rows
+        .into_iter()
+        .zip(&actors)
+        .map(|(r, who): (RevisionRow, _)| MemoryRevision::present(r, who, &names))
+        .collect();
     Ok(Json(Page {
-        items: service::revisions(&s.pool, agent, &key).await?,
+        items,
         next_cursor: None,
     }))
 }
@@ -278,7 +333,7 @@ async fn restore_memory(
     let a = visible_agent(&c, &s, agent).await?;
     let row = service::restore(&s.pool, agent, &key, req.revision, &author(&c)).await?;
     record(&c, &s, &a, "memory.restore", &key);
-    Ok(Json(row.into()))
+    present_one(&c, &s, &a, row).await
 }
 
 /// Redact a non-latest revision's content in place (audited).

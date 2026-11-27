@@ -2912,30 +2912,53 @@ Design target: `docs/design/skills-memory/` (D-496). The lanes complete each con
 names, and copy the route rows into `05`, the tables into `03`, the rules into `10` and the screens into `14`.
 
 - C-1169 **A memory's provenance and last use** (D-497; P5-MEMORY-1; migration `20261201000288`). `Memory` gains
-  `added_by: MemoryActor`, `changed_by: MemoryActor` and `last_used: { at: timestamp, conversation: ConversationRef|null }|null`.
+  `added_by: MemoryActor`, `changed_by: MemoryActor` and `last_used: MemoryLastUsed|null`
+  (`{ at: timestamp, conversation: ConversationRef|null }`); every route that returns a `Memory` has them.
   `MemoryActor` = `{ kind: "person" | "api_key" | "agent" | "template" | "import" | "unknown", person: { id, display_name }|null,
-  api_key: { id, name }|null, agent: { id, name }|null, conversation: ConversationRef|null, template: { name, version }|null }`;
-  `ConversationRef` = `{ id, title }` **only when the caller may read that conversation** (else the field is null and the
-  actor or use still shows, D-497(c)). Existing memories are back-filled from their oldest and newest kept revision;
-  what cannot be known is `kind: "unknown"`. `last_used` is written by `memory_get`, by a `memory_search` hit the agent
-  then reads, and by the turn-start recall, at most once per memory, conversation and hour (D-497(b)); never by a
-  dashboard or API read. The list stays one page (`MEMORY_MAX_PER_AGENT`); filtering and sorting are client-side.
+  api_key: { id, name }|null, agent: { id, name }|null, conversation: ConversationRef|null, template: { name, version }|null }`.
+  `person` is set for `person`, `api_key` (the key's person) and `template` (who created or applied it); a person's
+  `display_name` is never an e-mail address (one that is the address shows its local part), and `person` is null for a
+  user who no longer exists. `agent` is set for `agent` (the memory's agent). `import` is reserved: no server path
+  writes it today (the dashboard's import uses the ordinary create route).
+  `ConversationRef` = `{ id: uuid, title: string|null }` (null title: nobody titled it), present **only when the caller
+  may read that conversation** — the conversation routes' own check (`conversations::reference::conversation_refs`:
+  key confinement, own access or a session's emergency grant, then `can_see_conversation`); else the field is null and
+  the actor or use still shows (D-497(c)). Naming a conversation to an emergency reader records
+  `conversation.emergency_view` first, like the conversation list (503 `audit_unavailable` if it cannot). Existing
+  memories are back-filled by the migration: the adder from revision 1 when it is still kept, the last changer from
+  the newest revision; what cannot be known is `kind: "unknown"`. `last_used` is written by `memory_get` (so a
+  `memory_search` hit counts once the agent reads it) and by the turn-start recall of a delivered turn, at most once
+  per memory, conversation and hour (D-497(b)); never by `memory_list`, `memory_search`, or a dashboard or API read,
+  and it never changes `updated_at`. The list stays one page (`MEMORY_MAX_PER_AGENT`); filtering and sorting are
+  client-side. The `import` of `MemoryVia`/`MemoryActorKind` is in the schema for later.
 - C-1170 **Revisions name people, not e-mails** (D-497(d); P5-MEMORY-1). `MemoryRevision` gains `author: MemoryActor`
   (C-1169), `via: "dashboard" | "api" | "conversation" | "harvest" | "template" | "restore" | "import"`,
   `restored_from: integer|null`; `author_label` becomes the display name (never an e-mail) and is deprecated in favour
   of `author`. The API key id is recorded on new revisions (`memory_revisions.author_api_key_id`); older revisions
-  through an API key show the key's person with `api_key: null`.
+  through an API key show the key's person with `api_key: null`. The schema names the enum `MemoryVia`. `provenance`
+  (string) and `author_kind` stay.
 - C-1171 **Search snippets are plain text with highlight ranges** (P5-MEMORY-1; fixes M-1). `MemorySearchHit` gains
-  `highlights: [[start, end]]` (UTF-16 offsets into `snippet`, the conversation search's form, `repo/search.rs`
-  `snippet()`), `snippet` carries no markup, and a match in the title or key is highlighted in `title_highlights`.
-  The `memory_search` tool and the turn-start recall give the agent the same plain text (no `<b>`).
+  `highlights: [[start, end]]` and `title_highlights: [[start, end]]` (`[start, end)` in UTF-16 code units, the
+  conversation search's form, `repo/search.rs` `snippet()`). `highlights` index `snippet`; `title_highlights` index
+  `title`, or `key` when the memory has no title (a key or title that matched only as a substring has that substring
+  marked). `snippet` is one line of at most 800 characters (`MEMORY_SNIPPET_CHARS`): Markdown reduced to plain text
+  (list and task-list marks, headings, emphasis, code and table rules dropped), no markup, no control characters.
+  The `memory_search` tool and the turn-start recall give the agent the same plain text (no `<b>`); their hits carry no
+  ranges.
 - C-1172 **What the agent remembered, in the transcript** (D-497; P5-MEMORY-1 server, P5-MEMORY-4 web; fixes M-6).
   When the `memory_save` tool (any harness) saves or refuses, the API appends one transcript event to the turn, after
-  the tool call: `memory.saved` `{ key, title, preview (the content's first 200 characters, one line), revision,
-  created: bool, previous_revision: integer|null }` or `memory.refused` `{ key, title|null, preview, code:
-  "memory_locked" | "memory_limit_reached" | "invalid" | "not_allowed", message }` (plain words). They are ordinary
-  `transcript_events` rows, readable by whoever may read the conversation, and replayed like the others. The
-  `memory_save` result also returns `title`, and a refusal keeps its code (`tool_failed: memory_locked: …`) instead of
+  the tool call: `memory.saved` `{ turn_id, key, title: string (the memory's title, else its key), preview (the
+  content's first 200 characters, one line), revision, created: bool, previous_revision: integer|null }` or
+  `memory.refused` `{ turn_id, key, title: string|null (the memory it would have changed, else the title sent),
+  preview (of what the agent sent), code: "memory_locked" | "memory_limit_reached" | "invalid" | "not_allowed",
+  message }` (plain words, e.g. "“Jira project keys” is locked, so Daneel can't change it."). `invalid` is a write the
+  memory rules refuse (arguments that do not fit the tool's schema get no event); `not_allowed` is an evaluation
+  turn's read-only refusal. A server failure writes no event. They are ordinary `transcript_events` rows, readable by
+  whoever may read the conversation, replayed and exported like the others; a redaction leaves only `turn_id`.
+  The event is written after the call's own transaction, best effort (a failed append is logged and never changes the
+  tool's answer); its place relative to the harness's own `tool.started`/`tool.finished` reports follows the order in
+  which they reach the API. The
+  `memory_save` result also returns `title` (the stored one, null if none), and a refusal keeps its code (`tool_failed: memory_locked: …`) instead of
   a bare failure.
 - C-1173 **A skill's display name** (D-498; P5-SKILLS-1; migration `20261201000289`). `Skill` gains `title: string|null`
   (at most 80 characters, plain text). Create and update accept it; the folder `name` is still the immutable slug.

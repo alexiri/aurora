@@ -1201,6 +1201,11 @@ Phase 0 blob backend (`postgres`).
 | locked | boolean not null default false | the agent cannot save or delete this memory (409 `memory_locked`); people can; counts toward `MEMORY_MAX_PER_AGENT` (P6-MEMLOCK, C-1148) |
 | locked_at | timestamptz null | set when `locked` becomes true, cleared when false |
 | locked_by | uuid null FK→users (set null) | the person who locked it; null for an API key without a user and for a person who was later deleted |
+| added_by | jsonb not null default `{"kind":"unknown"}` | (P5-MEMORY-1, C-1169) who created it, ids only: `{ kind: person\|api_key\|agent\|template\|import\|unknown, user_id?, api_key_id?, conversation_id?, template?: { name, version } }`; dangling ids ok, no FKs; names are looked up at read time. Back-filled from revision 1 when it is still kept |
+| changed_by | jsonb not null default `{"kind":"unknown"}` | who wrote the current content (every save and restore; a lock is not a change); back-filled from the newest revision |
+| last_used_at | timestamptz null | (D-497(b)) the agent's latest recorded use (`memory_get`, or the turn-start recall of a delivered turn); never a dashboard or API read |
+| last_used_conversation_id | uuid null | the conversation of that use (dangling ok) |
+| last_used_marks | jsonb not null default `{}` | conversation id → time of the last use recorded there, entries older than an hour dropped at the next write: at most one write per memory, conversation and hour, by one conditional update that never touches `updated_at` |
 
 A lock writes no `memory_revisions` row (it is not a content change); it is audited (`memory.lock` / `memory.unlock`) and bumps the agent's home-sync generation (P6-MEMLOCK, C-1148).
 
@@ -1213,10 +1218,11 @@ A lock writes no `memory_revisions` row (it is not a content change); it is audi
 | op | text CHECK in (`save`,`restore`) | |
 | author_kind | text CHECK in (`user`,`agent`) | |
 | author_user_id | uuid null | |
-| author_label | text not null | |
+| author_label | text not null | an agent's name or a person's display name (never an e-mail address since P5-MEMORY-1; the API derives `author_label` at read time, so an older stored address is never returned) |
+| author_api_key_id | uuid null | (P5-MEMORY-1, C-1170) the API key the revision was written through; null for older revisions (dangling ok) |
 | title, description | text null | |
 | content | text not null | |
-| provenance | jsonb not null default `{}` | `{ conversation_id?, turn_id?, restored_from? }` (dangling ok) |
+| provenance | jsonb not null default `{}` | `{ source: dashboard\|api\|tool\|harvest\|template\|restore, conversation_id?, turn_id?, restored_from?, template?, template_version? }` (dangling ok) |
 | redacted_at | timestamptz null | content replaced by `[redacted]` in place |
 | redacted_by | uuid null | |
 

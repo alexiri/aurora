@@ -13,6 +13,7 @@ mod display_name_edited_migration;
 mod followup_controls_migration;
 mod gateway_grants;
 mod membership_queries;
+mod memory_provenance_migration;
 mod migration_order;
 mod own_workspace_access;
 mod schema_6_11;

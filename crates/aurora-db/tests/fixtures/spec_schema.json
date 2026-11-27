@@ -796,11 +796,16 @@
       "user_id"
     ],
     "memories": [
+      "added_by",
       "agent_id",
+      "changed_by",
       "content",
       "description",
       "id",
       "key",
+      "last_used_at",
+      "last_used_conversation_id",
+      "last_used_marks",
       "locked",
       "locked_at",
       "locked_by",
@@ -808,6 +813,7 @@
       "title"
     ],
     "memory_revisions": [
+      "author_api_key_id",
       "author_kind",
       "author_label",
       "author_user_id",
@@ -2515,11 +2521,16 @@
       "user_id": "uuid null"
     },
     "memories": {
+      "added_by": "jsonb not null",
       "agent_id": "uuid",
+      "changed_by": "jsonb not null",
       "content": "text not null",
       "description": "text null",
       "id": "uuid not null",
       "key": "text not null",
+      "last_used_at": "timestamptz null",
+      "last_used_conversation_id": "uuid null",
+      "last_used_marks": "jsonb not null",
       "locked": "boolean not null",
       "locked_at": "timestamptz null",
       "locked_by": "uuid null",
@@ -2527,6 +2538,7 @@
       "title": "text null"
     },
     "memory_revisions": {
+      "author_api_key_id": "uuid null",
       "author_kind": "text",
       "author_label": "text not null",
       "author_user_id": "uuid null",

@@ -64,6 +64,19 @@ pub async fn get<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// The existing conversations among `ids` (unknown ids are simply absent).
+pub async fn get_many<'e, E: PgExecutor<'e>>(
+    exec: E,
+    ids: &[Uuid],
+) -> Result<Vec<ConversationRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM conversations WHERE id = ANY($1)"
+    )))
+    .bind(ids)
+    .fetch_all(exec)
+    .await?)
+}
+
 /// Get-or-create by `(agent, kind, external_ref)`; idempotent under concurrency (`ON CONFLICT
 /// DO NOTHING` without a target absorbs both the ref and the direct-user unique indexes).
 /// Returns `(row, created)`.

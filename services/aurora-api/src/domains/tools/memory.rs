@@ -27,7 +27,14 @@ fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, ToolError> {
 
 fn fail(e: ApiError) -> ToolError {
     if e.status().is_client_error() {
-        ToolError::Failed(e.message().to_owned())
+        // (C-1172) A refusal the agent can act on keeps its code in the text:
+        // `tool_failed: memory_locked: …`.
+        match e.code() {
+            code @ ("memory_locked" | "memory_limit_reached") => {
+                ToolError::Failed(format!("{code}: {}", e.message()))
+            }
+            _ => ToolError::Failed(e.message().to_owned()),
+        }
     } else {
         tracing::error!(error = %e.message(), "memory tool error");
         ToolError::Failed("internal error".into())
@@ -108,17 +115,67 @@ impl PlatformTool for Save {
         let author = Author {
             kind: "agent",
             user_id: None,
-            label: agent.name,
+            api_key_id: None,
+            label: agent.name.clone(),
         };
         let source = Source::Tool {
             conversation_id: ctx.conversation_id,
             turn_id: ctx.turn_id,
         };
-        let (m, created) = memory::save(&ctx.agent.pool, agent.id, &w, &author, &source)
-            .await
-            .map_err(fail)?;
-        out(json!({"key": m.key, "revision": m.revision, "created": created}))
+        match memory::save(&ctx.agent.pool, agent.id, &w, &author, &source).await {
+            Ok((m, created)) => {
+                memory::events::saved(ctx, &m, created).await;
+                out(
+                    json!({"key": m.key, "title": m.title, "revision": m.revision,
+                           "created": created}),
+                )
+            }
+            Err(e) => {
+                if let Some(code) = memory::events::refusal_code(&e) {
+                    let existing = memory::service::get(&ctx.agent.pool, agent.id, &a.key)
+                        .await
+                        .ok()
+                        .and_then(|m| m.title);
+                    memory::events::refused(
+                        ctx,
+                        &agent.name,
+                        &memory::events::Attempt {
+                            key: &a.key,
+                            title: existing.as_deref().or(a.title.as_deref()),
+                            content: &a.content,
+                        },
+                        code,
+                        memory::events::invalid_detail(&e).as_deref(),
+                    )
+                    .await;
+                }
+                Err(fail(e))
+            }
+        }
     }
+}
+
+/// (C-1172) A `memory_save` the registry refused before the tool ran (an evaluation turn is
+/// read-only) still says so in the transcript.
+pub async fn refused_before_call(ctx: &ToolCallContext, args: &Value) {
+    let Ok(a) = serde_json::from_value::<SaveArgs>(args.clone()) else {
+        return;
+    };
+    let Ok(Some(agent)) = agents::get(&ctx.agent.pool, ctx.agent.agent_id).await else {
+        return;
+    };
+    memory::events::refused(
+        ctx,
+        &agent.name,
+        &memory::events::Attempt {
+            key: &a.key,
+            title: a.title.as_deref(),
+            content: &a.content,
+        },
+        "not_allowed",
+        None,
+    )
+    .await;
 }
 
 struct Get;
@@ -150,6 +207,8 @@ impl PlatformTool for Get {
         let m = memory::service::get(&ctx.agent.pool, ctx.agent.agent_id, &a.key)
             .await
             .map_err(fail)?;
+        // (C-1169) The agent used it. A `memory_search` hit counts once the agent reads it here.
+        memory::mark_used(&ctx.agent.pool, &[m.id], ctx.conversation_id).await;
         out(
             json!({"key": m.key, "title": m.title, "description": m.description,
                    "content": m.content, "revision": m.revision, "locked": m.locked}),
@@ -301,6 +360,7 @@ impl PlatformTool for Delete {
             &Author {
                 kind: "agent",
                 user_id: None,
+                api_key_id: None,
                 label: agent.name,
             },
         )
