@@ -175,7 +175,8 @@ describe("editor", () => {
     expect(xhrs[0]!.headers["if-none-match"]).toBeUndefined();
     xhrs[0]!.respond(200, { entry: entry("a.rs"), etag: "sha256:bbb" });
     await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull());
-    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    // The callback runs in an effect, after the commit that removes the words: the DOM can be ahead of it.
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
 
     await type(view, "x");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

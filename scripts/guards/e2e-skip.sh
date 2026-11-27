@@ -11,7 +11,7 @@ cd "$ROOT"
 
 fail() { echo "e2e-skip: FAIL: $*" >&2; exit 1; }
 
-# shellcheck source=scripts/e2e/lib-skip.sh
+# shellcheck source=scripts/e2e/lib-skip.sh disable=SC1091  # followed only with shellcheck -x
 source scripts/e2e/lib-skip.sh
 
 # 1. behaviour (self-test with planted output)

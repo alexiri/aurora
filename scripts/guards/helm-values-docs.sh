@@ -33,7 +33,7 @@ ALLOW_NAMED="database.max_connections database.gateway_role gateway.allowed_priv
   secrets.stores.id terminal.awake_cap_secs terminal.available scim.available scim.rate_per_minute"
 
 fail() { echo "helm-values-docs: FAIL: $*" >&2; exit 1; }
-[ -f "$VALUES" ] && [ -f "$DOCS" ] || fail "$VALUES or $DOCS missing"
+if [ ! -f "$VALUES" ] || [ ! -f "$DOCS" ]; then fail "$VALUES or $DOCS missing"; fi
 
 paths="$(awk '
   # A one-level inline map (`maxConnections: {api: 20, gateway: 10}`) is a map with leaf children.
@@ -73,6 +73,7 @@ paths="$(awk '
 ' "$VALUES")"
 [ -n "$paths" ] || fail "parsed no keys from $VALUES"
 leaves="$(sed -n 's/^L //p' <<<"$paths")"
+# shellcheck disable=SC2001  # strips the tag at the start of every line
 all="$(sed 's/^[LNK] //' <<<"$paths")"
 allowed_under() { local p; for p in $ALLOW_UNDER; do case "$1." in "$p."*) return 0 ;; esac; done; return 1; }
 tops="$(grep -v '\.' <<<"$all")"

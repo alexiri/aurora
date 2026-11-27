@@ -40,9 +40,9 @@ HOOK_KEY = "helm.sh/hook"
 
 def selector_matches(policy_selector, pod_labels):
     # An empty podSelector (default-deny, allow-dns) matches every pod but admits nothing on its
-    # own: default-deny has no egress rules at all. It must not count as the hook’s allow policy,
+    # own: default-deny has no egress rules at all. It must not count as the allow policy of the hook,
     # or deleting the -hooks policy would leave the guard green (default-deny alone is exactly the
-    # incident’s failure condition).
+    # failure condition of the incident).
     if not (policy_selector.get("matchLabels") or policy_selector.get("matchExpressions")):
         return False
     match = policy_selector.get("matchLabels") or {}

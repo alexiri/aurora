@@ -26,6 +26,7 @@ found="$(endpoints_scan deploy/helm)"
 [ -z "$found" ] || fail "a template reads the deprecated v1 Endpoints (use discovery.k8s.io/v1 EndpointSlice): $found"
 planted="$(mktemp)"
 trap 'rm -f "$planted"' EXIT
+# shellcheck disable=SC2016  # a literal Helm template line
 echo '{{- $eps := lookup "v1" "Endpoints" "default" "kubernetes" }}' >"$planted"
 [ -n "$(endpoints_scan "$planted")" ] || fail "self-test: the v1 Endpoints scan missed a planted lookup"
 
@@ -33,6 +34,7 @@ H=(helm template guard deploy/helm/aurora --set database.allowSharedLogin=true)
 
 # --- render checks on one rendered chart (stdin) ---
 analyse() {
+  # shellcheck disable=SC2016  # a literal Python program
   python3 -I -c '
 import sys, yaml
 label = sys.argv[1]

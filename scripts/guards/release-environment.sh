@@ -12,6 +12,7 @@ fail() { echo "release-environment: FAIL: $*" >&2; exit 1; }
 
 # check <workflow files...>: prints "ok" or a problem. Reads the YAML with python3 (read-only).
 check() {
+  # shellcheck disable=SC2016  # a literal Python program
   python3 -I -c '
 import sys, yaml
 users = []   # (file, job, if)
