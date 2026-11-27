@@ -8,7 +8,7 @@ done when its tests exist, pass in CI, and the security invariants it touches
 
 | Layer | Scope | Tooling | Runs |
 |-------|-------|---------|------|
-| **Unit** | pure logic per crate (matchers, evaluator, sanitizers, templates, envelopes, cron, state machines) | `cargo test`, `cargo nextest` (the documented fast path, `just test-nextest`), `proptest`, `insta` | every PR |
+| **Unit** | pure logic per crate (matchers, evaluator, sanitizers, templates, envelopes, cron, state machines) | `cargo test`, `cargo nextest` (on a development machine only through `scripts/dev/test.sh`), `proptest`, `insta` | every PR |
 | **Database** | repositories, claims, partial-unique races, migrations up from empty and from the previous release's schema | ephemeral Postgres from `aurora-testkit` (podman), one database per test | every PR |
 | **Service** | one service in-process with real Postgres and mocks for its neighbours (API with fake runner/connector clients; gateway with mock upstreams and a stub hook host) | `aurora-testkit`, `wiremock` | every PR |
 | **Contract** | OpenAPI document vs handlers; JSON Schemas of every wire type vs checked-in schemas; dashboard client regenerated without drift | schema diff | every PR |
@@ -1133,14 +1133,20 @@ scripts/dev/test.sh <lane> web playwright e2e/<spec> --project=mocked # the spec
   repo-root `.env`), and otherwise the shared server; it never starts a container per test process. It refuses a URL
   on port 55432 (the owner's dev database). `test.sh` sets both variables on the command itself, so a `.env` has no
   say there.
+- **Tests take their database from the test kit:** `let (_db, pool) = TestDb::with_pool().await;` (a fresh migrated
+  database, dropped when `_db` goes out of scope), or `TestDb::unmigrated_with_pool()` for an empty one.
+  **`#[sqlx::test]` is banned** (`scripts/guards/no-sqlx-test.py`): it reads `DATABASE_URL` and `.env` itself, past
+  the rules above, so it could run a test against the owner's dev database.
+- **e2e scripts** (`scripts/e2e/*.sh`) are not run by `test.sh`: run them through `scripts/dev/heavy.sh`. Naming an
+  e2e crate (`-p aurora-e2e-gateway`) works, with a warning that it starts its own stack.
 - **Slots and load.** Each crate or suite runs in its own slot of `scripts/dev/heavy.sh` (two slots for the whole
   machine; don't wrap `test.sh` in it). Before it starts one, `test.sh` waits while the 1-minute load is above
   2 × cores or more than 10 podman containers are running, and gives up after 30 minutes (exit 3).
 - **Caps.** Rust: `AURORA_TEST_THREADS` test threads (default 4, at most 8). vitest: 4 workers. Playwright: 2.
 - **Refused** (exit 2): no crate named, `--workspace`, a crate glob, more threads than the cap, a URL on port 55432
   in the environment or the arguments, watch/UI modes.
-- Never run `cargo test` or `cargo nextest run` across the workspace by hand; that includes `just test` and
-  `just test-nextest`. Other heavy commands (build, clippy, e2e scripts, `podman build`) go through
+- Never run `cargo test` or `cargo nextest run` across the workspace by hand. `just test` (every crate but the e2e
+  ones, then doctests) and `just test-nextest` (no doctests) go through `test.sh --all-crates`. Other heavy commands (build, clippy, e2e scripts, `podman build`) go through
   `scripts/dev/heavy.sh <lane> <command>`.
 - nextest skips doctests: `scripts/dev/heavy.sh <lane> cargo test -p <crate> --doc` runs them (no database).
 - The scripts have their own test, `bash scripts/dev/test_test-runner.sh` (stubbed podman and cargo), run by

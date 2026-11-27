@@ -24,6 +24,11 @@ aurora-config = { workspace = true }
 chrono = { workspace = true }
 aws-lc-rs = { workspace = true }
 
+[dev-dependencies]
+# (FIX-255) every database-backed test takes its database from the test kit (shared test server,
+# 55432 refused); `#[sqlx::test]` is banned (scripts/guards/no-sqlx-test.py).
+aurora-testkit = { workspace = true }
+
 [[bench]]
 name = "delta_bus_perf"
 path = "benches/delta_bus_perf.rs"

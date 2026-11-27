@@ -217,6 +217,15 @@ reset; run "$TEST_SH" lane rust --all-crates
 check "--all-crates runs each member except the e2e crates, one at a time" \
   test "$(tr '\n' ';' <"$STATE/order")" = "start x-one;end x-one;start x-two;end x-two;"
 
+check "--all-crates warns about nothing" test "$(grep -c 'warning:' "$TMP/out" || true)" -eq 0
+
+reset; run "$TEST_SH" lane rust -p aurora-e2e-gateway
+check "a named e2e crate runs, in a heavy slot" test "$rc" -eq 0 -a "$(count slot 'HOLDER')" -eq 1
+check "with one warning line that it starts its own stack" \
+  test "$(grep -c 'warning: aurora-e2e-gateway starts its own stack' "$TMP/out" || true)" -eq 1
+reset; run "$TEST_SH" lane rust --crates x-a,aurora-e2e-hosted
+check "the same inside --crates" out_has "warning: aurora-e2e-hosted starts its own stack"
+
 # Two lanes at once share one server.
 reset
 "$TEST_SH" lane-a rust -p x-a >"$TMP/out-a" 2>&1 &

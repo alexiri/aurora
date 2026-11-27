@@ -6,13 +6,14 @@
 use aurora_core::telemetry::{DbSpanLayer, provider_builder};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_sdk::trace::InMemorySpanExporter;
-use sqlx::PgPool;
 use tracing_subscriber::{Layer as _, layer::SubscriberExt as _};
 
 const CANARY: &str = "canary-bind-value-7f3a9c";
 
-#[sqlx::test]
-async fn query_spans_carry_parameterised_sql_never_bind_values(pool: PgPool) {
+#[tokio::test]
+async fn query_spans_carry_parameterised_sql_never_bind_values() {
+    // An empty database: the test creates its own table.
+    let (_db, pool) = aurora_testkit::TestDb::unmigrated_with_pool().await;
     let exporter = InMemorySpanExporter::default();
     let provider = provider_builder("test", 1.0)
         .with_simple_exporter(exporter.clone())

@@ -30,7 +30,9 @@ usage:
   scripts/dev/test.sh <lane> web vitest [files...]
   scripts/dev/test.sh <lane> web playwright <spec> --project=mocked
 
-<lane> is your lane's name (it shows in the heavy slot's status file). Rust tests use the shared
+<lane> is your lane's name (it shows in the heavy slot's status file). The e2e scripts
+(scripts/e2e/*.sh) are not run by this script: run them through scripts/dev/heavy.sh.
+Rust tests use the shared
 test Postgres (scripts/dev/test-pg.sh) and AURORA_TEST_THREADS test threads (default 4, max 8).
 Each run takes its own heavy slot (do not wrap this script in heavy.sh) and waits while the
 1-minute load is above 2 x nproc or more than 10 podman containers are running.
@@ -197,6 +199,12 @@ run_rust() {
   local c
   for c in "${crates[@]}"; do
     valid_crate "$c" || refuse "'$c' is not a plain crate name (no globs, no empty entries)."
+  done
+  # Only reachable by naming one: --all-crates leaves them out.
+  for c in "${crates[@]}"; do
+    case " $E2E_CRATES " in
+      *" $c "*) echo "test.sh: warning: $c starts its own stack (containers, fixed addresses; scripts/e2e/ is its usual runner); it runs in one heavy slot like any crate." >&2 ;;
+    esac
   done
 
   local -a threads=()

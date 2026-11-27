@@ -150,8 +150,36 @@ impl TestDb {
         }
     }
 
+    /// [`TestDb::new`] plus an owned handle to its pool: what a test that used
+    /// `#[sqlx::test(migrator = "aurora_db::MIGRATOR")]` starts with. That attribute is banned
+    /// (`scripts/guards/no-sqlx-test.py`): it reads `DATABASE_URL` and `.env` itself, past the
+    /// URL rules of this crate. Keep the `TestDb` bound until the test ends
+    /// (`let (_db, pool) = …`, never `let (_, pool)`): dropping it drops the database.
+    pub async fn with_pool() -> (TestDb, PgPool) {
+        let db = TestDb::new().await;
+        let pool = db.pool.clone();
+        (db, pool)
+    }
+
+    /// Like [`TestDb::with_pool`], but the database is empty: no migration is applied
+    /// (`#[sqlx::test(migrations = false)]`). For tests that run migrations themselves.
+    #[allow(clippy::panic)]
+    pub async fn unmigrated_with_pool() -> (TestDb, PgPool) {
+        match Self::try_create(false).await {
+            Ok(db) => {
+                let pool = db.pool.clone();
+                (db, pool)
+            }
+            Err(e) => panic!("aurora-testkit: failed to create test database: {e:#}"),
+        }
+    }
+
     /// Fallible variant of [`TestDb::new`].
     pub async fn try_new() -> anyhow::Result<TestDb> {
+        Self::try_create(true).await
+    }
+
+    async fn try_create(with_migrations: bool) -> anyhow::Result<TestDb> {
         let server_url = server_url().await?;
         let name = format!("aurora_test_{}", uuid::Uuid::now_v7().simple());
 
@@ -161,7 +189,7 @@ impl TestDb {
         // VEL-003: clone the per-server template (migrated once) at
         // filesystem speed instead of replaying all migrations per test.
         // `AURORA_TEST_TEMPLATE_DB=0` reverts to the legacy path below.
-        let migrated = if template::template_enabled() {
+        let migrated = if with_migrations && template::template_enabled() {
             let template = template::ensure_template(&server_url).await?;
             template::clone_from_template(&mut admin, template, &name).await?;
             true
@@ -182,7 +210,7 @@ impl TestDb {
         })
         .await
         .context("connecting to test database")?;
-        if !migrated {
+        if with_migrations && !migrated {
             template::migrate_pool(&pool).await?;
         }
         Ok(TestDb {

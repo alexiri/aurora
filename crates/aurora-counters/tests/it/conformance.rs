@@ -547,8 +547,9 @@ async fn memory_rollover_uses_the_injected_clock() {
 
 /// Overlapping multi-key takes in different orders must never deadlock (or error): each task
 /// takes the same keys in its own rotation of the call order, with new keys each round too.
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn postgres_overlapping_bucket_takes_never_deadlock(pool: aurora_db::PgPool) {
+#[tokio::test]
+async fn postgres_overlapping_bucket_takes_never_deadlock() {
+    let (_db, pool) = aurora_testkit::TestDb::with_pool().await;
     let store: Arc<dyn CounterStore> = Arc::new(PgCounterStore::new(pool));
     let n = ns();
     let keys: Vec<String> = (0..6).map(|i| format!("{n}:k{i}")).collect();
@@ -573,8 +574,9 @@ async fn postgres_overlapping_bucket_takes_never_deadlock(pool: aurora_db::PgPoo
     }
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn postgres(pool: aurora_db::PgPool) {
+#[tokio::test]
+async fn postgres() {
+    let (_db, pool) = aurora_testkit::TestDb::with_pool().await;
     let store: Arc<dyn CounterStore> = Arc::new(PgCounterStore::new(pool.clone()));
     suite(store.clone()).await;
     rollover_real_clock(store.clone()).await;

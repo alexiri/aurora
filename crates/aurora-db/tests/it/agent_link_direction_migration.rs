@@ -1,14 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! P5-REFINE-10 (C-1085): `20261201000264_agent_link_direction.sql` keeps every existing link
 //! as it was: `direction = both`, created by an agent, no creator person.
-use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
 
 const VERSION: i64 = 20_261_201_000_264;
 
-#[sqlx::test(migrations = false)]
-async fn existing_links_stay_both_ways_and_agent_created(pool: PgPool) {
+#[tokio::test]
+async fn existing_links_stay_both_ways_and_agent_created() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version < VERSION)

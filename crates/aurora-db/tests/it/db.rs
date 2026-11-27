@@ -6,6 +6,7 @@ use std::time::Duration;
 use aurora_db::bus::{self, BusError, BusEvent, Channel, Listener};
 use aurora_db::claim::{ClaimSpec, claim};
 use aurora_db::{DbError, PgPool, jobs};
+use aurora_testkit::TestDb;
 use serde_json::json;
 use sqlx::Row;
 use uuid::Uuid;
@@ -47,8 +48,9 @@ async fn agent(
     Ok(id)
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn migrations_apply_and_are_idempotent(pool: PgPool) {
+#[tokio::test]
+async fn migrations_apply_and_are_idempotent() {
+    let (_db, pool) = TestDb::with_pool().await;
     aurora_db::migrate(&pool).await.unwrap();
     let n: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('users','request_log','request_log_default','gateway_credentials','peer_tasks')",
@@ -59,8 +61,9 @@ async fn migrations_apply_and_are_idempotent(pool: PgPool) {
     assert_eq!(n, 5);
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn one_default_agent_per_workspace(pool: PgPool) {
+#[tokio::test]
+async fn one_default_agent_per_workspace() {
+    let (_db, pool) = TestDb::with_pool().await;
     let o = org(&pool).await;
     let w = workspace(&pool, o).await;
     agent(&pool, o, w, "daneel", true).await.unwrap();
@@ -78,8 +81,9 @@ async fn one_default_agent_per_workspace(pool: PgPool) {
     ));
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn one_active_plugin_version_per_package(pool: PgPool) {
+#[tokio::test]
+async fn one_active_plugin_version_per_package() {
+    let (_db, pool) = TestDb::with_pool().await;
     async fn pkg(pool: &PgPool, version: &str, status: &str) -> Result<(), DbError> {
         sqlx::query("INSERT INTO plugin_packages (id, package_id, version, contract, publisher, digest, signer_key_id, manifest, permissions, source, status) VALUES ($1,'p',$2,1,'pub',$2,'builtin','{}','{}','builtin',$3)")
             .bind(Uuid::now_v7()).bind(version).bind(status)
@@ -92,8 +96,9 @@ async fn one_active_plugin_version_per_package(pool: PgPool) {
     assert_eq!(err.constraint(), Some("plugin_packages_one_active_uq"));
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn one_draft_and_published_generation_per_scope(pool: PgPool) {
+#[tokio::test]
+async fn one_draft_and_published_generation_per_scope() {
+    let (_db, pool) = TestDb::with_pool().await;
     let o = org(&pool).await;
     let w = workspace(&pool, o).await;
     async fn gen_(
@@ -125,8 +130,9 @@ async fn one_draft_and_published_generation_per_scope(pool: PgPool) {
     assert!(matches!(err, DbError::CheckViolation { .. }));
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn fk_and_one_agent_credential(pool: PgPool) {
+#[tokio::test]
+async fn fk_and_one_agent_credential() {
+    let (_db, pool) = TestDb::with_pool().await;
     let o = org(&pool).await;
     let w = workspace(&pool, o).await;
     let a = agent(&pool, o, w, "a", false).await.unwrap();
@@ -160,8 +166,9 @@ async fn fk_and_one_agent_credential(pool: PgPool) {
     assert!(matches!(err, DbError::ForeignKeyViolation { .. }));
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn request_log_default_partition_accepts_rows(pool: PgPool) {
+#[tokio::test]
+async fn request_log_default_partition_accepts_rows() {
+    let (_db, pool) = TestDb::with_pool().await;
     sqlx::query("INSERT INTO request_log (id, ts, org_id, workspace_id, agent_id, credential_kind, lane, method, host, path, decision, status, latency_ms) VALUES ($1, now(), $1,$1,$1,'agent','mitm','GET','h','/','allow',200,1)")
         .bind(Uuid::now_v7()).execute(&pool).await.unwrap();
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM request_log_default")
@@ -171,8 +178,9 @@ async fn request_log_default_partition_accepts_rows(pool: PgPool) {
     assert_eq!(n, 1);
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn notify_round_trip_and_resync(pool: PgPool) {
+#[tokio::test]
+async fn notify_round_trip_and_resync() {
+    let (_db, pool) = TestDb::with_pool().await;
     let mut l = Listener::connect(&pool, &[Channel::Inbox, Channel::Approval])
         .await
         .unwrap();
@@ -201,8 +209,9 @@ async fn notify_round_trip_and_resync(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn oversize_payload_rejected(pool: PgPool) {
+#[tokio::test]
+async fn oversize_payload_rejected() {
+    let (_db, pool) = TestDb::with_pool().await;
     let big = json!({ "d": "x".repeat(7000) });
     let err = bus::notify(&pool, Channel::Delta, &big).await.unwrap_err();
     assert!(matches!(err, BusError::PayloadTooLarge { .. }));
@@ -211,8 +220,9 @@ async fn oversize_payload_rejected(pool: PgPool) {
     assert_eq!(Channel::parse("aurora_work"), Some(Channel::Work));
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn singleton_excludes_second_holder(pool: PgPool) {
+#[tokio::test]
+async fn singleton_excludes_second_holder() {
+    let (_db, pool) = TestDb::with_pool().await;
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
     let p2 = pool.clone();
@@ -244,8 +254,9 @@ async fn singleton_excludes_second_holder(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn claim_never_double_hands_rows(pool: PgPool) {
+#[tokio::test]
+async fn claim_never_double_hands_rows() {
+    let (_db, pool) = TestDb::with_pool().await;
     sqlx::query("CREATE TABLE claim_t (id int PRIMARY KEY, done boolean NOT NULL DEFAULT false, lease timestamptz)")
         .execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO claim_t (id) SELECT g FROM generate_series(1, 300) g")

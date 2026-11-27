@@ -80,6 +80,10 @@ echo "== agent-content-advisory (SEC-91, SEC-150: the gateway, policy, hook host
 bash scripts/guards/agent-content-advisory.sh --self-test
 bash scripts/guards/agent-content-advisory.sh
 
+echo "== no-sqlx-test (FIX-255: #[sqlx::test] reads DATABASE_URL/.env past the test kit; banned)"
+python3 -I scripts/guards/no-sqlx-test.py --self-test
+python3 -I scripts/guards/no-sqlx-test.py
+
 echo "== dev scripts syntax (VEL-002, FIX-255; shellcheck when installed, else bash -n)"
 dev_scripts=(scripts/dev/quick-gate.sh scripts/dev/heavy.sh scripts/dev/test-pg.sh scripts/dev/test.sh scripts/dev/test_test-runner.sh)
 if command -v shellcheck >/dev/null 2>&1; then
