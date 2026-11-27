@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Fold } from "@/components/ui/fold";
+import { Notice } from "@/components/ui/notice";
 import { Switch } from "@/components/ui/switch";
 import {
   EXPAND_STEP,
@@ -41,16 +43,24 @@ export function DiffView({ old, next, label, fileName, status }: { old: string; 
   const added = status ? status === "added" : old === "" && next !== "";
   const removed = status ? status === "removed" : next === "" && old !== "";
   const changed = base.rows.some((r) => r.type === "line" && r.line.kind !== "same");
-  // Word-level highlight: a removed line paired with the added line right after it.
+  // The label without its "Diff of", to name the parts inside the region.
+  const subject = label.replace(/^Diff of /, "");
+  // Word-level highlight: in a block of removed lines followed by added ones, the lines pair up in order.
   const highlights = useMemo(() => {
     const map = new Map<DiffLine, WordSpan[]>();
     const lines = base.rows.flatMap((r) => (r.type === "fold" ? r.lines : [r.line]));
-    for (let i = 0; i + 1 < lines.length; i++) {
-      if (lines[i].kind === "del" && lines[i + 1].kind === "add") {
-        const spans = wordSpans(lines[i].text, lines[i + 1].text);
-        map.set(lines[i], spans.old);
-        map.set(lines[i + 1], spans.new);
+    let i = 0;
+    while (i < lines.length) {
+      const dels: DiffLine[] = [];
+      while (lines[i]?.kind === "del") dels.push(lines[i++]!);
+      const adds: DiffLine[] = [];
+      while (lines[i]?.kind === "add") adds.push(lines[i++]!);
+      for (let k = 0; k < Math.min(dels.length, adds.length); k++) {
+        const spans = wordSpans(dels[k]!.text, adds[k]!.text);
+        map.set(dels[k]!, spans.old);
+        map.set(adds[k]!, spans.new);
       }
+      if (dels.length === 0 && adds.length === 0) i++;
     }
     return map;
   }, [base]);
@@ -83,10 +93,16 @@ export function DiffView({ old, next, label, fileName, status }: { old: string; 
       {base.veryLarge ? (
         <p className="text-xs text-muted">This file has {base.lines.toLocaleString("en-US")} lines, so only the changes and their context are shown until you expand them.</p>
       ) : null}
-      {!changed ? (
-        <p className="text-sm text-muted">Unchanged.</p>
+      {base.tooLarge ? (
+        <div className="space-y-2">
+          <Notice>This file is too large to compare line by line; the whole old and new text are below.</Notice>
+          <WholeText summary="Old text" label={`Old text: ${subject}`} text={old} />
+          <WholeText summary="New text" label={`New text: ${subject}`} text={next} />
+        </div>
+      ) : !changed ? (
+        <p className="text-sm text-muted">{added || removed ? "The file is empty." : "Unchanged."}</p>
       ) : (
-        <div tabIndex={0} className="max-w-full overflow-x-auto rounded-control border border-line bg-canvas" data-testid="diff-box">
+        <div tabIndex={0} role="region" aria-label={`Scrollable lines: ${subject}`} className="max-w-full overflow-x-auto rounded-control border border-line bg-canvas" data-testid="diff-box">
           <table className="w-full border-collapse font-mono text-xs leading-5 text-ink">
             <tbody>
               {(whole ? expandAll(base.rows) : rows).flatMap((row) => {
@@ -102,6 +118,17 @@ export function DiffView({ old, next, label, fileName, status }: { old: string; 
         </div>
       )}
     </section>
+  );
+}
+
+/** One side of a file too large to compare, in full, in a closed fold. */
+function WholeText({ summary, label, text }: { summary: string; label: string; text: string }) {
+  return (
+    <Fold summary={summary} data-testid="diff-whole-text">
+      <pre tabIndex={0} aria-label={label} className="mt-2 max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 font-mono text-xs text-ink [overflow-wrap:anywhere]">
+        {text}
+      </pre>
+    </Fold>
   );
 }
 
