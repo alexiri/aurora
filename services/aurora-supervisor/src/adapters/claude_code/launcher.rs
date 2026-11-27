@@ -49,21 +49,28 @@ const KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// (FIX-253) Kills the whole process group: HUP, a short grace for a clean exit, then KILL. The
 /// child leads the group, so its `run_in_background` shells die with it instead of being orphaned.
-async fn kill_group(mut child: tokio::process::Child) {
-    let group = child
-        .id()
-        .and_then(|p| rustix::process::Pid::from_raw(p as i32));
+///
+/// (FIX-253 fixes2) The KILL always follows the grace, whether or not the leader exited in it: a
+/// descendant that ignores HUP (`nohup`, `trap "" HUP`) must not survive. The leader is still
+/// unreaped while the group is signalled — a zombie's pid is never reused, so the KILL cannot
+/// reach a stranger's group. `group` is the child's own pid (pgid == pid, `process_group(0)`),
+/// taken while the child is unreaped.
+async fn kill_group(mut child: tokio::process::Child, group: Option<rustix::process::Pid>) {
     if let Some(g) = group {
         let _ = rustix::process::kill_process_group(g, rustix::process::Signal::HUP);
     }
-    if tokio::time::timeout(KILL_GRACE, child.wait())
-        .await
-        .is_err()
-    {
-        if let Some(g) = group {
-            let _ = rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
-        }
-        let _ = child.wait().await;
+    tokio::time::sleep(KILL_GRACE).await;
+    if let Some(g) = group {
+        let _ = rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
+    }
+    let _ = child.wait().await;
+}
+
+/// (FIX-253 fixes2) The KILL for a leader that is already gone by itself: whatever it left
+/// behind in the group (a background shell) dies with it instead of being orphaned.
+async fn kill_group_leftovers(group: Option<rustix::process::Pid>) {
+    if let Some(g) = group {
+        let _ = rustix::process::kill_process_group(g, rustix::process::Signal::KILL);
     }
 }
 
@@ -117,11 +124,22 @@ impl Launcher for ProcessLauncher {
         // (FIX-151) Platform-tool calls from this process's descendants act for this conversation;
         // the registration ends when the process does.
         let registration = crate::adapters::register_harness(&child, spec.conversation_id);
+        // (FIX-253 fixes2) The group the child leads, taken while it is unreaped: the group
+        // kills are aimed at it, so the leader must never be reaped before they are sent.
+        let group = child
+            .id()
+            .and_then(|p| rustix::process::Pid::from_raw(p as i32));
         tokio::spawn(async move {
             let _registration = registration;
             tokio::select! {
-                _ = child.wait() => {}
-                _ = kill_rx => kill_group(child).await,
+                res = child.wait() => {
+                    let _ = res;
+                    // The leader ended by itself: anything it left in the group dies with it
+                    // (a descendant that ignores HUP does not survive its parent's exit).
+                    kill_group_leftovers(group).await;
+                }
+                // A dropped `ChildIo` (the sender gone without a send) releases the same way.
+                _ = kill_rx => kill_group(child, group).await,
             }
         });
         Ok(ChildIo {

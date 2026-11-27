@@ -359,6 +359,103 @@ mod tests {
         .expect("the child did not end after the release");
     }
 
+    /// (FIX-253 fixes2) A descendant that ignores HUP (`nohup`, `trap "" HUP`) does not survive a
+    /// release: the KILL always follows the grace, even when the leader died on the HUP — the old
+    /// code skipped the KILL when the leader exited within it.
+    #[tokio::test]
+    async fn claude_code_release_kills_an_hup_immune_background_child_even_when_the_leader_dies() {
+        fn gone(pid: u32) -> bool {
+            !std::path::Path::new(&format!("/proc/{pid}")).exists()
+        }
+        let l = claude_code::launcher::ProcessLauncher {
+            program: "/bin/sh".into(),
+        };
+        let spec = claude_code::config::LaunchSpec {
+            // The background shell ignores HUP; the leader itself dies on it at once.
+            args: vec!["-c".into(),
+                "/bin/sh -c 'trap \"\" HUP; /bin/sleep 300' & echo $!; exec /bin/sleep 600".into()],
+            env: vec![],
+            cwd: std::env::temp_dir(),
+            conversation_id: uuid::Uuid::now_v7(),
+        };
+        let mut io = claude_code::launcher::Launcher::launch(&l, spec)
+            .await
+            .unwrap();
+        let bg: u32 = tokio::time::timeout(std::time::Duration::from_secs(20), io.lines.recv())
+            .await
+            .expect("the fake harness printed no background pid")
+            .expect("closed")
+            .trim()
+            .parse()
+            .expect("a pid");
+        assert!(!gone(bg), "the background child is not running");
+        // Let the background shell finish setting its HUP immunity before the release.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(!gone(bg), "the background child is not running");
+        (io.kill)();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !gone(bg) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the HUP-immune background pid {bg} survived the release"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// (FIX-253 fixes2) A leader that exits by itself (or is dropped) still takes its group with
+    /// it: whatever it left in the group dies, instead of being orphaned.
+    #[tokio::test]
+    async fn claude_code_a_leader_that_exits_by_itself_still_kills_the_group() {
+        fn gone(pid: u32) -> bool {
+            !std::path::Path::new(&format!("/proc/{pid}")).exists()
+        }
+        let l = claude_code::launcher::ProcessLauncher {
+            program: "/bin/sh".into(),
+        };
+        let spec = claude_code::config::LaunchSpec {
+            // The background shell ignores HUP; the leader exits at once, without any release.
+            args: vec!["-c".into(),
+                "/bin/sh -c 'trap \"\" HUP; /bin/sleep 300' & echo $!; echo leader-done; exit 0"
+                    .into()],
+            env: vec![],
+            cwd: std::env::temp_dir(),
+            conversation_id: uuid::Uuid::now_v7(),
+        };
+        let mut io = claude_code::launcher::Launcher::launch(&l, spec)
+            .await
+            .unwrap();
+        let bg: u32 = tokio::time::timeout(std::time::Duration::from_secs(20), io.lines.recv())
+            .await
+            .expect("the fake harness printed no background pid")
+            .expect("closed")
+            .trim()
+            .parse()
+            .expect("a pid");
+        assert!(!gone(bg), "the background child is not running");
+        // The leader ends by itself; it says so on its last line. No `kill` is called. (The
+        // stream does not end with the leader: the background child holds the pipe.)
+        tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                match io.lines.recv().await {
+                    Some(l) if l.trim() == "leader-done" => break,
+                    Some(_) => {}
+                    None => panic!("the stream ended before the leader's last line"),
+                }
+            }
+        })
+        .await
+        .expect("the leader did not exit by itself");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !gone(bg) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the background pid {bg} was orphaned by the leader's own exit"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     #[test]
     fn known_ids_resolve_when_the_runtime_is_present() {
         for id in KNOWN {
