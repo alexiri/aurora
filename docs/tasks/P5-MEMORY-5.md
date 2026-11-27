@@ -110,3 +110,14 @@ cluster torn down.
   `ae473292` passed. Mockup comparison and SEC-157 notes are in the report.
 - Cluster `aurora-mem5` (:4530) torn down; cache volumes kept. PROGRESS and FEATURES not edited (the dispatch limited
   the commit to the report and captures); `P5/14§memory-polish` is not done.
+
+**Pass 2 (2026-11-27, on `1e067b16`, with FIX-277): the registry is clean — 21 Match, 0 Minor, 0 Needs changes.**
+
+- Report: `docs/design/skills-memory/verify/MEMORY-REPORT-pass2.md`; captures of the walk's findings in
+  `…/verify/memory-pass2/`.
+- Merged since pass 1: FIX-277 (C-1 with O-2, C-2, C-3, C-4), all confirmed on a live stack, C-1 with no override.
+- To send back, outside the Memory rows: W-1 (an emergency reader opening a skill's file gets a 403 and an error
+  box), W-2 (a dead Reply button on read-only conversations) and W-3 (the manage page still says the agents can't be
+  opened while access is open). Owner-accepted differences: none recorded.
+- `P5/14§memory-polish`: not marked here (PROGRESS and FEATURES left to the coordinator).
+- No product code changed. Cluster `aurora-mem5` recreated for this pass and **kept up** for P5-SKILLS-5 pass 2.
