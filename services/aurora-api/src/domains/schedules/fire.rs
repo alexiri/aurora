@@ -297,6 +297,11 @@ async fn fire_due(
         }
         return Ok(());
     }
+    // (FIX-253 fixes2 G, FIX-264) `ends_at` and the delegated task's end are hard ends, for a
+    // repeating schedule as for a one-time one.
+    if task_ended(conn, row).await? {
+        return disable_task_ended(conn, row).await;
+    }
     let Some(expr) = row.cron.as_deref() else {
         return fire_once(conn, row, &agent).await;
     };
@@ -316,6 +321,21 @@ async fn fire_due(
         }
     }
     Ok(())
+}
+
+/// (FIX-253 fixes2 G) A schedule does not outlive its delegated task: whether the task behind
+/// its origin conversation has ended (closed — a `waiting` task is still alive and its wake must
+/// fire, FIX-253) or its `ends_at` has passed.
+async fn task_ended(conn: &mut PgConnection, row: &ScheduleRow) -> Result<bool, ApiError> {
+    if row.ends_at.is_some_and(|ends| ends <= Utc::now()) {
+        return Ok(true);
+    }
+    let Some(origin) = row.origin_conversation_id else {
+        return Ok(false);
+    };
+    Ok(peer_tasks::by_task_conversation(&mut *conn, origin)
+        .await?
+        .is_some_and(|task| !matches!(task.status.as_str(), "open" | "waiting")))
 }
 
 /// (FIX-253 fixes2 G) The delegated task a wake-up came from has ended: no run, the schedule
@@ -344,21 +364,6 @@ async fn fire_once(
     row: &ScheduleRow,
     agent: &agents::AgentRow,
 ) -> Result<(), ApiError> {
-    // (FIX-253 fixes2 G) A peer-created wake-up does not outlive its delegated task: when the
-    // task behind the origin conversation has ended (closed — a `waiting` task is still alive
-    // and its wake must fire, FIX-253), or the task's `ends_at` has passed, the fire skips and
-    // the schedule is disabled — it never moves to its own run thread.
-    if row.origin_conversation_id.is_some() || row.ends_at.is_some() {
-        let task_ended = match row.origin_conversation_id {
-            Some(origin) => peer_tasks::by_task_conversation(&mut *conn, origin)
-                .await?
-                .is_some_and(|task| !matches!(task.status.as_str(), "open" | "waiting")),
-            None => false,
-        } || row.ends_at.is_some_and(|ends| ends <= Utc::now());
-        if task_ended {
-            return disable_task_ended(conn, row).await;
-        }
-    }
     let started = match repo::origin_for_run(&mut *conn, row).await? {
         Some(origin) => match start_in_origin(conn, row, origin).await? {
             OriginStart::Started(st) => Some(st),

@@ -1274,6 +1274,13 @@ thread link, the answer is posted there too (`13 §Mirror`).
   that task conversation while the task is not closed (`queued`/`open`); a closed task's
   conversation is nobody's chat any more, so the run keeps its own run thread. The Web Push never
   fires for these (the claim requires the creator's direct chat).
+  (FIX-264) **The task's limits hold for all its work.** Any tool call in a task conversation
+  with no person speaking (the peer's turn, a wake-up, watch or decision turn, or a call outside
+  a turn) may change or delete only schedules made from that conversation, and never gives one a
+  `cron`. **`ends_at` is a hard end:** the fire path checks it, and the end of the task behind
+  the origin conversation, before any fire, repeating schedules included, and disables the
+  schedule (`task_ended`). A schedule with `ends_at` takes no `cron` (422 `schedule_has_end`,
+  field `/cron`), and no `run_at` at or after it, on create or change (422 `wakeup_after_end`).
 
 ## Webhooks
 

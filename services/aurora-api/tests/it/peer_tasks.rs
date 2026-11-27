@@ -2818,3 +2818,260 @@ async fn a_failing_origin_notice_does_not_fail_the_decision() {
         0
     );
 }
+
+// ------------------------------------------------- FIX-264: wake turns, cancel, lock order
+
+/// (FIX-264) A wake turn is spoken by the platform, and it is still the delegated task's turn:
+/// the receiving agent cannot make its wake-up repeat, nor change or delete the agent's other
+/// schedules, whether or not the tool call carries a turn. Its own one-time change still works.
+#[tokio::test]
+async fn a_wake_turn_keeps_the_delegated_tasks_schedule_limits() {
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let task = Rig::id(&d.send("check back").await["peer_task_id"]);
+    let soon = |hours| {
+        (chrono::Utc::now() + chrono::Duration::hours(hours))
+            .format("%Y-%m-%dT%H:%M")
+            .to_string()
+    };
+    let made = d
+        .as_b(
+            task,
+            "schedule_create",
+            json!({"name": "wake", "prompt": "look again", "run_at": soon(1), "timezone": "UTC"}),
+        )
+        .await;
+    let wake = Rig::id(&Rig::ok(&made)["id"]);
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    d.fire_schedules().await;
+    let pc = d.rig.peer_conversation(task).await;
+    let turn = d.rig.running_turn(pc).await.expect("the wake turn runs");
+    let (speaker,): (String,) = sqlx::query_as("SELECT speaker_kind FROM turns WHERE id = $1")
+        .bind(turn)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(speaker, "system");
+    // A schedule of the same agent that a person made outside the task.
+    let other = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, anchor,
+            creator_user_id)
+         VALUES ($1,$2,'persons','p','0 9 * * *','UTC','creator',$3)",
+    )
+    .bind(other)
+    .bind(d.b)
+    .bind(d.rig.p.id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    for on in [Some(turn), None] {
+        let call = |tool: &'static str, args: Value| d.rig.tool(d.b, pc, on, tool, args);
+        let r = call("schedule_update", json!({"id": wake, "cron": "0 * * * *"})).await;
+        assert!(
+            Rig::err(&r).contains("a delegated task can only set a one-time wake-up"),
+            "{on:?}: {}",
+            Rig::err(&r)
+        );
+        let r = call("schedule_update", json!({"id": other, "prompt": "changed"})).await;
+        assert!(
+            Rig::err(&r).contains("Only a schedule of this task"),
+            "{on:?}: {}",
+            Rig::err(&r)
+        );
+        let r = call("schedule_delete", json!({"id": other})).await;
+        assert!(
+            Rig::err(&r).contains("Only a schedule of this task"),
+            "{on:?}: {}",
+            Rig::err(&r)
+        );
+    }
+    let untouched: (String, Option<String>) =
+        sqlx::query_as("SELECT prompt, cron FROM schedules WHERE id = $1")
+            .bind(other)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(untouched, ("p".to_owned(), Some("0 9 * * *".to_owned())));
+
+    // The wake-up's own one-time change still works.
+    let r = d
+        .rig
+        .tool(
+            d.b,
+            pc,
+            Some(turn),
+            "schedule_update",
+            json!({"id": wake, "run_at": soon(2), "timezone": "UTC"}),
+        )
+        .await;
+    Rig::ok(&r);
+}
+
+/// (FIX-264) The cancel route is all or nothing: with the report refused by the database, the
+/// task stays open, its approval pending and the next task queued; once the report can be
+/// written, the close, the report, the abandoned approval and the promotion land together.
+#[tokio::test]
+async fn the_cancel_route_is_all_or_nothing() {
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let first = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let approval = d.approval(first).await;
+    let second = Rig::id(&d.send("and then this").await["peer_task_id"]);
+    assert_eq!(d.rig.task_status(second).await, "queued");
+    for sql in [
+        "CREATE FUNCTION aurora_report_fail() RETURNS trigger AS $$
+         BEGIN IF NEW.type = 'notice' AND NEW.payload->>'code' = 'peer_task_closed'
+         THEN RAISE EXCEPTION 'test: refused report'; END IF; RETURN NEW; END;
+         $$ LANGUAGE plpgsql",
+        "CREATE TRIGGER aurora_report_trg BEFORE INSERT ON transcript_events
+         FOR EACH ROW EXECUTE FUNCTION aurora_report_fail()",
+    ] {
+        sqlx::query(sql).execute(pool).await.unwrap();
+    }
+    let approval_status = || async {
+        sqlx::query_scalar::<_, String>("SELECT status FROM approvals WHERE id = $1")
+            .bind(approval)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let uri = format!("/v1/peer-tasks/{first}/cancel");
+    let (s, v) = d.rig.post(&d.rig.p, &uri, None).await;
+    assert_eq!(s, 500, "{v}");
+    assert_eq!(d.rig.task_status(first).await, "open", "nothing landed");
+    assert_eq!(approval_status().await, "pending");
+    assert_eq!(d.rig.task_status(second).await, "queued");
+
+    sqlx::query("DROP TRIGGER aurora_report_trg ON transcript_events")
+        .execute(pool)
+        .await
+        .unwrap();
+    let (s, v) = d.rig.post(&d.rig.p, &uri, None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(d.rig.task_status(first).await, "cancelled");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 1);
+    assert_eq!(approval_status().await, "abandoned");
+    assert_eq!(d.rig.task_status(second).await, "open");
+}
+
+/// (FIX-264) The requester's cancel locks the task conversation first, like a turn end: while a
+/// turn end holds it, the cancel waits holding neither the link nor the task.
+#[tokio::test]
+async fn a_requesters_cancel_waits_for_the_task_conversation_before_the_link_and_task() {
+    use aurora_db::repo::conversations as convs;
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let pc = d.rig.peer_conversation(task).await;
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, pc).await.unwrap());
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let cancel = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        let out = peers::cancel_by_requester(&mut tx, d.rig.p.id, task)
+            .await
+            .unwrap();
+        assert!(matches!(out, peers::RequesterCancel::Done(_)));
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        lock_link_then_task(&mut turn_end, task).await;
+        turn_end.commit().await.unwrap();
+    };
+    tokio::join!(cancel, other);
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+}
+
+/// (FIX-264) The requester's cancel takes the link before the task: while another close holds
+/// the link, the cancel waits without holding the task.
+#[tokio::test]
+async fn a_requesters_cancel_waits_for_the_link_before_the_task() {
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let mut close = pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT 1 FROM agent_links
+          WHERE id = (SELECT link_id FROM peer_tasks WHERE id = $1) FOR UPDATE",
+    )
+    .bind(task)
+    .execute(&mut *close)
+    .await
+    .unwrap();
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let cancel = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        peers::cancel_by_requester(&mut tx, d.rig.p.id, task)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        sqlx::query("SELECT 1 FROM peer_tasks WHERE id = $1 FOR UPDATE NOWAIT")
+            .bind(task)
+            .execute(&mut *close)
+            .await
+            .expect("the cancel holds no task lock");
+        close.commit().await.unwrap();
+    };
+    tokio::join!(cancel, other);
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+}
+
+/// (FIX-264) A message that closes the task on a used-up budget takes the task conversation
+/// first too: while a turn end holds it, the message waits holding neither the link nor the task.
+#[tokio::test]
+async fn a_budget_close_by_message_waits_for_the_task_conversation_before_the_link_and_task() {
+    use aurora_db::repo::{agents, conversations as convs, turns};
+    let d = duo().await;
+    let pool = d.rig.h.pool();
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let pc = d.rig.peer_conversation(task).await;
+    let turn = d.rig.running_turn(pc).await.unwrap();
+    sqlx::query("UPDATE peer_tasks SET messages_used = message_budget WHERE id = $1")
+        .bind(task)
+        .execute(pool)
+        .await
+        .unwrap();
+    let sender = agents::get(pool, d.b).await.unwrap().unwrap();
+    let conversation = convs::get(pool, pc).await.unwrap().unwrap();
+    let turn = turns::get(pool, turn).await.unwrap().unwrap();
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, pc).await.unwrap());
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let message = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        let out = peers::send_message(
+            &mut tx,
+            &peers::SendRequest {
+                sender: &sender,
+                conversation: &conversation,
+                turn: Some(&turn),
+                target: "@alpha",
+                text: "one more thing",
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(&out, peers::SendOutcome::Refused(m) if m.contains("message budget")),
+            "{out:?}"
+        );
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        lock_link_then_task(&mut turn_end, task).await;
+        turn_end.commit().await.unwrap();
+    };
+    tokio::join!(message, other);
+    assert_eq!(d.rig.task_status(task).await, "expired");
+}

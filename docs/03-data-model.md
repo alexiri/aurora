@@ -1348,7 +1348,7 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | consecutive_failures | int not null default 0 | |
 | creator_user_id | uuid null FK→users (set null) | fire-time authority anchor |
 | origin_conversation_id | uuid null FK→conversations (set null) | |
-| ends_at | timestamptz null | (FIX-253 fixes2 G) a peer-created wake-up's deadline: the delegated task's `expires_at`; the fire path skips and disables the schedule once the task has ended or this instant has passed (`10 §Schedules`) |
+| ends_at | timestamptz null | (FIX-253 fixes2 G) a peer-created wake-up's deadline: the delegated task's `expires_at`; the fire path skips and disables the schedule once the task has ended or this instant has passed, repeating or not; such a schedule takes no `cron` and no `run_at` at or after it (FIX-264, `10 §Schedules`) |
 | run_conversation_id | uuid null FK→conversations (set null) | created lazily |
 | next_fire_at | timestamptz null | |
 | fire_lease_until | timestamptz null | claim clock |
