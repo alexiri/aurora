@@ -1665,6 +1665,20 @@ fn resolved_files(
     Ok(files)
 }
 
+/// A helper set as the one helper writer takes it.
+fn helper_files(
+    files: &[aurora_template::TemplateFile],
+) -> Vec<agent_helpers::service::HelperFile<'_>> {
+    files
+        .iter()
+        .map(|f| agent_helpers::service::HelperFile {
+            path: &f.path,
+            content: &f.bytes,
+            executable: f.executable,
+        })
+        .collect()
+}
+
 /// The written content of every taken part that carries a merge (FIX-251): the offer's merge
 /// hash echoed back, one resolution per conflict hunk in the offer's order, and the part's
 /// own limits on what the choices compose. Anything else is refused before anything is
@@ -1736,25 +1750,20 @@ fn resolve_parts(
                 let bi = at("body")?;
                 let description = resolved_text(&plan.units[di], &per_unit[di])?;
                 let body = resolved_text(&plan.units[bi], &per_unit[bi])?;
-                if description.chars().count() > aurora_core::limits::SKILL_DESCRIPTION_MAX
-                    || body.chars().count() > aurora_core::limits::SKILL_BODY_MAX
-                {
-                    return Err(part_too_large());
-                }
+                let files = resolved_files(&plan.units[2..], &per_unit[2..], &plan.own_files)?;
+                // The merged skill keeps the limits of an edit, with the same errors.
+                let contents: Vec<&[u8]> = files.iter().map(|f| f.bytes.as_slice()).collect();
+                skills_domain::service::check_composed(&description, &body, &contents)?;
                 ResolvedPart::Skill {
                     description,
                     body,
-                    files: resolved_files(&plan.units[2..], &per_unit[2..], &plan.own_files)?,
+                    files,
                 }
             }
             "helpers" => {
                 let files = resolved_files(&plan.units, &per_unit, &plan.own_files)?;
-                if files
-                    .iter()
-                    .any(|f| f.bytes.len() > aurora_core::limits::TEMPLATE_HELPER_FILE_MAX)
-                {
-                    return Err(part_too_large());
-                }
+                // The merged set keeps the caps of any helper write, with the same errors.
+                agent_helpers::service::check_set(&helper_files(&files))?;
                 ResolvedPart::Helpers(files)
             }
             _ => return Err(ApiError::internal("merge part of an unknown kind")),
@@ -2268,15 +2277,7 @@ async fn apply_in_tx(
                         Some(ResolvedPart::Helpers(fs)) => fs.as_slice(),
                         _ => &diff.rendered.helpers,
                     };
-                let files: Vec<agent_helpers::service::HelperFile<'_>> = written
-                    .iter()
-                    .map(|f| agent_helpers::service::HelperFile {
-                        path: &f.path,
-                        content: &f.bytes,
-                        executable: f.executable,
-                    })
-                    .collect();
-                agent_helpers::service::replace_all(tx, agent.id, &files).await?;
+                agent_helpers::service::replace_all(tx, agent.id, &helper_files(written)).await?;
                 recorded.push(create::helpers_part(agent.id, written));
             }
             // ---- library skills --------------------------------------------------------------

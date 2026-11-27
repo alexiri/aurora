@@ -3799,6 +3799,203 @@ async fn a_stale_merge_review_is_refused() {
     assert_eq!(v["error"]["code"], "template_version_changed", "{v}");
 }
 
+/// Give the agent's skill `watch` an own file, past the routes.
+async fn upd_own_skill_file(u: &Upd, path: &str, content: &str) {
+    let mut conn = u.w.h.pool().acquire().await.unwrap();
+    aurora_db::repo::skills::upsert_file(&mut conn, u.watch, path, content.as_bytes(), Some(false))
+        .await
+        .unwrap();
+}
+
+/// Take one part of the offered `version` with its reviewed merge, resolving hunk by hunk
+/// with `choose(unit)` (`{choice, text?}`).
+async fn upd_take_merged(
+    u: &Upd,
+    version: &str,
+    kind: &str,
+    key: &str,
+    choose: impl Fn(&str) -> Value,
+) -> (u16, Value) {
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let merge = part_merge(&v, kind, key).clone();
+    let resolutions: Vec<Value> = merge["conflicts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            let unit = c["unit"].as_str().unwrap();
+            let mut r = choose(unit);
+            r["unit"] = json!(unit);
+            r
+        })
+        .collect();
+    let (s, v) =
+        u.w.apply(
+            &u.owner,
+            u.agent,
+            json!({
+                "version": version,
+                "content_sha256": sha,
+                "parts": [{
+                    "kind": kind,
+                    "key": key,
+                    "merge_sha256": merge["merge_sha256"],
+                    "resolutions": resolutions,
+                }],
+            }),
+        )
+        .await;
+    (s, v)
+}
+
+async fn upd_watch_body(u: &Upd) -> String {
+    sqlx::query_scalar("SELECT body FROM skills WHERE id = $1")
+        .bind(u.watch)
+        .fetch_one(u.w.h.pool())
+        .await
+        .unwrap()
+}
+
+/// The merged skill's body and files together keep a manual edit's total limit (FIX-251):
+/// each is within its own limit, the sum is not.
+#[tokio::test]
+async fn a_merged_skill_over_the_total_limit_is_refused_like_an_edit() {
+    let u = upd_world().await;
+    upd_own_skill_file(&u, "own.md", &"o".repeat(13_000)).await;
+    upd_advance(&u, "2.0.0").await;
+    let (s, v) = upd_take_merged(
+        &u,
+        "2.0.0",
+        "skill",
+        "watch",
+        |_| json!({"choice": "text", "text": "b".repeat(20_000)}),
+    )
+    .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "skill_too_large", "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("32000 characters"),
+        "{v}"
+    );
+    assert_eq!(upd_watch_body(&u).await, "Watch body: mine.");
+}
+
+/// The updates fixture's `2.0.0` with `watch` given a new description and a new file.
+async fn upd_advance_watch_grows(u: &Upd) {
+    let mut files = upd_files("t", "2.0.0");
+    for f in &mut files {
+        if f.0 == "t/skills/watch/SKILL.md" {
+            f.1 = tpl_skill_md("watch", "Something is very off.", "Watch body v2.");
+        }
+    }
+    files.push(("t/skills/watch/extra.md".to_owned(), b"extra\n".to_vec()));
+    advance_fs(&u.w, u.id, u.repo, "t", "2.0.0", &files, &[]).await;
+}
+
+/// The merged skill keeps a manual edit's file count: the person's own files and the new
+/// version's together (FIX-251).
+#[tokio::test]
+async fn a_merged_skill_over_the_file_count_is_refused_like_an_edit() {
+    let u = upd_world().await;
+    for i in 0..50 {
+        upd_own_skill_file(&u, &format!("own-{i}.md"), "own\n").await;
+    }
+    upd_advance_watch_grows(&u).await;
+    let (s, v) = upd_take_merged(
+        &u,
+        "2.0.0",
+        "skill",
+        "watch",
+        |_| json!({"choice": "keep_mine"}),
+    )
+    .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"]["code"], "skill_files_limit_reached", "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("at most 50 files"),
+        "{v}"
+    );
+}
+
+/// A free edit of the merged description follows a manual edit's rules (FIX-251).
+#[tokio::test]
+async fn a_merged_description_follows_the_rules_of_an_edit() {
+    let u = upd_world().await;
+    sqlx::query("UPDATE skills SET description = 'Mine.' WHERE id = $1")
+        .bind(u.watch)
+        .execute(u.w.h.pool())
+        .await
+        .unwrap();
+    upd_advance_watch_grows(&u).await;
+    for (text, says) in [
+        ("two\nlines".to_owned(), "single line"),
+        (" ".to_owned(), "must not be empty"),
+        ("d".repeat(501), "at most 500 characters"),
+    ] {
+        let (s, v) = upd_take_merged(&u, "2.0.0", "skill", "watch", |unit| {
+            if unit == "description" {
+                json!({"choice": "text", "text": text})
+            } else {
+                json!({"choice": "keep_mine"})
+            }
+        })
+        .await;
+        assert!(s == 400 || s == 422, "{s} {v}");
+        assert!(v.to_string().contains(says), "{v}");
+        assert!(v.to_string().contains("/description"), "{v}");
+    }
+}
+
+/// The merged helper set keeps the per-agent caps, refused with the helpers' own error
+/// (FIX-251): the file count, and the bytes together.
+#[tokio::test]
+async fn a_merged_helper_set_over_the_caps_is_refused() {
+    for (count, size, says) in [
+        (50, 4, "at most 50 helper files"),
+        (9, 240 * 1024, "together can be at most 2097152 bytes"),
+    ] {
+        let u = upd_world().await;
+        upd_set_report(&u, "an own edit\n").await;
+        let content = vec![b'h'; size];
+        let mut conn = u.w.h.pool().acquire().await.unwrap();
+        for i in 0..count {
+            aurora_db::repo::agent_helpers::insert(
+                &mut conn,
+                u.agent,
+                &format!("own-{i}.md"),
+                &content,
+                false,
+                &"0".repeat(64),
+            )
+            .await
+            .unwrap();
+        }
+        drop(conn);
+        upd_advance(&u, "2.0.0").await;
+        let (s, v) = upd_take_merged(
+            &u,
+            "2.0.0",
+            "helpers",
+            "",
+            |_| json!({"choice": "keep_mine"}),
+        )
+        .await;
+        assert_eq!(s, 422, "{v}");
+        assert_eq!(v["error"]["code"], "helpers_limit", "{v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains(says),
+            "{v}"
+        );
+    }
+}
+
 /// Resolutions that do not match the offer's conflict hunks are refused, and so is a part
 /// applied without its merge hash (FIX-251).
 #[tokio::test]

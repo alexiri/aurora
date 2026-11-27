@@ -108,12 +108,34 @@ pub(crate) fn content_size(c: &[u8]) -> usize {
     skill_format::content_size(c)
 }
 
-fn check_total(body: &str, files: &[repo::FileRow]) -> Result<(), ApiError> {
-    let total = body.chars().count()
-        + files
-            .iter()
-            .map(|f| content_size(&f.content))
-            .sum::<usize>();
+fn files_limit() -> ApiError {
+    ApiError::conflict(
+        "skill_files_limit_reached",
+        format!(
+            "A skill can have at most {} files.",
+            limits::SKILL_FILES_MAX
+        ),
+    )
+}
+
+/// The limits of an edit, applied to a whole skill composed elsewhere (a template merge's
+/// result, FIX-251): the description's and body's own rules, the file count and the total —
+/// refused with the same errors.
+pub(crate) fn check_composed(
+    description: &str,
+    body: &str,
+    files: &[&[u8]],
+) -> Result<(), ApiError> {
+    validate_description(description)?;
+    validate_body(body)?;
+    if files.len() as i64 > limits::SKILL_FILES_MAX {
+        return Err(files_limit());
+    }
+    check_total(body, files.iter().copied())
+}
+
+fn check_total<'a>(body: &str, files: impl Iterator<Item = &'a [u8]>) -> Result<(), ApiError> {
+    let total = body.chars().count() + files.map(content_size).sum::<usize>();
     if total > limits::SKILL_TOTAL_MAX {
         return Err(ApiError::unprocessable(
             "skill_too_large",
@@ -473,7 +495,7 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
     let body = p.body.unwrap_or(&cur.body);
     if p.body.is_some() {
         let files = repo::files(&mut tx, &[id]).await?;
-        check_total(body, &files)?;
+        check_total(body, files.iter().map(|f| f.content.as_slice()))?;
     }
     let row = repo::update(
         &mut tx,
@@ -519,13 +541,7 @@ pub async fn put_file(
     // (FIX-110) At most SKILL_FILES_MAX files per skill (a replaced path adds none); the skill
     // row is locked above, so the count is race-free.
     if !files.iter().any(|f| f.path == path) && files.len() as i64 >= limits::SKILL_FILES_MAX {
-        return Err(ApiError::conflict(
-            "skill_files_limit_reached",
-            format!(
-                "A skill can have at most {} files.",
-                limits::SKILL_FILES_MAX
-            ),
-        ));
+        return Err(files_limit());
     }
     files.retain(|f| f.path != path);
     files.push(repo::FileRow {
@@ -534,7 +550,7 @@ pub async fn put_file(
         content: content.to_vec(),
         executable: false,
     });
-    check_total(&cur.body, &files)?;
+    check_total(&cur.body, files.iter().map(|f| f.content.as_slice()))?;
     repo::upsert_file(&mut tx, id, path, content, executable).await?;
     repo::touch(&mut tx, id).await?;
     bump(&mut tx, &cur).await?;
