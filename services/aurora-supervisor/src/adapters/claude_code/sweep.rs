@@ -89,7 +89,17 @@ fn snapshot() -> Vec<Proc> {
 
 /// `true` once the leader exited — still unreaped, or already reaped.
 pub(super) fn exited(pid: i32) -> bool {
-    stat_of(pid).is_none_or(|p| p.zombie)
+    exited_from(std::fs::read(format!("/proc/{pid}/stat")))
+}
+
+/// What reading the leader's `stat` says about it. Only "there is no such process" and the
+/// zombie state say that it exited; any other failure (out of descriptors or memory) says
+/// nothing, and the next poll asks again.
+fn exited_from(stat: std::io::Result<Vec<u8>>) -> bool {
+    match stat {
+        Ok(s) => parse_stat(0, &s).is_some_and(|p| p.zombie),
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
 }
 
 /// Signals the instance `p`, never a later process with its pid.
@@ -284,5 +294,27 @@ impl ChildTree {
             }
             tokio::time::sleep(SCAN_EVERY).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (SEC-165) Only "no such process" or a zombie says that the leader exited: a read that
+    /// fails for want of a file descriptor must not start the kill of a live child.
+    #[test]
+    fn a_failed_read_does_not_say_that_the_leader_exited() {
+        let err = |code: Errno| Err(std::io::Error::from(code));
+        assert!(!exited_from(err(Errno::MFILE)));
+        assert!(!exited_from(err(Errno::NOMEM)));
+        assert!(exited_from(err(Errno::NOENT)));
+        let stat = |text: &str| Ok(text.as_bytes().to_vec());
+        assert!(exited_from(stat(
+            "7 (sh) Z 1 7 7 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5"
+        )));
+        assert!(!exited_from(stat(
+            "7 (s) h) S 1 7 7 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 5"
+        )));
     }
 }
