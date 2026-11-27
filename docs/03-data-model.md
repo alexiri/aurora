@@ -1341,16 +1341,17 @@ skills and, with them, their updates; deleting an org deletes its libraries.
 | gate_command | text null | ≤2 000 |
 | gate_description | text null | ≤200 |
 | enabled | bool not null default true | |
-| disabled_reason | text null CHECK in (`user`,`authorization`,`failures`) | |
+| disabled_reason | text null CHECK in (`user`,`authorization`,`failures`,`task_ended`) | (FIX-253 fixes2 G) `task_ended`: the delegated task behind a peer-created wake-up has ended |
 | disabled_by | uuid null FK→users (set null) | (phase 5, P5-REFINE-14, C-1096) the person whose own pause this is; cleared on resume |
 | consecutive_failures | int not null default 0 | |
 | creator_user_id | uuid null FK→users (set null) | fire-time authority anchor |
 | origin_conversation_id | uuid null FK→conversations (set null) | |
+| ends_at | timestamptz null | (FIX-253 fixes2 G) a peer-created wake-up's deadline: the delegated task's `expires_at`; the fire path skips and disables the schedule once the task has ended or this instant has passed (`10 §Schedules`) |
 | run_conversation_id | uuid null FK→conversations (set null) | created lazily |
 | next_fire_at | timestamptz null | |
 | fire_lease_until | timestamptz null | claim clock |
 | last_fire_at | timestamptz null | |
-| last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`gated_quiet`,`skipped_frozen`,`waiting_paused`) | `skipped_frozen` (phase 2, RFE-006): fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too; (phase 5, P5-SCHED-ONCE) `waiting_paused`: a due one-time schedule waits for the paused agent |
+| last_outcome | text null CHECK in (`ok`,`failed`,`skipped_busy`,`gated_quiet`,`skipped_frozen`,`waiting_paused`,`skipped_task_closed`) | `skipped_frozen` (phase 2, RFE-006): fire skipped because the agent is effectively frozen (`10 §Schedules`); `schedule_runs.outcome` (open text) records `skipped_frozen` too; (phase 5, P5-SCHED-ONCE) `waiting_paused`: a due one-time schedule waits for the paused agent; (FIX-253 fixes2 G) `skipped_task_closed`: the fire skipped because the delegated task behind the schedule has ended |
 | anchor | text not null default `creator` CHECK in (`creator`,`workspace`) | fire-time authority: the creator's access (`creator`) or "an active owner exists" (`workspace`); `creator_user_id` stays as provenance (`04 §Fire-time authority`) |
 | check | `(cron IS NULL) <> (run_at IS NULL)`; `completed_at IS NULL OR run_at IS NOT NULL` | (phase 5, P5-SCHED-ONCE, C-1092) |
 | index | `schedules_completed_idx (completed_at) WHERE completed_at IS NOT NULL` | (phase 5, P5-SCHED-ONCE) retention and the reminder push |

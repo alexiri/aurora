@@ -270,6 +270,21 @@ pub trait HarnessSession: Send {
     async fn abort(&mut self) -> Result<(), HarnessError>;
     /// Let go without ending; a later start with the same ref resumes.
     async fn release(self: Box<Self>) -> Result<(), HarnessError>;
+    /// (FIX-253, D-490) The harness child's own background work that outlives the turn: commands
+    /// it started in the background and whose end nobody observed. Empty when the adapter cannot
+    /// know or the child is gone (its background work dies with it). A plain method: it reads
+    /// only what the adapter already knows.
+    fn background_work(&self) -> Vec<BackgroundWork> {
+        Vec::new()
+    }
+}
+
+/// (FIX-253, D-490) One piece of the harness child's own background work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackgroundWork {
+    pub command: String,
+    /// Unix seconds when it was started.
+    pub started_at: u64,
 }
 
 #[cfg(test)]

@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"id":"msg_03","role":"assistant","content":[{"type":"text","text":"The e2e run failed; I pushed a fix and started it again."}],"stop_reason":"end_turn","usage":{"input_tokens":120,"output_tokens":30}},"parent_tool_use_id":null}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":4000,"num_turns":1,"result":"The e2e run failed; I pushed a fix and started it again.","session_id":"5d1e0c1a-0000-4000-8000-000000000002","total_cost_usd":0.004,"usage":{"input_tokens":120,"output_tokens":30}}

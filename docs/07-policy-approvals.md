@@ -881,7 +881,9 @@ item shows on Administration, `14 §Needs your attention`).
 When a one-time schedule's run that happened in its creator's own chat (`10 §Schedules`) ends
 `done`, the same delivery loop claims `schedule_runs.answer_pushed_at` and sends **one push to each
 opted-in device of the schedule's creator** (the claim requires the conversation to still be that
-person's direct chat, so no other person's device is ever reached). The payload is
+person's direct chat, so no other person's device is ever reached). (FIX-253, D-490) A schedule
+made in a delegated task's conversation belongs to the task's requester and wakes in the task
+conversation, which is not a direct chat: the claim never matches, so no push is sent. The payload is
 `{ "v": 1, "type": "schedule_answer", "url": "/o/<org>/w/<ws>/agents/<handle>?c=<conversation>" }`,
 plus `title` (the schedule's name, `NAME`-capped) only on a device with `show_details`; never the
 answer, the prompt or any other text, so a lock screen shows only the service worker's fixed

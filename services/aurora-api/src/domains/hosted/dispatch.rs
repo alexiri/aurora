@@ -26,6 +26,9 @@ const NO_KEY_PAGES: usize = 8;
 const SYNC_LEASE_SECS: f64 = 60.0;
 const ABORT_LEASE_SECS: f64 = 30.0;
 const PURGE_LEASE_SECS: f64 = 30.0;
+/// (FIX-253 review) A `session.release` is re-sent after this lease until the supervisor
+/// acknowledges it; while one is in flight the Stop request waits.
+const RELEASE_LEASE_SECS: f64 = 30.0;
 
 /// Side effects the caller performs after the transaction commits.
 #[derive(Default)]
@@ -186,6 +189,20 @@ async fn arm4_signals(
             t.sandbox_id,
             t.boot_id,
             WorkItemBody::TurnSendNow(TurnRef { turn_id: t.turn_id }),
+        ));
+    }
+    // (FIX-253, D-490) Stop of the **Background activity** of a finished turn: release the
+    // conversation's idle harness session; the child's background work dies with it. Re-sent
+    // each lease until the supervisor acknowledges the release (FIX-253 review).
+    for t in
+        hosted::claim_background_stops(tx, runner, replica, RELEASE_LEASE_SECS, ARM_LIMIT).await?
+    {
+        items.push(item(
+            t.sandbox_id,
+            t.boot_id,
+            WorkItemBody::SessionRelease(aurora_protocol::runner::SessionRelease {
+                conversation_id: t.conversation_id,
+            }),
         ));
     }
     Ok(())

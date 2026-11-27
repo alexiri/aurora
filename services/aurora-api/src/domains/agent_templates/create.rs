@@ -898,6 +898,7 @@ async fn create_in_tx(
                     gate_command: None,
                     gate_description: None,
                     anchor: "creator",
+                    ends_at: None,
                 },
                 Some(caller.user_id),
                 None,

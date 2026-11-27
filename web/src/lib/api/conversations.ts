@@ -179,6 +179,9 @@ export const chatApi = {
       ),
     ),
   continue: (id: string) => unwrap(api.POST("/v1/conversations/{id}/continue", { params: { path: { id } } })),
+  /** (FIX-253, D-490) The `no_wakeup` notice's action: one one-time reminder in 15 minutes, idempotent per turn. */
+  remind: (id: string, turnId: string) =>
+    unwrap(api.POST("/v1/conversations/{id}/reminder", { params: { path: { id } }, body: { turn_id: turnId } })),
   abort: (turn: string) => unwrap(api.POST("/v1/turns/{id}/abort", { params: { path: { id: turn } } })),
   sendNow: (turn: string) => unwrap(api.POST("/v1/turns/{id}/send-now", { params: { path: { id: turn } } })),
   /** (FIX-225, C-1154) The waiting follow-ups of a conversation, oldest first, with the caller's `controls`. */

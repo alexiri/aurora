@@ -521,6 +521,44 @@ pub async fn claim_aborts(
     .await?)
 }
 
+/// Arm 4 (FIX-253, D-490): finished turns whose Stop was requested for their still-running
+/// **Background activity**: handed to the supervisor once per lease (FIX-253 review). The abort
+/// flag stays until the supervisor's `session.released` report clears it: a release that could
+/// not run yet (a turn was running) is retried after the lease, and the **stopped** notice is
+/// written only on the acknowledgement. `steer_delivered_at` doubles as the in-flight mark on
+/// `turn` rows, where it is otherwise unused (as in [`claim_send_nows`]).
+pub async fn claim_background_stops(
+    conn: &mut PgConnection,
+    runner: Uuid,
+    replica: Uuid,
+    lease_secs: f64,
+    limit: i64,
+) -> Result<Vec<TurnSignal>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(
+        "WITH cand AS (SELECT t.id FROM turns t JOIN sandboxes s ON s.agent_id = t.agent_id
+             WHERE t.role = 'turn' AND t.status NOT IN ('dispatched','running')
+               AND t.abort_requested_at IS NOT NULL
+               AND (t.steer_delivered_at IS NULL
+                    OR t.steer_delivered_at < now() - make_interval(secs => $3))
+               AND s.runner_id = $1 AND s.channel_replica_id = $2 AND s.state = 'running'
+               AND s.boot_id IS NOT NULL AND t.boot_id = s.boot_id
+               AND EXISTS (SELECT 1 FROM transcript_events e
+                 WHERE e.conversation_id = t.conversation_id AND e.turn_id = t.id
+                   AND e.type = 'notice' AND e.payload->>'code' = 'background_activity')
+             ORDER BY t.created_at LIMIT $4 FOR UPDATE OF t SKIP LOCKED)
+         UPDATE turns t SET steer_delivered_at = now(), updated_at = now()
+         FROM cand, sandboxes s WHERE t.id = cand.id AND s.agent_id = t.agent_id
+         RETURNING t.id AS turn_id, t.conversation_id, s.id AS sandbox_id, s.boot_id"
+            .to_owned(),
+    ))
+    .bind(runner)
+    .bind(replica)
+    .bind(lease_secs)
+    .bind(limit)
+    .fetch_all(conn)
+    .await?)
+}
+
 /// Arm 4: send-now requests, delivered once (`steer_delivered_at` doubles as the delivered mark
 /// on `turn` rows, where it is otherwise unused).
 pub async fn claim_send_nows(

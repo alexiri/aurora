@@ -3907,6 +3907,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/conversations/{id}/reminder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * (FIX-253, D-490) The "Remind it in 15 minutes" action on the `no_wakeup` notice: one one-time
+         *     schedule 15 minutes ahead in this conversation, attributed to the caller; a second press
+         *     returns the already-set time.
+         */
+        post: operations["remindConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/conversations/{id}/stream": {
         parameters: {
             query?: never;
@@ -15628,6 +15649,19 @@ export interface components {
             /** Format: int32 */
             streams_open: number;
             version: string;
+        };
+        /**
+         * @description (FIX-253, D-490) `POST /conversations/{id}/reminder` body: the turn whose "nothing is set to
+         *     wake it" notice the button sits on.
+         */
+        ReminderRequest: {
+            /** Format: uuid */
+            turn_id: string;
+        };
+        /** @description (FIX-253, D-490) The reminder the notice's action set (or already had set). */
+        ReminderSet: {
+            /** @description The local wall time the reminder fires at ("HH:MM"). */
+            reminder_for: string;
         };
         /** @description A version this instance ingested from the source that the manifest no longer lists. */
         RemovedUpstream: {
@@ -34688,6 +34722,75 @@ export interface operations {
             };
             /** @description hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id), reply_target_invalid (details.reason: not_found | not_replyable | redacted) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Too many requests: the per-principal rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    remindConversation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Conversation id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReminderRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReminderSet"];
+                };
+            };
+            /** @description Unauthenticated: no credential, or an invalid or expired one */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description reminder_not_offered */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

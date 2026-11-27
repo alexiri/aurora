@@ -1495,6 +1495,8 @@ const ROWS: &[Row] = &[
     r("GET", "/v1/agents/{agent}/timeline", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/timeline/stream", G::WsUse, true),
     r("POST", "/v1/conversations/{id}/continue", G::WsUse, false),
+    // (FIX-253, D-490) The notice's reminder action: the same write right as a message.
+    r("POST", "/v1/conversations/{id}/reminder", G::WsUse, false),
     // P2-010 (RFE-010): the per-conversation decision (direct user / turn author / `can_own`) needs
     // a real conversation and is covered by tests/it/conversation_lifecycle.rs; the matrix asserts
     // the visibility floor (`can_use`).
@@ -2099,6 +2101,9 @@ fn body_for_inner(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"decision": "deny", "agent_id": fx.agent})
         }
         ("POST", "/v1/conversations/{id}/messages") => json!({"text": "hi"}),
+        ("POST", "/v1/conversations/{id}/reminder") => {
+            json!({"turn_id": Uuid::now_v7()})
+        }
         ("POST", "/v1/orgs/{org}/api-keys" | "/v1/workspaces/{ws}/api-keys") => {
             json!({"name": "k"})
         }

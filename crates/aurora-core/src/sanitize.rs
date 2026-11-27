@@ -120,17 +120,57 @@ pub fn reason(s: &str, max: usize) -> String {
         "key",
         "authorization",
     ];
+    // (FIX-253 review) Long flags whose value is a credential, and the short flags read in their
+    // command family only (`mysql -p …`, `curl -u …`): the bare `-p` of `ls -p` is not a password.
+    const SECRET_FLAGS: [&str; 7] = [
+        "--token",
+        "--password",
+        "--passwd",
+        "--secret",
+        "--api-key",
+        "--apikey",
+        "--passphrase",
+    ];
+    const P_IS_PASSWORD: [&str; 5] = ["mysql", "mariadb", "mysqldump", "mongo", "mongosh"];
+    fn secret_name(k: &str, keys: &[&str; 8]) -> bool {
+        keys.iter()
+            .any(|s| k == *s || k.ends_with(&format!("_{s}")) || k.ends_with(&format!("-{s}")))
+    }
     let line = one_line(s, max.saturating_mul(2).max(64));
+    // The command families the short flags are read in: a `-p` is a password only after `mysql`
+    // and friends, `-u` a user only after `curl`. The command may appear anywhere (`&& mysql …`).
+    let mut p_is_password = false;
+    let mut u_is_user = false;
     let mut out: Vec<String> = Vec::new();
     let mut mask_next = false;
     for word in line.split(' ') {
+        let lower = word.to_ascii_lowercase();
+        let base = lower.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
+        if P_IS_PASSWORD.contains(&base) {
+            p_is_password = true;
+        }
+        if base == "curl" {
+            u_is_user = true;
+        }
         if mask_next {
+            // `Authorization: Basic x`: the scheme word is shown, its credential stays masked.
+            if lower == "bearer" || lower == "basic" {
+                out.push(word.to_owned());
+                continue;
+            }
             mask_next = false;
             out.push("***".into());
             continue;
         }
-        let lower = word.to_ascii_lowercase();
         if lower == "bearer" || lower == "basic" {
+            mask_next = true;
+            out.push(word.to_owned());
+            continue;
+        }
+        if SECRET_FLAGS.contains(&lower.as_str())
+            || (lower == "-p" && p_is_password)
+            || (lower == "-u" && u_is_user)
+        {
             mask_next = true;
             out.push(word.to_owned());
             continue;
@@ -157,26 +197,26 @@ pub fn reason(s: &str, max: usize) -> String {
                 w = format!("{}{p}***", &w[..i]);
             }
         }
-        // key=value / key:value pairs.
+        // key=value / key:value pairs (the long flags' `=` form: `--password=x`).
         for sep in ['=', ':'] {
             if let Some(i) = w.find(sep) {
                 let k = w[..i]
-                    .trim_start_matches(['"', '\'', '{', '(', '['])
+                    .trim_start_matches(['"', '\'', '{', '(', '[', '-'])
                     .to_ascii_lowercase();
                 let k = k.trim_end_matches(['"', '\'']);
-                if !w[i + 1..].is_empty()
-                    && SECRET_KEYS.iter().any(|s| {
-                        k == *s || k.ends_with(&format!("_{s}")) || k.ends_with(&format!("-{s}"))
-                    })
-                {
+                if !w[i + 1..].is_empty() && secret_name(k, &SECRET_KEYS) {
                     w = format!("{}{sep}***", &w[..i]);
                 }
             }
         }
-        if SECRET_KEYS
-            .iter()
-            .any(|s| lower.trim_end_matches(':') == *s)
-            && word.ends_with(':')
+        // A bare header or flag name in front of its value (`Authorization: x`, `Cookie: x`,
+        // `X-Api-Key: x` — header names compound: `x-api-key` ends with `-key`).
+        let name = word
+            .trim_matches(|c: char| c == '\'' || c == '"')
+            .to_ascii_lowercase();
+        if name.ends_with(':')
+            && (secret_name(name.trim_end_matches(':'), &SECRET_KEYS)
+                || name.trim_end_matches(':') == "cookie")
         {
             mask_next = true;
         }
@@ -302,6 +342,37 @@ mod tests {
         assert_eq!(
             reason("image: docker.io/x/y:1", 300),
             "image: docker.io/x/y:1"
+        );
+    }
+
+    /// (FIX-253 review) The Background activity command line masks the flag forms too: long
+    /// credential flags, the short password flag of the commands where `-p` is one (`mysql`),
+    /// `curl -u`, header-style names and `Authorization: Basic`. A bare `-p` of `ls -p` and a
+    /// path that merely contains "token" are not masked.
+    #[test]
+    fn reason_masks_flag_and_header_forms() {
+        let r = reason(
+            "curl --token t0k --password p4ss -X POST https://bob:hunter2@x.example \
+             -u bob:hunter2 -H 'Cookie: session=abc123' -H 'X-Api-Key: key123' \
+             -H 'Authorization: Basic dXNlcjpwYXNz' && mysql -p hush",
+            500,
+        );
+        for leaked in [
+            "t0k",
+            "p4ss",
+            "hunter2",
+            "abc123",
+            "key123",
+            "dXNlcjpwYXNz",
+            "hush",
+        ] {
+            assert!(!r.contains(leaked), "{leaked} leaked in {r}");
+        }
+        assert!(r.contains("https://***@x.example"), "{r}");
+        // False positives stay untouched.
+        assert_eq!(
+            reason("ls -p src && cat /var/tokens/list.txt", 200),
+            "ls -p src && cat /var/tokens/list.txt"
         );
     }
 

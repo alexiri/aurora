@@ -752,6 +752,250 @@ async fn message_in_task_needs_the_matching_open_task() {
     assert_eq!(used, 1);
 }
 
+/// (FIX-253, D-490) The platform's self-check: an agent turn that ends with the task still open
+/// and nothing set to wake the agent gets one visible reminder notice; a schedule anchored to
+/// the conversation is a wake, so no notice; a failed turn and a person turn never get one.
+#[tokio::test]
+async fn a_turn_ending_with_an_open_task_and_no_wake_posts_the_reminder_notice() {
+    use aurora_api::domains::hosted::lifecycle;
+    let d = duo().await;
+    let task = Rig::id(&d.send("one").await["peer_task_id"]);
+    let pc = d.rig.peer_conversation(task).await;
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+
+    // A failed turn is not a promise: no notice (the task still closes as today).
+    let turn = d.rig.running_turn(pc).await.unwrap();
+    lifecycle::finish(&mut conn, turn, "failed", Some("x"), None, None)
+        .await
+        .unwrap();
+    assert_eq!(d.rig.notices(pc, "no_wakeup").await.len(), 0);
+
+    // A `done` agent turn with the task open and no wake: exactly one notice, naming the agent.
+    let task2 = Rig::id(&d.send("two").await["peer_task_id"]);
+    let pc2 = d.rig.peer_conversation(task2).await;
+    let turn2 = d.rig.running_turn(pc2).await.unwrap();
+    lifecycle::finish(&mut conn, turn2, "done", None, None, None)
+        .await
+        .unwrap();
+    let notices = d.rig.notices(pc2, "no_wakeup").await;
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["agent_id"], json!(d.b));
+    assert!(
+        notices[0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Agent bravo said it would continue, but nothing is set to wake it")
+    );
+    assert_eq!(notices[0]["turn_id"], json!(turn2));
+
+    let task3 = Rig::id(&d.send("three").await["peer_task_id"]);
+    let pc3 = d.rig.peer_conversation(task3).await;
+    sqlx::query(
+        "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, run_at, creator_user_id, origin_conversation_id)
+         VALUES ($1,$2,'check','Look again.',NULL,'UTC', now() + interval '15 minutes', $3, $4)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(d.b)
+    .bind(d.rig.p.id)
+    .bind(pc3)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    let turn3 = d.rig.running_turn(pc3).await.unwrap();
+    lifecycle::finish(&mut conn, turn3, "done", None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(d.rig.notices(pc3, "no_wakeup").await.len(), 0);
+}
+
+/// (FIX-253, D-490) The "Remind it in 15 minutes" action on the `no_wakeup` notice: one press
+/// creates exactly one one-time schedule ~15 minutes ahead in the peer conversation for the same
+/// agent, attributed to the person who pressed; a second press (by another person who can see
+/// the conversation) creates no second schedule and returns the same time; someone who cannot
+/// see the conversation is refused.
+#[tokio::test]
+async fn a_reminder_press_sets_one_one_time_schedule_for_the_presser() {
+    use crate::common::cookie;
+    use crate::peers_rig::Person;
+    use aurora_api::domains::hosted::lifecycle;
+    let d = duo().await;
+    let task = Rig::id(&d.send("one").await["peer_task_id"]);
+    let pc = d.rig.peer_conversation(task).await;
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    let turn = d.rig.running_turn(pc).await.unwrap();
+    lifecycle::finish(&mut conn, turn, "done", None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(d.rig.notices(pc, "no_wakeup").await.len(), 1);
+
+    // Another person of the workspace can see the peer conversation and press the notice too.
+    let id2 = d.rig.h.user("p2@x.io", false).await;
+    d.rig.h.member(d.rig.org, id2, "member", "active").await;
+    d.rig.h.bind_ws(d.rig.ws1, id2, "approver").await;
+    let (_, tok2) = d.rig.h.good_session(id2).await;
+    let p2 = Person {
+        id: id2,
+        cookie: cookie(&tok2),
+    };
+
+    let uri = format!("/v1/conversations/{pc}/reminder");
+    let (code, body) = d
+        .rig
+        .post(&d.rig.p, &uri, Some(json!({"turn_id": turn})))
+        .await;
+    assert_eq!(code, 200, "{body}");
+    let when = body["reminder_for"].as_str().unwrap().to_owned();
+    assert_eq!(when.len(), 5, "{when}");
+    type ReminderRow = (
+        String,
+        Option<String>,
+        Option<Uuid>,
+        Uuid,
+        Option<Uuid>,
+        f64,
+    );
+    let rows: Vec<ReminderRow> = sqlx::query_as(
+        "SELECT name, cron, creator_user_id, agent_id, origin_conversation_id,
+                extract(epoch from (run_at - now()))::double precision
+         FROM schedules WHERE origin_conversation_id = $1",
+    )
+    .bind(pc)
+    .fetch_all(d.rig.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row.0, "Reminder");
+    assert_eq!(row.1, None, "a reminder is a one-time schedule");
+    assert_eq!(row.2, Some(d.rig.p.id), "attributed to the presser");
+    assert_eq!(row.3, d.b, "wakes the peer conversation's agent");
+    assert_eq!(row.4, Some(pc));
+    assert!(
+        (14.0 * 60.0..16.0 * 60.0).contains(&row.5),
+        "run_at ~15 minutes ahead, got {}s",
+        row.5
+    );
+
+    // The durable notice says the time and is the idempotency marker.
+    let set = d.rig.notices(pc, "no_wakeup_set").await;
+    assert_eq!(set.len(), 1);
+    assert_eq!(set[0]["reminder_for"], json!(when));
+    assert!(
+        set[0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("A reminder is set for "),
+        "{}",
+        set[0]["text"]
+    );
+
+    // A second press — by the other person — creates no second schedule and says the same time.
+    let (code, body) = d.rig.post(&p2, &uri, Some(json!({"turn_id": turn}))).await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["reminder_for"], json!(when));
+    assert_eq!(d.rig.notices(pc, "no_wakeup_set").await.len(), 1);
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM schedules WHERE origin_conversation_id = $1")
+            .bind(pc)
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(n, 1);
+
+    // Someone who cannot see the conversation is refused and creates nothing.
+    let (code, _) = d
+        .rig
+        .post(&d.rig.q, &uri, Some(json!({"turn_id": turn})))
+        .await;
+    assert_eq!(code, 404);
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM schedules WHERE origin_conversation_id = $1")
+            .bind(pc)
+            .fetch_one(d.rig.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(n, 1);
+}
+
+/// (FIX-253 fixes2 E) The reminder press writes into the conversation and starts agent work, so it
+/// honors the same gates as sending a message: an archived conversation is refused (restore it to
+/// write again), and a frozen agent is refused (423 `frozen`).
+#[tokio::test]
+async fn a_reminder_press_refuses_an_archived_conversation_and_a_frozen_agent() {
+    use crate::common::cookie;
+    use crate::peers_rig::Person;
+    use aurora_api::domains::hosted::lifecycle;
+    let d = duo().await;
+    let task = Rig::id(&d.send("one").await["peer_task_id"]);
+    let pc = d.rig.peer_conversation(task).await;
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    let turn = d.rig.running_turn(pc).await.unwrap();
+    lifecycle::finish(&mut conn, turn, "done", None, None, None)
+        .await
+        .unwrap();
+    drop(conn);
+    let uri = format!("/v1/conversations/{pc}/reminder");
+    let count = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM schedules WHERE origin_conversation_id = $1",
+        )
+        .bind(pc)
+        .fetch_one(d.rig.h.pool())
+        .await
+        .unwrap()
+    };
+
+    // Archived: refused before anything is created, with the restore hint.
+    let (code, _) = d
+        .rig
+        .post(&d.rig.p, &format!("/v1/conversations/{pc}/archive"), None)
+        .await;
+    assert_eq!(code, 200);
+    let (code, body) = d
+        .rig
+        .post(&d.rig.p, &uri, Some(json!({"turn_id": turn})))
+        .await;
+    assert_eq!(code, 409, "{body}");
+    assert_eq!(body["error"]["code"], "conversation_archived", "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        "This conversation is archived. Restore it to write again."
+    );
+    assert_eq!(count().await, 0);
+    assert_eq!(d.rig.notices(pc, "no_wakeup_set").await.len(), 0);
+
+    // Restored but the agent frozen: refused with the frozen error.
+    let (code, _) = d
+        .rig
+        .post(&d.rig.p, &format!("/v1/conversations/{pc}/unarchive"), None)
+        .await;
+    assert_eq!(code, 200);
+    let oid = d.rig.h.user("own-e@x.io", false).await;
+    d.rig.h.member(d.rig.org, oid, "member", "active").await;
+    d.rig.h.bind_ws(d.rig.ws1, oid, "owner").await;
+    let (_, tok) = d.rig.h.good_session(oid).await;
+    let owner = Person {
+        id: oid,
+        cookie: cookie(&tok),
+    };
+    let (code, body) = d
+        .rig
+        .post(
+            &owner,
+            &format!("/v1/agents/{}/freeze", d.b),
+            Some(json!({"reason": "gate"})),
+        )
+        .await;
+    assert_eq!(code, 200, "{body}");
+    let (code, body) = d
+        .rig
+        .post(&d.rig.p, &uri, Some(json!({"turn_id": turn})))
+        .await;
+    assert_eq!(code, 423, "{body}");
+    assert_eq!(body["error"]["code"], "frozen", "{body}");
+    assert_eq!(count().await, 0);
+}
+
 #[tokio::test]
 async fn receiver_turn_ending_without_a_report_closes_the_task_once() {
     use aurora_api::domains::hosted::lifecycle;

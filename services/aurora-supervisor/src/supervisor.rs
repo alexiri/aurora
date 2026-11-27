@@ -10,10 +10,11 @@ use std::time::Duration;
 
 use aurora_protocol::runner::{
     Code, Gate, GateOutcome, HarnessId, HarnessInfo, HomeSynced, PortsState, SendNowOutcome,
-    SendNowResult, SessionPurged, SessionReport, SteerOutcome, SteerResult, SupervisorReady,
-    TurnDeliver, TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
+    SendNowResult, SessionPurged, SessionReleased, SessionReport, SteerOutcome, SteerResult,
+    SupervisorReady, TurnDeliver, TurnEvent, TurnMessage, TurnRef, TurnResult, TurnStatus,
 };
 use aurora_protocol::supervisor::{RunnerToSupervisor, SupervisorToRunner};
+use serde_json::{Map, Value, json};
 use tokio::sync::{Mutex, Notify, mpsc};
 use tokio::time::{Instant, interval, sleep_until};
 use uuid::Uuid;
@@ -387,20 +388,53 @@ impl Supervisor {
         }
     }
 
-    /// Releases one conversation's harness session; one with a running turn is never interrupted.
+    /// Releases one conversation's harness session; one with a running turn is never interrupted
+    /// (the release waits for it — the request comes again). The outcome is reported
+    /// (`session.released`): the API records the **Background activity stopped** notice only on
+    /// an acknowledged release (FIX-253 review).
     async fn release_session(&mut self, conversation_id: Uuid) {
-        if self
+        let ok = if self
             .turns
             .values()
             .any(|t| t.conversation_id == conversation_id)
         {
-            return;
-        }
-        if let Some(e) = self.sessions.remove(&conversation_id)
-            && let Ok(m) = Arc::try_unwrap(e.session)
-        {
-            let _ = m.into_inner().release().await;
-        }
+            false
+        } else {
+            match self.sessions.remove(&conversation_id) {
+                Some(SessionEntry {
+                    session,
+                    cred,
+                    epoch,
+                    reported_ref,
+                    _proxy,
+                }) => {
+                    // (FIX-253 fixes2) `ok` only when the release really ran and succeeded. A
+                    // session another live clone still holds was not released: the entry goes
+                    // back, so the next Stop can try again.
+                    let (released, back) = release_shared(session).await;
+                    if let Some(session) = back {
+                        self.sessions.insert(
+                            conversation_id,
+                            SessionEntry {
+                                session,
+                                cred,
+                                epoch,
+                                reported_ref,
+                                _proxy,
+                            },
+                        );
+                    }
+                    released
+                }
+                // Nothing to release: the background work is already gone.
+                None => true,
+            }
+        };
+        self.send(SupervisorToRunner::SessionReleased(SessionReleased {
+            conversation_id,
+            ok,
+        }))
+        .await;
     }
 
     /// (P5-GUIDE-7, C-654) A sync changed what new sessions are told (core descriptors or the
@@ -1064,15 +1098,40 @@ impl TurnTask {
             let mut s = self.session.lock().await;
             s.run_turn(self.input.clone()).await
         };
-        let (status, err_code, err_msg, usage) = match started {
+        let (status, err_code, err_msg, usage, n) = match started {
             Err(e) => (
                 TurnStatus::Failed,
                 Some(classify_error(&e.code)),
                 Some(e.message),
                 None,
+                0u64,
             ),
             Ok(stream) => self.pump(stream, &turn_ref).await,
         };
+        // (FIX-253, D-490) Nothing happens unseen: the harness child's own background work is
+        // listed at turn end, while the turn still owns the event stream on the API side, so the
+        // conversation gets one visible entry (with Stop) for what keeps running after the reply.
+        let backgrounds = self.session.lock().await.background_work();
+        if !backgrounds.is_empty() {
+            let items: Vec<Value> = backgrounds
+                .iter()
+                .map(|w| json!({ "command": w.command, "started_at": w.started_at }))
+                .collect();
+            // A static, grammar-checked code; "background" is well inside the bound.
+            let kind = match aurora_protocol::runner::Code::new("background") {
+                Ok(k) => k,
+                Err(_) => unreachable!("the static background code is short enough"),
+            };
+            self.send(SupervisorToRunner::TurnEvent(TurnEvent {
+                turn_id: self.turn_id,
+                n: n + 1,
+                event: aurora_protocol::runner::HarnessEventWire {
+                    kind,
+                    data: Map::from_iter([("items".to_owned(), json!(items))]),
+                },
+            }))
+            .await;
+        }
         self.cred.set_context(None);
         self.db_turns.end(self.turn_id);
 
@@ -1110,11 +1169,17 @@ impl TurnTask {
         Option<&'static str>,
         Option<String>,
         Option<serde_json::Value>,
+        u64,
     ) {
         let mut n = 0u64;
         let mut tick = interval(self.progress);
         tick.tick().await;
         let mut abort_deadline: Option<Instant> = None;
+        let out = |n: u64,
+                   s: TurnStatus,
+                   c: Option<&'static str>,
+                   m: Option<String>,
+                   u: Option<serde_json::Value>| (s, c, m, u, n);
         loop {
             let deadline = async {
                 match abort_deadline {
@@ -1126,21 +1191,21 @@ impl TurnTask {
                 ev = stream.recv() => {
                     let aborted = self.aborted.load(Ordering::SeqCst);
                     match ev {
-                        None => return if aborted {
-                            (TurnStatus::Aborted, None, None, None)
+                        None => return out(n, if aborted {
+                            TurnStatus::Aborted
                         } else {
-                            (TurnStatus::Failed, Some("harness_failed"), Some("harness ended without a result".into()), None)
-                        },
-                        Some(HarnessEvent::Done { usage }) => return if aborted {
-                            (TurnStatus::Aborted, None, None, usage)
+                            TurnStatus::Failed
+                        }, if aborted { None } else { Some("harness_failed") }, if aborted { None } else { Some("harness ended without a result".into()) }, None),
+                        Some(HarnessEvent::Done { usage }) => return out(n, if aborted {
+                            TurnStatus::Aborted
                         } else {
-                            (TurnStatus::Done, None, None, usage)
-                        },
-                        Some(HarnessEvent::Error { code: c, message }) => return if aborted {
-                            (TurnStatus::Aborted, None, None, None)
+                            TurnStatus::Done
+                        }, None, None, usage),
+                        Some(HarnessEvent::Error { code: c, message }) => return out(n, if aborted {
+                            TurnStatus::Aborted
                         } else {
-                            (TurnStatus::Failed, Some(classify_error(&c)), Some(message), None)
-                        },
+                            TurnStatus::Failed
+                        }, if aborted { None } else { Some(classify_error(&c)) }, if aborted { None } else { Some(message) }, None),
                         Some(HarnessEvent::SessionRef { session_ref }) => {
                             self.report_session(Some(session_ref)).await;
                         }
@@ -1167,8 +1232,99 @@ impl TurnTask {
                 _ = self.abort.notified(), if abort_deadline.is_none() => {
                     abort_deadline = Some(Instant::now() + ABORT_GRACE);
                 }
-                _ = deadline => return (TurnStatus::Aborted, None, None, None),
+                _ = deadline => return out(n, TurnStatus::Aborted, None, None, None),
             }
         }
+    }
+}
+
+/// (FIX-253 fixes2) One shared session's release: `true` only when the release really ran and
+/// succeeded. A session another live clone still holds was not released — the clone comes back,
+/// so the caller can keep the entry and the next Stop can try again.
+async fn release_shared(session: SharedSession) -> (bool, Option<SharedSession>) {
+    match Arc::try_unwrap(session) {
+        Ok(m) => (m.into_inner().release().await.is_ok(), None),
+        Err(arc) => (false, Some(arc)),
+    }
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+    use crate::harness::{BackgroundWork, HarnessError, HarnessEventStream};
+    use aurora_protocol::runner::SendNowOutcome;
+    use std::path::Path;
+
+    /// A session whose release fails, and one whose release succeeds: the two failure and the
+    /// success paths of [`release_shared`].
+    struct StubSession {
+        fails: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl HarnessSession for StubSession {
+        fn session_ref(&self) -> Option<String> {
+            None
+        }
+        async fn run_turn(&mut self, _: TurnInput) -> Result<HarnessEventStream, HarnessError> {
+            Err(HarnessError::new("stub", "no turns"))
+        }
+        async fn steer(&mut self, _: SteerInput) -> Result<SteerAck, HarnessError> {
+            Ok(SteerAck::Refused)
+        }
+        async fn background_running_tool(&mut self) -> Result<SendNowOutcome, HarnessError> {
+            Ok(SendNowOutcome::Unsupported)
+        }
+        async fn abort(&mut self) -> Result<(), HarnessError> {
+            Ok(())
+        }
+        async fn release(self: Box<Self>) -> Result<(), HarnessError> {
+            if self.fails {
+                Err(HarnessError::new("stub", "release failed"))
+            } else {
+                Ok(())
+            }
+        }
+        fn background_work(&self) -> Vec<BackgroundWork> {
+            Vec::new()
+        }
+    }
+
+    fn stub(fails: bool) -> SharedSession {
+        Arc::new(Mutex::new(
+            Box::new(StubSession { fails }) as Box<dyn HarnessSession>
+        ))
+    }
+
+    fn _unused(_: &Path) {}
+
+    /// A release that failed is not an acknowledgement: `ok` stays false.
+    #[tokio::test]
+    async fn a_failed_release_is_not_reported_as_released() {
+        let (ok, back) = release_shared(stub(true)).await;
+        assert!(!ok, "a release that errored must not report ok");
+        assert!(back.is_none());
+    }
+
+    /// A session another clone still holds was not released: the clone comes back for the entry.
+    #[tokio::test]
+    async fn a_session_still_held_by_another_clone_is_not_released_and_comes_back() {
+        let session = stub(false);
+        let held = Arc::clone(&session);
+        let (ok, back) = release_shared(session).await;
+        assert!(!ok, "an unreleased session must not report ok");
+        let Some(back) = back else {
+            panic!("the still-held session must come back");
+        };
+        // The returned session is the same live one, not a fresh failure.
+        assert!(Arc::ptr_eq(&held, &back));
+    }
+
+    /// The success path: the release ran and succeeded.
+    #[tokio::test]
+    async fn a_successful_release_is_reported() {
+        let (ok, back) = release_shared(stub(false)).await;
+        assert!(ok);
+        assert!(back.is_none());
     }
 }

@@ -581,6 +581,34 @@ impl Conn {
     }
 }
 
+/// (FIX-253 review) A `session.release` is acknowledged: while a turn runs in the conversation
+/// the release waits (`ok: false` — the request comes again), and an idle session is released
+/// (`ok: true`). The API writes the **Background activity stopped** notice only on `ok: true`.
+#[tokio::test]
+async fn a_release_is_acknowledged_and_a_running_turn_defers_it() {
+    let (gw, _) = stub_gateway().await;
+    let (_r, mut c) = start(gw).await;
+    c.sync_brief(1, "first").await;
+    c.deliver(TURN, "[[say: a]] [[sleep: 1s]] [[say: b]]", "auc_t")
+        .await;
+    c.next_of("turn.event").await;
+    c.send("session.release", json!({"conversation_id": CONV}))
+        .await;
+    assert_eq!(
+        c.next_of("session.released").await["ok"],
+        false,
+        "a turn is running: the release waits for it"
+    );
+    assert_eq!(c.next_of("turn.result").await["status"], "done");
+    c.send("session.release", json!({"conversation_id": CONV}))
+        .await;
+    assert_eq!(
+        c.next_of("session.released").await["ok"],
+        true,
+        "the idle session is released"
+    );
+}
+
 /// (P5-GUIDE-7, C-654) A sync that changes the rendered instruction files (or the core
 /// descriptors) releases the idle sessions, so the next turn starts a fresh harness session; a
 /// sync that changes nothing leaves them. The fake harness rewrites its session marker on every
