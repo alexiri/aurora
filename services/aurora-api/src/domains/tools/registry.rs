@@ -223,6 +223,9 @@ impl Registry {
             {
                 tracing::warn!(error = %e, "eval refusal count failed");
             }
+            if tool == "memory_save" {
+                super::memory::refused_before_call(ctx, &args).await;
+            }
             return ToolResult::failure(
                 id,
                 WireError {

@@ -226,6 +226,11 @@ async fn compute(
     for job in judge_jobs {
         crate::domains::evals::judge::spawn(s.clone(), job);
     }
+    // (P5-MEMORY-1, C-1169) After the commit: the recording takes no lock the delivery holds,
+    // and a delivery that rolled back records nothing.
+    for (memories, conv) in after.memory_uses {
+        crate::domains::memory::mark_used(&s.pool, &memories, conv).await;
+    }
     for (conv, turn) in after.flush {
         crate::domains::hosted::lifecycle::flush_deltas(s, conv, turn).await;
     }

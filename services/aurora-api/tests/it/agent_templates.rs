@@ -7294,6 +7294,22 @@ async fn a_full_creation_writes_every_kind_with_its_provenance() {
     assert_eq!(prov["source"], "template", "{prov}");
     assert_eq!(prov["template"], "Monitor", "{prov}");
     assert_eq!(prov["template_version"], "1.0.0", "{prov}");
+    // (P5-MEMORY-1, C-1169) The memory itself says the template added it, for the creator.
+    let (added, changed): (Value, Value) = sqlx::query_as(
+        "SELECT added_by, changed_by FROM memories WHERE agent_id = $1 AND key = 'notes'",
+    )
+    .bind(agent)
+    .fetch_one(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(added["kind"], "template", "{added}");
+    assert_eq!(
+        added["template"],
+        json!({"name": "Monitor", "version": "1.0.0"}),
+        "{added}"
+    );
+    assert_eq!(added["user_id"], json!(owner_id), "{added}");
+    assert_eq!(changed, added);
 
     // The skills: the two own ones (editable) and the library skill, pinned and read-only.
     assert_eq!(

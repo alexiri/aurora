@@ -21,13 +21,14 @@ function mockFetch(routes: Record<string, Handler>) {
   return fn;
 }
 
+const ann: Memory["added_by"] = { kind: "person", person: { id: "u1", display_name: "Ann" } };
 const rev = (n: number, over: Partial<MemoryRevision> = {}): MemoryRevision => ({
-  revision: n, author_kind: "user", author_label: "Ann", provenance: "dashboard", redacted: false,
-  content: `content ${n}`, created_at: "2026-01-01T00:00:00Z", ...over,
+  revision: n, author_kind: "user", author_label: "Ann", provenance: "dashboard", author: ann, via: "dashboard",
+  redacted: false, content: `content ${n}`, created_at: "2026-01-01T00:00:00Z", ...over,
 });
 const memory: Memory = {
   key: "k", revision: 3, content: "c", index_line: "k: c", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
-  locked: false,
+  locked: false, added_by: ann, changed_by: ann,
 };
 
 describe("limits", () => {

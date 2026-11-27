@@ -35,6 +35,9 @@ const RELEASE_LEASE_SECS: f64 = 30.0;
 pub struct After {
     /// `(conversation, turn)` whose buffered deltas must be flushed.
     pub flush: Vec<(Uuid, Uuid)>,
+    /// (P5-MEMORY-1, C-1169) The memories a delivered turn's recall included, per conversation:
+    /// recorded as used once the delivery is committed.
+    pub memory_uses: Vec<(Vec<Uuid>, Uuid)>,
 }
 
 fn item(sandbox_id: Uuid, boot_id: Uuid, body: WorkItemBody) -> WorkItem {
@@ -367,7 +370,13 @@ async fn arm6_dispatch(
         }
         let (resume_ref, epoch) = hosted::session_of(tx, turn.conversation_id).await?;
         let mems = hosted::memories(tx, agent.id).await?;
-        let snippets = crate::domains::memory::recall_snippets(tx, agent.id, &turn.text).await?;
+        let recalled = crate::domains::memory::recall_snippets(tx, agent.id, &turn.text).await?;
+        if !recalled.memories.is_empty() {
+            after
+                .memory_uses
+                .push((recalled.memories, turn.conversation_id));
+        }
+        let snippets = recalled.snippets;
         let attachments: Vec<AttachmentRef> = hosted::turn_attachments(tx, turn.id)
             .await?
             .into_iter()
