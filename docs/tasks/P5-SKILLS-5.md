@@ -99,3 +99,16 @@ Sonnet `sonnet-integration-reviewer` with a browser (comparison and precise chan
 
 Passes run, verdict counts per pass, report paths, what was sent back and merged, owner-accepted differences, the
 cluster torn down.
+
+**Pass 1 (2026-11-27, on `d2783670`): not clean — 21 Match, 4 Minor difference, 2 Needs changes.**
+
+- Report: `docs/design/skills-memory/verify/SKILLS-REPORT-pass1.md`; captures in `…/verify/skills-pass1/`.
+- To send back: C-1 (broken: unaddable library skills listed as addable, wrong sizes) and C-2 to P5-SKILLS-1/-4; C-3
+  (unclamped descriptions), C-4 (update notice count), C-5 (diffs scroll at 390 px) to P5-SKILLS-3; C-6 ("Default
+  branch") and C-7 (suggested label) to P5-SKILLS-2. Outside the registry: B-1 (broken, git libraries: editing a
+  library's source stops update proposals and keeps stale ones) needs a new FIX.
+- Merged fixes: none yet. Owner-accepted differences: none recorded.
+- No direct fixes and no product code changed, so no tests or fail-first evidence of this lane's own.
+- Not verified: the emergency reader (the build predates the FIX-277 code), app skills; see the report.
+- Cluster `aurora-mem5` (:4530) **kept up** for P5-MEMORY-5 pass 2, on the owner's coordinator's instruction. PROGRESS
+  and FEATURES not edited; `P5/14§skills-polish` is not done.
