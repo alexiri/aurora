@@ -585,6 +585,75 @@ async fn the_reaper_collects_zombie_children_nobody_waits_for() {
     reaper.abort();
 }
 
+/// (SEC-165) The kernel cuts a process's name to 15 bytes, also inside a character: such a
+/// zombie's `stat` is not UTF-8, and it is reaped all the same.
+#[tokio::test]
+async fn the_reaper_collects_a_zombie_whose_name_is_cut_inside_a_character() {
+    use aurora_supervisor::process::spawn_reaper;
+    use std::os::unix::fs::PermissionsExt;
+    let d = TempDir::new();
+    // 14 bytes, then a two-byte character: the cut falls between its bytes.
+    let script = d.path().join("aaaaaaaaaaaaaaé");
+    std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let child = aurora_supervisor::spawn::command(&script, std::iter::empty::<(&str, &str)>())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    std::mem::forget(child);
+    let stat = move || std::fs::read(format!("/proc/{pid}/stat")).ok();
+    let zombie = |s: &[u8]| {
+        let after = &s[s.iter().rposition(|b| *b == b')').unwrap() + 1..];
+        after.trim_ascii_start().starts_with(b"Z")
+    };
+    timeout(T, async {
+        while !stat().is_some_and(|s| zombie(&s)) {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .expect("the child became a zombie");
+    assert!(
+        std::str::from_utf8(&stat().unwrap()).is_err(),
+        "the name was not cut inside a character"
+    );
+    let reaper = spawn_reaper(Duration::from_millis(100));
+    timeout(T, async {
+        while stat().is_some() {
+            tokio::time::sleep(Duration::from_millis(20)).await
+        }
+    })
+    .await
+    .expect("the zombie was reaped");
+    reaper.abort();
+}
+
+/// (SEC-165) A child the supervisor spawned is its owner's to wait for, however late it does
+/// so: the reaper leaves it, and its exit status arrives. (The harness leader stays unwaited
+/// through a whole stop, which keeps its pid and its group its own.)
+#[tokio::test]
+async fn the_reaper_leaves_a_child_its_owner_has_not_waited_for_yet() {
+    use aurora_supervisor::process::spawn_reaper;
+    let reaper = spawn_reaper(Duration::from_millis(50));
+    let mut cmd = aurora_supervisor::spawn::tokio_command("sh", std::iter::empty::<(&str, &str)>());
+    cmd.args(["-c", "exit 7"]);
+    let mut child = aurora_supervisor::spawn::spawn(&mut cmd).unwrap();
+    // Other children end meanwhile: each SIGCHLD makes the reaper scan again.
+    for _ in 0..20 {
+        let mut other =
+            aurora_supervisor::spawn::tokio_command("true", std::iter::empty::<(&str, &str)>());
+        aurora_supervisor::spawn::spawn(&mut other)
+            .unwrap()
+            .wait()
+            .await
+            .ok();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let status = child.wait().await.expect("the exit status was taken away");
+    assert_eq!(status.code(), Some(7));
+    reaper.abort();
+}
+
 /// (FIX-114) Shutdown signals the registered process groups.
 #[tokio::test]
 async fn terminate_all_signals_running_groups() {
@@ -891,8 +960,8 @@ async fn bridge_call_under(
     String,
     Option<aurora_supervisor::proc_ancestry::Registration>,
 ) {
-    let mut sh = aurora_supervisor::spawn::tokio_command("sh", std::iter::empty::<(&str, &str)>())
-        .arg("-c")
+    let mut cmd = aurora_supervisor::spawn::tokio_command("sh", std::iter::empty::<(&str, &str)>());
+    cmd.arg("-c")
         // The bridge is a child of the shell (not exec'd), so the call has an ancestry to walk.
         .arg("\"$0\" mcp-bridge --session \"$1\" --socket \"$2\"; true")
         // nextest's runtime path first: CI shards run an extracted archive, where the
@@ -905,9 +974,8 @@ async fn bridge_call_under(
         .arg(sock)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
+        .kill_on_drop(true);
+    let mut sh = aurora_supervisor::spawn::spawn(&mut cmd).unwrap();
     let registration =
         harness_of.and_then(|(reg, conv)| reg.register(sh.id().unwrap(), conv.parse().unwrap()));
     let mut stdin = sh.stdin.take().unwrap();
@@ -979,12 +1047,12 @@ async fn bridge_of_the_harness_is_served_and_another_conversation_is_refused() {
 async fn a_process_outside_every_harness_is_refused_for_every_conversation() {
     let (_d, hub, mut rx, sock, registry) = caller_rig().await;
     // A harness exists (a long-lived sibling process), but the caller is not below it.
-    let mut sibling =
+    let mut sibling = aurora_supervisor::spawn::spawn(
         aurora_supervisor::spawn::tokio_command("sleep", std::iter::empty::<(&str, &str)>())
             .arg("30")
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+            .kill_on_drop(true),
+    )
+    .unwrap();
     let _g = registry
         .register(sibling.id().unwrap(), CONV.parse().unwrap())
         .unwrap();
@@ -1230,12 +1298,12 @@ async fn the_aurora_target_from_a_process_outside_the_harness_is_session_not_cal
     use aurora_supervisor::agent_cli::{self, Verb};
     let (d, hub, mut rx, sock, registry) = caller_rig().await;
     // A harness exists for CONV (a sibling), but this process is not below it.
-    let mut sibling =
+    let mut sibling = aurora_supervisor::spawn::spawn(
         aurora_supervisor::spawn::tokio_command("sleep", std::iter::empty::<(&str, &str)>())
             .arg("30")
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
+            .kill_on_drop(true),
+    )
+    .unwrap();
     let _g = registry
         .register(sibling.id().unwrap(), CONV.parse().unwrap())
         .unwrap();

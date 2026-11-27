@@ -22,8 +22,8 @@ use uuid::Uuid;
 
 use crate::channel::ChannelSender;
 use crate::harness::{
-    HarnessAdapter, HarnessCapabilities, HarnessEvent, HarnessSession, McpBridgeSpec,
-    SessionOptions, SteerAck, SteerInput, TurnInput,
+    BackgroundWork, HarnessAdapter, HarnessCapabilities, HarnessEvent, HarnessSession,
+    McpBridgeSpec, SessionOptions, SteerAck, SteerInput, TurnInput,
 };
 use crate::harvest::Harvester;
 use crate::home::{HomeConfig, HomeProjector, PartOutcome};
@@ -44,6 +44,10 @@ pub struct SupervisorConfig {
     pub proxy_ip: IpAddr,
     pub progress_interval: Duration,
     pub shutdown_grace: Duration,
+    /// (FIX-265) The longest one release request holds the supervisor's loop, however many
+    /// sessions it covers. What is not released by then is reported as not stopped and goes on
+    /// in its own task. Longer than the grace a process that ignores HUP is given.
+    pub release_deadline: Duration,
     pub version: String,
     /// Base bridge command (e.g. `[exe, "mcp-bridge"]`); `--session <conversation id>` is appended.
     pub mcp_bridge_command: Vec<String>,
@@ -69,6 +73,7 @@ impl SupervisorConfig {
             proxy_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
             progress_interval: Duration::from_secs(10),
             shutdown_grace: Duration::from_secs(5),
+            release_deadline: Duration::from_secs(4),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             mcp_bridge_command: Vec::new(),
             harvest_interval: Duration::from_secs(10),
@@ -135,6 +140,29 @@ pub struct Supervisor {
     /// against that anchor (`turn.idle.events`); the entry goes when the watch is done. With
     /// the turn: the number of the watch's next event.
     idle_turns: Arc<StdMutex<HashMap<Uuid, (Uuid, u64)>>>,
+    /// (FIX-265) The background list last reported for each conversation that ever had one:
+    /// from then on every change is reported, the empty list too.
+    reported_background: Arc<StdMutex<HashMap<Uuid, Vec<BackgroundWork>>>>,
+    /// (FIX-265) Sessions that are not released yet, because their release failed or takes
+    /// longer than [`SupervisorConfig::release_deadline`]: the conversation's next
+    /// `session.release` goes on with them.
+    unreleased: Vec<(Uuid, Unreleased)>,
+}
+
+/// A session the supervisor is done with but has not seen released.
+enum Unreleased {
+    /// Its release is still running, in a task that gives the session back if it fails.
+    Running(Releasing),
+    /// Its release failed.
+    Failed(SharedSession),
+}
+
+/// [`release_shared`] in its own task, so that nobody has to wait for it to the end:
+/// `None` once released.
+type Releasing = tokio::task::JoinHandle<Option<SharedSession>>;
+
+fn start_release(session: SharedSession) -> Releasing {
+    tokio::spawn(async move { release_shared(session).await.1 })
 }
 
 /// One share of the in-memory allow-list.
@@ -258,6 +286,8 @@ impl Supervisor {
             ptys,
             reported_ports: BTreeSet::new(),
             idle_turns: Arc::new(StdMutex::new(HashMap::new())),
+            reported_background: Arc::default(),
+            unreleased: Vec::new(),
         }
     }
 
@@ -369,8 +399,9 @@ impl Supervisor {
     }
 
     /// (FIX-253, part B) Reports what the watched idle children did since the last drain, as
-    /// `turn.idle.events` anchored on the turn each watch follows. A watch whose background
-    /// work is gone and that has nothing left to report is dropped: the reader stopped itself.
+    /// `turn.idle.events` anchored on the turn each watch follows, with a `background` entry
+    /// when the list changed (FIX-265). A watch whose reader stopped, whose background work is
+    /// gone and that has nothing left to report is dropped.
     async fn drain_idle(&mut self) {
         let anchors: Vec<(Uuid, (Uuid, u64))> = self
             .idle_turns
@@ -378,6 +409,14 @@ impl Supervisor {
             .map(|m| m.iter().map(|(c, w)| (*c, *w)).collect())
             .unwrap_or_default();
         for (conversation_id, (turn_id, mut next)) in anchors {
+            // A running turn reports for itself, at its end.
+            if self
+                .turns
+                .values()
+                .any(|t| t.conversation_id == conversation_id)
+            {
+                continue;
+            }
             let Some(entry) = self.sessions.get(&conversation_id) else {
                 if let Ok(mut m) = self.idle_turns.lock() {
                     m.remove(&conversation_id);
@@ -385,30 +424,46 @@ impl Supervisor {
                 continue;
             };
             let mut s = entry.session.lock().await;
+            // Read before the drain: a watch that was over then has nothing more to add.
+            let watching = s.idle_watching();
             let events: Vec<HarnessEvent> = s.take_idle_events();
-            if events.is_empty() {
-                if s.background_work().is_empty()
+            let work = s.background_work();
+            drop(s);
+            let changed = self.reported_background.lock().is_ok_and(|mut m| {
+                m.get_mut(&conversation_id).is_some_and(|reported| {
+                    let changed = *reported != work;
+                    reported.clone_from(&work);
+                    changed
+                })
+            });
+            let mut wire = number_idle(&events, &mut next);
+            if changed {
+                wire.push(NumberedEvent {
+                    n: next,
+                    event: background_wire(&work),
+                });
+                next += 1;
+            }
+            if wire.is_empty() {
+                if work.is_empty()
+                    && !watching
                     && let Ok(mut m) = self.idle_turns.lock()
                 {
                     m.remove(&conversation_id);
                 }
                 continue;
             }
-            let wire = number_idle(&events, &mut next);
-            drop(s);
             if let Ok(mut m) = self.idle_turns.lock()
                 && let Some(watch) = m.get_mut(&conversation_id)
                 && watch.0 == turn_id
             {
                 watch.1 = next;
             }
-            if !wire.is_empty() {
-                self.send(SupervisorToRunner::TurnIdleEvents(TurnEvents {
-                    turn_id,
-                    events: wire,
-                }))
-                .await;
-            }
+            self.send(SupervisorToRunner::TurnIdleEvents(TurnEvents {
+                turn_id,
+                events: wire,
+            }))
+            .await;
         }
     }
 
@@ -434,18 +489,90 @@ impl Supervisor {
                 _ = sleep_until(deadline) => break,
             }
         }
-        for (_, entry) in self.sessions.drain() {
-            if let Ok(m) = Arc::try_unwrap(entry.session) {
-                let _ = m.into_inner().release().await;
-            }
+        // All at once: each release waits for what its harness started to end.
+        let rest: Vec<Releasing> = self
+            .sessions
+            .drain()
+            .map(|(_, e)| start_release(e.session))
+            .chain(self.unreleased.drain(..).map(|(_, u)| match u {
+                Unreleased::Running(r) => r,
+                Unreleased::Failed(s) => start_release(s),
+            }))
+            .collect();
+        let _ =
+            tokio::time::timeout(self.cfg.release_deadline, futures::future::join_all(rest)).await;
+    }
+
+    /// Waits for releases until `deadline`, all of them against that one instant; each that
+    /// has not released its session by then is kept for the conversation's next
+    /// `session.release`. `true` when none is.
+    async fn settle(
+        &mut self,
+        conversation_id: Uuid,
+        releases: Vec<Releasing>,
+        deadline: Instant,
+    ) -> bool {
+        let mut released = true;
+        for mut release in releases {
+            let kept = match tokio::time::timeout_at(deadline, &mut release).await {
+                Ok(Ok(None)) => continue,
+                Ok(Ok(Some(session))) => Some(Unreleased::Failed(session)),
+                // The task died and its session with it: nothing is left to try again, and
+                // nothing says that it was released.
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "a release task failed");
+                    None
+                }
+                Err(_) => Some(Unreleased::Running(release)),
+            };
+            released = false;
+            self.unreleased.extend(kept.map(|k| (conversation_id, k)));
         }
+        released
+    }
+
+    /// Releases a session that is no longer used, waiting no longer than the release
+    /// deadline.
+    async fn release_replaced(&mut self, conversation_id: Uuid, session: SharedSession) {
+        let deadline = Instant::now() + self.cfg.release_deadline;
+        self.settle(conversation_id, vec![start_release(session)], deadline)
+            .await;
+    }
+
+    /// Whether a session of the conversation is still not released, after dropping those
+    /// whose release has finished meanwhile.
+    async fn has_unreleased(&mut self, conversation_id: Uuid) -> bool {
+        let mut left = false;
+        for (c, u) in std::mem::take(&mut self.unreleased) {
+            let u = match u {
+                Unreleased::Running(r) if r.is_finished() => match r.await {
+                    Ok(Some(session)) => Unreleased::Failed(session),
+                    _ => continue,
+                },
+                u => u,
+            };
+            left |= c == conversation_id;
+            self.unreleased.push((c, u));
+        }
+        left
     }
 
     /// Releases one conversation's harness session; one with a running turn is never interrupted
     /// (the release waits for it — the request comes again). The outcome is reported
     /// (`session.released`): the API records the **Background activity stopped** notice only on
-    /// an acknowledged release (FIX-253 review).
+    /// an acknowledged release (FIX-253 review), and `ok` says that nothing the conversation's
+    /// harness started is left (FIX-265). What did not end is kept, and the request, sent again,
+    /// goes on with it.
     async fn release_session(&mut self, conversation_id: Uuid) {
+        let deadline = Instant::now() + self.cfg.release_deadline;
+        self.release_session_by(conversation_id, deadline).await;
+    }
+
+    /// [`Self::release_session`] that waits no longer than `deadline`, for every session of
+    /// the conversation together.
+    async fn release_session_by(&mut self, conversation_id: Uuid, deadline: Instant) {
+        // A failed release that is still running counts as such once it has finished.
+        self.has_unreleased(conversation_id).await;
         let ok = if self
             .turns
             .values()
@@ -453,39 +580,34 @@ impl Supervisor {
         {
             false
         } else {
-            match self.sessions.remove(&conversation_id) {
-                Some(SessionEntry {
-                    session,
-                    cred,
-                    epoch,
-                    reported_ref,
-                    _proxy,
-                }) => {
-                    // (FIX-253, part B) The watch dies with the session.
-                    if let Ok(mut m) = self.idle_turns.lock() {
-                        m.remove(&conversation_id);
-                    }
-                    // (FIX-253 fixes2) `ok` only when the release really ran and succeeded. A
-                    // session another live clone still holds was not released: the entry goes
-                    // back, so the next Stop can try again.
-                    let (released, back) = release_shared(session).await;
-                    if let Some(session) = back {
-                        self.sessions.insert(
-                            conversation_id,
-                            SessionEntry {
-                                session,
-                                cred,
-                                epoch,
-                                reported_ref,
-                                _proxy,
-                            },
-                        );
-                    }
-                    released
-                }
-                // Nothing to release: the background work is already gone.
-                None => true,
+            let (mine, others): (Vec<_>, Vec<_>) = std::mem::take(&mut self.unreleased)
+                .into_iter()
+                .partition(|(c, _)| *c == conversation_id);
+            self.unreleased = others;
+            // They all run at once: the deadline is not shared out between them.
+            let mut releases: Vec<Releasing> = mine
+                .into_iter()
+                .map(|(_, u)| match u {
+                    Unreleased::Running(r) => r,
+                    Unreleased::Failed(s) => start_release(s),
+                })
+                .collect();
+            // (FIX-253 fixes2) `ok` only when every release really ran and succeeded. No
+            // session: nothing of it to release.
+            if let Some(e) = self.sessions.remove(&conversation_id) {
+                releases.push(start_release(e.session));
             }
+            let ok = self.settle(conversation_id, releases, deadline).await;
+            if ok {
+                // (FIX-253, part B) The watch dies with the session.
+                if let Ok(mut m) = self.idle_turns.lock() {
+                    m.remove(&conversation_id);
+                }
+                if let Ok(mut m) = self.reported_background.lock() {
+                    m.remove(&conversation_id);
+                }
+            }
+            ok
         };
         self.send(SupervisorToRunner::SessionReleased(SessionReleased {
             conversation_id,
@@ -499,8 +621,10 @@ impl Supervisor {
     /// message; a session with a turn running keeps its own until then.
     async fn release_idle_sessions(&mut self) {
         let ids: Vec<Uuid> = self.sessions.keys().copied().collect();
+        // One deadline for them all.
+        let deadline = Instant::now() + self.cfg.release_deadline;
         for id in ids {
-            self.release_session(id).await;
+            self.release_session_by(id, deadline).await;
         }
     }
 
@@ -648,9 +772,8 @@ impl Supervisor {
         }
         if foreign.is_none()
             && let Some(e) = self.sessions.remove(&conversation_id)
-            && let Ok(m) = Arc::try_unwrap(e.session)
         {
-            let _ = m.into_inner().release().await;
+            self.release_replaced(conversation_id, e.session).await;
         }
         let done = match adapter {
             Ok(a) => a.purge_session(&self.cfg.working_dir, &session_ref).await,
@@ -879,13 +1002,12 @@ impl Supervisor {
             .get(&d.conversation_id)
             .is_some_and(|e| e.epoch != d.session.epoch)
             && let Some(old) = self.sessions.remove(&d.conversation_id)
-            && let Ok(m) = Arc::try_unwrap(old.session)
         {
             // (FIX-253, part B) The old session's watch dies with it.
-            if let Ok(mut m2) = self.idle_turns.lock() {
-                m2.remove(&d.conversation_id);
+            if let Ok(mut m) = self.idle_turns.lock() {
+                m.remove(&d.conversation_id);
             }
-            let _ = m.into_inner().release().await;
+            self.release_replaced(d.conversation_id, old.session).await;
         }
         if !self.sessions.contains_key(&d.conversation_id) {
             match self.start_session(&d).await {
@@ -941,6 +1063,8 @@ impl Supervisor {
             procs: self.procs.clone(),
             db_turns: self.db_turns.clone(),
             idle_turns: self.idle_turns.clone(),
+            reported_background: self.reported_background.clone(),
+            unreleased: self.has_unreleased(d.conversation_id).await,
         };
         self.hub.set_turn(d.conversation_id, Some(d.turn_id));
         self.turns.insert(d.turn_id, handle);
@@ -1106,6 +1230,11 @@ struct TurnTask {
     /// (FIX-253, part B) The supervisor's `idle_turns` map, so the watch started here is known
     /// to the drain.
     idle_turns: Arc<StdMutex<HashMap<Uuid, (Uuid, u64)>>>,
+    /// (FIX-265) The supervisor's record of the lists it reported.
+    reported_background: Arc<StdMutex<HashMap<Uuid, Vec<BackgroundWork>>>>,
+    /// (FIX-265) An earlier session of the conversation is not released yet, so an empty list
+    /// of this one does not say that nothing runs.
+    unreleased: bool,
 }
 
 impl TurnTask {
@@ -1176,26 +1305,29 @@ impl TurnTask {
         // (FIX-253, D-490) Nothing happens unseen: the harness child's own background work is
         // listed at turn end, while the turn still owns the event stream on the API side, so the
         // conversation gets one visible entry (with Stop) for what keeps running after the reply.
-        let backgrounds = self.session.lock().await.background_work();
-        if !backgrounds.is_empty() {
-            let items: Vec<Value> = backgrounds
-                .iter()
-                .map(|w| json!({ "command": w.command, "started_at": w.started_at }))
-                .collect();
-            // A static, grammar-checked code; "background" is well inside the bound.
-            let kind = match aurora_protocol::runner::Code::new("background") {
-                Ok(k) => k,
-                Err(_) => unreachable!("the static background code is short enough"),
-            };
+        let (backgrounds, may_say_more) = {
+            let s = self.session.lock().await;
+            (s.background_work(), s.wants_idle_watch())
+        };
+        // (FIX-265) Once a conversation has had a list, every turn's end says what it is now,
+        // the empty list too.
+        let reported = self.reported_background.lock().is_ok_and(|mut m| {
+            let had = m.contains_key(&self.conversation_id);
+            if !backgrounds.is_empty() || (had && !self.unreleased) {
+                m.insert(self.conversation_id, backgrounds.clone());
+                return true;
+            }
+            false
+        });
+        if reported {
             self.send(SupervisorToRunner::TurnEvent(TurnEvent {
                 turn_id: self.turn_id,
                 n: n + 1,
-                event: aurora_protocol::runner::HarnessEventWire {
-                    kind,
-                    data: Map::from_iter([("items".to_owned(), json!(items))]),
-                },
+                event: background_wire(&backgrounds),
             }))
             .await;
+        }
+        if reported || may_say_more {
             // (FIX-253, part B) The watch begins: what the child does while nobody holds its
             // stream is reported as `turn.idle.events` against this turn until the work, the
             // child or the watch budget ends it.
@@ -1313,12 +1445,34 @@ impl TurnTask {
 }
 
 /// (FIX-253 fixes2) One shared session's release: `true` only when the release really ran and
-/// succeeded. A session another live clone still holds was not released — the clone comes back,
-/// so the caller can keep the entry and the next Stop can try again.
+/// succeeded. A session another live clone still holds was not released, and neither was one
+/// whose release failed (FIX-265): it comes back, so the caller can keep it and the next Stop
+/// can try again.
 async fn release_shared(session: SharedSession) -> (bool, Option<SharedSession>) {
     match Arc::try_unwrap(session) {
-        Ok(m) => (m.into_inner().release().await.is_ok(), None),
+        Ok(m) => {
+            let mut s = m.into_inner();
+            match s.release().await {
+                Ok(()) => (true, None),
+                Err(e) => {
+                    tracing::warn!(code = %e.code, message = %e.message, "release failed");
+                    (false, Some(Arc::new(Mutex::new(s))))
+                }
+            }
+        }
         Err(arc) => (false, Some(arc)),
+    }
+}
+
+/// (FIX-253, D-490) The `background` event: what still runs, oldest first.
+fn background_wire(work: &[BackgroundWork]) -> aurora_protocol::runner::HarnessEventWire {
+    let items: Vec<Value> = work
+        .iter()
+        .map(|w| json!({ "command": w.command, "started_at": w.started_at }))
+        .collect();
+    aurora_protocol::runner::HarnessEventWire {
+        kind: code("background"),
+        data: Map::from_iter([("items".to_owned(), json!(items))]),
     }
 }
 
@@ -1382,8 +1536,9 @@ mod release_tests {
         async fn abort(&mut self) -> Result<(), HarnessError> {
             Ok(())
         }
-        async fn release(self: Box<Self>) -> Result<(), HarnessError> {
-            if self.fails {
+        /// Fails once, then succeeds.
+        async fn release(&mut self) -> Result<(), HarnessError> {
+            if std::mem::take(&mut self.fails) {
                 Err(HarnessError::new("stub", "release failed"))
             } else {
                 Ok(())
@@ -1402,11 +1557,17 @@ mod release_tests {
 
     fn _unused(_: &Path) {}
 
-    /// A release that failed is not an acknowledgement: `ok` stays false.
+    /// A release that failed is not an acknowledgement: `ok` stays false, and (FIX-265) the
+    /// session comes back, so that the next Stop tries again.
     #[tokio::test]
     async fn a_failed_release_is_not_reported_as_released() {
         let (ok, back) = release_shared(stub(true)).await;
         assert!(!ok, "a release that errored must not report ok");
+        let Some(back) = back else {
+            panic!("an errored release must be retried");
+        };
+        let (ok, back) = release_shared(back).await;
+        assert!(ok, "the retry released it");
         assert!(back.is_none());
     }
 

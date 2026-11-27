@@ -167,9 +167,11 @@ fn zombie_children(me: i32) -> Vec<i32> {
     rd.filter_map(Result::ok)
         .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
         .filter(|pid| {
-            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            // Bytes, not text: the kernel cuts the name to 15 bytes, also inside a
+            // character.
+            std::fs::read(format!("/proc/{pid}/stat"))
                 .ok()
-                .and_then(|s| parse_proc_stat(&s))
+                .and_then(|s| parse_proc_stat(&String::from_utf8_lossy(&s)))
                 .is_some_and(|(state, ppid)| state == 'Z' && ppid == me)
         })
         .collect()
@@ -179,13 +181,15 @@ fn zombie_children(me: i32) -> Vec<i32> {
 /// parent died (tool subprocesses of an aborted turn, `sh -c 'server &'`) are reparented to it
 /// and stay zombies until someone waits for them, eating the sandbox's pid budget.
 ///
-/// Tokio reaps only the children it spawned, and does so itself at SIGCHLD; a zombie child of
-/// ours that is **still there on the next scan** (`interval` later, long after tokio would have
-/// reaped its own) is an orphan nobody owns, so it is reaped here. Returns a task handle.
+/// A child the supervisor spawned ([`crate::spawn::spawn`]) is its owner's to wait for,
+/// whenever it does so, and is never touched here. Any other zombie child that has stayed one
+/// for `interval` of real time is an orphan nobody owns, and is reaped. (Scans come with every
+/// `SIGCHLD`, so two of them may be microseconds apart.) Returns a task handle.
 pub fn spawn_reaper(interval: Duration) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let me = i32::try_from(std::process::id()).unwrap_or(1);
-        let mut seen: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
+        // When each zombie was first seen.
+        let mut seen: BTreeMap<i32, std::time::Instant> = BTreeMap::new();
         let mut tick = tokio::time::interval(interval);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut chld = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::child()).ok();
@@ -194,14 +198,15 @@ pub fn spawn_reaper(interval: Duration) -> tokio::task::JoinHandle<()> {
                 _ = tick.tick() => {}
                 Some(()) = async { match chld.as_mut() { Some(s) => s.recv().await, None => None } } => {}
             }
-            let now: std::collections::BTreeSet<i32> = zombie_children(me).into_iter().collect();
-            for pid in now.intersection(&seen) {
-                if let Some(p) = Pid::from_raw(*pid) {
-                    let _ = rustix::process::waitpid(Some(p), rustix::process::WaitOptions::NOHANG);
+            let zombies: BTreeSet<i32> = zombie_children(me).into_iter().collect();
+            seen.retain(|pid, _| zombies.contains(pid));
+            let now = std::time::Instant::now();
+            for pid in zombies {
+                let first = *seen.entry(pid).or_insert(now);
+                if now.duration_since(first) >= interval {
+                    crate::spawn::reap_unowned(pid);
                 }
             }
-            // Zombies seen for the first time get one more interval to be reaped by their owner.
-            seen = now.difference(&seen).copied().collect();
         }
     })
 }
@@ -466,11 +471,11 @@ impl ProcessManager {
             );
             id
         };
-        let mut child = match shell(&self.cfg, command, &cwd)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+        let mut child = match crate::spawn::spawn(
+            shell(&self.cfg, command, &cwd)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        ) {
             Ok(c) => c,
             Err(e) => {
                 self.lock().procs.remove(&id);
@@ -744,11 +749,11 @@ The wake starts a turn for you, so you can react and report. Fires once.",
             outcome,
             output: output.map(|o| truncate_bytes(&o, MAX_GATE_OUTPUT)),
         };
-        let mut child = match shell(&self.cfg, command, &self.cfg.working_dir)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        {
+        let mut child = match crate::spawn::spawn(
+            shell(&self.cfg, command, &self.cfg.working_dir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null()),
+        ) {
             Ok(c) => c,
             Err(e) => {
                 return done(

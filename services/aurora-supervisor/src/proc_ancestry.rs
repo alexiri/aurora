@@ -42,7 +42,9 @@ pub fn parse_stat(content: &str) -> Option<Stat> {
 
 /// Reads one process's [`Stat`]; `None` when it does not exist (any more).
 pub fn read_stat(pid: u32) -> Option<Stat> {
-    parse_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+    // Bytes, not text: the kernel cuts the name to 15 bytes, also inside a character.
+    let stat = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
+    parse_stat(&String::from_utf8_lossy(&stat))
 }
 
 #[derive(Debug, Clone, Copy)]

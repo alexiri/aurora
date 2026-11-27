@@ -509,7 +509,7 @@ impl HarnessSession for PiSession {
         Ok(())
     }
 
-    async fn release(self: Box<Self>) -> Result<(), HarnessError> {
+    async fn release(&mut self) -> Result<(), HarnessError> {
         if let Some(a) = &self.abort
             && self.running.load(Ordering::SeqCst)
         {

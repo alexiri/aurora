@@ -20,9 +20,12 @@ platform's agent inside the agent's computer. It:
 
 1. Runs as PID 1 (uid 1000), reaps children, forwards SIGTERM to process groups.
    (FIX-114) Tokio reaps the children it spawned; a SIGCHLD/1 s loop reaps the zombie
-   children of PID 1 that are still there on the next scan (orphans reparented to it:
-   tool subprocesses of an aborted turn, `sh -c 'server &'`), so they cannot eat the
-   sandbox's pid budget; shutdown (the runner's `shutdown` frame or SIGTERM) sends
+   children of PID 1 that nobody owns (orphans reparented to it: tool subprocesses of
+   an aborted turn, `sh -c 'server &'`), so they cannot eat the sandbox's pid budget.
+   (FIX-265) Every child is started through `spawn::spawn`, which marks it as owned
+   for as long as its handle lives (clippy refuses tokio's own `spawn`); the loop
+   never waits for an owned child, however late its owner does, and reaps any other
+   zombie child once it has been one for 1 s of real time; shutdown (the runner's `shutdown` frame or SIGTERM) sends
    SIGTERM to every registered process group first.
 2. Reads `AURORA_BOOT`, makes the process non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`) so
    `/proc/<pid>/environ` is unreadable to the agent, and never passes the variable to a
@@ -124,7 +127,9 @@ pub trait HarnessSession: Send {
     async fn steer(&mut self, input: SteerInput) -> Result<SteerAck, HarnessError>;   // only if capability; MUST refuse between turns
     async fn background_running_tool(&mut self) -> Result<SendNowResult, HarnessError>; // "moved" only when confirmed
     async fn abort(&mut self) -> Result<(), HarnessError>;
-    async fn release(self: Box<Self>) -> Result<(), HarnessError>; // let go without ending; a later start with the same ref resumes
+    // let go without ending; a later start with the same ref resumes. Ok only when nothing the
+    // session started is left running; after an error the session is kept and release is retried
+    async fn release(&mut self) -> Result<(), HarnessError>;
 }
 ```
 
@@ -137,8 +142,17 @@ pub trait HarnessSession: Send {
   (FIX-253, D-490) `HarnessSession::background_work()` reports the child's own
   background commands that outlive the turn (claude-code: the model's `Bash`
   calls with `run_in_background`, tracked while mapping); the supervisor lists
-  them at turn end as a `background` turn event (nothing happens unseen), and a
-  dead or released child reports none — its background work died with it.
+  them at turn end as a `background` turn event (nothing happens unseen).
+  (FIX-265) **The list shrinks.** An entry is known by its tool-use id (never
+  by its command text) and leaves when the CLI says that its task ended:
+  `system/task_notification` or a `system/task_updated` with an ended status
+  (`completed`, `failed`, `killed`, `stopped`; `system/task_started` ties the
+  task id to the tool-use id). The call's own successful tool result only
+  acknowledges the launch; an error result removes the entry. Once a
+  conversation has reported background work, the supervisor reports the list
+  at every turn end, and during the idle watch whenever it changes — the empty
+  list too. A child reports none only once nothing it started is left; until
+  then a dead child's list stands.
 - **Steer** must refuse between turns (never queue for a future turn).
   Consumption is confirmed later by `message joined`; a steer that resolves but
   never joins before the turn ends is reported *missed* (the API promotes it).
@@ -149,6 +163,28 @@ pub trait HarnessSession: Send {
   running. (FIX-253, D-490) The same release is what a Stop of a finished turn's
   **Background activity** dispatches (`session.release`): the idle child is
   killed and its background work dies with it.
+  (FIX-265) **Stop reaches orphans, and stopped means stopped (claude-code).**
+  Every harness child gets its own value of `AURORA_HARNESS_CHILD` in its
+  environment (the sandbox has no delegated cgroup). A kill takes every process
+  that is in the child's process group, carries that value
+  (`/proc/<pid>/environ`) or descends from such a process, whatever its parent
+  is now, each signalled through a pidfd (where the kernel has them) and only
+  while its pid still has the start time the scan saw; the supervisor itself is
+  never signalled: HUP to the group, up to 2 s of grace, then KILL, repeated
+  until two scans in a row find nothing. The whole end has one deadline of
+  7 s; scans run on a blocking thread and read at most 128 KiB of a process's
+  environment. Only then does `release` succeed and
+  `session.released { ok: true }` leave. One release request waits at most
+  4 s (`release_deadline`) for all the conversation's sessions together, which
+  are released at once; what is not released by then goes on in its own task,
+  the answer is `ok: false`, and the next `session.release` goes on with it (a
+  failed one is tried again). While such a session exists, a newer session's
+  empty background list is not reported. A supervisor that is not PID 1 makes
+  itself the child subreaper, so orphans are still reaped. **Limit:** a process
+  that left the group and the parent tree **and** dropped the variable
+  (`env -i`, an overwritten environment, a process that hides its environment,
+  like `ssh-agent`, or one whose environment holds the variable only past the
+  first 128 KiB) is not found; the end of the sandbox ends it.
 - (FIX-253, part B) **The idle reader.** After a turn that leaves background
   work, the supervisor starts the session's idle reader
   (`HarnessSession::start_idle_reader`): while the work lasts, the adapter
@@ -159,10 +195,13 @@ pub trait HarnessSession: Send {
   holds that mutex: every line is read by exactly one of them, so a following
   turn takes the stream back with nothing lost and nothing duplicated (the
   reader re-checks the running flag every 100 ms tick and wakes on the turn's
-  notify). The watch ends when the background work is gone, the child dies, or
-  30 minutes have passed since it began (`IDLE_WATCH`; a longer watch is the
-  next turn's business — the supervisor restarts it after every turn that
-  still leaves work); it keeps at most 256 events for the next drain. The
+  notify). The watch ends when the background work is gone, no run of the
+  child is open and the child has been silent for 10 s (FIX-265: a command's
+  end is followed by the child's own run about it), when the child dies, or
+  when 30 minutes have passed since it began (`IDLE_WATCH`; a longer watch is
+  the next turn's business — the supervisor restarts it after every turn of a
+  child that has started background work); it keeps at most 256 events for the
+  next drain. The
   supervisor drains on the harvest tick and reports what it got as
   `turn.idle.events` anchored on the turn that ended (`16 §W5`). The reader
   forwards text, tool calls and each idle run's usage (the usage of its

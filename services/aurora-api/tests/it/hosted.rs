@@ -1221,6 +1221,207 @@ async fn a_deferred_background_stop_stays_requested_until_acknowledged() {
     assert_eq!(evs.last().unwrap().0, "background_stopped", "{evs:?}");
 }
 
+/// A `background` event listing `commands` (the supervisor's report of what still runs).
+fn bg_event(n: u64, commands: &[&str]) -> Value {
+    let items: Vec<Value> = commands
+        .iter()
+        .map(|c| json!({"command": c, "started_at": 1700000000u64}))
+        .collect();
+    ev(n, "background", json!({"items": items}))
+}
+
+/// `(code, turn, commands)` of every background notice, in order.
+async fn background_lines(r: &Rig) -> Vec<(String, String, Vec<String>)> {
+    background_notices(r)
+        .await
+        .into_iter()
+        .map(|(code, p)| {
+            let commands = p["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|i| i["command"].as_str().unwrap().to_owned())
+                .collect();
+            (code, p["turn_id"].as_str().unwrap().to_owned(), commands)
+        })
+        .collect()
+}
+
+fn line(code: &str, turn: &str, commands: &[&str]) -> (String, String, Vec<String>) {
+    (
+        code.to_owned(),
+        turn.to_owned(),
+        commands.iter().map(|c| (*c).to_owned()).collect(),
+    )
+}
+
+/// (FIX-265) The list shows what still runs: a newer report replaces the **Background
+/// activity** entry (also after the turn, from the idle child's watch), the same list adds
+/// nothing, an empty one records that the activity stopped — and Stop belongs to the newest
+/// entry only.
+#[tokio::test]
+async fn a_newer_background_report_replaces_the_entry_and_an_empty_one_ends_it() {
+    let r = rig().await;
+    let lv = r.boot("bgshrink").await;
+    let first = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": first}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": first, "events": [bg_event(1, &["cmd-a"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": first, "status": "done"}),
+    )
+    .await;
+
+    // The next turn: the first command ended, another one runs.
+    r.say(lv.conv, "again").await;
+    let second = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": second}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": second,
+            "events": [bg_event(1, &["cmd-b"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": second,
+            "events": [bg_event(2, &["cmd-b"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": second, "status": "done"}),
+    )
+    .await;
+    assert_eq!(
+        background_lines(&r).await,
+        [
+            line("background_activity", &first, &["cmd-a"]),
+            line("background_activity", &second, &["cmd-b"]),
+        ]
+    );
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{first}/abort"), None)
+        .await;
+    assert_eq!(s, 409, "a replaced entry has no Stop: {v}");
+
+    // The idle child's watch reports the change too.
+    let st = r
+        .report(
+            &lv,
+            json!({"kind": "turn.idle.events", "turn_id": second,
+                "events": [bg_event(1, &["cmd-b", "cmd-c"])]}),
+        )
+        .await;
+    assert_eq!(st, "applied");
+    r.report(
+        &lv,
+        json!({"kind": "turn.idle.events", "turn_id": second, "events": [bg_event(2, &[])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.idle.events", "turn_id": second, "events": [bg_event(3, &[])]}),
+    )
+    .await;
+    let lines = background_lines(&r).await;
+    assert_eq!(
+        lines[2..],
+        [
+            line("background_activity", &second, &["cmd-b", "cmd-c"]),
+            line("background_stopped", &second, &[]),
+        ]
+    );
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{second}/abort"), None)
+        .await;
+    assert_eq!(s, 409, "nothing runs, nothing to stop: {v}");
+}
+
+/// (FIX-265) While a Stop is in flight no report replaces or ends the entry — only the
+/// supervisor's acknowledgement says "stopped". And a session the supervisor released by itself
+/// (a new tool list) ends the entry too: its background work is gone.
+#[tokio::test]
+async fn only_the_acknowledgement_ends_a_requested_stop() {
+    let r = rig().await;
+    let lv = r.boot("bgack").await;
+    let turn = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [bg_event(1, &["cmd-a"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    for (n, commands) in [(1, &[][..]), (2, &["cmd-z"][..])] {
+        r.report(
+            &lv,
+            json!({"kind": "turn.idle.events", "turn_id": turn,
+                "events": [bg_event(n, commands)]}),
+        )
+        .await;
+    }
+    let codes = || async {
+        background_notices(&r)
+            .await
+            .into_iter()
+            .map(|n| n.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        codes().await,
+        ["background_activity", "background_stop_requested"]
+    );
+    let released =
+        |ok: bool| json!({"kind": "session.released", "conversation_id": lv.conv, "ok": ok});
+    assert_eq!(r.report(&lv, released(true)).await, "applied");
+    assert_eq!(
+        codes().await,
+        [
+            "background_activity",
+            "background_stop_requested",
+            "background_stopped"
+        ]
+    );
+
+    // Released with nobody's Stop: a failure says nothing, success ends the entry.
+    r.say(lv.conv, "again").await;
+    let second = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": second}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": second, "events": [bg_event(1, &["cmd-b"])]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": second, "status": "done"}),
+    )
+    .await;
+    r.report(&lv, released(false)).await;
+    assert_eq!(codes().await.len(), 4);
+    assert_eq!(r.report(&lv, released(true)).await, "applied");
+    assert_eq!(codes().await.last().unwrap(), "background_stopped");
+    assert_eq!(codes().await.len(), 5);
+    assert_eq!(r.report(&lv, released(true)).await, "duplicate");
+}
+
 /// (P5-REFINE-7, C-1075) Stop keeps what was written (`partial: true`) and leaves the
 /// `turn_stopped` mark before `turn.finished`; a queued turn stopped before it ran gets the
 /// mark alone.

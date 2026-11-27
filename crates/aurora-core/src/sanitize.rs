@@ -121,7 +121,7 @@ pub fn reason(s: &str, max: usize) -> String {
         "authorization",
     ];
     // (FIX-253 review) Long flags whose value is a credential, and the short flags read in their
-    // command family only (`mysql -p …`, `curl -u …`): the bare `-p` of `ls -p` is not a password.
+    // command family only (`mysql -p…`, `curl -u …`): the bare `-p` of `ls -p` is not a password.
     const SECRET_FLAGS: [&str; 7] = [
         "--token",
         "--password",
@@ -131,48 +131,103 @@ pub fn reason(s: &str, max: usize) -> String {
         "--apikey",
         "--passphrase",
     ];
-    const P_IS_PASSWORD: [&str; 5] = ["mysql", "mariadb", "mysqldump", "mongo", "mongosh"];
+    // (FIX-265) Environment names end in the secret word with or without a separator
+    // (`PGPASSWORD`, `MYSQL_PWD`, `GHTOKEN`); read for the `=` form only.
+    const ENV_ENDINGS: [&str; 7] = [
+        "password", "passwd", "pwd", "token", "secret", "key", "sshpass",
+    ];
+    // The words that name a scheme behind `Authorization:`; the credential follows them.
+    const SCHEMES: [&str; 7] = [
+        "bearer",
+        "basic",
+        "token",
+        "apikey",
+        "digest",
+        "bot",
+        "negotiate",
+    ];
     fn secret_name(k: &str, keys: &[&str; 8]) -> bool {
         keys.iter()
             .any(|s| k == *s || k.ends_with(&format!("_{s}")) || k.ends_with(&format!("-{s}")))
     }
-    let line = one_line(s, max.saturating_mul(2).max(64));
-    // The command families the short flags are read in: a `-p` is a password only after `mysql`
-    // and friends, `-u` a user only after `curl`. The command may appear anywhere (`&& mysql …`).
-    let mut p_is_password = false;
-    let mut u_is_user = false;
+    let (line, cut) = whole_words(s, max.saturating_mul(2).max(64));
+    // The command families the short flags are read in: the command may appear anywhere
+    // (`&& mysql …`, `/usr/bin/curl …`).
+    let mut family = Families::default();
     let mut out: Vec<String> = Vec::new();
-    let mut mask_next = false;
+    let mut pending = Pending::Nothing;
+    // A masked value that opened a quote: the words up to the closing one belong to it.
+    let mut quoted: Option<char> = None;
     for word in line.split(' ') {
+        if let Some(q) = quoted {
+            if word.contains(q) {
+                quoted = None;
+            }
+            continue;
+        }
         let lower = word.to_ascii_lowercase();
-        let base = lower.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
-        if P_IS_PASSWORD.contains(&base) {
-            p_is_password = true;
-        }
-        if base == "curl" {
-            u_is_user = true;
-        }
-        if mask_next {
-            // `Authorization: Basic x`: the scheme word is shown, its credential stays masked.
-            if lower == "bearer" || lower == "basic" {
-                out.push(word.to_owned());
+        family.note(&lower);
+        match pending {
+            Pending::Header => {
+                // `Authorization: Basic x`: the scheme word is shown, its credential masked.
+                if SCHEMES.contains(&lower.as_str()) {
+                    out.push(word.to_owned());
+                    continue;
+                }
+                pending = Pending::Nothing;
+                quoted = open_quote(word);
+                out.push("***".into());
                 continue;
             }
-            mask_next = false;
-            out.push("***".into());
+            Pending::Value => {
+                // A scheme word as a flag's value is masked too, and so is what follows it.
+                if lower != "bearer" && lower != "basic" {
+                    pending = Pending::Nothing;
+                }
+                quoted = open_quote(word);
+                out.push("***".into());
+                continue;
+            }
+            Pending::Nothing => {}
+        }
+        // A word that **is** an `Authorization:` or `Proxy-Authorization:` header (`-H…`,
+        // `--header=…`, quoted or not). With a scheme or nothing behind the name, it holds no
+        // credential and the following word does; anything else glued to the name is one.
+        if let Some(value_at) = authorization_header(word) {
+            let value = &word[value_at..];
+            let bare = value.trim_matches(['"', '\'']).to_ascii_lowercase();
+            if bare.is_empty() || SCHEMES.contains(&bare.as_str()) {
+                pending = Pending::Header;
+                out.push(word.to_owned());
+            } else {
+                quoted = open_quote(value);
+                out.push(format!("{}***", &word[..value_at]));
+            }
             continue;
         }
+        // A word that only mentions the header (a JSON body, a URL) is masked like any other
+        // word below; when it ends in the name or a scheme, the following word is masked too.
+        let mentions = {
+            let bare: String = lower.chars().filter(|c| !matches!(c, '"' | '\'')).collect();
+            bare.rsplit_once("authorization:")
+                .is_some_and(|(_, after)| after.is_empty() || SCHEMES.contains(&after))
+        };
         if lower == "bearer" || lower == "basic" {
-            mask_next = true;
+            pending = Pending::Header;
             out.push(word.to_owned());
             continue;
         }
-        if SECRET_FLAGS.contains(&lower.as_str())
-            || (lower == "-p" && p_is_password)
-            || (lower == "-u" && u_is_user)
-        {
-            mask_next = true;
+        if SECRET_FLAGS.contains(&lower.as_str()) {
+            pending = Pending::Value;
             out.push(word.to_owned());
+            continue;
+        }
+        if let Some(short) = family.flag(word) {
+            if short.value_follows {
+                pending = Pending::Value;
+            }
+            quoted = short.quoted;
+            out.push(short.shown);
             continue;
         }
         let mut w = word.to_owned();
@@ -204,7 +259,11 @@ pub fn reason(s: &str, max: usize) -> String {
                     .trim_start_matches(['"', '\'', '{', '(', '[', '-'])
                     .to_ascii_lowercase();
                 let k = k.trim_end_matches(['"', '\'']);
-                if !w[i + 1..].is_empty() && secret_name(k, &SECRET_KEYS) {
+                let secret = secret_name(k, &SECRET_KEYS)
+                    || (sep == '='
+                        && (ENV_ENDINGS.iter().any(|e| k.ends_with(e)) || k == "passphrase"));
+                if !w[i + 1..].is_empty() && secret {
+                    quoted = quoted.or_else(|| open_quote(&w[i + 1..]));
                     w = format!("{}{sep}***", &w[..i]);
                 }
             }
@@ -218,11 +277,165 @@ pub fn reason(s: &str, max: usize) -> String {
             && (secret_name(name.trim_end_matches(':'), &SECRET_KEYS)
                 || name.trim_end_matches(':') == "cookie")
         {
-            mask_next = true;
+            pending = Pending::Header;
+        }
+        if mentions {
+            pending = Pending::Header;
         }
         out.push(w);
     }
-    clamp(out.join(" "), max)
+    let mut masked = out.join(" ");
+    if cut {
+        masked.push('…');
+    }
+    clamp(masked, max)
+}
+
+/// `s` as one line of at most `cap` characters, ending at the end of a word: the word the cut
+/// falls in is dropped, because the part of it before the cut may be a credential that only its
+/// rest marks as one (`https://user:password` without the `@host`). `true` when it was cut.
+fn whole_words(s: &str, cap: usize) -> (String, bool) {
+    let mut line = one_line(s, usize::MAX);
+    let Some((end, next)) = line.char_indices().nth(cap) else {
+        return (line, false);
+    };
+    let end = if next == ' ' {
+        end
+    } else {
+        line[..end].rfind(' ').unwrap_or(0)
+    };
+    line.truncate(end);
+    (line, true)
+}
+
+/// Where the value begins in a word that is an `Authorization:` header.
+fn authorization_header(word: &str) -> Option<usize> {
+    let quotes = ['"', '\''];
+    let mut rest = word.trim_start_matches(quotes);
+    if let Some(r) = rest.strip_prefix("-H") {
+        rest = r;
+    } else if rest
+        .get(.."--header=".len())
+        .is_some_and(|p| p.eq_ignore_ascii_case("--header="))
+    {
+        rest = &rest["--header=".len()..];
+    }
+    rest = rest.trim_start_matches(quotes);
+    ["authorization:", "proxy-authorization:"]
+        .iter()
+        .find(|name| {
+            rest.get(..name.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(name))
+        })
+        .map(|name| word.len() - rest.len() + name.len())
+}
+
+/// What [`reason`] still has to mask in the words that follow.
+#[derive(Clone, Copy)]
+enum Pending {
+    Nothing,
+    /// A flag's value.
+    Value,
+    /// The value behind a header name or a scheme word: a scheme word in front of it stays.
+    Header,
+}
+
+/// The quote a masked value opened and did not close.
+fn open_quote(value: &str) -> Option<char> {
+    let q = value.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+    (!value[1..].contains(q)).then_some(q)
+}
+
+/// The commands seen so far in a line whose short flags carry credentials.
+#[derive(Default)]
+struct Families {
+    /// `-p`: the database clients (`-pSECRET`) and `sshpass`.
+    p: bool,
+    redis: bool,
+    curl: bool,
+}
+
+/// A masked short flag: the word as shown, and what of its value is still to come.
+struct ShortFlag {
+    shown: String,
+    value_follows: bool,
+    quoted: Option<char>,
+}
+
+impl Families {
+    fn note(&mut self, lower: &str) {
+        let base = lower.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_');
+        match base.rsplit('/').next().unwrap_or(base) {
+            "mysql" | "mariadb" | "mysqldump" | "mysqladmin" | "mariadb-dump" | "mongo"
+            | "mongosh" | "sshpass" => self.p = true,
+            "redis-cli" => self.redis = true,
+            "curl" => self.curl = true,
+            _ => {}
+        }
+    }
+
+    /// A credential flag of one of the seen commands, apart (`-u bob:pw`) or with its value
+    /// attached (`-ubob:pw`, `--user=bob:pw`).
+    fn flag(&self, word: &str) -> Option<ShortFlag> {
+        let flag = word.trim_start_matches(['"', '\'']);
+        let lead = &word[..word.len() - flag.len()];
+        let apart = |shown: &str| {
+            Some(ShortFlag {
+                shown: shown.to_owned(),
+                value_follows: true,
+                quoted: None,
+            })
+        };
+        // `at`: where the attached value begins in `flag`.
+        let attached = |at: usize, value_follows: bool| {
+            Some(ShortFlag {
+                shown: format!("{lead}{}***", &flag[..at]),
+                value_follows,
+                quoted: open_quote(&flag[at..]),
+            })
+        };
+        let lower = flag.to_ascii_lowercase();
+        if (self.p && lower == "-p")
+            || (self.redis && (flag == "-a" || lower == "--pass"))
+            || (self.curl && (lower == "--user" || lower == "--proxy-user"))
+        {
+            return apart(word);
+        }
+        if self.redis && lower.starts_with("--pass=") {
+            return attached("--pass=".len(), false);
+        }
+        if self.curl {
+            for long in ["--user=", "--proxy-user="] {
+                if lower.starts_with(long) && flag.len() > long.len() {
+                    return attached(long.len(), false);
+                }
+            }
+        }
+        if flag.starts_with("--") {
+            return None;
+        }
+        // (`-p` in lower case only: `-P3306` is a port.)
+        if (self.p && flag.starts_with("-p") || self.redis && flag.starts_with("-a"))
+            && flag.len() > 2
+        {
+            return attached(2, false);
+        }
+        // curl's short flags group (`-su bob:pw`, `-sSubob:pw`); `-H…` is a header.
+        if self.curl && flag.starts_with('-') && !flag.starts_with("-H") {
+            let letters = flag[1..]
+                .find(|c: char| !c.is_ascii_alphabetic())
+                .map_or(flag.len(), |i| i + 1);
+            if let Some(u) = flag[..letters].find(['u', 'U']) {
+                if u + 1 == flag.len() {
+                    return apart(word);
+                }
+                // All letters ending in `u` reads both ways: mask both.
+                let both = letters == flag.len() && flag.ends_with(['u', 'U']);
+                return attached(u + 1, both);
+            }
+        }
+        None
+    }
 }
 
 /// Like [`one_line`] but keeps `\n` (runs of more than 2 collapse to 2).
@@ -373,6 +586,161 @@ mod tests {
         assert_eq!(
             reason("ls -p src && cat /var/tokens/list.txt", 200),
             "ls -p src && cat /var/tokens/list.txt"
+        );
+    }
+
+    /// (FIX-265) The common forms a command line carries a credential in. Each case is one
+    /// command and the secret in it, which the masked line no longer holds.
+    #[test]
+    fn reason_masks_the_common_command_line_forms() {
+        let cases = [
+            // The short password flags, attached and apart, in their command families.
+            ("mysql -u root -pS3CRET1 db", "S3CRET1"),
+            ("mysqldump -h db -pS3CRET2 --all-databases", "S3CRET2"),
+            ("sshpass -p S3CRET3 ssh host", "S3CRET3"),
+            ("sshpass -pS3CRET4 ssh host", "S3CRET4"),
+            ("redis-cli -h cache -a S3CRET5 ping", "S3CRET5"),
+            ("redis-cli -aS3CRET6 ping", "S3CRET6"),
+            // curl's user, in every spelling.
+            ("curl --user bob:S3CRET7 https://x", "S3CRET7"),
+            ("curl --user=bob:S3CRET8 https://x", "S3CRET8"),
+            ("curl -ubob:S3CRET9 https://x", "S3CRET9"),
+            ("curl -u bob:S3CRET10 https://x", "S3CRET10"),
+            ("curl -sSubob:S3CRET11 https://x", "S3CRET11"),
+            ("curl -su bob:S3CRET12 https://x", "S3CRET12"),
+            ("curl --proxy-user bob:S3CRET13 https://x", "S3CRET13"),
+            ("/usr/bin/curl -u bob:S3CRET14 https://x", "S3CRET14"),
+            // Long flags with `=`.
+            ("tool --password=S3CRET15", "S3CRET15"),
+            ("tool --token=S3CRET16", "S3CRET16"),
+            // Environment names: the secret word needs no separator before it.
+            ("PGPASSWORD=S3CRET17 psql", "S3CRET17"),
+            ("MYSQL_PWD=S3CRET18 mysql db", "S3CRET18"),
+            ("SSHPASS=S3CRET19 sshpass -e ssh host", "S3CRET19"),
+            ("DBPASSWD=S3CRET20 ./run", "S3CRET20"),
+            ("GHTOKEN=S3CRET21 gh pr list", "S3CRET21"),
+            ("CLIENTSECRET=S3CRET22 ./run", "S3CRET22"),
+            ("AWS_SECRET_ACCESSKEY=S3CRET23 aws s3 ls", "S3CRET23"),
+            ("export OLDPWD=S3CRET24", "S3CRET24"),
+            // Header forms without the space.
+            (
+                "curl -H 'Authorization:Bearer S3CRET25' https://x",
+                "S3CRET25",
+            ),
+            (
+                "curl -H 'Authorization:Basic S3CRET26' https://x",
+                "S3CRET26",
+            ),
+            (
+                "curl -H 'Authorization:Token S3CRET27' https://x",
+                "S3CRET27",
+            ),
+            (
+                "curl -H \"Proxy-Authorization:Basic S3CRET28\" https://x",
+                "S3CRET28",
+            ),
+            (
+                "curl -H 'Authorization: Token S3CRET29' https://x",
+                "S3CRET29",
+            ),
+            ("curl -HAuthorization:Bearer S3CRET30 https://x", "S3CRET30"),
+            (
+                "curl --header=Authorization:token S3CRET31 https://x",
+                "S3CRET31",
+            ),
+        ];
+        let leaked: Vec<String> = cases
+            .iter()
+            .map(|(command, secret)| (command, secret, reason(command, 500)))
+            .filter(|(_, secret, masked)| masked.contains(**secret))
+            .map(|(command, _, masked)| format!("{command} -> {masked}"))
+            .collect();
+        assert!(leaked.is_empty(), "{leaked:#?}");
+        // A quoted value with a space in it is one value, to its closing quote.
+        for command in [
+            "curl -u \"bob:two S3CRET\" https://x",
+            "mysql -p'two S3CRET' db",
+            "PGPASSWORD=\"two S3CRET\" psql",
+            "tool --passphrase=S3CRET",
+        ] {
+            let masked = reason(command, 500);
+            assert!(!masked.contains("S3CRET"), "{command} -> {masked}");
+        }
+        // The command itself stays readable, and a word that is not a credential stays.
+        assert_eq!(
+            reason("redis-cli -h cache -a hunter2 ping", 200),
+            "redis-cli -h cache -a *** ping"
+        );
+        assert_eq!(
+            reason("ls -a src && ssh -p 22 host && sort -u names.txt", 200),
+            "ls -a src && ssh -p 22 host && sort -u names.txt"
+        );
+    }
+
+    /// (SEC-165) A word that only mentions `authorization:` is masked like any other word, and
+    /// a credential glued to the header name is masked too.
+    #[test]
+    fn reason_masks_words_that_mention_authorization() {
+        let cases: [(&str, &[&str]); 7] = [
+            (
+                r#"curl -d '{"password":"hunter2","authorization":"Bearer S3CRETT"}' https://x"#,
+                &["hunter2", "S3CRETT"],
+            ),
+            ("curl https://bob:hunter2@h?authorization:", &["hunter2"]),
+            (
+                "echo aub_0123456789abcdef,authorization:",
+                &["0123456789abcdef"],
+            ),
+            ("curl -HAuthorization:S3CRET1 https://x", &["S3CRET1"]),
+            (
+                "curl --header=Authorization:S3CRET2 https://x",
+                &["S3CRET2"],
+            ),
+            (
+                "curl -H'Proxy-Authorization:S3CRET3' https://x",
+                &["S3CRET3"],
+            ),
+            (
+                "curl --header='Authorization:S3CRET4' https://x",
+                &["S3CRET4"],
+            ),
+        ];
+        let leaked: Vec<String> = cases
+            .iter()
+            .map(|(command, secrets)| (command, secrets, reason(command, 500)))
+            .filter(|(_, secrets, masked)| secrets.iter().any(|s| masked.contains(s)))
+            .map(|(command, _, masked)| format!("{command} -> {masked}"))
+            .collect();
+        assert!(leaked.is_empty(), "{leaked:#?}");
+        // The header's name and scheme stay readable.
+        assert_eq!(
+            reason("curl -HAuthorization:Bearer abc https://x", 200),
+            "curl -HAuthorization:Bearer *** https://x"
+        );
+        assert_eq!(
+            reason("curl --header=Authorization:abc https://x", 200),
+            "curl --header=Authorization:*** https://x"
+        );
+    }
+
+    /// (SEC-165) The input is cut before it is masked; the word the cut falls in is dropped, so
+    /// that no part of a credential loses what marks it as one.
+    #[test]
+    fn reason_never_shows_a_part_of_a_cut_word() {
+        let long = "S".repeat(200);
+        for command in [
+            format!("curl https://bob:{long}@host/x"),
+            format!("echo one https://bob:{long}@host/x"),
+        ] {
+            for max in [10, 32, 60] {
+                let masked = reason(&command, max);
+                assert!(!masked.contains("SS"), "{max}: {masked}");
+            }
+        }
+        // What was whole before the cut stays.
+        assert_eq!(
+            reason(&format!("curl https://bob:{long}@host/x"), 32),
+            "curl…"
         );
     }
 

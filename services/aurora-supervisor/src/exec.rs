@@ -30,7 +30,7 @@ use aurora_protocol::runner::{
 };
 use aurora_protocol::supervisor::SupervisorToRunner;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
+use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
 use tokio::sync::{mpsc, watch};
 use tokio::task::AbortHandle;
 
@@ -353,7 +353,7 @@ fn frame_data(tag: u8, id: u32, payload: &[u8]) -> Vec<u8> {
 /// The spawned child with its pipe ends. Ending it (drop) hangs it up and kills its process
 /// group after the grace, in a detached reaper — nothing on the data path waits for it.
 struct ExecProc {
-    child: Option<Child>,
+    child: Option<crate::spawn::OwnedChild>,
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
@@ -395,7 +395,7 @@ impl ExecProc {
         {
             cmd.uid(uid).gid(uid);
         }
-        let mut child = cmd.spawn()?;
+        let mut child = crate::spawn::spawn(&mut cmd)?;
         Ok(Self {
             stdin: child.stdin.take(),
             stdout: child.stdout.take(),

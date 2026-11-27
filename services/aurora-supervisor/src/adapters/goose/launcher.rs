@@ -68,7 +68,7 @@ impl Launcher for ProcessLauncher {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let mut child = cmd.spawn().map_err(|e| {
+        let mut child = crate::spawn::spawn(&mut cmd).map_err(|e| {
             HarnessError::new(
                 "harness_failed",
                 format!("cannot start {}: {e}", self.program.display()),

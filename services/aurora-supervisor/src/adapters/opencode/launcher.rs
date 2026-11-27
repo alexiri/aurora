@@ -82,7 +82,7 @@ impl ProcessLauncher {
 #[async_trait]
 impl Launcher for ProcessLauncher {
     async fn launch(&self, spec: LaunchSpec) -> Result<ChildIo, HarnessError> {
-        let mut child = self.command(&spec).spawn().map_err(|e| {
+        let mut child = crate::spawn::spawn(&mut self.command(&spec)).map_err(|e| {
             HarnessError::new(
                 "harness_failed",
                 format!("cannot start {}: {e}", self.program.display()),
@@ -141,9 +141,7 @@ impl Launcher for ProcessLauncher {
 
     async fn query(&self, spec: LaunchSpec) -> Result<String, HarnessError> {
         let fail = |m: String| HarnessError::new("harness_failed", m);
-        let mut child = self
-            .command(&spec)
-            .spawn()
+        let mut child = crate::spawn::spawn(&mut self.command(&spec))
             .map_err(|e| fail(format!("cannot start {}: {e}", self.program.display())))?;
         drop(child.stdin.take());
         let Some(mut out) = child.stdout.take() else {

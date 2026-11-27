@@ -4,4 +4,8 @@ allow-panic-in-tests = true
 disallowed-methods = [
   { path = "std::process::Command::new", reason = "spawn through aurora_supervisor::spawn (SEC-34, I-23)" },
   { path = "tokio::process::Command::new", reason = "spawn through aurora_supervisor::spawn (SEC-34, I-23)" },
+  # The orphan reaper takes the exit status of a child nobody marked as owned.
+  { path = "tokio::process::Command::spawn", reason = "spawn with aurora_supervisor::spawn::spawn" },
+  { path = "tokio::process::Command::output", reason = "spawn with aurora_supervisor::spawn::spawn" },
+  { path = "tokio::process::Command::status", reason = "spawn with aurora_supervisor::spawn::spawn" },
 ]
