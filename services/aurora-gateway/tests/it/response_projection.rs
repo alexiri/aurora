@@ -156,6 +156,91 @@ async fn a_compressed_answer_on_a_projected_tool_is_withheld() {
     assert_withheld(&env, "/cpsgzip", 502, "tool_response_unprojectable").await;
 }
 
+// The projection belongs to the matched tool, not to the way the request is forwarded: a
+// granted secret on the app's host (no connection wins, so the app's `block_untooled` and the
+// connection injection path play no part) and a request that carries no credential at all both
+// answer projected too.
+
+/// Asserts `/cps` answers with names and types only.
+async fn assert_projected(env: &Env) {
+    let r = get(env, "/cps", "").await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    let v: Value = serde_json::from_str(&r.body).expect("the answer is the projected JSON");
+    assert_eq!(
+        v,
+        json!([{"name": "hook", "type": "hook"}, {"name": "mail", "type": "email"}]),
+        "settings never reach the caller: {}",
+        r.body
+    );
+}
+
+/// The one request-log row of the request just made.
+async fn logged(env: &Env) -> aurora_db::repo::gateway::RequestLogRow {
+    env.log.flush().await;
+    let rows = env.rows.lock().unwrap().clone();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    rows[0].clone()
+}
+
+fn projection_snapshot() -> Value {
+    snapshot(
+        vec![app_json("demo", projection_tools(), false)],
+        vec![host_json("demo", None, json!({"inject": []}))],
+    )
+}
+
+#[tokio::test]
+async fn a_granted_secret_on_the_apps_host_answers_a_projected_tool_projected() {
+    let (env, ..) = start(projection_snapshot(), &[("c1", "sek")], |w| {
+        let s = SecretMetaRow {
+            id: Uuid::now_v7(),
+            workspace_id: Some(w.ws),
+            name: "gen".into(),
+            kind: "generic".into(),
+            llm_provider: None,
+            llm_auth_mode: None,
+            llm_endpoint_id: None,
+            host_pattern: "127.0.0.1".into(),
+            path_pattern: None,
+            injection: json!({"kind": "bearer"}),
+            value_ref: SecretRef::ext("mem", "c1", None, "1").unwrap().to_column(),
+            value_version: 1,
+            origin: None,
+        };
+        let mut r = Rows::default();
+        r.ws.default_action = "block".into();
+        r.ws.rules.push(rule(
+            "g",
+            "allow",
+            json!([{"type":"secret","id":s.id}]),
+            false,
+        ));
+        r.secrets.push(s);
+        r
+    })
+    .await;
+    assert_projected(&env).await;
+    // The secret really was injected: this is the secret path, not the uncredentialed one.
+    let row = logged(&env).await;
+    assert!(row.secret_id.is_some(), "{row:?}");
+    assert_eq!(row.tool_id.as_deref(), Some("cps"), "{row:?}");
+}
+
+#[tokio::test]
+async fn a_request_without_a_credential_answers_a_projected_tool_projected() {
+    let (env, ..) = start(projection_snapshot(), &[], |_| {
+        let mut r = Rows::default();
+        r.ws.default_action = "allow".into();
+        r
+    })
+    .await;
+    assert_projected(&env).await;
+    let row = logged(&env).await;
+    assert!(row.secret_id.is_none(), "{row:?}");
+    assert!(row.connection_id.is_none(), "{row:?}");
+    assert_eq!(row.tool_id.as_deref(), Some("cps"), "{row:?}");
+}
+
 // A request whose URL carries a connection value (the host injects it as a query parameter)
 // sets the echo needles; the answer path that scrubs them is the same one the projection runs
 // on, so a projected tool answers projected there too (a person-pinned server's answers are
