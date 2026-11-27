@@ -5242,7 +5242,6 @@ struct RefOffer {
     owner: String,
     agent: Uuid,
     library: Uuid,
-    sha: String,
     /// The apply body that takes the library skill.
     take: Value,
 }
@@ -5292,7 +5291,6 @@ async fn ref_offer_world() -> RefOffer {
         owner,
         agent,
         library,
-        sha,
         take,
     }
 }
