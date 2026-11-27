@@ -7576,6 +7576,45 @@ async fn an_approval_tells_exactly_the_people_who_can_apply() {
     assert_eq!(rows, 1);
 }
 
+/// An organization role administers and never uses (D-477): an organization owner or admin
+/// with no access of their own in the workspace cannot apply the update, so they get no
+/// e-mail and no item in the workspace's attention feed.
+#[tokio::test]
+async fn an_organization_role_alone_is_not_told_about_an_update() {
+    let w = world().await;
+    template_ingested(&w).await;
+    let org = w.h.org().await;
+    let ws = w.h.workspace(org).await;
+    let _ = bound_member(&w, org, ws, "owner@x.io", "owner").await;
+    let mut role_only: Vec<String> = Vec::new();
+    for (email, role) in [("orgowner@x.io", "owner"), ("orgadmin@x.io", "admin")] {
+        let u = w.h.user(email, false).await;
+        w.h.member(org, u, role, "active").await;
+        role_only.push(cookie(&w.h.good_session(u).await.1));
+    }
+
+    agent_from_template(&w, org, ws, "behind", Some("0.9.0")).await;
+    w.approve("t", "1.0.0").await;
+
+    let mail = w.h.mail.sent();
+    let tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    assert_eq!(tos, vec!["owner@x.io"], "{mail:?}");
+    for c in &role_only {
+        let (s, v) =
+            w.h.call(
+                c,
+                Method::GET,
+                &format!("/v1/workspaces/{ws}/attention"),
+                None,
+            )
+            .await;
+        let told = v["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|i| i["kind"] == "template_update"));
+        assert!(!told, "{s} {v}");
+    }
+}
+
 /// A re-offer of the same version is silent (the dedup), a new version tells again, and every
 /// workspace with agents from the template gets its own notice.
 #[tokio::test]

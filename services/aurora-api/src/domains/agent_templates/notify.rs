@@ -92,8 +92,10 @@ async fn tell(state: &AppState, template_id: &str, actor: Option<Uuid>) -> Resul
 }
 
 /// The people who can apply an update in `ws` (the right the apply route requires: an active
-/// member with an effective workspace access — own, group- or IdP-derived, or an effective org
-/// owner or admin's implicit own access), except the person who approved.
+/// member with access of their own in the workspace — a personal binding, or one derived from a
+/// group or the identity provider; `effective_workspace_access` holds nothing else), except the
+/// person who approved. An organization role alone makes nobody a recipient (D-477: it
+/// administers and never uses).
 async fn recipients(
     state: &AppState,
     ws: Uuid,
