@@ -1808,6 +1808,18 @@ impl PolicyHandler {
             return Outcome::Respond(self.refuse(ctx, &err, decision));
         }
         self.apply_hits(&d, &pk);
+        // (lane review 2026-11-25) A tool that declares a response projection has every answer
+        // reduced to the projected paths on the response path, for every caller. It belongs to
+        // the matched tool, so all three forwarding paths below attach it: a connection, a
+        // granted secret on the app's host, and no credential at all. (`block_untooled` does not
+        // keep a projected tool off the last two: it only refuses requests that match no tool,
+        // and only under a connection.) The answer must arrive readable, so the request asks for
+        // no compressed encoding (an upstream that compresses anyway is withheld, never
+        // streamed unchecked). Removed before injection, so no signature covers the header.
+        let project = tool.and_then(|t| t.project.clone());
+        if project.is_some() {
+            headers.remove("accept-encoding");
+        }
         // 11. injection (plaintext fetched only now).
         if let Some(Cand::App(conn)) = &winner {
             let Some(m) = &app_match else {
@@ -2008,14 +2020,6 @@ impl PolicyHandler {
                     query.as_deref(),
                 )
             };
-            // (lane review 2026-11-25) A tool that declares a response projection has every
-            // answer reduced to the projected paths on the response path, for every caller:
-            // the answer must arrive readable, so the request asks for no compressed encoding
-            // (an upstream that compresses anyway is withheld, never streamed unchecked).
-            let project = tool.and_then(|t| t.project.clone());
-            if project.is_some() {
-                headers.remove("accept-encoding");
-            }
             let hook = self.hook(
                 &rv,
                 ctx,
@@ -2191,7 +2195,7 @@ impl PolicyHandler {
                 false,
                 backstop,
                 echo,
-                None,
+                project,
             );
             hook.llm = llm;
             return Outcome::Forward(PreparedRequest {
@@ -2221,7 +2225,7 @@ impl PolicyHandler {
             passthrough,
             None,
             Vec::new(),
-            None,
+            project,
         );
         Outcome::Forward(PreparedRequest {
             scheme,

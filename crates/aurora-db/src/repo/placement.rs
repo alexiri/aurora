@@ -275,12 +275,15 @@ pub async fn count_personal_without_starter<'e, E: PgExecutor<'e>>(
 }
 
 /// Active LLM keys of the agent's organization (org-level) or workspace that are **not** granted
-/// to `agent`, oldest first (C-1062: what "give this agent a key" can offer).
+/// to `agent`, oldest first (C-1062: what "give this agent a key" can offer). At most 200; the
+/// `starters` are read first so that the limit can never drop one. The order shown to people is
+/// the caller's, not this one.
 pub async fn ungranted_llm_keys<'e, E: PgExecutor<'e>>(
     exec: E,
     agent: Uuid,
     org: Uuid,
     workspace: Uuid,
+    starters: &[Uuid],
 ) -> Result<Vec<crate::repo::hosted::LlmCandidate>, DbError> {
     Ok(sqlx::query_as(
         "SELECT s.id, s.name, s.status, s.workspace_id, s.llm_provider, s.llm_endpoint_id,
@@ -290,11 +293,12 @@ pub async fn ungranted_llm_keys<'e, E: PgExecutor<'e>>(
            AND (s.workspace_id IS NULL OR s.workspace_id = $3)
            AND s.llm_provider IS NOT NULL AND s.llm_endpoint_id IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM grants g WHERE g.secret_id = s.id AND g.agent_id = $1)
-         ORDER BY s.created_at, s.id LIMIT 200",
+         ORDER BY (s.id = ANY($4)) DESC, s.created_at, s.id LIMIT 200",
     )
     .bind(agent)
     .bind(org)
     .bind(workspace)
+    .bind(starters)
     .fetch_all(exec)
     .await?)
 }

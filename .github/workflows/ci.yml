@@ -434,6 +434,7 @@ jobs:
   # nothing is pushed unless all of them are green. When a check fails, the watchdog stops the build
   # within a minute (scripts/ci/stop-builder-on-failed-check.sh); the other checks keep running.
   images-builder:
+    if: "!startsWith(github.ref, 'refs/tags/cli-v')"
     concurrency: { group: "images-builder-${{ github.ref }}", cancel-in-progress: false }
     runs-on: ubuntu-24.04
     permissions:
@@ -476,6 +477,7 @@ jobs:
           cat "$RUNNER_TEMP/watchdog.log" 2>/dev/null || true
 
   images-services:
+    if: "!startsWith(github.ref, 'refs/tags/cli-v')"
     # One group per image: a shared group lets only one matrix leg run and keeps a single pending
     # slot, so the next push's legs replaced (cancelled) the siblings still waiting.
     concurrency: { group: "images-services-${{ github.ref }}-${{ matrix.image }}", cancel-in-progress: false }
@@ -561,7 +563,7 @@ jobs:
   # the `release` environment, which only the push job can read: pull requests (no environment, no secret)
   # build the same image with UNSIGNED archives. Both jobs share these steps through YAML anchors.
   images-api:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/cli-v')
     environment: release
     # One group per image, as for images-services: a shared group keeps one pending slot, so with two
     # pushes in flight the queued legs replaced (cancelled) each other — the api leg of run
@@ -646,6 +648,7 @@ jobs:
       - *api-cleanup
 
   images-web:
+    if: "!startsWith(github.ref, 'refs/tags/cli-v')"
     concurrency: { group: "images-web-${{ github.ref }}", cancel-in-progress: false }
     needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
@@ -676,6 +679,7 @@ jobs:
   # changes rarely: it is exported with mode=max and is the dominant cache entry. The public AlmaLinux base
   # is used in CI (the CERN default is a local build default).
   images-sandbox:
+    if: "!startsWith(github.ref, 'refs/tags/cli-v')"
     concurrency: { group: "images-sandbox-${{ github.ref }}", cancel-in-progress: false }
     needs: [rust-lint, rust-deny, rust-build, rust-test, e2e-gateway, gated-suites, e2e-hosted, web, guards]
     runs-on: ubuntu-24.04
