@@ -47,6 +47,18 @@ impl Mail {
             calendar: None,
         }
     }
+
+    /// A notice with nothing to open: the body is the text alone and `link` is empty.
+    pub fn without_link(to: &str, subject: &str, text: &str) -> Self {
+        Self {
+            to: to.to_owned(),
+            subject: subject.to_owned(),
+            body: format!("{text}\n"),
+            link: String::new(),
+            from_name: None,
+            calendar: None,
+        }
+    }
 }
 
 /// The SMTP message of a [`Mail`] from `from`: plain text, or multipart/mixed (plain, inline

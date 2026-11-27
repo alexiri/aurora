@@ -97,6 +97,9 @@ want = {
 }
 consts = {"query,os,prom,alert": ["CTRL", "UID_RE", "UNIT_S", "TIMEOUT"], "query,prom": ["POINTS_MAX"]}
 src = {k: open(p, encoding="utf-8").read() for k, p in files.items()}
+# `die` and `mktemp` name their script: the alert script's own name (its errors are not the query
+# script's) is the one difference allowed.
+src["alert"] = src["alert"].replace("grafana-alert", "grafana-query")
 tree = {k: ast.parse(s) for k, s in src.items()}
 bad = 0
 def seg(k, name):
@@ -512,7 +515,7 @@ then ok "create builds the exact body (three-step model, guard labels, expires, 
 
 refuse "create needs --expires" create --managed-by night --folder night-folder --group agent-night \
   --title t --ds prom-main --expr 'x[5m]' --op gt --threshold 1 --for 5m --receiver oncall
-refuse "--expires is 1d to 30d" create --managed-by night --folder night-folder --group agent-night \
+refuse "grafana-alert: --expires is 1d to 30d" create --managed-by night --folder night-folder --group agent-night \
   --title t --ds prom-main --expr 'x[5m]' --op gt --threshold 1 --for 5m --receiver oncall --expires 31d
 refuse "a range of at least 5 minutes" create --managed-by night --folder night-folder \
   --group agent-night --title t --ds prom-main --expr 'cpu_seconds > 1' --op gt --threshold 1 \

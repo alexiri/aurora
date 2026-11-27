@@ -165,6 +165,25 @@ describe("push service worker", () => {
     expect(stray.options.data.url, "a path outside Aurora becomes the home page").toBe("/");
   });
 
+  it("self_grant and emergency_access: fixed text and the dashboard path they were given (FIX-234, FIX-236)", async () => {
+    const people = "/o/acme/w/main/people";
+    const grant = await push(JSON.stringify({ v: 1, type: "self_grant", url: people }));
+    expect(grant.title).toBe("Aurora — someone gave themselves workspace access");
+    expect(grant.options.data.url).toBe(people);
+    const open = await push(JSON.stringify({ v: 1, type: "emergency_access", url: "/o/acme/w/main", reason: "SECRET-CANARY" }));
+    expect(open.title).toBe("Aurora — an owner opened emergency read access");
+    expect(open.options.body).toBe("Open the workspace for details.");
+    expect(open.options.tag).toBe("aurora-emergency-access");
+    expect(open.options.data.url).toBe("/o/acme/w/main");
+    expect(JSON.stringify(open)).not.toContain("SECRET-CANARY");
+    const named = await push(
+      JSON.stringify({ v: 1, type: "emergency_access", url: "/o/acme/w/main", title: "Emergency read access to Main" }),
+    );
+    expect(named.title).toBe("Aurora — Emergency read access to Main");
+    const stray = await push(JSON.stringify({ v: 1, type: "emergency_access", url: "https://evil.example/o/acme" }));
+    expect(stray.options.data.url).toBe("/");
+  });
+
   it("workspace_lifecycle and org_lifecycle: fixed text, the sentence only when carried (FIX-244, D-486)", async () => {
     const ws = await push(JSON.stringify({ v: 1, type: "workspace_lifecycle", url: "/o/acme/w/main" }));
     expect(ws.title).toBe("Aurora — your workspace changed");
@@ -192,6 +211,23 @@ describe("push service worker", () => {
       JSON.stringify({ v: 1, type: "default_store", url: "/", title: "The default secret store changed" }),
     );
     expect(named.title).toBe("Aurora — The default secret store changed");
+  });
+
+  it("template_update: fixed text, the sentence only when carried, and the agents path it was given (FIX-251, D-488(a))", async () => {
+    const path = "/o/acme/w/main/agents?needs_update=1";
+    const plain = await push(JSON.stringify({ v: 1, type: "template_update", url: path, detail: "SECRET-CANARY" }));
+    expect(plain.title).toBe("Aurora — a template update is available");
+    expect(plain.options.body).toBe("Open the Agents page to review the updates.");
+    expect(plain.options.tag).toBe("aurora-template-update");
+    expect(plain.options.data.url).toBe(path);
+    expect(JSON.stringify(plain)).not.toContain("SECRET-CANARY");
+    const named = await push(
+      JSON.stringify({ v: 1, type: "template_update", url: path, title: "T 1.4.0 is available for 3 agents in Main" }),
+    );
+    expect(named.title).toBe("Aurora — T 1.4.0 is available for 3 agents in Main");
+    expect(named.options.body).toBe("Open the Agents page to review the updates.");
+    const stray = await push(JSON.stringify({ v: 1, type: "template_update", url: "https://evil.example/x" }));
+    expect(stray.options.data.url, "a path outside Aurora becomes the home page").toBe("/");
   });
 
   it("never shows a field outside the payload contract", async () => {

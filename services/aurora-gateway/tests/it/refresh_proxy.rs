@@ -143,9 +143,13 @@ async fn upstream(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_owned();
+    let path = req.uri().path().to_owned();
     let _ = req.into_body().collect().await;
     let ok = auth == "Bearer a1";
-    let mut r = Response::new(Full::new(Bytes::from(if ok {
+    let mut r = Response::new(Full::new(Bytes::from(if ok && path == "/cps" {
+        r#"[{"name":"hook","type":"hook","settings":{"url":"https://hooks.example.org/x"}}]"#
+            .to_owned()
+    } else if ok {
         format!("auth={auth} ext={ext}")
     } else {
         format!("INVALID_SESSION_ID auth={auth}")
@@ -264,6 +268,16 @@ async fn start_with(
     expires_in_secs: i64,
     health: Option<Arc<aurora_gateway::health::Health>>,
 ) -> Rig {
+    start_app(status, expires_in_secs, health, Value::Null).await
+}
+
+/// [`start_with`] with the app's `tools` block.
+async fn start_app(
+    status: &str,
+    expires_in_secs: i64,
+    health: Option<Arc<aurora_gateway::health::Health>>,
+    tools: Value,
+) -> Rig {
     let db = TestDb::new().await;
     let p = db.pool();
     let w = World {
@@ -362,7 +376,7 @@ async fn start_with(
             "token": {"kind": "oauth2_refresh", "client": "g", "refresh_field": "refresh_token",
                       "rotate_refresh_token": true,
                       "stale_codes": [{"status": 401, "body_contains": "INVALID_SESSION_ID"}]},
-            "tools": null, "approvals": {}, "agent": null, "database": null}],
+            "tools": tools, "approvals": {}, "agent": null, "database": null}],
         "hosts": [host_json("demo", None, json!({"inject": [
             {"bearer": "{credentials.access_token}"},
             {"header": {"name": "x-ext", "value": "{context.org_external_id}"}}]}))],
@@ -535,6 +549,31 @@ async fn stale_code_refreshes_and_resends_bodyless_once() {
     assert!(a.body.contains("auth=Bearer a1"), "{}", a.body);
     assert_eq!(r.prov.lock().unwrap().calls, 1);
     assert_eq!(r.hits.load(Ordering::SeqCst), 2);
+}
+
+/// The answer to the resent request goes through the same response path: a projected
+/// tool's is reduced like a first answer.
+#[tokio::test]
+async fn the_answer_to_a_stale_resend_is_projected() {
+    let tools = json!({"read": {"items": [
+        {"id": "cps", "name": "c", "host": "127.0.0.1", "path": "/cps", "methods": ["GET"],
+         "project": ["$.name", "$.type"]}
+    ]}});
+    let r = start_app("active", 3600, None, tools).await;
+    let a = get(&r.env, "/cps", "").await;
+    assert_eq!(a.status, 200, "{}", a.body);
+    assert_eq!(
+        r.hits.load(Ordering::SeqCst),
+        2,
+        "this is the resent answer"
+    );
+    assert_eq!(
+        a.json(),
+        json!([{"name": "hook", "type": "hook"}]),
+        "{}",
+        a.body
+    );
+    assert!(!a.body.contains("hooks.example.org"), "{}", a.body);
 }
 
 #[tokio::test]

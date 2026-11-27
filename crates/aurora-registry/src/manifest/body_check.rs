@@ -3,6 +3,7 @@
 //! before any rule, approval or injection, so nothing the approval card cannot show is ever
 //! held for a person's approval. Fail closed: a body that is absent, truncated, not a JSON
 //! object, or otherwise not checkable is refused too.
+use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -151,14 +152,19 @@ impl BodyCheck {
         if truncated {
             return Some("the body is longer than the gateway can check in full".into());
         }
-        let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
-            return Some("the body is not the JSON object this tool sends".into());
+        let v = match read_unrepeated(body) {
+            Ok(v) => v,
+            Err(Some(key)) => {
+                return Some(format!(
+                    "the body carries `{key}` twice: send each key once"
+                ));
+            }
+            Err(None) => return Some("the body is not the JSON object this tool sends".into()),
         };
         let Some(obj) = v.as_object() else {
             return Some("the body is not a JSON object".into());
         };
-        // The receiver's parser matches object key names without regard to case and keeps the
-        // last match. A key its fold (case, the Kelvin sign U+212A, the long s U+017F) makes
+        // The receiver's parser matches object key names without regard to case. A key its fold (case, the Kelvin sign U+212A, the long s U+017F) makes
         // equal to a key this check reads is that key to the parser, whatever its spelling, so
         // it is refused at every level the check reads before any exact comparison.
         let mut known: Vec<&str> = Vec::with_capacity(
@@ -311,9 +317,8 @@ impl BodyCheck {
                         };
                         // The member is reached along object keys and array indexes; the
                         // object it names is checked the way the checked objects above are:
-                        // the receiver's parser matches key names without case and keeps the
-                        // last match, so a spelling that folds onto a listed key is that key
-                        // to it, whatever it shows.
+                        // the receiver's parser matches key names without case, so a spelling
+                        // that folds onto a listed key is that key to it, whatever it shows.
                         let place = format!("`{k}`[{at}]");
                         let (cur, place) = match member_value(e, &m.member, &place) {
                             Ok(found) => found,
@@ -442,6 +447,92 @@ impl BodyCheck {
             }
         }
         None
+    }
+}
+
+/// `body` as a JSON value that says what the bytes say. `Err(Some(key))`: an object at some
+/// depth repeats `key`. Receivers do not agree on what a repeat means (a map keeps the last
+/// value, but a decoder may merge a repeated object into the one it already filled), so no
+/// single value stands for such a body. `Err(None)`: the body is not one JSON value.
+///
+/// One parse builds the value and finds the repeat, so the two can never disagree about what
+/// was read. It also takes every member name literally, unlike the library's own `Value`
+/// parser, which reads one private name as an instruction to parse the member's string.
+fn read_unrepeated(body: &[u8]) -> Result<serde_json::Value, Option<String>> {
+    let mut repeated = None;
+    let mut de = serde_json::Deserializer::from_slice(body);
+    let read = Unrepeated(&mut repeated)
+        .deserialize(&mut de)
+        .and_then(|v| de.end().map(|()| v));
+    read.map_err(|_| repeated)
+}
+
+/// The visitor of [`read_unrepeated`]; it records the repeated key it stopped at.
+struct Unrepeated<'a>(&'a mut Option<String>);
+
+impl<'de> DeserializeSeed<'de> for Unrepeated<'_> {
+    type Value = serde_json::Value;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+        d.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Unrepeated<'_> {
+    type Value = serde_json::Value;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a JSON value")
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(serde_json::Value::Null)
+    }
+
+    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
+        Ok(v.into())
+    }
+
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+        Ok(v.into())
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+        Ok(v.into())
+    }
+
+    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
+        Ok(v.into())
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+        Ok(v.into())
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
+        Ok(v.into())
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut out = Vec::new();
+        while let Some(v) = seq.next_element_seed(Unrepeated(&mut *self.0))? {
+            out.push(v);
+        }
+        Ok(serde_json::Value::Array(out))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut out = serde_json::Map::new();
+        // The key arrives unescaped, so `a` and `a` are the same key here too.
+        while let Some(key) = map.next_key::<String>()? {
+            if out.contains_key(&key) {
+                *self.0 = Some(key);
+                return Err(serde::de::Error::custom("a repeated key"));
+            }
+            let v = map.next_value_seed(Unrepeated(&mut *self.0))?;
+            out.insert(key, v);
+        }
+        Ok(serde_json::Value::Object(out))
     }
 }
 
@@ -829,8 +920,8 @@ mod tests {
                 "notification_settings": { "receiver": "oncall" }
             })
         };
-        // The receiver's parser matches key names without case and keeps the last match, so
-        // `Data` would silently become the `data` the check read: refused at every level.
+        // The receiver's parser matches key names without case, so `Data` would silently
+        // become part of the `data` the check read: refused at every level.
         for (key, value) in [
             ("Data", json!([{}, {}, {}, {}])),
             ("DATA", json!([{}, {}, {}, {}])),
@@ -902,22 +993,103 @@ mod tests {
         assert_eq!(c.violation(b.as_slice(), false), None);
     }
 
+    /// The script's whole body as text, so a test can repeat a key in it.
+    fn script_body() -> String {
+        serde_json::to_string(&json!({
+            "condition": "C", "data": steps(),
+            "labels": { "managed_by": "night" },
+            "annotations": { "summary": "p95" },
+            "notification_settings": { "receiver": "oncall" }
+        }))
+        .unwrap()
+    }
+
+    /// `body` with `extra` added as the first member(s) of the object that starts `after` the
+    /// given text.
+    fn with_member(body: &str, after: &str, extra: &str) -> String {
+        assert!(body.contains(after), "{after} is not in {body}");
+        body.replacen(after, &format!("{after}{extra},"), 1)
+    }
+
+    fn twice(key: &str) -> String {
+        format!("the body carries `{key}` twice: send each key once")
+    }
+
     #[test]
-    fn a_duplicated_exact_key_is_still_checked_last_match_wins() {
-        // Both parsers keep the last occurrence of a duplicated key, so the check reads the
-        // same value the receiver does.
+    fn a_repeated_key_is_refused() {
+        // A receiver need not keep only the last of a repeat: it may decode a repeated object
+        // into the one it already filled, and keep what the first one added. The first value
+        // here is what the check and the approval card would never see.
         let c = check();
-        let b = br#"{"data":[{},{},{}],"data":[{},{},{},{}],"labels":{},"annotations":{},"notification_settings":{}}"#;
-        assert!(
-            c.violation(b, false)
-                .unwrap()
-                .contains("`data` has 4 entries")
-        );
-        let b = br#"{"data":[{"refId":"A","datasourceUid":"prom"},{"refId":"B","datasourceUid":"__expr__"},{"refId":"C","datasourceUid":"__expr__"}],"labels":{},"annotations":{},"notification_settings":{},"labels":{"severity":"page"}}"#;
-        assert!(
-            c.violation(b, false)
-                .unwrap()
-                .contains("`labels` carries `severity`")
+        let base = script_body();
+        assert_eq!(c.violation(base.as_bytes(), false), None);
+        for (key, first) in [
+            // An object key: routing labels, annotations, the receiver settings.
+            ("labels", r#""labels":{"severity":"page"}"#),
+            ("annotations", r#""annotations":{"runbook_url":"x"}"#),
+            (
+                "notification_settings",
+                r#""notification_settings":{"mute_time_intervals":["nights"]}"#,
+            ),
+            // An array key.
+            ("data", r#""data":[]"#),
+            // A scalar, with the same value both times.
+            ("condition", r#""condition":"C""#),
+        ] {
+            let b = with_member(&base, "{", first);
+            assert_eq!(c.violation(b.as_bytes(), false), Some(twice(key)), "{b}");
+        }
+    }
+
+    #[test]
+    fn a_repeated_nested_key_is_refused() {
+        let c = check();
+        let base = script_body();
+        for (key, after, first) in [
+            (
+                "receiver",
+                r#""notification_settings":{"#,
+                r#""receiver":"other""#,
+            ),
+            // Inside a data step, and inside the query step's model.
+            ("refId", r#""data":[{"#, r#""refId":"A""#),
+            ("expr", r#""model":{"#, r#""expr":"other""#),
+            // The same key spelled with an escape is the same key.
+            ("managed_by", r#""labels":{"#, r#""managed_by":"x""#),
+        ] {
+            let b = with_member(&base, after, first);
+            assert_eq!(c.violation(b.as_bytes(), false), Some(twice(key)), "{b}");
+        }
+        // Wherever it appears: in an object no rule reads.
+        let b = with_member(&base, r#""relativeTimeRange":{"#, r#""from":1"#);
+        assert_eq!(c.violation(b.as_bytes(), false), Some(twice("from")), "{b}");
+    }
+
+    #[test]
+    fn the_check_reads_every_object_as_the_bytes_spell_it() {
+        // The JSON library's own `Value` parser (with its raw-value feature on) replaces an
+        // object whose only member has this private name with the JSON text in its string.
+        // The receiver sees an object with that member, so the check reads the same.
+        let c = check();
+        let b = serde_json::to_vec(&json!({
+            "condition": "C", "data": steps(),
+            "labels": { "$serde_json::private::RawValue": r#"{"managed_by":"night"}"# }
+        }))
+        .unwrap();
+        let why = c.violation(&b, false).unwrap_or_default();
+        assert!(why.contains("$serde_json::private::RawValue"), "{why}");
+    }
+
+    #[test]
+    fn the_same_key_in_different_objects_is_no_repeat_and_trailing_data_is_refused() {
+        let c = check();
+        let base = script_body();
+        // `refId`, `type` and `params` appear in many objects of the script's own body.
+        assert_eq!(c.violation(base.as_bytes(), false), None);
+        let b = format!("{base} {{}}");
+        assert_eq!(
+            c.violation(b.as_bytes(), false).unwrap(),
+            "the body is not the JSON object this tool sends"
         );
     }
 

@@ -5,6 +5,7 @@
 //! labels and addresses are unique per organization and among the instance libraries (null is one
 //! scope, not "distinct nulls"); the state rows go with their library or organization.
 use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
 
@@ -42,10 +43,9 @@ async fn lib(
     Ok(id)
 }
 
-#[sqlx::test(migrations = false)]
-async fn an_over_budget_library_gets_its_state_row_and_instance_libraries_are_one_scope(
-    pool: PgPool,
-) {
+#[tokio::test]
+async fn an_over_budget_library_gets_its_state_row_and_instance_libraries_are_one_scope() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version < VERSION)

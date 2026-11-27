@@ -20,9 +20,11 @@
 # included), so a change in aurora-core/-db/-protocol can no longer "pass"
 # while aurora-api or aurora-gateway no longer compile. Tests run on the
 # touched crates only, plus aurora-db and aurora-api when a migration changed.
-# Tests use cargo-nextest when installed (doctests are skipped, as always with
-# nextest), else `cargo test`. Clippy omits --all-features unless a touched
-# crate defines feature flags (--all and workspace-wide changes keep it).
+# Rust tests run through scripts/dev/test.sh (FIX-255): the shared test
+# Postgres, a heavy slot, one crate at a time, cargo-nextest (required;
+# doctests are skipped, as always with nextest — --all runs them separately).
+# Clippy omits --all-features unless a touched crate defines feature flags
+# (--all and workspace-wide changes keep it).
 # One line warns when target/ exceeds 60 GB (`just clean-stale`).
 #
 # Scope detection: changed paths from git diff (working tree vs HEAD, plus the
@@ -36,12 +38,11 @@
 # set — fmt + clippy on aurora-db and aurora-protocol — so the gate never
 # silently does nothing.
 #
-# Host discipline (the box is shared with worker lanes): heavy commands run
-# under `nice -n 10`; before the long phases the gate waits while the 1-minute
-# load average exceeds 25 and notes 15–25. Tests and clippy find Postgres
-# through the repo convention (I-05): `.env` at the repo root, else the
-# environment, else the documented aurora-dev-pg URL is exported; sqlx::test
-# creates and drops its own scratch databases, never the dev database itself.
+# Host discipline (the box is shared with worker lanes): heavy commands take a
+# slot of scripts/dev/heavy.sh (do not wrap the gate itself in it) and the rest
+# runs under `nice -n 10`; before the long phases the gate waits while the
+# 1-minute load average exceeds 25 and notes 15–25. The gate never sets or
+# guesses a database URL: test.sh gives the tests the shared test server.
 #
 # The gate never bypasses .cargo/config.toml: every cargo command runs from
 # the repo root (no --manifest-path), so scripts/dev/linker.sh and the
@@ -181,7 +182,31 @@ print("\n".join(sorted(seen)))
 '
 }
 
-have_nextest() { cargo nextest --version >/dev/null 2>&1; }
+HEAVY="$ROOT/scripts/dev/heavy.sh"
+TEST_SH="$ROOT/scripts/dev/test.sh"
+GATE_LANE=quick-gate
+
+# slot_phase "<label>" <cmd...> — like phase, for commands that go through
+# heavy.sh or test.sh (those set the niceness and take the slot themselves).
+slot_phase() {
+  local label="$1"; shift
+  local t0 rc
+  t0="$(date +%s)"
+  echo "--- $label"
+  if "$@"; then rc=0; else rc="$?"; fi
+  echo "    [$(($(date +%s) - t0))s] $label"
+  return "$rc"
+}
+
+heavy_phase() {
+  local label="$1"; shift
+  slot_phase "$label" "$HEAVY" "$GATE_LANE" "$@"
+}
+
+require_nextest() {
+  cargo nextest --version >/dev/null 2>&1 \
+    || die "cargo-nextest is not installed (cargo install cargo-nextest --locked); scripts/dev/test.sh needs it"
+}
 
 # One line, never deletes anything: target/ past 60 GB.
 disk_warning() {
@@ -199,18 +224,6 @@ changed_files() {
     git diff --name-only --cached --
     git ls-files --others --exclude-standard --
   } | sort -u
-}
-
-# Repo convention (I-05): sqlx macros and sqlx::test resolve the dev Postgres
-# from .env at the repo root, else DATABASE_URL/AURORA_TEST_DATABASE_URL. When
-# none of those exist, export the documented aurora-dev-pg URL so the gate
-# does not fall back to starting a throwaway podman container per run.
-ensure_db_url() {
-  if [ -n "${AURORA_TEST_DATABASE_URL:-}" ] || [ -n "${DATABASE_URL:-}" ] || [ -f "$ROOT/.env" ]; then
-    return 0
-  fi
-  export DATABASE_URL="postgres://aurora:aurora@127.0.0.1:55432/aurora"
-  echo "env: no .env and no DATABASE_URL — exporting the repo-convention dev Postgres (aurora-dev-pg on 127.0.0.1:55432; sqlx::test uses scratch databases only)"
 }
 
 fixtures_needed=0
@@ -239,10 +252,10 @@ run_fixtures() {
   [ "$fixtures_needed" -eq 1 ] || return 0
   echo "note: plugins/fixtures/dist is missing (gitignored; CI builds it before the test shards) — building the fixture packages once"
   if [ -x target/debug/aurora ] && [ -x target/debug/aurora-gateway ]; then
-    phase "fixture packages: bash scripts/fixtures/build.sh (SKIP_CARGO=1; target binaries exist)" \
+    heavy_phase "fixture packages: bash scripts/fixtures/build.sh (SKIP_CARGO=1; target binaries exist)" \
       env SKIP_CARGO=1 bash scripts/fixtures/build.sh
   else
-    phase "fixture packages: bash scripts/fixtures/build.sh" bash scripts/fixtures/build.sh
+    heavy_phase "fixture packages: bash scripts/fixtures/build.sh" bash scripts/fixtures/build.sh
   fi
 }
 
@@ -258,12 +271,12 @@ run_web() {
     phase "web: npx tsc --noEmit" bash -c 'cd web && exec npx tsc --noEmit'
   fi
   if [ "${#web_tests[@]}" -gt 0 ]; then
-    phase "web: npx vitest run (changed test files)" \
-      bash -c 'cd web && exec npx vitest run "$@"' _ "${web_tests[@]}"
+    slot_phase "web: vitest run (changed test files, through test.sh)" \
+      "$TEST_SH" "$GATE_LANE" web vitest "${web_tests[@]}"
   fi
   if [ "${#web_src[@]}" -gt 0 ]; then
-    phase "web: npx vitest related (tests importing the changed sources)" \
-      bash -c 'cd web && exec npx vitest related "$@"' _ "${web_src[@]}"
+    heavy_phase "web: npx vitest related (tests importing the changed sources)" \
+      bash -c 'cd web && exec npx vitest related --run --maxWorkers=4 "$@"' _ "${web_src[@]}"
   fi
 }
 
@@ -369,9 +382,6 @@ if [ "${#feat_crates[@]}" -gt 0 ]; then
   clippy_features=(--all-features)
   clippy_feature_note="--all-features: ${feat_crates[*]} define feature flags"
 fi
-use_nextest=0
-have_nextest && use_nextest=1
-
 # --- plan --------------------------------------------------------------------
 
 echo "== quick gate (VEL-002) — development-loop tool, NOT a merge gate (CI runs the full suite)"
@@ -411,13 +421,9 @@ else
     plan_fixtures
     [ "$fixtures_needed" -eq 1 ] && echo "  fixture packages: bash scripts/fixtures/build.sh (plugins/fixtures/dist is gitignored)"
     if [ "$workspace_wide" -eq 1 ]; then
-      echo "  cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted"
+      echo "  scripts/dev/test.sh quick-gate rust --all-crates   (one crate at a time; not the e2e crates)"
     elif [ "${#test_crates[@]}" -gt 0 ]; then
-      if [ "$use_nextest" -eq 1 ]; then
-        echo "  cargo nextest run ${test_crates[*]}   (doctests are skipped by nextest; 'cargo test --doc -p <crate>' or 'just test' runs them)"
-      else
-        echo "  cargo test ${test_crates[*]}   (cargo-nextest not installed)"
-      fi
+      echo "  scripts/dev/test.sh quick-gate rust --crates $(IFS=,; echo "${test_crates[*]}")   (one at a time; nextest skips doctests)"
       for n in ${test_notes[@]+"${test_notes[@]}"}; do echo "    $n"; done
     fi
   fi
@@ -439,6 +445,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 disk_warning
+[ "${AURORA_HEAVY_HELD:-}" != "${AURORA_HEAVY_DIR:-/home/alex/orca/workspaces/aurora}" ] \
+  || die "the gate is running inside a heavy slot; run it directly (it takes its own slots)"
 
 # --- execute -----------------------------------------------------------------
 
@@ -446,21 +454,23 @@ if [ "$ALL" -eq 1 ]; then
   load_gate
   phase "cargo fmt --all --check" cargo fmt --all --check
   if [ "$TESTS_ONLY" -eq 0 ]; then
-    phase "cargo clippy --workspace --all-targets --all-features -- -D warnings" \
+    heavy_phase "cargo clippy --workspace --all-targets --all-features -- -D warnings" \
       cargo clippy --workspace --all-targets --all-features -- -D warnings
   fi
   if [ "$CLIPPY_ONLY" -eq 0 ]; then
+    require_nextest
     plan_fixtures
     run_fixtures
-    ensure_db_url
-    phase "cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted (8 test threads; shared dev Postgres)" \
-      cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted -- --test-threads=8
+    slot_phase "tests: scripts/dev/test.sh quick-gate rust --all-crates" \
+      "$TEST_SH" "$GATE_LANE" rust --all-crates
+    heavy_phase "doctests (nextest skips them; they need no database)" \
+      cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted --doc
     [ -x web/node_modules/.bin/eslint ] || die "web dependencies missing: run 'cd web && pnpm install --frozen-lockfile' first"
-    phase "web: npx eslint ." bash -c 'cd web && exec npx eslint .'
+    heavy_phase "web: npx eslint ." bash -c 'cd web && exec npx eslint .'
     if [ "$TESTS_ONLY" -eq 0 ]; then
-      phase "web: npx tsc --noEmit" bash -c 'cd web && exec npx tsc --noEmit'
+      heavy_phase "web: npx tsc --noEmit" bash -c 'cd web && exec npx tsc --noEmit'
     fi
-    phase "web: npx vitest run" bash -c 'cd web && exec npx vitest run'
+    slot_phase "web: vitest run (through test.sh)" "$TEST_SH" "$GATE_LANE" web vitest
   fi
   phase "architecture guards (bash scripts/guards/run-all.sh)" bash scripts/guards/run-all.sh
 elif [ "$WEB_ONLY" -eq 1 ]; then
@@ -476,37 +486,32 @@ else
   fi
   if [ "$TESTS_ONLY" -eq 0 ]; then
     if [ "$workspace_wide" -eq 1 ]; then
-      phase "cargo clippy --workspace --all-targets --all-features -- -D warnings" \
+      heavy_phase "cargo clippy --workspace --all-targets --all-features -- -D warnings" \
         cargo clippy --workspace --all-targets --all-features -- -D warnings
     elif [ "${#crates[@]}" -gt 0 ]; then
       clippy_args=()
       for c in "${clippy_crates[@]}"; do clippy_args+=(-p "$c"); done
-      phase "cargo clippy ${clippy_crates[*]} --all-targets ${clippy_features[*]:-} -- -D warnings" \
+      heavy_phase "cargo clippy ${clippy_crates[*]} --all-targets ${clippy_features[*]:-} -- -D warnings" \
         cargo clippy "${clippy_args[@]}" --all-targets ${clippy_features[@]+"${clippy_features[@]}"} -- -D warnings
     else
-      phase "core set: cargo clippy -p aurora-db -p aurora-protocol --all-targets -- -D warnings" \
+      heavy_phase "core set: cargo clippy -p aurora-db -p aurora-protocol --all-targets -- -D warnings" \
         cargo clippy -p aurora-db -p aurora-protocol --all-targets -- -D warnings
     fi
   fi
   if [ "$CLIPPY_ONLY" -eq 0 ]; then
     if [ "$workspace_wide" -eq 1 ]; then
+      require_nextest
       plan_fixtures
       run_fixtures
-      ensure_db_url
-      phase "cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted (8 test threads; shared dev Postgres)" \
-        cargo test --workspace --exclude aurora-e2e-gateway --exclude aurora-e2e-hosted -- --test-threads=8
+      slot_phase "tests: scripts/dev/test.sh quick-gate rust --all-crates" \
+        "$TEST_SH" "$GATE_LANE" rust --all-crates
     elif [ "${#test_crates[@]}" -gt 0 ]; then
+      require_nextest
       plan_fixtures
       run_fixtures
-      ensure_db_url
-      test_args=()
-      for c in "${test_crates[@]}"; do test_args+=(-p "$c"); done
-      if [ "$use_nextest" -eq 1 ]; then
-        phase "cargo nextest run ${test_crates[*]} (doctests skipped)" \
-          cargo nextest run "${test_args[@]}" --no-tests=pass
-      else
-        phase "cargo test ${test_crates[*]}" cargo test "${test_args[@]}"
-      fi
+      test_list="$(IFS=,; echo "${test_crates[*]}")"
+      slot_phase "tests: scripts/dev/test.sh quick-gate rust --crates $test_list" \
+        "$TEST_SH" "$GATE_LANE" rust --crates "$test_list"
     fi
     run_web
   fi

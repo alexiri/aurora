@@ -2,7 +2,7 @@
 //! (the gateway with `backend = postgres` but `gateway = memory` opened a pool it never used).
 
 use aurora_config::{CounterBackend, CountersConfig};
-use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 
 fn postgres_cfg() -> CountersConfig {
     CountersConfig {
@@ -13,8 +13,9 @@ fn postgres_cfg() -> CountersConfig {
     }
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn unshared_class_builds_no_store(pool: PgPool) {
+#[tokio::test]
+async fn unshared_class_builds_no_store() {
+    let (_db, pool) = TestDb::with_pool().await;
     let cfg = postgres_cfg();
     let none = aurora_db::counters::build_store_if(cfg.gateway_shared, &cfg, &pool).expect("ok");
     assert!(none.is_none(), "gateway = memory builds no counters pool");

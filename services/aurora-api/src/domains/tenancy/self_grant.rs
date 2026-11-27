@@ -82,14 +82,10 @@ fn sentence(actor_name: &str, org_role: &str, role: &str, ws_name: &str) -> Stri
     )
 }
 
-/// The People page of the workspace (C-1161's link).
-fn people_link(external_url: &str, org_slug: &str, ws_slug: &str) -> String {
-    format!(
-        "{}/o/{}/w/{}/people",
-        external_url.trim_end_matches('/'),
-        org_slug,
-        ws_slug
-    )
+/// The People page of the workspace (C-1161's link), as a dashboard path: the push carries it
+/// as it is (the service worker accepts nothing else), the e-mail prefixes the external URL.
+fn people_path(org_slug: &str, ws_slug: &str) -> String {
+    format!("/o/{org_slug}/w/{ws_slug}/people")
 }
 
 /// Tell the owners. Fire-and-forget per recipient (a failed send is logged, as in the other
@@ -112,7 +108,8 @@ pub async fn notify(
         return Ok(());
     }
     let text = sentence(actor_name, org_role, role, ws_name);
-    let link = people_link(&state.config.external_url, org_slug, ws_slug);
+    let path = people_path(org_slug, ws_slug);
+    let link = format!("{}{path}", state.config.external_url.trim_end_matches('/'));
     for p in &people {
         let mail = Mail::new(
             &p.email,
@@ -130,7 +127,7 @@ pub async fn notify(
         if let Err(e) = state.mailer.send(mail).await {
             tracing::error!(error = %e, "self-grant e-mail send failed");
         }
-        crate::domains::push::deliver::notify_self_grant(state, p.user_id, &text, &link).await;
+        crate::domains::push::deliver::notify_self_grant(state, p.user_id, &text, &path).await;
     }
     Ok(())
 }

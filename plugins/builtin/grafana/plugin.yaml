@@ -1,6 +1,6 @@
 package:
   id: grafana
-  version: 1.8.0
+  version: 1.8.1
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -143,8 +143,9 @@ apps:
           # data step (a query no approval card shows), a label a notification policy could
           # route on, or notification settings beyond the receiver. `allow_keys` is the
           # script's own top-level key list: the receiver's parser matches key names without
-          # case and keeps the last match, so any other key (and any spelling that folds onto
-          # a known one) is refused even when the check would not read it. Every `data` step
+          # case, so any other key (and any spelling that folds onto a known one) is refused
+          # even when the check would not read it; a body that repeats a key at any depth is
+          # refused too. Every `data` step
           # is the `{refId, datasourceUid, queryType, relativeTimeRange, model}` object the
           # script sends, and the steps after the first are the server's own `__expr__` steps
           # (its reduce and threshold): a step that queries a data source of its own — a

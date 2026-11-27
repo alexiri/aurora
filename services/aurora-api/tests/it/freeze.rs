@@ -726,6 +726,16 @@ async fn freezes_and_unfreezes_tell_the_owners_and_only_them() {
         !m.body.contains('@'),
         "no e-mail address in the body: {m:?}"
     );
+    let (org_slug, ws_slug): (String, String) = sqlx::query_as(
+        "SELECT o.slug, w.slug FROM workspaces w JOIN organizations o ON o.id = w.org_id \
+         WHERE w.id = $1",
+    )
+    .bind(w.r.ws)
+    .fetch_one(w.r.h.pool())
+    .await
+    .unwrap();
+    let base = w.r.h.state.config.external_url.trim_end_matches('/');
+    assert_eq!(m.link, format!("{base}/o/{org_slug}/w/{ws_slug}"), "{m:?}");
 
     // The same freeze again (idempotent, `unchanged`) sends nothing.
     let (s, v) = w.freeze(w.ws_owner, &ws_uri).await;
@@ -786,6 +796,32 @@ async fn freezes_and_unfreezes_tell_the_owners_and_only_them() {
         "{m:?}"
     );
     assert!(!m.body.contains("ia@x.io"), "{m:?}");
+    assert_eq!(
+        m.link,
+        format!(
+            "{}/o/{org_slug}",
+            w.r.h.state.config.external_url.trim_end_matches('/')
+        ),
+        "{m:?}"
+    );
+
+    // The instance administrator lifts it: the organization's owners are told of the unfreeze.
+    before = w.r.h.mail.sent().len();
+    let (s, v) = w.unfreeze(w.ia, &admin_uri).await;
+    assert_eq!(s, 200, "{v}");
+    let mail = new_mail(&w.r.h, before);
+    let mut tos: Vec<&str> = mail.iter().map(|m| m.to.as_str()).collect();
+    tos.sort_unstable();
+    assert_eq!(tos, ["oo@x.io", "po@x.io"], "{tos:?}");
+    assert!(
+        mail.iter().all(|m| m.subject.contains("was unfrozen")
+            && m.body
+                .contains("an instance administrator lifted the freeze of the organization")
+            && !m.body.contains('@')),
+        "{mail:?}"
+    );
+    let (s, v) = w.freeze(w.ia, &admin_uri).await;
+    assert_eq!(s, 200, "{v}");
 
     // A lower authority cannot lift it: the action is refused, the transaction rolls back, and
     // nothing is sent.
@@ -816,13 +852,15 @@ impl Mailer for RecordingFailMailer {
 }
 
 /// (FIX-244, D-486) A failing recipient does not stop the others and never fails the action:
-/// every recipient's send is attempted, the freeze commits, and the pushes (the other channel)
-/// still carry the notice.
+/// every recipient's send is attempted and the freeze commits.
 #[tokio::test]
 async fn a_failing_recipient_does_not_stop_the_others_and_the_freeze_still_commits() {
     let mut w = world().await;
-    let peer = w.r.h.user("po@x.io", false).await;
-    w.r.h.member(w.r.org, peer, "owner", "active").await;
+    // Two recipients, so a first failed send that stopped the loop would show.
+    for email in ["po@x.io", "qo@x.io"] {
+        let peer = w.r.h.user(email, false).await;
+        w.r.h.member(w.r.org, peer, "owner", "active").await;
+    }
     let attempts = std::sync::Arc::new(RecordingFailMailer(std::sync::Mutex::new(Vec::new())));
     w.r.h.state =
         w.r.h
@@ -849,5 +887,9 @@ async fn a_failing_recipient_does_not_stop_the_others_and_the_freeze_still_commi
     let mut tos = attempts.0.lock().unwrap().clone();
     tos.sort_unstable();
     tos.dedup();
-    assert_eq!(tos, ["po@x.io"], "every owner but the actor: {tos:?}");
+    assert_eq!(
+        tos,
+        ["po@x.io", "qo@x.io"],
+        "every owner but the actor: {tos:?}"
+    );
 }

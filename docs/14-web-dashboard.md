@@ -499,7 +499,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     (`components/agents/agent-card.tsx`), the same card as on the Agents page. A card has the
     avatar, the name (the link to the agent's page), `@handle` and, at the right, the needs-you
     chip when approvals wait; a badges line (kind chip, "BYO disabled by …", token badges for
-    owners); the agent's summary (C-986); and **Chat** at the foot. There is no "New agent"
+    owners, the **Update available** mark when the agent's template offers a newer version —
+    FIX-251); the agent's summary (C-986); and **Chat** at the foot. There is no "New agent"
     tile: the **New agent** button stays in the section header. One agent is one card at the
     start of the row.
   - The first-run checklist is a numbered list with a progress bar.
@@ -1353,6 +1354,10 @@ unified by D-407 (P5-REFINE-1).
 | **Waiting for review** | Pending approval | a new template version an instance admin must read and approve before it is offered; people keep using the offered version meanwhile | Expert |
 | **Waiting for its package** | Awaiting package | a version Aurora has read whose package the repository has not published yet | Expert |
 | **Offered in <org>** | Enabled in, Available in | the organization's switch for one template: off hides it from new agents; agents already made from it keep working | Set up |
+| **Update available** | Outdated, Version available | the accent mark on an agent's card and on the agent page header when the agent's template offers a newer version; the header mark opens the agent's Settings › Manage review | Use |
+| **Needs update** | Outdated, Behind | the Agents page's filter (`?needs_update=1`) and its banner: only the agents whose template offers a newer version are listed, with the count and the way back to all of them | Use |
+| **Review updates** | Update wizard, Apply all | the walkthrough behind the update notice and the banner: each agent that needs an update, one review at a time, every offer read fresh from the agent's status; an agent whose offer is gone is skipped, and the last close ends on the unfiltered page | Use |
+| **Keep mine**, **Take the new one**, **Edit your own text** | Resolve, Accept mine, Overwrite | the three choices of one conflict hunk in the review: the agent's text, the new version's, or the person's own edit, diffed as it is written | Use |
 | **Helper files** | Helper scripts | files an agent keeps in `.aurora/helpers`, byte for byte | Use |
 | **Skills from libraries** | Library skills | what an agent reads from a skill library instead of carrying its own copy | Use |
 
@@ -2748,6 +2753,17 @@ skills, helper files and memories as inert data in folds; **Skills from librarie
 changes, then create.", 422 field errors jump to the step they belong to; each new webhook's secret is shown once, then
 the toast "<Agent> is ready" opens the new agent's chat.
 
+(FIX-251, D-488(a)) When a new version of a template is approved, the people who can apply an update
+to an agent made from it are told: the workspace's attention feed carries the notice ("<Template>
+<version> is available for N agents in <Workspace>", informational, counted under the agents topic)
+while the offer stands and at least one agent is behind, its **Review updates** action opens the
+Agents page filtered `?needs_update=1`, and e-mail and Web Push follow the person's notice
+preferences like for the other notices. The filtered Agents page shows a banner with the count and
+**Review updates**; each agent card carries the **Update available** mark, and the agent page header
+marks it too, linked to Settings › Manage. **Review updates** walks the agents that are behind, one
+review at a time, each offer read fresh from the agent's own template status; an agent whose offer is
+gone by the time it is read is skipped, and the last close returns to the unfiltered page.
+
 The agent's **Template section** (C-1117) sits on Settings › Manage, above Export and import, and is shown only for
 agents made from a template or holding helper files. It says "Made from <template> <version>" and lists the helper
 files ("2 helper files in .aurora/helpers"): **View** opens a dialog with one fold per file — path, size, Executable,
@@ -2755,14 +2771,24 @@ the text as plain text — and **Remove** takes one file or all of them, each wi
 offering them again brings them back. When a newer version is offered, the section says "Version <v> is available.
 <Agent> keeps working as it is until you apply it." and **Review changes** opens the dialog: the new version's
 **About this template** (its README, rendered as C-1116, in a fold), then each part with its state in words and a full
-diff, the checkboxes (ticked for `unchanged_here` and `new`, unticked otherwise; an unreachable new library skill gets
-the "Needs the skill library <repo>" sentence and no checkbox), the inputs needed, and the apps added with **Give
-access** links to the Access tab's journey. The offer lists only instructions, skills, helper files and skills from
-libraries: the newer version's memories, schedules and webhooks are used only when an agent is created and are never
-offered to an existing agent (what it already has stays as it is). The proposed texts are rendered with the agent's
+diff, the checkboxes (ticked for `unchanged_here`, `new` and a clean merge, unticked otherwise; an unreachable new
+library skill gets the "Needs the skill library <repo>" sentence and no checkbox), the inputs needed, and the apps
+added with **Give access** links to the Access tab's journey. The offer lists only instructions, skills, helper files
+and skills from libraries: the newer version's memories, schedules and webhooks are used only when an agent is created
+and are never offered to an existing agent (what it already has stays as it is), and the dialog says so ("Memories are
+never changed by an update."). (FIX-251, D-488(b)) A part the person edited is no longer all-or-nothing: where the
+starting text is stored it is offered as a three-way merge. A part with no merge says why in the server's words (the
+starting text is not stored, or "This file is too large to merge automatically…") and keeps the all-or-nothing choice,
+unticked. A **merged** part is ticked by default and shown diffed
+against what the agent has now — the person's edit stays, the new version's change is applied around it. A **conflict**
+part is unticked and lists each conflict hunk with both sides diffed and a choice per hunk — **Keep mine**, **Take the
+new one**, or **Edit your own text** (a size-capped editor with a live diff against the agent's text); Apply waits
+while a taken conflict part still has an unresolved hunk ("Every change still waiting needs a choice…"), since the
+server would refuse it. The proposed texts are rendered with the agent's
 current name, so renaming <Agent> makes a part that says `{agent.name}` show as changed on the next offer — the diff
 then shows only the name swap — until an apply re-records it with the new name. **Apply** sends exactly the ticked
-parts bound to the shown hash (C-1112);
+parts bound to the shown hash (C-1112) — a merged or conflict part echoes the merge's hash, a conflict part one
+resolution per hunk in the offer's order;
 a 409 `template_version_changed` closes the dialog, reads the offer again and the section says "This template was
 updated. Check the changes, then apply." **Skip this version** applies with no parts: the provenance moves, nothing
 else changes. **Stop following this template** (with a confirm) forgets the provenance — the helper files and the

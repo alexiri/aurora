@@ -7,6 +7,7 @@
 
 use aurora_db::PgPool;
 use aurora_db::repo::agent_templates as repo;
+use aurora_testkit::TestDb;
 use uuid::Uuid;
 
 async fn seed_source(pool: &PgPool, name: &str) -> Uuid {
@@ -52,8 +53,9 @@ fn new_template(source: Uuid, template_id: &str) -> repo::NewTemplate<'_> {
     }
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn a_lost_ownership_race_reports_id_taken_instead_of_stealing(pool: PgPool) {
+#[tokio::test]
+async fn a_lost_ownership_race_reports_id_taken_instead_of_stealing() {
+    let (_db, pool) = TestDb::with_pool().await;
     aurora_db::migrate(&pool).await.unwrap();
     let a = seed_source(&pool, "first").await;
     let b = seed_source(&pool, "second").await;
@@ -128,8 +130,9 @@ async fn a_lost_ownership_race_reports_id_taken_instead_of_stealing(pool: PgPool
 
 /// A check extends the lease of the source it is still working on: only the current owner
 /// succeeds, and a released (or stolen) lease cannot be extended.
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn extend_lease_only_succeeds_for_the_current_owner(pool: PgPool) {
+#[tokio::test]
+async fn extend_lease_only_succeeds_for_the_current_owner() {
+    let (_db, pool) = TestDb::with_pool().await;
     aurora_db::migrate(&pool).await.unwrap();
     let source = seed_source(&pool, "first").await;
     let owner = Uuid::now_v7();

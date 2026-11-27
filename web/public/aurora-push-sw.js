@@ -17,10 +17,12 @@ const TYPES = [
   "app_setup_declined",
   "schedule_answer",
   "self_grant",
+  "emergency_access",
   "workspace_lifecycle",
   "org_lifecycle",
   "default_store",
   "peer_approval",
+  "template_update",
 ];
 const URL_PATTERN = /^\/o\/[A-Za-z0-9._~%/-]+(\?[A-Za-z0-9._~%=&-]*)?$/;
 
@@ -67,6 +69,17 @@ function build(raw) {
       title: item ? "Aurora — " + item : "Aurora — someone gave themselves workspace access",
       body: "Open the workspace's People page to review it.",
       tag: "aurora-self-grant",
+      url: URL_PATTERN.test(url) ? url : "/",
+    };
+  }
+  if (data.type === "emergency_access") {
+    // (FIX-236, C-1165) Fixed text; the notice's subject only when the device turned names on. Never
+    // the reason and never any content.
+    const item = text(data.title, 80);
+    return {
+      title: item ? "Aurora — " + item : "Aurora — an owner opened emergency read access",
+      body: "Open the workspace for details.",
+      tag: "aurora-emergency-access",
       url: URL_PATTERN.test(url) ? url : "/",
     };
   }
@@ -122,6 +135,17 @@ function build(raw) {
           : "Aurora — your workspace changed",
       body: "Open Aurora for details.",
       tag: org ? "aurora-org-lifecycle" : "aurora-workspace-lifecycle",
+      url: URL_PATTERN.test(url) ? url : "/",
+    };
+  }
+  if (data.type === "template_update") {
+    // (FIX-251, D-488(a)) Fixed text; the sentence only when the device turned names on. Never
+    // any content, never an e-mail address.
+    const item = text(data.title, 80);
+    return {
+      title: item ? "Aurora — " + item : "Aurora — a template update is available",
+      body: "Open the Agents page to review the updates.",
+      tag: "aurora-template-update",
       url: URL_PATTERN.test(url) ? url : "/",
     };
   }

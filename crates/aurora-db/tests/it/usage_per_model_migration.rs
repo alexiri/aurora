@@ -4,6 +4,7 @@
 //! partition (existing and later ones) takes the new `llm_model` column. The migrations are forward-only; the
 //! reverse statements are exercised too, so a rollback by hand is known to work on the same data.
 use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use chrono::Utc;
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
@@ -23,8 +24,9 @@ async fn insert(pool: &PgPool, id: Uuid, with_model: bool) {
     sqlx::query(sql).bind(id).execute(pool).await.unwrap();
 }
 
-#[sqlx::test(migrations = false)]
-async fn the_migration_applies_on_a_partitioned_table_that_already_has_rows(pool: PgPool) {
+#[tokio::test]
+async fn the_migration_applies_on_a_partitioned_table_that_already_has_rows() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         // every migration before it: later ones (the usage ledger reads `turns.model_basis`) need it

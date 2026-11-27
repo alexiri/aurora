@@ -1007,7 +1007,15 @@ One row per part an agent last wrote from a template, written at creation and at
 | template_id | text not null | pk part; keyed by the template id (not a FK), so a source removed and added again keeps the organization's choice |
 | disabled_by | uuid null FK→users (set null) | |
 
-The gateway role gets nothing on these tables.
+### `agent_template_update_notices` (phase 6, FIX-251, D-488(a); the update notice's dedup)
+One row per (workspace, version) the update notice went out for: the row IS the dedup, so a withdrawal and a re-offer of the same version never tells the workspace's people again. Keyed by the template id (no FK), like the provenance. The dashboard reads the rows whose offer still stands (the template offered, the version its newest approved one, the organization's switch off, at least one agent behind) as the workspace's in-app notice.
+| Column | Type | Notes |
+|---|---|---|
+| workspace_id | uuid not null FK→workspaces (cascade) | pk part |
+| template_id | text not null | pk part; the `<id>` of `template.yaml` |
+| version | text not null | pk part; the version that was announced |
+
+The gateway role gets nothing on these tables. (`created_at` is implicit, 03 §Conventions.)
 
 ---
 

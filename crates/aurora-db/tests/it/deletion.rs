@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use aurora_db::PgPool;
 use aurora_db::repo::{orgs, workspaces};
+use aurora_testkit::TestDb;
 use uuid::Uuid;
 
 /// Tables with a non-cascading foreign key into `parent`.
@@ -28,8 +29,9 @@ fn set(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|s| (*s).to_owned()).collect()
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn every_restrict_child_of_organizations_is_handled_by_the_cascade(pool: PgPool) {
+#[tokio::test]
+async fn every_restrict_child_of_organizations_is_handled_by_the_cascade() {
+    let (_db, pool) = TestDb::with_pool().await;
     let found = restrict_children(&pool, "organizations").await;
     let handled: BTreeSet<String> = orgs::ORG_CASCADE_TABLES
         .iter()
@@ -57,8 +59,9 @@ async fn every_restrict_child_of_organizations_is_handled_by_the_cascade(pool: P
     assert!(!handled.contains("organizations"));
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn every_restrict_child_of_workspaces_is_handled_by_workspace_deletion(pool: PgPool) {
+#[tokio::test]
+async fn every_restrict_child_of_workspaces_is_handled_by_workspace_deletion() {
+    let (_db, pool) = TestDb::with_pool().await;
     let found = restrict_children(&pool, "workspaces").await;
     let handled = set(workspaces::WORKSPACE_RESTRICT_CHILDREN);
     assert_eq!(
@@ -70,8 +73,9 @@ async fn every_restrict_child_of_workspaces_is_handled_by_workspace_deletion(poo
 
 /// A manual group (bound to a workspace), a SCIM token and a SCIM link used to make the
 /// final `DELETE FROM organizations` fail (RESTRICT) and roll the whole deletion back.
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn org_with_groups_and_scim_rows_is_deleted(pool: PgPool) {
+#[tokio::test]
+async fn org_with_groups_and_scim_rows_is_deleted() {
+    let (_db, pool) = TestDb::with_pool().await;
     let org = Uuid::now_v7();
     sqlx::query("INSERT INTO organizations (id, slug, name, external_id) VALUES ($1, $2, 'o', $2)")
         .bind(org)

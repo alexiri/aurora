@@ -59,18 +59,15 @@ kind-down:
 # Whole workspace except the gated e2e crates.
 test_excludes := "--exclude aurora-e2e-gateway --exclude aurora-e2e-hosted"
 
-# Workspace tests (no e2e) with `cargo test` (what CI runs). Extra args pass through, e.g. `just test -- tenancy::`.
+# Every crate but the e2e ones, one at a time through scripts/dev/test.sh, then the doctests. Extra args are nextest filters/args, e.g. `just test tenancy::`.
 test *args:
-    cargo test --workspace {{test_excludes}} {{args}}
+    bash scripts/dev/test.sh "just-$(basename "$PWD")" rust --all-crates {{args}}
+    # nextest does not run doctests (they need no database)
+    bash scripts/dev/heavy.sh "just-$(basename "$PWD")" cargo test --workspace {{test_excludes}} --doc
 
-# Same set under cargo-nextest (opt-in: `cargo install cargo-nextest --locked`; not a measured win, see docs/ops/build-performance.md).
+# The same crate runs without the doctests (needs cargo-nextest, as `test` does).
 test-nextest *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo nextest --version >/dev/null 2>&1 || { echo "cargo-nextest not installed: cargo install cargo-nextest --locked" >&2; exit 1; }
-    cargo nextest run --workspace {{test_excludes}} {{args}}
-    # nextest does not run doctests
-    cargo test --workspace {{test_excludes}} --doc
+    bash scripts/dev/test.sh "just-$(basename "$PWD")" rust --all-crates {{args}}
 
 # Incremental developer build of the services.
 build-fast:
@@ -88,17 +85,17 @@ disk-report *dirs:
 clean-lane worktree *flags:
     bash scripts/dev/clean-lane.sh {{flags}} {{worktree}}
 
-# Force-remove leftover aurora-testkit-* Postgres containers (leaked by test runs whose
-# --rm never fired because the process was killed). Only testkit fallback containers
-# carry this name prefix, never the shared dev DB — but a container is "live" until its
-# whole test run ends (each test process caches its URL), so run this when no test run
-# that lacks AURORA_TEST_DATABASE_URL/.env is in progress.
+# Force-remove leftover aurora-testkit-* Postgres containers. The test kit no longer starts
+# any (FIX-255: it uses the shared server of scripts/dev/test-pg.sh); this is for leftovers of
+# runs from older trees. Only those containers carry the name prefix, never the shared dev DB or
+# aurora-test-pg — but a checkout without FIX-255 may still be using one, so run this when no
+# such test run is in progress.
 clean-testkit:
     podman ps -a -q --filter name='^aurora-testkit-' | xargs -r podman rm -f -t 1
     # (FIX-103) Leaked per-test databases of killed runs live in the shared server: the testkit itself
     # reaps `aurora_test_<uuid>` databases with no connection older than 2 h (aurora_testkit::template::
     # reap_leaked) once per test process. To reap now, run any testkit test, e.g.
-    #   DATABASE_URL=postgres://aurora:aurora@127.0.0.1:55432/aurora cargo test -p aurora-testkit --test testkit cleanup_drops_database
+    #   scripts/dev/test.sh <lane> rust -p aurora-testkit cleanup_drops_database
 
 # Drop build artefacts not used for DAYS days (cargo-sweep), else document-and-stop. Never touches other worktrees.
 clean-stale days="14":
