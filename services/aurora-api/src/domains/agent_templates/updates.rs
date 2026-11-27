@@ -2045,8 +2045,10 @@ pub async fn apply(
     // so the re-reads and the writes below see one consistent state.
     memory_repo::lock_agent(&mut tx, agent.id).await?;
     // Re-verify under the lock (SEC-146 A): the agent, the offer and the part states may all
-    // have moved between the pre-check above and this transaction.
-    let agent = agents_repo::get(&mut *tx, agent_id)
+    // have moved between the pre-check above and this transaction. The agent's row is locked
+    // first: the manual writers of the brief, the skills and the helpers take that lock too, so
+    // an edit is either committed before the re-reads (and seen) or waits for the commit.
+    let agent = agents_repo::get_for_update(&mut *tx, agent_id)
         .await?
         .ok_or_else(not_found)?;
     let Some(ctx) = offer_ctx_on(state, &mut tx, &agent).await? else {
@@ -2401,7 +2403,7 @@ pub async fn detach(
     memory_repo::lock_agent(&mut tx, agent.id).await?;
     // Re-read under the lock (SEC-146 A): a concurrent apply or detach may have moved the
     // provenance; a second detach finds it gone and answers 404.
-    let agent = agents_repo::get(&mut *tx, agent_id)
+    let agent = agents_repo::get_for_update(&mut *tx, agent_id)
         .await?
         .ok_or_else(not_found)?;
     if agent.template_id.is_none() {

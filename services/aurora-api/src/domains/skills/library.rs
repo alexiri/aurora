@@ -251,6 +251,10 @@ pub(crate) async fn write_add_in_tx(
     workspace: Option<Uuid>,
     p: &PreparedAdd,
 ) -> Result<(SkillRow, AuditEvent), ApiError> {
+    // The agent's row comes before the budget lock: a template apply holds it when it gets here.
+    if let Some(agent) = owner.agent {
+        aurora_db::repo::agents::get_for_update(&mut *tx, agent).await?;
+    }
     lock_budget(tx, org, owner).await?;
     check_budget(state, tx, org, owner, p.loaded.size, None).await?;
     let src = Source {
@@ -689,9 +693,7 @@ async fn lock_pending(
     skill: Uuid,
     uid: Uuid,
 ) -> Result<(SkillRow, UpdateRow), ApiError> {
-    let row = skills_repo::get_for_update(conn, skill)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Skill not found."))?;
+    let row = service::lock_for_edit(conn, skill).await?;
     let u = repo::get_update_for_update(conn, uid)
         .await?
         .filter(|u| u.skill_id == skill)
@@ -880,9 +882,7 @@ async fn detach_skill(
     let cur = service::row(&s.pool, id).await?;
     authorize(&c, &s, &cur, true).await?;
     let mut tx = audit::begin(&s).await?;
-    let row = skills_repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("Skill not found."))?;
+    let row = service::lock_for_edit(&mut tx, id).await?;
     if row.library_id.is_none() {
         return Err(ApiError::conflict(
             "not_a_library_skill",

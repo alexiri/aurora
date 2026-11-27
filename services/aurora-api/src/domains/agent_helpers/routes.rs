@@ -151,6 +151,8 @@ async fn delete_helper(
             .collect(),
     };
     let mut tx = s.pool.begin().await.map_err(DbError::from)?;
+    // Serializes with a template apply, which writes the helper set under this lock.
+    agents::get_for_update(&mut *tx, a.id).await?;
     let removed = service::delete(&mut tx, a.id, q.path.as_deref()).await?;
     tx.commit().await.map_err(DbError::from)?;
     if removed > 0 {

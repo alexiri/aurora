@@ -91,6 +91,21 @@ pub async fn get<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<Agen
     .await?)
 }
 
+/// [`get`] with the row locked until the transaction ends. A template apply holds it while it
+/// compares and writes an agent's parts, and every manual writer of such a part takes it
+/// **first**, before any row of the part itself, so the two serialize and cannot deadlock.
+pub async fn get_for_update<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+) -> Result<Option<AgentRow>, DbError> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLS} FROM agents WHERE id = $1 FOR UPDATE"
+    )))
+    .bind(id)
+    .fetch_optional(exec)
+    .await?)
+}
+
 pub async fn list_for_workspace<'e, E: PgExecutor<'e>>(
     exec: E,
     ws: Uuid,

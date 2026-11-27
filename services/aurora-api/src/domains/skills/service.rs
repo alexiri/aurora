@@ -440,11 +440,7 @@ pub(crate) async fn create_in_tx(
     // (FIX-110) The per-agent cap is checked under the agent row lock (the pattern
     // `schedules::service::create` uses), so concurrent creates cannot overshoot it.
     if let Some(agent) = owner.agent {
-        sqlx::query("SELECT 1 FROM agents WHERE id = $1 FOR UPDATE")
-            .bind(agent)
-            .execute(&mut *tx)
-            .await
-            .map_err(DbError::from)?;
+        agents::get_for_update(&mut *tx, agent).await?;
         if repo::count_agent_own(&mut *tx, agent).await? >= limits::SKILL_PER_AGENT_MAX {
             return Err(ApiError::conflict(
                 "skill_limit_reached",
@@ -477,6 +473,18 @@ pub(crate) async fn create_in_tx(
     view(tx, row).await
 }
 
+/// Locks a skill for a change: the owning agent's row first (agent-tier skills), then the
+/// skill's own row. A template apply holds the agent's row while it writes skills, so every
+/// change of an existing skill takes the two in this order.
+pub(crate) async fn lock_for_edit(conn: &mut PgConnection, id: Uuid) -> Result<SkillRow, ApiError> {
+    // The owner of a skill never changes, so this unlocked read is enough to find it.
+    let owner = repo::get(conn, id).await?.ok_or_else(not_found)?.agent_id;
+    if let Some(agent) = owner {
+        agents::get_for_update(&mut *conn, agent).await?;
+    }
+    repo::get_for_update(conn, id).await?.ok_or_else(not_found)
+}
+
 pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView, ApiError> {
     if let Some(d) = p.description {
         validate_description(d)?;
@@ -485,9 +493,7 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
         validate_body(b)?;
     }
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let cur = repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(not_found)?;
+    let cur = lock_for_edit(&mut tx, id).await?;
     // (P4-GSL) enable/disable stays allowed; the content changes only by an approved update.
     if cur.library_id.is_some() && (p.description.is_some() || p.body.is_some()) {
         return Err(readonly());
@@ -513,9 +519,7 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
 
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let cur = repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(not_found)?;
+    let cur = lock_for_edit(&mut tx, id).await?;
     repo::delete(&mut tx, id).await?;
     bump(&mut tx, &cur).await?;
     tx.commit().await.map_err(DbError::from)?;
@@ -531,9 +535,7 @@ pub async fn put_file(
 ) -> Result<SkillView, ApiError> {
     validate_path(path)?;
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let cur = repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(not_found)?;
+    let cur = lock_for_edit(&mut tx, id).await?;
     if cur.library_id.is_some() {
         return Err(readonly());
     }
@@ -562,9 +564,7 @@ pub async fn put_file(
 
 pub async fn delete_file(pool: &PgPool, id: Uuid, path: &str) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let cur = repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(not_found)?;
+    let cur = lock_for_edit(&mut tx, id).await?;
     if cur.library_id.is_some() {
         return Err(readonly());
     }

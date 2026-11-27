@@ -11,6 +11,7 @@ use aurora_testkit::git_server::{Change, GitServer};
 use base64::Engine as _;
 use http::Method;
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
 use crate::common::*;
@@ -3994,6 +3995,195 @@ async fn a_merged_helper_set_over_the_caps_is_refused() {
             "{v}"
         );
     }
+}
+
+// ---- an apply and a concurrent edit (T3): the agent row lock serializes them --------------------
+//
+// A test transaction holds one row lock to stop a request at a known point; the next step
+// starts only when Postgres reports the request waiting (or it has already answered, which is
+// what an unserialized writer does).
+
+/// Wait until `waiters` backends of this test's database wait for a lock, or `done` is set.
+async fn wait_for_lock_waiters(w: &W, waiters: i64, done: &AtomicBool) {
+    for _ in 0..2_000 {
+        let now: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+        if now >= waiters || done.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("{waiters} requests never waited for a lock");
+}
+
+/// The apply of `watch`'s conflict, taking the new text, bound to the offer `v` showed.
+fn upd_watch_apply_body(v: &Value, parts_before: &[Value]) -> Value {
+    let merge = part_merge(v, "skill", "watch");
+    let mut parts = parts_before.to_vec();
+    parts.push(json!({
+        "kind": "skill",
+        "key": "watch",
+        "merge_sha256": merge["merge_sha256"],
+        "resolutions": [{"unit": "body", "choice": "take_theirs"}],
+    }));
+    json!({
+        "version": "2.0.0",
+        "content_sha256": v["update"]["content_sha256"],
+        "parts": parts,
+    })
+}
+
+/// An edit that is under way when the apply starts is waited for and seen: the apply is the
+/// stale review's 409, and the edit stands.
+#[tokio::test]
+async fn an_apply_waits_for_a_skill_edit_under_way_and_sees_it() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let body = upd_watch_apply_body(&v, &[]);
+
+    // Hold the skill's row: the edit stops inside its transaction.
+    let mut blocker = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM skills WHERE id = $1 FOR UPDATE")
+        .bind(u.watch)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let uri = format!("/v1/skills/{}", u.watch);
+    let applied = AtomicBool::new(false);
+    let never = AtomicBool::new(false);
+    let edit = u.w.h.call(
+        &u.owner,
+        Method::PATCH,
+        &uri,
+        Some(json!({"body": "Watch body: edited meanwhile."})),
+    );
+    let apply = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        let r = u.w.apply(&u.owner, u.agent, body).await;
+        applied.store(true, Ordering::SeqCst);
+        r
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 2, &applied).await;
+        blocker.rollback().await.unwrap();
+    };
+    let ((edit_status, edit_answer), (status, answer), ()) = tokio::join!(edit, apply, release);
+
+    assert_eq!(edit_status, 200, "{edit_answer}");
+    assert_eq!(
+        upd_watch_body(&u).await,
+        "Watch body: edited meanwhile.",
+        "no lost edit: {status} {answer}"
+    );
+    assert_eq!(status, 409, "{answer}");
+    assert_eq!(
+        answer["error"]["code"], "template_version_changed",
+        "{answer}"
+    );
+}
+
+/// An edit that starts while the apply is under way waits for it and lands on top.
+#[tokio::test]
+async fn a_skill_edit_made_during_an_apply_lands_on_top() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    // The helpers are written first: the apply has read the skill and not written it yet when
+    // it stops at the held helper row.
+    let body = upd_watch_apply_body(&v, &[json!({"kind": "helpers", "key": ""})]);
+    let mut blocker = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent_helper_files WHERE agent_id = $1 FOR UPDATE")
+        .bind(u.agent)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let uri = format!("/v1/skills/{}", u.watch);
+    let edited = AtomicBool::new(false);
+    let never = AtomicBool::new(false);
+    let apply = u.w.apply(&u.owner, u.agent, body);
+    let edit = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        let r =
+            u.w.h
+                .call(
+                    &u.owner,
+                    Method::PATCH,
+                    &uri,
+                    Some(json!({"body": "Watch body: edited meanwhile."})),
+                )
+                .await;
+        edited.store(true, Ordering::SeqCst);
+        r
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 2, &edited).await;
+        blocker.rollback().await.unwrap();
+    };
+    let ((status, answer), (edit_status, edit_answer), ()) = tokio::join!(apply, edit, release);
+
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(edit_status, 200, "{edit_answer}");
+    assert_eq!(
+        upd_watch_body(&u).await,
+        "Watch body: edited meanwhile.",
+        "no lost edit"
+    );
+}
+
+/// The helper removal takes the same lock: an apply of the helpers that starts while a
+/// removal is under way sees it, and never writes the removed file back.
+#[tokio::test]
+async fn an_apply_waits_for_a_helper_removal_under_way_and_sees_it() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    assert_eq!(part_state(&v, "helpers", ""), Some("unchanged_here"), "{v}");
+    let body = json!({
+        "version": "2.0.0",
+        "content_sha256": v["update"]["content_sha256"],
+        "parts": [{"kind": "helpers", "key": ""}],
+    });
+    let mut blocker = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM agent_helper_files WHERE agent_id = $1 FOR UPDATE")
+        .bind(u.agent)
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let uri = format!("/v1/agents/{}/helpers?path=report.sh", u.agent);
+    let applied = AtomicBool::new(false);
+    let never = AtomicBool::new(false);
+    let removal = u.w.h.call(&u.owner, Method::DELETE, &uri, None);
+    let apply = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        let r = u.w.apply(&u.owner, u.agent, body).await;
+        applied.store(true, Ordering::SeqCst);
+        r
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 2, &applied).await;
+        blocker.rollback().await.unwrap();
+    };
+    let ((removal_status, removal_answer), (status, answer), ()) =
+        tokio::join!(removal, apply, release);
+
+    assert_eq!(removal_status, 204, "{removal_answer}");
+    let left: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM agent_helper_files WHERE agent_id = $1")
+            .bind(u.agent)
+            .fetch_one(u.w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(left, 0, "no lost removal: {status} {answer}");
+    assert_eq!(status, 409, "{answer}");
 }
 
 /// Resolutions that do not match the offer's conflict hunks are refused, and so is a part
