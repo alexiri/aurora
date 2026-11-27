@@ -8587,6 +8587,59 @@ fn the_copied_skill_rules_match_the_platform_validator() {
         assert!(!validator::path_ok(p), "{p}");
         assert!(!copy::path_ok(p), "{p}");
     }
+
+    // What counts as text: UTF-8, no NUL, no byte-order mark.
+    let texts: &[(&[u8], bool)] = &[
+        (b"", true),
+        (b"hello\n", true),
+        (b"a\r\n\tb", true),
+        ("caf\u{e9} \u{202e}".as_bytes(), true),
+        (b"a\0b", false),
+        ("\u{feff}x".as_bytes(), false),
+        ("x\u{feff}".as_bytes(), true),
+        (&[0xff, 0xfe], false),
+        (&[0x61, 0x80], false),
+    ];
+    for (bytes, want) in texts {
+        let (v, c) = (validator::is_text(bytes), copy::is_text(bytes));
+        assert_eq!((v, c), (*want, *want), "{bytes:?}");
+    }
+
+    // Cleaning: CRLF to LF, control and format characters gone, the rest as typed.
+    for (raw, want) in [
+        ("a\r\nb", "a\nb"),
+        // A lone carriage return is whitespace: kept.
+        ("a\rb", "a\rb"),
+        ("a\u{200b}b\u{202e}c\u{2066}d", "abcd"),
+        ("a\u{0}b\u{7}c\u{1b}[0m", "abc[0m"),
+        ("  indented\n\n\n\ttab", "  indented\n\n\n\ttab"),
+        ("caf\u{e9} \u{1f600}", "caf\u{e9} \u{1f600}"),
+    ] {
+        let (v, c) = (validator::clean_text(raw), copy::clean_text(raw));
+        assert_eq!((v.as_str(), c.as_str()), (want, want), "{raw:?}");
+    }
+
+    // The anchor and alias pre-check (the template format refuses tags on top).
+    for (yaml, anchored, tagged) in [
+        ("a: &x 1", true, false),
+        ("a: *x", true, false),
+        ("- &a 1", true, false),
+        ("a: [x, *y]", true, false),
+        ("a: [x,\n  y, &z w]", true, false),
+        ("[x,\n  y, *z]", true, false),
+        ("a: !t 1", false, true),
+        ("a: [x,\n  !t y]", false, true),
+        ("a: A *fine* agent", false, false),
+        ("a: 'quoted *value'", false, false),
+        ("a: [x,\n  \"*y\"]", false, false),
+    ] {
+        assert_eq!(validator::has_anchor_or_alias(yaml), anchored, "{yaml:?}");
+        assert_eq!(
+            copy::has_anchor_alias_or_tag(yaml),
+            anchored || tagged,
+            "{yaml:?}"
+        );
+    }
 }
 
 // ---- the whole journey on the checked-in example (the service-monitor) --------------------------

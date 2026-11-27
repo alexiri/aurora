@@ -101,52 +101,11 @@ struct Frontmatter {
     description: Option<serde_yaml::Value>,
 }
 
-/// Whether any YAML token starts with `&` (anchor) or `*` (alias): at the start of a line (after
-/// block-sequence dashes), after `:`/`,`/`[`/`{` and spaces. Conservative on purpose: a plain
-/// scalar that merely *contains* `*emphasis*` is fine, one that *starts* with `*` is an alias.
-fn has_anchor_or_alias(fm: &str) -> bool {
-    fm.lines().any(|line| {
-        let mut l = line.trim_start();
-        while let Some(r) = l.strip_prefix("- ") {
-            l = r.trim_start();
-        }
-        // A token can start here, or after an indicator (`: `, `,`, `[`, `{`, `? `) outside quotes.
-        let chars: Vec<char> = l.chars().collect();
-        let mut quote: Option<char> = None;
-        let mut token_start = true;
-        let mut flow = false;
-        for (i, &ch) in chars.iter().enumerate() {
-            if let Some(q) = quote {
-                if ch == q {
-                    quote = None;
-                }
-                continue;
-            }
-            let next_blank = chars.get(i + 1).is_none_or(|n| matches!(n, ' ' | '\t'));
-            match ch {
-                '&' | '*' if token_start => return true,
-                '"' | '\'' if token_start => quote = Some(ch),
-                ' ' | '\t' => continue,
-                '[' | '{' if token_start => flow = true,
-                '[' | '{' => {}
-                ':' | '?' if next_blank => {
-                    token_start = true;
-                    continue;
-                }
-                ',' if flow => {
-                    token_start = true;
-                    continue;
-                }
-                _ => {}
-            }
-            token_start = false;
-            if matches!(ch, '[' | '{') {
-                // a flow collection opens a value position
-                token_start = true;
-            }
-        }
-        false
-    })
+/// Whether any YAML token starts with `&` (anchor) or `*` (alias); the shared pre-check
+/// ([`aurora_core::yaml_guard`]) with this format's two indicators.
+#[must_use]
+pub fn has_anchor_or_alias(fm: &str) -> bool {
+    aurora_core::yaml_guard::has_indicator_token(fm, &['&', '*'])
 }
 
 /// Which rule a skill broke; the linter maps it to its `app_skill_*` code, the API ignores it and
@@ -342,6 +301,24 @@ pub fn check_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An anchor or alias on a continuation line of a flow collection is refused like one on
+    /// the collection's first line.
+    #[test]
+    fn frontmatter_aliases_on_a_flow_continuation_line_are_refused() {
+        for fm in [
+            "description: d\nx: [a,\n  b, &z c]",
+            "description: d\nx: &z c\ny: [a,\n  b, *z]",
+            "description: d\nx: [a,\n  b, *z]",
+        ] {
+            let md = format!("---\n{fm}\n---\nbody\n");
+            assert_eq!(
+                parse_skill_md(md.as_bytes(), "s"),
+                Err("SKILL.md frontmatter must not use YAML anchors or aliases".to_owned()),
+                "{fm}"
+            );
+        }
+    }
 
     #[test]
     fn names() {
