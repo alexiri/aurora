@@ -150,7 +150,10 @@ export function ScheduleRow({
   canOwn,
   initiallyShowRuns = false,
   select,
+  readOnly = false,
 }: {
+  /** (FIX-277) The row and its runs, with nothing that changes the schedule. */
+  readOnly?: boolean;
   select?: { checked: boolean; onChange: (on: boolean) => void };
   agentId: string;
   s: Schedule;
@@ -254,6 +257,11 @@ export function ScheduleRow({
         </>
       }
       actions={
+        readOnly ? (
+          <Button size="sm" variant="outline" aria-expanded={showRuns} onClick={() => setShowRuns((v) => !v)}>
+            Runs
+          </Button>
+        ) : (
         <>
           <Button
             size="sm"
@@ -298,6 +306,7 @@ export function ScheduleRow({
             </MenuItem>
           </RowMenu>
         </>
+        )
       }
     >
       {custom ? (

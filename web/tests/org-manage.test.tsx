@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import WorkspaceRedirect from "@/app/o/[org]/w/[ws]/layout";
 import OrgPage from "@/app/o/[org]/page";
+import { useWorkspace } from "@/lib/api/queries";
 import { wrap } from "./support/render";
 import { json, type Handler } from "./support/api";
 
@@ -12,7 +13,12 @@ import { json, type Handler } from "./support/api";
 // says `my_role: null` with `administers: true` redirects an administrator there.
 
 const replace = vi.fn();
+let path = "/o/acme/w/lab";
+beforeEach(() => {
+  path = "/o/acme/w/lab";
+});
 vi.mock("next/navigation", () => ({
+  usePathname: () => path,
   useParams: () => ({ org: "acme", ws: "lab" }),
   useRouter: () => ({ push: vi.fn(), replace }),
 }));
@@ -23,6 +29,11 @@ vi.mock("next/link", () => ({
     </a>
   ),
 }));
+
+/** A page under the layout that shows only once the workspace has answered, so "it stayed" is the layout's own decision. */
+function Body() {
+  return useWorkspace("w1").data ? <p>page body</p> : null;
+}
 
 const now = "2026-11-20T10:00:00Z";
 const wsRow = (slug: string, name: string, my_role: string | null, over: Record<string, unknown> = {}) => ({
@@ -83,21 +94,57 @@ describe("the old-address redirect (FIX-235)", () => {
 
   it("my_role null with administers redirects to the manage page and shows nothing else", async () => {
     serve(routesFor({}));
-    wrap(<WorkspaceRedirect>page body</WorkspaceRedirect>);
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/o/acme/workspaces/lab"));
     expect(screen.queryByText("page body")).toBeNull();
   });
 
+  // (FIX-277, D-478) The real answer to an emergency reader is `my_role: null, administers: true`:
+  // the grant, not the administration, decides. They stay on the page they asked for.
+  it("an emergency reader, who also administers, stays on the page they asked for", async () => {
+    serve(routesFor({ emergency_reader: true }));
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
+    await screen.findByText("page body");
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("an administrator whose grant is over (emergency_reader false) is redirected again", async () => {
+    serve(routesFor({ emergency_reader: false }));
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/o/acme/workspaces/lab"));
+    expect(screen.queryByText("page body")).toBeNull();
+  });
+
+  // (FIX-277) A page the grant doesn't cover never mounts for a reader: nothing there can act or ask.
+  it("a reader on a page the grant doesn't cover sees that, and the page never mounts", async () => {
+    path = "/o/acme/w/lab/settings";
+    serve(routesFor({ emergency_reader: true }));
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
+    const notice = await screen.findByTestId("emergency-not-covered");
+    expect(notice).toHaveTextContent("Emergency read access doesn’t cover this page.");
+    expect(within(notice).getByRole("link", { name: "Read the workspace’s agents" })).toHaveAttribute("href", "/o/acme/w/lab/agents");
+    expect(screen.queryByText("page body")).toBeNull();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("a member reads that same page as ever", async () => {
+    path = "/o/acme/w/lab/settings";
+    serve(routesFor({ my_role: "member", administers: false }));
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
+    await screen.findByText("page body");
+    expect(screen.queryByTestId("emergency-not-covered")).toBeNull();
+  });
+
   it("own access and a plain member render the page", async () => {
     serve(routesFor({ my_role: "member", administers: false }));
-    wrap(<WorkspaceRedirect>page body</WorkspaceRedirect>);
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
     await screen.findByText("page body");
     expect(replace).not.toHaveBeenCalled();
   });
 
   it("administers false with my_role null (a member of another workspace view) does not redirect", async () => {
     serve(routesFor({ administers: false }));
-    wrap(<WorkspaceRedirect>page body</WorkspaceRedirect>);
+    wrap(<WorkspaceRedirect><Body /></WorkspaceRedirect>);
     await screen.findByText("page body");
     expect(replace).not.toHaveBeenCalled();
   });

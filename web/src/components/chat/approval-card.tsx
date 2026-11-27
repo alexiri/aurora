@@ -13,6 +13,7 @@ import { ApiError } from "@/lib/api/client";
 import { useCanApprove, useDecide, usePendingApprovals } from "@/lib/api/approvals";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { useWorkspace } from "@/lib/api/queries";
+import { isEmergencyReader } from "@/lib/emergency";
 import { approvalStatus, type TranscriptState } from "@/lib/chat/transcript";
 import { orList, whoCanFromContacts } from "@/lib/who-can";
 
@@ -51,12 +52,14 @@ export function ApprovalCard({ ev, state, wsId }: { ev: TranscriptEvent; state: 
   const settled = st.status !== "pending";
   const decide = useDecide(wsId);
   const canApprove = useCanApprove(wsId);
-  const pending = usePendingApprovals(wsId, !settled);
+  const workspace = useWorkspace(wsId).data;
+  // (FIX-277) The grant doesn't cover the approvals: a reader's card says what the conversation says.
+  const pending = usePendingApprovals(wsId, !settled && !!workspace && !isEmergencyReader(workspace));
   const detail = Array.isArray(pending.data?.items) ? pending.data.items.find((a) => a.id === id) : undefined;
   const now = useNow(!settled && !!detail);
   const params = useParams<{ org?: string; ws?: string }>();
   // "Waiting for <names>" for people who may not answer (C-983): the workspace's owners, from its contacts.
-  const contacts = useWorkspace(wsId).data?.contacts;
+  const contacts = workspace?.contacts;
   const approvers = whoCanFromContacts("workspace_approver", contacts, "decide_this").people.map((p) => p.name);
   // (C-982) The answer the conversation was told: Always allow names the change and what it let through.
   const decidedAlways = (() => {

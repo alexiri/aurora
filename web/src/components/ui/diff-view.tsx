@@ -166,16 +166,31 @@ function FoldButtons({ fold, rows, setRows }: { fold: FoldRow; rows: DiffRow[]; 
 /** One diff line: its old and new number, its sign, and its text with the changed words marked. */
 function LineRow({ line, highlights, wrap }: { line: DiffLine; highlights: Map<DiffLine, WordSpan[]>; wrap: boolean }) {
   const spans = highlights.get(line);
+  const sign = line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  ";
+  const text = spans
+    ? spans.map((s, i) => (s.changed ? <mark key={i} className={line.kind === "add" ? "bg-accent-ink/25 text-accent-ink" : "bg-danger-ink/25 text-danger-ink"}>{s.text}</mark> : <span key={i}>{s.text}</span>))
+    : line.text;
   return (
     <tr data-diff={line.kind} className={line.kind === "add" ? "bg-accent-soft text-accent-ink" : line.kind === "del" ? "bg-danger-soft text-danger-ink" : undefined}>
       <td className="w-10 select-none border-r border-line px-1 text-right align-top text-muted tabular-nums">{line.old ?? ""}</td>
       <td className="w-10 select-none border-r border-line px-1 text-right align-top text-muted tabular-nums">{line.new ?? ""}</td>
-      <td className={wrap ? "whitespace-pre-wrap px-2 align-top wrap-anywhere" : "whitespace-pre px-2 align-top"}>
-        {line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  "}
-        {spans
-          ? spans.map((s, i) => (s.changed ? <mark key={i} className={line.kind === "add" ? "bg-accent-ink/25 text-accent-ink" : "bg-danger-ink/25 text-danger-ink"}>{s.text}</mark> : <span key={i}>{s.text}</span>))
-          : line.text}
-      </td>
+      {wrap ? (
+        // (FIX-277) A hanging indent: the sign has its own column, so a continued line starts under the text, and a
+        // long word with no spaces starts beside the sign and breaks where it must.
+        <td className="w-full px-2 align-top">
+          <div className="flex">
+            <span className="shrink-0 whitespace-pre">{sign}</span>
+            <span data-diff-text className="min-w-0 whitespace-pre-wrap wrap-anywhere">
+              {text}
+            </span>
+          </div>
+        </td>
+      ) : (
+        <td className="whitespace-pre px-2 align-top">
+          {sign}
+          {text}
+        </td>
+      )}
     </tr>
   );
 }

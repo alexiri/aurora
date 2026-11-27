@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceManage } from "@/components/workspace/workspace-manage";
+import { formatTime } from "@/lib/format-date";
 import { wrap } from "./support/render";
 import { json, type Handler } from "./support/api";
 
@@ -129,10 +130,27 @@ describe("Workspace manage page (FIX-235, D-477)", () => {
   });
 
   it("an org owner who already holds the grant is not offered the emergency read", async () => {
-    serve({}, { emergency_reader: true, emergency_reader_id: "e1" });
+    serve({}, { emergency_reader: true, emergency_reader_id: "e1", emergency_reader_expires_at: "2026-11-20T16:00:00Z" });
     wrap(<WorkspaceManage />);
-    await screen.findByTestId("manage-notice");
+    const notice = await screen.findByTestId("manage-notice");
     expect(screen.queryByRole("button", { name: "Open emergency read access…" })).toBeNull();
+    // (FIX-277) The page says the access is open and until when (their own grant's end), and no longer
+    // offers it or says its chats can't be opened.
+    expect(notice).toHaveTextContent(`Emergency read access is open until ${formatTime("2026-11-20T16:00:00Z")}.`);
+    expect(notice).not.toHaveTextContent("In an emergency you can open read access.");
+    expect(notice).not.toHaveTextContent("open its chats");
+    expect(notice).toHaveTextContent("You’re not one of its people, so you can’t use its agents.");
+    // The way into what the grant lets them read.
+    expect(within(notice).getByRole("link", { name: "Read the workspace’s agents" })).toHaveAttribute("href", "/o/acme/w/lab/agents");
+  });
+
+  it("an administrator without a grant gets no link into the workspace", async () => {
+    serve({}, { emergency_reader: false });
+    wrap(<WorkspaceManage />);
+    const notice = await screen.findByTestId("manage-notice");
+    await screen.findByText("Carol");
+    expect(within(notice).queryByRole("link")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Read the workspace’s agents" })).toBeNull();
   });
 
   it("Add yourself asks first, says what it does, and PUTs the chosen role", async () => {

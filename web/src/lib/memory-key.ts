@@ -60,12 +60,48 @@ export function newMemoryKey(title: string, content: string, taken: Iterable<str
   }
 }
 
-/** The name a memory goes by in lists: its title, else the first line of the text, 60 characters. */
+/** How much of one line is reduced to plain text: far more than a name shows, and a bound on the work. */
+const NAME_LINE_MAX = 400;
+
+/**
+ * One line of Markdown as plain text, as search snippets are: no heading, quote, list or task-list marks, no emphasis or
+ * code marks, a link or picture by its text. What stands inside code, escaped marks, underscores inside a word and marks
+ * that pair with nothing stay. Empty when the line is only marks (a code fence, a rule, a table's rule).
+ */
+function plainLine(line: string): string {
+  let s = line.replace(/\0/g, "").slice(0, NAME_LINE_MAX).trim();
+  if (/^(```|~~~)/.test(s) || /^[-*_=|:\s]+$/.test(s)) return "";
+  // Block marks, however they are nested ("> - ## Rota"). A task box counts only after its list mark.
+  let before: string;
+  do {
+    before = s;
+    s = s.replace(/^(?:>\s*|#{1,6}(?:\s+|$)|(?:[-*+]|\d{1,9}[.)])(?:\s+\[[ xX]\])?(?:\s+|$))/, "");
+  } while (s !== before);
+  // Code and escaped characters are set aside, so the rules below leave them alone.
+  const kept: string[] = [];
+  const keep = (text: string) => `\0${kept.push(text) - 1}\0`;
+  s = s
+    .replace(/(`+)(.+?)\1(?!`)/g, (_m, _ticks, code: string) => keep(code.trim()))
+    .replace(/\\([!-/:-@[-`{-~])/g, (_m, ch: string) => keep(ch))
+    .replace(/!?\[([^\]]*)\](?:\((?:[^()]|\([^()]*\))*\)|\[[^\]]*\])/g, "$1")
+    .replace(/<((?:https?:\/\/|mailto:)[^\s>]+)>/g, (_m, url: string) => keep(url));
+  do {
+    before = s;
+    s = s
+      .replace(/(\*{1,3}|~~)(?=[^\s*~])(.*?[^\s*~])\1/g, "$2")
+      .replace(/(?<![\p{L}\p{N}_])(_{1,3})(?=[^\s_])(.*?[^\s_])\1(?![\p{L}\p{N}_])/gu, "$2");
+  } while (s !== before);
+  return s.replace(/\0(\d+)\0/g, (_m, i: string) => kept[Number(i)] ?? "").trim();
+}
+
+/** The name a memory goes by in lists: its title, else the first line of the text as plain text, 60 characters. */
 export function memoryName(m: { title?: string | null; content?: string | null; index_line?: string | null }): string {
   const t = m.title?.trim();
   if (t) return cut(t, 60);
-  const first = (m.content ?? "").split("\n").find((l) => l.trim() !== "");
-  if (first) return cut(first.replace(/^#+\s*/, "").trim(), 60);
+  for (const line of (m.content ?? "").split("\n")) {
+    const plain = plainLine(line);
+    if (plain) return cut(plain, 60);
+  }
   return cut((m.index_line ?? "").trim() || "Untitled", 60);
 }
 

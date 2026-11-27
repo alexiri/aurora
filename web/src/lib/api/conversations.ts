@@ -216,8 +216,8 @@ export function useFollowups(convId: string) {
   return useQuery({ queryKey: followupsKey(convId), queryFn: () => chatApi.followups(convId), retry: false });
 }
 
-export function useDirectConversation(agentId: string) {
-  return useQuery({ queryKey: ["agents", agentId, "direct"] as const, queryFn: () => chatApi.direct(agentId), retry: false, staleTime: Infinity });
+export function useDirectConversation(agentId: string, enabled = true) {
+  return useQuery({ queryKey: ["agents", agentId, "direct"] as const, queryFn: () => chatApi.direct(agentId), enabled, retry: false, staleTime: Infinity });
 }
 /**
  * `automation` (C-1074): `all` (default) includes the run threads of schedules and webhooks, `none` leaves them out (the
@@ -288,10 +288,11 @@ export function useConversationById(id: string | null, enabled: boolean) {
 
 /** Download URL of a conversation export (`aurora.conversation.v1` JSON, or a zip with the files). */
 export const exportUrl = (id: string, kind: "json" | "zip") => `/v1/conversations/${id}/export${kind === "zip" ? "?attachments=zip" : ""}`;
-export function useSandbox(agentId: string) {
+export function useSandbox(agentId: string, enabled = true) {
   return useQuery({
     queryKey: ["agents", agentId, "sandbox"] as const,
     queryFn: () => chatApi.sandbox(agentId),
+    enabled,
     retry: false,
     refetchInterval: 5000,
   });

@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { useEndEmergencyAccess } from "@/lib/api/emergency";
 import { useResolve, useWorkspace } from "@/lib/api/queries";
-import { dismissEmergency, emergencyDismissed, emergencyPeopleBannerText, emergencyReaderBannerText, type WorkspaceEmergency } from "@/lib/emergency";
+import { dismissEmergency, emergencyDismissed, emergencyPeopleBannerText, emergencyReaderBannerText, isEmergencyReader, type WorkspaceEmergency } from "@/lib/emergency";
 
 /** The reader's banner: what the mode is, until when, and the one action that ends it early. */
 function ReaderBanner({ expiresAt, emergencyId }: { expiresAt: string; emergencyId: string }) {
@@ -75,7 +75,7 @@ export function EmergencyBanners() {
   const w = workspace.data;
   if (!w) return null;
   const emergency = w.audience?.emergency;
-  if (w.emergency_reader) {
+  if (isEmergencyReader(w)) {
     // (FIX-236, review HIGH-3, verify LOW-2) "End now" ends the caller's OWN active grant
     // (`emergency_reader_id`), never the newest one in `audience.emergency`, which may belong to
     // another owner — and the expiry text counts the OWN grant down (`emergency_reader_expires_at`).

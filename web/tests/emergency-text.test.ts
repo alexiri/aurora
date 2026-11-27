@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // the reader's banner, the people's banner active and ended, the span, the end labels.
 import {
   EMERGENCY_END,
+  emergencyCovers,
+  isEmergencyReader,
   emergencyEndText,
   emergencyPeopleBannerText,
   emergencyReaderBannerText,
@@ -105,4 +107,23 @@ describe("emergencyEndText", () => {
     expect(emergencyEndText({ active: false, expires_at: "2026-11-20T18:00:00Z", end_reason: "access_lost" })).toBe("Access lost");
     expect(Object.keys(EMERGENCY_END).sort()).toEqual(["access_lost", "ended", "expired"]);
   });
+});
+
+describe("what a reader may open (FIX-277)", () => {
+  it("only the viewer's own grant makes them a reader", () => {
+    expect(isEmergencyReader({ emergency_reader: true })).toBe(true);
+    for (const w of [{ emergency_reader: false }, {}, null, undefined]) expect(isEmergencyReader(w)).toBe(false);
+  });
+
+  it.each(["", "agents", "agents/daneel", "activity", "skills", "people"])("covers /%s", (rest) => {
+    expect(emergencyCovers(rest)).toBe(true);
+  });
+
+  // Anything not named is not covered, a page added later included.
+  it.each(["settings", "apps", "apps/github", "apps/github/connect", "credentials", "internet-access", "approvals", "welcome", "agents/new/t1", "agents/daneel/terminal", "people/invite", "something-new"])(
+    "doesn't cover /%s",
+    (rest) => {
+      expect(emergencyCovers(rest)).toBe(false);
+    },
+  );
 });

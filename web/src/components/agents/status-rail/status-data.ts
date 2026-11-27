@@ -125,18 +125,21 @@ export function useAgentStatus({
   agentId,
   canApprove,
   conversations,
+  computer = true,
 }: {
   wsId: string;
   agentId: string;
   canApprove: boolean;
   conversations: readonly Conversation[];
+  /** Read the agent's computer; off for a viewer who may not (no rail is shown to them). */
+  computer?: boolean;
 }): AgentStatus {
   const gateway = useAgentPendingApprovals(wsId, agentId, canApprove);
   const actions = useAgentPendingActionApprovals(wsId, agentId, canApprove);
   // (P5-REFINE-11, D-415) One timeline feed and one stream per agent page; the rail's three surfaces read this.
   const timeline = useAgentTimeline(agentId, {}, DID_LIMIT);
   useTimelineStream(agentId);
-  const sandbox = useSandbox(agentId);
+  const sandbox = useSandbox(agentId, computer);
 
   const byId = useMemo(() => new Map(conversations.map((c) => [c.id, c])), [conversations]);
   const needs = useMemo(

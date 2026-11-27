@@ -96,7 +96,13 @@ export function AutomationsTab({
   narrationCards,
   initialFilter = "all",
   agentFrozen = false,
+  readOnly = false,
 }: {
+  /**
+   * (FIX-277) Emergency read access: the schedules and webhooks with their runs and deliveries, nothing to add or
+   * change, and no chats (the grant doesn't cover them).
+   */
+  readOnly?: boolean;
   agentId: string;
   agentName: string;
   /** The agent is paused: a one-time schedule that is due reads "Waiting: <Agent> is paused" (P5-SCHED-ONCE). */
@@ -113,21 +119,21 @@ export function AutomationsTab({
 }) {
   const schedules = useSchedules(agentId);
   const webhooks = useWebhooks(agentId);
-  const presences = usePresences(agentId);
-  const options = usePresenceOptions(agentId);
+  const presences = usePresences(agentId, !readOnly);
+  const options = usePresenceOptions(agentId, !readOnly);
   const connectors = useConnectors();
   const who = useWhoCan({ workspaceId: wsId }, "workspace_owner", "add_schedule");
   // Who can connect a chat platform: the organization's owners and admins. Until the role is known, the workspace right stands in.
   const orgRole = useOrg(orgId).data?.my_role;
   const canConnect = orgRole ? orgRole === "owner" || orgRole === "admin" : canOwn;
-  const [filter, setFilter] = useState<AutomationFilter>(initialFilter);
+  const [filter, setFilter] = useState<AutomationFilter>(readOnly && initialFilter === "chats" ? "all" : initialFilter);
   const [choosing, setChoosing] = useState(false);
   const [creating, setCreating] = useState<"schedule" | "webhook" | null>(null);
   const [reveal, setReveal] = useState<WebhookReveal | null>(null);
   const chatsRef = useRef<HTMLDivElement>(null);
   // (P5-REFINE-19) The palette's "New schedule for <Agent>" and "New webhook for <Agent>" open the form the New automation choice opens.
-  useVerb("new-schedule", () => setCreating("schedule"), canOwn);
-  useVerb("new-webhook", () => setCreating("webhook"), canOwn);
+  useVerb("new-schedule", () => setCreating("schedule"), canOwn && !readOnly);
+  useVerb("new-webhook", () => setCreating("webhook"), canOwn && !readOnly);
   // (P5-REFINE-19, `bulk`, Expert) A checkbox per schedule and webhook for an owner (a chat row has none), a bar above the list.
   const bulkOn = useBulkOn();
   // The selection is of what the filter shows: changing the filter drops the ticks that are no longer in the list.
@@ -166,7 +172,7 @@ export function AutomationsTab({
       setCreating(k);
     }
   };
-  const newButton = (
+  const newButton = readOnly ? null : (
     <Button size="sm" onClick={() => setChoosing(true)}>
       <PlusIcon aria-hidden="true" className="size-4" />
       New automation
@@ -176,7 +182,7 @@ export function AutomationsTab({
     { value: "all", label: `All ${total}` },
     { value: "schedules", label: `Schedules ${sch.length}` },
     { value: "webhooks", label: `Webhooks ${hooks.length}` },
-    { value: "chats", label: `Chats ${chats.length}` },
+    ...(readOnly ? [] : [{ value: "chats" as const, label: `Chats ${chats.length}` }]),
   ];
 
   return (
@@ -192,7 +198,7 @@ export function AutomationsTab({
       {creating === "webhook" ? <WebhookForm agentId={agentId} agentName={agentName} canOwn={canOwn} onDone={() => setCreating(null)} onReveal={setReveal} /> : null}
 
       {total === 0 && !creating ? (
-        <EmptyState title="No automations yet" when={`${agentName} can run on a schedule, when something calls it, or in a chat.`} action={newButton} />
+        <EmptyState title="No automations yet" when={readOnly ? undefined : `${agentName} can run on a schedule, when something calls it, or in a chat.`} action={newButton} />
       ) : null}
 
       {total > 0 ? (
@@ -213,11 +219,11 @@ export function AutomationsTab({
             <ItemList aria-label="Automations">
               {show("schedules")
                 ? sch.map((s) => (
-                    <ScheduleRow key={s.id} agentId={agentId} s={s} agentBase={agentBase} agentName={agentName} agentFrozen={agentFrozen} defaultTimezone={defaultTimezone} workspaceName={workspaceName} wsId={wsId} canOwn={canOwn} select={pick(s.id)} />
+                    <ScheduleRow key={s.id} agentId={agentId} s={s} agentBase={agentBase} agentName={agentName} agentFrozen={agentFrozen} defaultTimezone={defaultTimezone} workspaceName={workspaceName} wsId={wsId} canOwn={canOwn} select={pick(s.id)} readOnly={readOnly} />
                   ))
                 : null}
               {show("webhooks")
-                ? hooks.map((w) => <WebhookRow key={w.id} agentId={agentId} agentName={agentName} w={w} agentBase={agentBase} wsId={wsId} canOwn={canOwn} onReveal={setReveal} select={pick(w.id)} />)
+                ? hooks.map((w) => <WebhookRow key={w.id} agentId={agentId} agentName={agentName} w={w} agentBase={agentBase} wsId={wsId} canOwn={canOwn} onReveal={setReveal} select={pick(w.id)} readOnly={readOnly} />)
                 : null}
               {show("chats") ? chats.map((p) => <ChatRow key={p.id} agentId={agentId} agentName={agentName} p={p} platform={platformOf(p)} />) : null}
             </ItemList>
@@ -229,7 +235,7 @@ export function AutomationsTab({
 
       {/* The Chats set-up: with a chat platform (or a chat the agent is in) it is the presences, bindings and reach; without, the ask. */}
       {/* Only an organization owner or admin can connect a platform, so with none the Chats group is where everyone else (a personal-workspace owner included) asks for one (channels-3). */}
-      {show("chats") && (hasPlatform || filter === "chats" || !canConnect) ? (
+      {!readOnly && show("chats") && (hasPlatform || filter === "chats" || !canConnect) ? (
         <div id="chats" ref={chatsRef} className="scroll-mt-4 space-y-3 pt-2">
           <h3 className="font-display text-base font-semibold text-ink">Chats</h3>
           {hasPlatform ? (

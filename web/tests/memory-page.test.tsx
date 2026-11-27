@@ -124,6 +124,33 @@ describe("memory keys", () => {
     expect(memoryName({ content: "\n# Heading line\nmore" })).toBe("Heading line");
     expect(memoryName({ content: "w".repeat(80) })).toHaveLength(60);
   });
+  // (FIX-277) The first line as plain text: Markdown's marks are not part of a name.
+  it.each([
+    ["a list item", "- Carol drinks tea", "Carol drinks tea"],
+    ["an ordered item", "2) Cut over on Monday", "Cut over on Monday"],
+    ["a task item", "- [ ] Move the on-call agent", "Move the on-call agent"],
+    ["a ticked task item", "* [x] Pilot set up", "Pilot set up"],
+    ["a quote", "> > Never on a Friday", "Never on a Friday"],
+    ["a list item in a quote, with a heading", "> - ## Rota", "Rota"],
+    ["emphasis", "**Goal:** move *the* ~~old~~ __three__ _agents_ ***now***", "Goal: move the old three agents now"],
+    ["inline code", "Run `kubectl get pods` first", "Run kubectl get pods first"],
+    ["code keeps its own characters", "Set `__init__` and `a*b*c`", "Set __init__ and a*b*c"],
+    ["a link", "See [the runbook](https://example.org/a_(b)) and ![a chart](x.png)", "See the runbook and a chart"],
+    ["a reference link and an autolink", "[Docs][1] at <https://example.org/docs>", "Docs at https://example.org/docs"],
+    ["underscores inside a word", "The key is memory_search_v2, not _this_", "The key is memory_search_v2, not this"],
+    ["stars that mark nothing", "2 * 3 * 4 for *.rs and *.ts", "2 * 3 * 4 for *.rs and *.ts"],
+    ["escaped marks", "\\*not emphasis\\*", "*not emphasis*"],
+    ["a hash that is no heading", "#277 is fixed", "#277 is fixed"],
+    ["a first line that is only marks", "```\nnpm ci\n```", "npm ci"],
+    ["a rule before the text", "---\n- [ ]\nRota", "Rota"],
+    ["the review's line", "- *API latency*: `platform/api-overview` — p50/p95 by route.", "API latency: platform/api-overview — p50/p95 by route."],
+  ])("names an untitled memory in plain text: %s", (_what, content, name) => {
+    expect(memoryName({ content })).toBe(name);
+  });
+  it("keeps a title as written, and falls back when the text has no words", () => {
+    expect(memoryName({ title: "**As written**", content: "x" })).toBe("**As written**");
+    expect(memoryName({ content: "---\n", index_line: "note" })).toBe("note");
+  });
   it("says how long ago in calendar days", () => {
     const now = Date.parse("2026-11-27T12:00:00Z");
     const at = (d: number) => new Date(now - d * 86_400_000).toISOString();

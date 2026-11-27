@@ -22,6 +22,7 @@ import { actionsOnly } from "@/components/agents/status-rail/status-data";
 import { useAccounts } from "@/lib/api/accounts";
 import { useOrgSetupRequests } from "@/lib/api/app-setup-requests";
 import { useAgents, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
+import { isEmergencyReader } from "@/lib/emergency";
 import { ago } from "@/lib/utils";
 
 /** "2 things need you." / "Daneel is ready. Nothing needs you." (the Overview board's sentence, from real state). */
@@ -58,8 +59,10 @@ export function OverviewView() {
   const { org, ws } = useParams<{ org: string; ws: string }>();
   const resolved = useResolve(org, ws);
   const workspace = resolved.data?.workspace;
+  // (FIX-277) The workspace answer too: it says whether the viewer only reads, before anything is drawn or asked for.
+  const answer = useWorkspace(workspace?.id);
 
-  if (resolved.isPending) return <Loading />;
+  if (resolved.isPending || (workspace && answer.isPending)) return <Loading />;
   if (resolved.isError) return <ErrorState error={resolved.error} onRetry={() => resolved.refetch()} />;
   if (!workspace) {
     return <ErrorState error={{ code: "not_found" }} />;
@@ -96,9 +99,12 @@ function OverviewBody({
   const activity = useActivity(wsId, { agent: "", decision: "", host: "" });
   const now = useNow(30_000);
   const base = `/o/${org}/w/${ws}`;
+  // (FIX-277, C-1165) Emergency read access: the agents and the recent activity, with nothing to start. What reads the
+  // workspace's accounts, attention feed or setup is left out, because the grant doesn't cover it.
+  const emergency = isEmergencyReader(workspace.data);
   // The agent's own model calls are thinking, not an action (as in the status rail): not listed.
   const recent = actionsOnly(activity.data?.pages[0]?.items ?? []).slice(0, 6);
-  const accountNames = new Map((useAccounts({ kind: "workspace", id: wsId }).data?.items ?? []).map((a) => [a.ref.id, a.name]));
+  const accountNames = new Map((useAccounts({ kind: "workspace", id: wsId }, !emergency).data?.items ?? []).map((a) => [a.ref.id, a.name]));
   const byId = new Map(agents.data?.items.map((a) => [a.id, a]) ?? []);
 
   // (P5-POLISH-7, D5) The sentence comes from state: what needs the person, else that the agent is ready.
@@ -108,21 +114,22 @@ function OverviewBody({
   // (P5-POLISH-11) The same items as the Needs you panel below: app setup requests count too (owners and admins only).
   const orgData = useOrg(orgId);
   const isOrgAdmin = orgData.data?.my_role === "owner" || orgData.data?.my_role === "admin";
-  const setups = useOrgSetupRequests(orgId, isOrgAdmin);
+  const setups = useOrgSetupRequests(orgId, isOrgAdmin && !emergency);
   const needs = counts.count + (isOrgAdmin ? (setups.data?.length ?? 0) : 0);
   const list = agents.data?.items ?? [];
-  const sentence = overviewSentence(needs, list.map((a) => a.name));
+  // A reader isn't told that nothing needs them: they can't see what waits here.
+  const sentence = emergency ? "The workspace’s agents and what they did recently." : overviewSentence(needs, list.map((a) => a.name));
   // The guide shows here only after Welcome has stopped being the landing page (it is seen), so never on both pages.
-  const guideHere = onboarding.data?.welcome_seen === true;
+  const guideHere = !emergency && onboarding.data?.welcome_seen === true;
   void name;
 
   return (
     <div className="flex flex-col gap-8">
       <PageHeader title="Overview" description={sentence} className="mb-0" />
 
-      <NeedsYou wsId={wsId} base={base} orgId={orgId} />
+      {emergency ? null : <NeedsYou wsId={wsId} base={base} orgId={orgId} />}
 
-      <Section id="agents" title="Agents" actions={<CreateAgentDialog wsId={wsId} />}>
+      <Section id="agents" title="Agents" actions={emergency ? null : <CreateAgentDialog wsId={wsId} />}>
         {agents.isPending ? <Loading /> : null}
         {agents.isError ? <ErrorState error={agents.error} onRetry={() => agents.refetch()} /> : null}
         {agents.data ? (
@@ -134,9 +141,9 @@ function OverviewBody({
                 href={`${base}/agents/${a.handle}`}
                 needs={agentNeeds.counts[a.id] ?? 0}
                 showTokenBadges={workspace.data?.my_role === "owner"}
-                wsId={wsId}
-                orgId={orgId}
-                chat
+                wsId={emergency ? undefined : wsId}
+                orgId={emergency ? undefined : orgId}
+                chat={!emergency}
               />
             ))}
           </CardGrid>

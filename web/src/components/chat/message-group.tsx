@@ -13,6 +13,7 @@ import { ApiError } from "@/lib/api/client";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { chatApi } from "@/lib/api/conversations";
 import { useWorkspace } from "@/lib/api/queries";
+import { isEmergencyReader } from "@/lib/emergency";
 import { newIdempotencyKey } from "@/lib/chat/idempotency";
 import { clockTime, type Block, type Row, type ToolCall } from "@/lib/chat/layout";
 import type { TranscriptState } from "@/lib/chat/transcript";
@@ -403,7 +404,8 @@ function TurnErrorWithRetry({
   const keyRef = useRef<string | null>(null);
   const [repostErr, setRepostErr] = useState<string | null>(null);
   // (C-615) Only the start-failure codes the retry endpoint accepts get the button (C-585, C-610).
-  if (!isRetryableCode(code)) {
+  // (FIX-277) Never for an emergency reader: the button reads the agent's computer and restarts it.
+  if (!isRetryableCode(code) || isEmergencyReader(ws.data)) {
     return <ErrorBlock code={code} message={message} detail={detail} base={base} agentId={agentId} canOwn={ws.data?.my_role === "owner"} />;
   }
   return (

@@ -127,7 +127,8 @@ export function ChatTab({
   onStatusSheetOpenChange?: (open: boolean) => void;
 }) {
   const qc = useQueryClient();
-  const direct = useDirectConversation(agentId);
+  // (FIX-277) Opening the person's own chat creates it: an emergency reader has none, and picks one to read.
+  const direct = useDirectConversation(agentId, !emergency);
   const [archived, setArchived] = useState(false);
   // (chat-11) The phone's list is shown only after the person taps back.
   const [listShown, setListShown] = useState(false);
@@ -274,13 +275,13 @@ export function ChatTab({
   // (D-409) New chat: a fresh conversation, opened at once with the composer focused (an empty thread focuses it).
   const [newChatBusy, setNewChatBusy] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
-  const status = useAgentStatus({ wsId, agentId, canApprove, conversations: activeConvs });
+  const status = useAgentStatus({ wsId, agentId, canApprove, conversations: activeConvs, computer: !emergency });
   const waitingIds = useMemo(
     () => (canApprove ? new Set(status.needs.flatMap((n) => (n.conversationId ? [n.conversationId] : []))) : undefined),
     [canApprove, status.needs],
   );
 
-  if (direct.isPending) return <Loading />;
+  if (!emergency && direct.isPending) return <Loading />;
   if (direct.isError) return <ErrorState error={direct.error} onRetry={() => void direct.refetch()} />;
 
   const conv = convId
