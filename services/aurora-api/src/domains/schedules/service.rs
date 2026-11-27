@@ -226,12 +226,12 @@ pub async fn create_in_tx(
         timing(c.cron.as_deref(), c.run_at.as_deref(), &tz, Utc::now())?;
     // (FIX-253 fixes2 A) The open-wake-up cap of a task conversation, serialized per
     // conversation before any row is locked.
-    if let Some(origin) = origin {
-        if is_task_conversation(&mut *tx, origin).await? {
-            lock_task_wakeups(&mut *tx, origin).await?;
-            if repo::open_once_count_from(&mut *tx, origin).await? >= WAKEUP_CAP {
-                return Err(wakeup_cap());
-            }
+    if let Some(origin) = origin
+        && is_task_conversation(&mut *tx, origin).await?
+    {
+        lock_task_wakeups(&mut *tx, origin).await?;
+        if repo::open_once_count_from(&mut *tx, origin).await? >= WAKEUP_CAP {
+            return Err(wakeup_cap());
         }
     }
     // Serialize the per-agent cap.
@@ -316,17 +316,15 @@ pub async fn patch_with(
     // (FIX-253 fixes2 A) Re-arming a task conversation's one-time wake-up obeys the cap of three
     // open ones. The lock serializes it against a concurrent create or re-arm; the schedule
     // being re-armed (open again the moment the patch lands) does not count against itself.
-    if p.run_at.is_some() {
-        if let Some(origin) = seen.origin_conversation_id {
-            if is_task_conversation(&mut *tx, origin).await? {
-                lock_task_wakeups(&mut *tx, origin).await?;
-                let open = repo::open_once_count_from(&mut *tx, origin).await?;
-                let self_open =
-                    (r.run_at.is_some() && r.cron.is_none() && r.completed_at.is_none()) as i64;
-                if open - self_open >= WAKEUP_CAP {
-                    return Err(wakeup_cap());
-                }
-            }
+    if p.run_at.is_some()
+        && let Some(origin) = seen.origin_conversation_id
+        && is_task_conversation(&mut tx, origin).await?
+    {
+        lock_task_wakeups(&mut tx, origin).await?;
+        let open = repo::open_once_count_from(&mut *tx, origin).await?;
+        let self_open = (r.run_at.is_some() && r.cron.is_none() && r.completed_at.is_none()) as i64;
+        if open - self_open >= WAKEUP_CAP {
+            return Err(wakeup_cap());
         }
     }
     // The timing after this patch; `Some(next)` when it changed (re-armed if enabled).

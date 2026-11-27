@@ -800,8 +800,6 @@ async fn a_peer_turn_updates_and_deletes_only_its_own_task_schedules_and_rearmin
     let runs: Vec<bool> = futures::future::join_all((0..6).map(|i| {
         let pool = r.h.pool().clone();
         let agent = agent.clone();
-        let conv2 = conv2;
-        let requester = requester;
         async move {
             service::create(
                 &pool,
