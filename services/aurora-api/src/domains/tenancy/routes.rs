@@ -1099,7 +1099,11 @@ async fn resolve(
             let w = workspaces::get_by_slug(&s.pool, org_id, &slug)
                 .await?
                 .ok_or_else(nf)?;
-            c.workspace(&s, w.id).await.map_err(|_| nf())?;
+            // Own access, or the administer right (an org owner/admin manages the workspace
+            // without being one of its people); either way only id, slug and name leave.
+            if c.workspace(&s, w.id).await.is_err() {
+                c.administer(&s, w.id).await.map_err(|_| nf())?;
+            }
             Some(ResolvedWorkspace {
                 id: w.id,
                 slug: w.slug,

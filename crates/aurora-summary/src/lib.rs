@@ -286,7 +286,7 @@ mod tests {
         .clamp();
         assert!(s.title.chars().count() <= SUMMARY_TITLE_MAX);
         assert!(!s.title.contains('\n') && !s.title.contains('\u{202e}'));
-        assert_eq!(s.fields.len(), 12);
+        assert_eq!(s.fields.len() as u32, SUMMARY_FIELDS_MAX);
         assert!(
             s.fields
                 .iter()

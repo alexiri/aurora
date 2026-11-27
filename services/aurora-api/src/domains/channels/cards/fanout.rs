@@ -12,7 +12,8 @@ use aurora_channels::CapabilitySet;
 use aurora_core::{ApiError, sanitize};
 use aurora_db::DbError;
 use aurora_db::repo::{
-    action_approvals, agents, approvals, channel_integrations, channel_ops, reach_grants,
+    action_approvals, agents, approvals, channel_integrations, channel_ops, peer_tasks,
+    reach_grants,
 };
 use aurora_protocol::connector::{Sender, Target};
 use std::collections::HashMap;
@@ -96,7 +97,20 @@ async fn post_approval(state: &AppState, id: Uuid) -> Result<bool, ApiError> {
         return Ok(false);
     };
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
-    let Some(link) = repo::latest_thread_link(&mut *tx, conv).await? else {
+    // (FIX-252) An approval raised in a peer task conversation has no thread link of its own; its
+    // card goes to the origin conversation the request came from. The card carries the same facts
+    // as every approval card plus the delegating agent ("asked for by …"); D-178 redaction follows
+    // the origin link's kind. Deciding stays `can_approve` at the approval's workspace (the action
+    // handler re-checks at click time); the card's buttons change nothing about that.
+    let peer = peer_tasks::by_task_conversation(&mut *tx, conv).await?;
+    let link = match repo::latest_thread_link(&mut *tx, conv).await? {
+        Some(l) => Some(l),
+        None => match peer.as_ref() {
+            Some(pt) => repo::latest_thread_link(&mut *tx, pt.origin_conversation_id).await?,
+            None => None,
+        },
+    };
+    let Some(link) = link else {
         return Ok(false);
     };
     if !integration_active(&mut tx, link.integration_id).await? {
@@ -108,11 +122,37 @@ async fn post_approval(state: &AppState, id: Uuid) -> Result<bool, ApiError> {
         integration_id: link.integration_id,
     };
     // D-178: only a 1:1 conversation (`direct`) gets the request's details on the card.
+    let peer_card = match peer.as_ref() {
+        Some(pt) => {
+            let asked = agents::get(&mut *tx, pt.from_agent_id)
+                .await?
+                .map(|a| crate::domains::peer_tasks::service::agent_label(&a));
+            // (FIX-252) The card's buttons follow the requester's rights at the approval's
+            // workspace, read at post time; every decide re-checks them there.
+            let requester_may_decide = match pt.requester_user_id {
+                Some(u) => aurora_db::authz::can_approve(&state.pool, u, row.workspace_id)
+                    .await
+                    .unwrap_or(false),
+                None => false,
+            };
+            let workspace_name =
+                aurora_db::repo::approval_notify::workspace_labels(&state.pool, row.workspace_id)
+                    .await?
+                    .map_or_else(|| "the workspace".into(), |w| w.0);
+            Some(build::PeerOrigin {
+                asked_for_by: asked.unwrap_or_else(|| "another agent".into()),
+                workspace_name,
+                requester_may_decide,
+            })
+        }
+        None => None,
+    };
     let card = build::approval(
         &m,
         &row,
         link.kind != "direct",
         state.ops().approvals.park.resume_window_secs,
+        peer_card.as_ref(),
     )?;
     let approvals_url =
         super::workspace_page_url(&mut tx, state, row.workspace_id, "approvals").await?;

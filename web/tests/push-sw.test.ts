@@ -150,6 +150,21 @@ describe("push service worker", () => {
     expect(stray.options.data.url, "a path outside Aurora becomes the home page").toBe("/");
   });
 
+  it("peer_approval: fixed text about the wait, the agent's name only when carried, and the approvals path it was given (FIX-252)", async () => {
+    const path = "/o/acme/w/main/approvals?focus=3f2b8c1e-6a4d-4e0b-9d57-1c2a7e5b9f10";
+    const plain = await push(JSON.stringify({ v: 1, type: "peer_approval", url: path, detail: "SECRET-CANARY" }));
+    expect(plain.title).toBe("Aurora — a delegated task is waiting for an approval");
+    expect(plain.options.body).toBe("Open the approvals page to review it.");
+    expect(plain.options.tag).toBe("aurora-peer-approval");
+    expect(plain.options.data.url).toBe(path);
+    expect(JSON.stringify(plain)).not.toContain("SECRET-CANARY");
+    const named = await push(JSON.stringify({ v: 1, type: "peer_approval", url: path, agent: "Fixer" }));
+    expect(named.title).toBe("Aurora — Fixer is waiting for an approval");
+    expect(named.options.body).toBe("Open the approvals page to review it.");
+    const stray = await push(JSON.stringify({ v: 1, type: "peer_approval", url: "https://evil.example/x" }));
+    expect(stray.options.data.url, "a path outside Aurora becomes the home page").toBe("/");
+  });
+
   it("workspace_lifecycle and org_lifecycle: fixed text, the sentence only when carried (FIX-244, D-486)", async () => {
     const ws = await push(JSON.stringify({ v: 1, type: "workspace_lifecycle", url: "/o/acme/w/main" }));
     expect(ws.title).toBe("Aurora — your workspace changed");

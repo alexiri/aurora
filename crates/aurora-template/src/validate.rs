@@ -141,6 +141,10 @@ pub(crate) fn read_files(
             structural.push(p);
             continue;
         }
+        // No `.github` skip here: a `.github` segment in `rel` is a hidden segment, refused just
+        // above (a `.github` folder inside the template is refused, not silently dropped), and a
+        // template folder that sits under the repository's own `.github` carries that prefix in
+        // the root name, never in `rel` — the files of such a folder are checked as any other.
         if !seen.insert(f.path.clone()) {
             structural.push(name_problem(&f.path, "the same path appears twice"));
             continue;
@@ -158,7 +162,10 @@ pub(crate) fn read_files(
             break;
         }
     }
-    if files.len() > limits::TEMPLATE_FILES_MAX {
+    // Files whose path the grammar refused were pushed to `structural` and are not content, so
+    // they are not counted toward the file cap either.
+    let content_files = files.len();
+    if content_files > limits::TEMPLATE_FILES_MAX {
         structural.push(TemplateProblem::new(
             ProblemCode::TemplateTooLarge,
             root_name,
@@ -1156,6 +1163,39 @@ pub(crate) mod tests {
         assert_eq!(c.helpers.len(), 1);
         assert_eq!(c.automations.len(), 2);
         assert!(c.avatar.is_none());
+    }
+
+    #[test]
+    fn the_github_skip_tests_the_path_relative_to_the_template_folder() {
+        // A template folder that lives under the repository's own `.github` has that prefix in
+        // the root name, not in the paths below it: the template's own files are all seen (no
+        // "required" refusals), and the root name itself is refused by its own check.
+        let files: Vec<TreeFile> = sample_files()
+            .into_iter()
+            .map(|f| TreeFile {
+                path: format!(".github/templates/{}", f.path),
+                bytes: f.bytes,
+                mode: f.mode,
+            })
+            .collect();
+        let err = read_tree(".github/templates/service-monitor", &files).unwrap_err();
+        assert!(
+            !err.iter().any(|p| p.message.contains("is required")),
+            "{err:?}"
+        );
+        assert!(
+            err.iter().any(|p| p.code == ProblemCode::TemplateDirName),
+            "{err:?}"
+        );
+        // A `.github` folder inside the template is a hidden segment: the grammar refuses it, it
+        // is not silently skipped.
+        let mut files = sample_files();
+        files.push(file("service-monitor/.github/workflows/ci.yml", "x"));
+        let err = read_tree("service-monitor", &files).unwrap_err();
+        assert!(
+            err.iter().any(|p| p.message.contains("hidden segment")),
+            "{err:?}"
+        );
     }
 
     #[test]

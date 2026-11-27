@@ -423,7 +423,9 @@ async fn abort_queued_send_now_and_finish_fencing() {
     .await;
     assert_eq!(s, 202, "{t}");
     assert_eq!(t["status"], "aborted");
-    assert_eq!(t["abort_requested"], true);
+    // (FIX-253 review) The stop ends at the terminal transition: the queued turn was aborted in
+    // the same call, so nothing is pending any more — `abort_requested` is already cleared.
+    assert_eq!(t["abort_requested"], false);
     assert!(!t["finished_at"].is_null());
     let (_, ev) = call(
         &h,

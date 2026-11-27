@@ -169,6 +169,12 @@ impl Package {
             let ty = entry.header().entry_type();
             if ty.is_dir() {
                 let d = name.trim_end_matches('/');
+                // A `.github` folder is a repository's own metadata, never package content: at
+                // any depth it is skipped silently, not a `path_unknown` (owner request,
+                // 2026-11-25; aurora_core::meta_paths).
+                if aurora_core::meta_paths::has_github_segment(d) {
+                    continue;
+                }
                 let agent_dir = d == "agent"
                     || d.strip_prefix(AGENT_DIR)
                         .is_some_and(|app| !app.is_empty() && !app.contains('/'));
@@ -191,6 +197,12 @@ impl Package {
             }
             if let Some(x) = path_safety(&name) {
                 out.push(x);
+                continue;
+            }
+            // Files under a `.github` folder are metadata, not content: skipped before the
+            // allowed-path check and not counted toward the decompressed cap (owner request,
+            // 2026-11-25).
+            if aurora_core::meta_paths::has_github_segment(&name) {
                 continue;
             }
             if !allowed_path(&name) {

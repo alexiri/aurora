@@ -6,9 +6,10 @@ import { err, json, type Handler } from "./support/api";
 import { wrap } from "./support/render";
 
 // C-1114: the review of one version — everything in full as data, marked as text from the source at
-// the commit, the README with its Preview toggle, the diff against the offered version, Approve bound
-// to the exact content_sha256 the page showed (a 409 reloads with the version-changed sentence), and
-// Reject with a confirm.
+// the commit, the README with its Preview toggle, what changed against the version people use now
+// (FIX-247) shown as each part's diff inside its own section, folded GitLab-style, with a short
+// what-changed block on top (FIX-250), Approve bound to the exact content_sha256 the page showed (a
+// 409 reloads with the version-changed sentence), and Reject with a confirm.
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ template_id: "schedule-manager", version: "1.1.0" }),
@@ -45,10 +46,10 @@ const version = (v: string, sha: string, sha256: string, c: Record<string, unkno
 const detail = version("1.1.0", SHA_B, SHA_CONTENT, content());
 const offered = version("1.0.0", SHA_A, "b".repeat(64), content({ instructions: "Triage the queue." }));
 
-const listRoute = () => ({
+const listRoute = (item: Record<string, unknown> = {}) => ({
   "GET /v1/admin/agent-templates": () =>
     json(200, {
-      items: [{ template_id: "schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work", source: { id: "s1", name: "Team templates" }, current_version: "1.0.0", offered: true, head_state: "ok", head_version: null, head_problems: null, removed_upstream: false, needs_apps: [], needs_libraries: [], versions: [] }],
+      items: [{ template_id: "schedule-manager", name: "Schedule manager", summary: "Triage and schedule the team's work", source: { id: "s1", name: "Team templates" }, current_version: "1.0.0", offered: true, head_state: "ok", head_version: null, head_problems: null, removed_upstream: false, needs_apps: [], needs_libraries: [], versions: [], ...item }],
     }),
 });
 
@@ -106,9 +107,9 @@ describe("Agent template review (C-1114)", () => {
     expect(screen.getByRole("region", { name: "Instructions" }).textContent).toContain("Triage carefully.");
     expect(screen.getByLabelText("Skill code-review body").textContent).toContain("Review carefully.");
     expect(screen.getByLabelText("File checklist.md of skill code-review").textContent).toContain("- tests");
-    const helper = screen.getByLabelText("Helper file scripts/run.sh").parentElement!;
-    expect(helper.textContent).toContain("executable");
-    expect(helper.textContent).toContain("#!/bin/sh");
+    const helpers = screen.getByRole("region", { name: "Helper files" });
+    expect(helpers.textContent).toContain("executable");
+    expect(helpers.textContent).toContain("#!/bin/sh");
     // skill references with the C-1114 sentence
     expect(screen.getByTestId("template-skill-ref").textContent).toContain("Comes from that library as it is when an agent is created; its updates are reviewed in the library.");
     expect(screen.getByTestId("template-skill-ref").textContent).toContain("https://git.example.org/acme/skills.git · main · skills");
@@ -125,12 +126,77 @@ describe("Agent template review (C-1114)", () => {
     expect(screen.getByText("Repository")).toBeTruthy();
   });
 
-  it("says people keep using the offered version, and diffs against it", async () => {
+  it("shows each part's diff inside its section, the top block short", async () => {
     renderReview();
     await screen.findByText("People keep using 1.0.0 until you approve this one.");
-    const diff = await screen.findByRole("region", { name: /Changes against 1.0.0/ });
-    expect(within(diff).getByText("- Triage the queue.")).toBeTruthy();
-    expect(within(diff).getByText("+ Triage carefully.")).toBeTruthy();
+    const block = await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    expect(within(block).getByText("1 change: Instructions.")).toBeTruthy();
+    // The block holds no diff of its own.
+    expect(within(block).queryByTestId("diff-view")).toBeNull();
+    // The diff sits in the Instructions section, not above the content.
+    const instructions = screen.getByRole("region", { name: "Instructions" });
+    expect(block.compareDocumentPosition(instructions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(instructions).getByLabelText("Diff of Instructions")).toBeTruthy();
+    const diff = within(instructions).getByLabelText("Diff of Instructions");
+    expect(diff.textContent).toContain("- Triage the queue.");
+    expect(diff.textContent).toContain("+ Triage carefully.");
+    // A section nothing touched is collapsed to one line "Unchanged" that expands to the text.
+    const about = screen.getByRole("region", { name: /About this template/ });
+    const fold = within(about).getByTestId("diff-unchanged");
+    expect(fold.textContent).toContain("Unchanged");
+    expect(within(fold).getByLabelText("README.md source text").textContent).toContain("# Schedule manager");  });
+
+  it("calls out the changes that widen what the agent can do or reach first, linking to their sections", async () => {
+    renderReview({
+      "GET /v1/admin/agent-templates/schedule-manager/versions/1.1.0": () =>
+        json(200, {
+          ...detail,
+          content: content({
+            apps: [
+              { app: "github", required: true, level: "ask", tools: null, why: "Reads the pull requests" },
+              { app: "slack", required: false, level: "read", tools: null, why: "Posts to the channel" },
+            ],
+            automations: [
+              { kind: "schedule", name: "morning-triage", prompt: "Triage the queue.", cron: "0 9 * * *" },
+              { kind: "webhook", name: "pager", instructions: "Page the on-call.", verification: "signed" },
+            ],
+          }),
+        }),
+    });
+    const block = await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    expect(within(block).getByText("3 changes: Instructions, a new app, a new webhook.")).toBeTruthy();
+    const attention = within(block).getByTestId("diff-attention");
+    expect(within(attention).getByText("Look at these first")).toBeTruthy();
+    expect(within(attention).getByRole("link", { name: "App slack" }).getAttribute("href")).toBe("#apps");
+    expect(within(attention).getByRole("link", { name: "Webhook pager" }).getAttribute("href")).toBe("#automations");
+    // The widened parts show in their own sections, with the change in words above the list.
+    const apps = screen.getByRole("region", { name: "Apps" });
+    expect(within(apps).getByTestId("diff-change").textContent).toContain("App slack");
+    expect(within(screen.getByRole("region", { name: "Automations" })).getByTestId("diff-change").textContent).toContain("Webhook pager");
+    // The instructions diff sits inside the Instructions section.
+    expect(within(screen.getByRole("region", { name: "Instructions" })).getByLabelText("Diff of Instructions")).toBeTruthy();
+  });
+
+  it("a first version says there is nothing to compare with", async () => {
+    renderReview(listRoute({ current_version: null }));
+    await screen.findByText("This is the first version: nothing to compare with.");
+    expect(screen.queryByRole("region", { name: /What changed since/ })).toBeNull();
+    // The content is still shown in full.
+    expect(screen.getByRole("region", { name: "Instructions" }).textContent).toContain("Triage carefully.");
+  });
+
+  it("identical content says nothing changed", async () => {
+    renderReview({
+      "GET /v1/admin/agent-templates/schedule-manager/versions/1.1.0": () => json(200, { ...detail, content: offered.content }),
+    });
+    await screen.findByText("Nothing changed: this version matches 1.0.0.");
+  });
+
+  it("reviewing the version people use now shows no diff", async () => {
+    renderReview(listRoute({ current_version: "1.1.0" }));
+    await screen.findByRole("region", { name: "Instructions" });
+    expect(screen.queryByRole("region", { name: /What changed since/ })).toBeNull();
+    expect(screen.queryByText(/This is the first version/)).toBeNull();
   });
 
   it("Approve sends exactly the content_sha256 the page showed", async () => {

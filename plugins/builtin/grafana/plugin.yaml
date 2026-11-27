@@ -1,17 +1,17 @@
 package:
   id: grafana
-  version: 1.5.1
+  version: 1.8.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
   name: Grafana
-  description: Dashboards, folders, annotations and alerting on your own Grafana server, and queries on Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through Grafana's query API, connected with a service account token; saving dashboards, annotations and silences are approved
+  description: Dashboards, folders, annotations and alerting on your own Grafana server, and queries on Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through Grafana's query API, connected with a service account token; saving dashboards, annotations, silences and alert rules in one folder are approved
   homepage: https://grafana.com
 apps:
   - about:
       id: grafana
       name: Grafana
-      description: Search dashboards, read panels and alerts, and query Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through your Grafana server; annotate, save dashboards and silence alerts when you allow it
+      description: Search dashboards, read panels and alerts, and query Prometheus, Mimir, Loki, OpenSearch, Elasticsearch and SQL data sources through your Grafana server; annotate, save dashboards, silence alerts and manage alert rules in one folder when you allow it
       summary: Dashboards, metrics, logs and alerts on your Grafana server.
       first_prompt: "Which Grafana alerts are firing right now, and since when?"
       category: monitoring
@@ -20,7 +20,7 @@ apps:
       api_docs: https://grafana.com/docs/grafana/latest/developer-resources/api-reference/http-api/api-legacy/
       api_spec: https://raw.githubusercontent.com/grafana/grafana/main/public/openapi3.json
       connect_note:
-        text: "An administrator registers your Grafana server first (Self-hosted apps). Create a service account in Grafana (Administration, Users and access, Service accounts) and add a token. The service account's role and the folder and data source permissions decide what agents can see: Viewer is enough to read and query, Editor is needed to save dashboards, add annotations and silence alerts. A service account belongs to one Grafana organization. Queries run as the service account, and data sources should use read-only database users (Grafana's advice for SQL data sources): a query on a SQL or InfluxDB data source whose database user can write could change data."
+        text: "An administrator registers your Grafana server first (Self-hosted apps). Create a service account in Grafana (Administration, Users and access, Service accounts) and add a token. The service account's role and the folder and data source permissions decide what agents can see: Viewer is enough to read and query, and alert rules need Viewer plus Edit on the agent's one alert folder — Editors can edit every folder by default, so an Editor token is not the way to scope rules (the app's setup text has the steps). Saving dashboards, adding annotations and silencing alerts need Editor. A service account belongs to one Grafana organization. Queries run as the service account, and data sources should use read-only database users (Grafana's advice for SQL data sources): a query on a SQL or InfluxDB data source whose database user can write could change data."
         url: https://grafana.com/docs/grafana/latest/administration/service-accounts/
     instances:
       label: Grafana server
@@ -61,6 +61,14 @@ apps:
       - match: { host: "{instance}", path_prefix: /api/ }
         inject:
           - bearer: "{credentials.access_token}"
+          # Grafana marks a rule written through its provisioning API as provisioned, which locks
+          # it in Grafana's UI; this header makes rules the agent writes editable by people. Only
+          # Grafana's alerting-provisioning endpoints read it, and the catalogue below offers the
+          # agent no provisioning writes except the three alert-rule tools, so a host-wide header
+          # is as scoped as a per-operation one would be. The manifest has no per-operation
+          # inject (docs/09 §5), and the linter forbids the agent from sending a header the
+          # manifest injects, so agents cannot switch it off.
+          - header: { name: X-Disable-Provenance, value: "true" }
     # (Security review of P5-GRAFANA, 2026-11-21) Every request must match a tool below, under a
     # `full` grant too: Grafana's data source proxy forwards any method and path to the backend
     # with Grafana's own credentials, and the token's Grafana role does not limit that, so an
@@ -106,6 +114,13 @@ apps:
           - { id: get_alert_rule, description: "Reads one Grafana-managed alert rule's definition.", name: Get an alert rule definition, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [GET] }
           - { id: list_alerts, description: "Lists the alerts in Grafana's Alertmanager: firing, silenced or inhibited.", name: List alerts, host: "{instance}", path: /api/alertmanager/grafana/api/v2/alerts, methods: [GET] }
           - { id: list_silences, description: "Lists silences in Grafana's Alertmanager.", name: List silences, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [GET] }
+          # `refuse_query`: the tool declares no query parameters, and the endpoint would answer
+          # a `decrypt=true` parameter with the contact points' settings and secrets.
+          # `project`: every answer item keeps only its name and type — the gateway reduces the
+          # answer on the response path for every caller (the agent CLI reduces what it saves
+          # and prints the same way), so the endpoint's settings (e-mail addresses, URLs) and
+          # secrets reach no caller, raw send or CLI call alike.
+          - { id: list_contact_points, description: "Lists the contact points (notification destinations) by name and type; only those two fields are returned, their settings and secrets never reach the agent.", name: List contact points, host: "{instance}", path: /api/v1/provisioning/contact-points, methods: [GET], refuse_query: true, project: ["$.name", "$.type"] }
           # Annotations.
           - { id: list_annotations, description: "Lists annotations (deployments, incidents, notes) in a time range.", name: List annotations, host: "{instance}", path: /api/annotations, methods: [GET] }
           # Grafana's own UI reads Prometheus, Loki, OpenSearch and SQL data through this POST, and
@@ -118,6 +133,139 @@ apps:
           - { id: update_dashboard, description: "Creates a dashboard or saves a new version of one.", name: Save a dashboard, host: "{instance}", path: /api/dashboards/db, methods: [POST] }
           - { id: create_silence, description: "Silences matching alerts in Grafana's Alertmanager for a time, or changes a silence.", name: Silence alerts, host: "{instance}", path: /api/alertmanager/grafana/api/v2/silences, methods: [POST] }
           - { id: delete_silence, description: "Ends a silence in Grafana's Alertmanager.", name: End a silence, host: "{instance}", path: "/api/alertmanager/grafana/api/v2/silence/*", methods: [DELETE] }
+          # (D-484) Alert rules the agent manages: built by the grafana-alerts skill's script with
+          # a managed_by label and an expiry. Nothing here touches contact points, notification
+          # policies, mute timings or templates: those routes select no tool and stay refused.
+          # The legacy provisioning API is the one every supported Grafana serves (checked against
+          # v13.3.1, where the /apis/… replacement is deprecating it; older servers have only it).
+          # `body_check` mirrors the grafana-alerts script's rule shape, so a body the script
+          # cannot build is refused before anything else sees it: a recording rule, a second
+          # data step (a query no approval card shows), a label a notification policy could
+          # route on, or notification settings beyond the receiver. `allow_keys` is the
+          # script's own top-level key list: the receiver's parser matches key names without
+          # case and keeps the last match, so any other key (and any spelling that folds onto
+          # a known one) is refused even when the check would not read it. Every `data` step
+          # is the `{refId, datasourceUid, queryType, relativeTimeRange, model}` object the
+          # script sends, and the steps after the first are the server's own `__expr__` steps
+          # (its reduce and threshold): a step that queries a data source of its own — a
+          # second SQL query the approval card does not show — is refused. The first step's
+          # `model` is the raw query object that same parser reads without case, so
+          # `entry_member` holds the same folded allow list for it that `allow_keys` holds
+          # for the body: exactly the keys the script's builder sends (editorMode, expr,
+          # instant, legendFormat, refId), no other key and no other spelling of one. That is
+          # what keeps a query the card does not show out of the one step that queries a data
+          # source: a SQL query lives in the model's `rawSql`, not in the `expr` the card
+          # shows. The first step's `datasourceUid` itself has no value to declare (it names
+          # the connection's Prometheus data source, whichever instance the connection was
+          # made on), so the card shows it and nothing binds it here; the model keys are what
+          # keep a query type the card cannot show out of the rule.
+          - id: create_alert_rule
+            description: "Creates a Grafana-managed alert rule from the three-step query model the grafana-alerts script builds."
+            name: Create an alert rule
+            host: "{instance}"
+            path: /api/v1/provisioning/alert-rules
+            methods: [POST]
+            body_check:
+              refuse_keys: [record]
+              allow_keys: [orgID, title, ruleGroup, folderUID, condition, data, for, noDataState, execErrState, isPaused, labels, annotations, notification_settings]
+              only_keys:
+                labels: [managed_by, expires, service]
+                annotations: [summary, expires]
+                notification_settings: [receiver]
+              exact_len:
+                data: 3
+              entry_keys:
+                data: [refId, datasourceUid, queryType, relativeTimeRange, model]
+              entry_value:
+                data: { from: 1, key: datasourceUid, value: __expr__ }
+              # The steps carry exactly the script's refIds: the query step is `A`, the reduce
+              # step `B`, the threshold step `C`; the reduce step reads `A` and the threshold
+              # step reads `B`; and the top-level `condition` is `C`, the step the card reads
+              # its decision from. A body that swaps or renames them shows one decision on the
+              # card and runs another (a `condition` naming the raw query step fires on
+              # whatever the query returns, with the threshold step only shown).
+              value: { condition: C }
+              entry_at:
+                data:
+                  - { at: 0, key: refId, value: A }
+                  - { at: 1, key: refId, value: B }
+                  - { at: 2, key: refId, value: C }
+                  - { at: 1, member: model, key: expression, value: A }
+                  - { at: 2, member: model, key: expression, value: B }
+              entry_member:
+                data:
+                  - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                  # The two expression steps the receiver runs itself: each model is what the
+                  # script's builder sends, its `type` is the one the script builds, and the
+                  # conditions the card reads its comparison and threshold from carry no
+                  # second spelling for the receiver's parser to prefer.
+                  - { at: 1, member: model, keys: [conditions, datasource, expression, reducer, refId, type], value: { key: type, value: reduce } }
+                  - { at: 1, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
+                  - { at: 1, member: model/conditions/0/evaluator, keys: [params, type] }
+                  - { at: 2, member: model, keys: [conditions, datasource, expression, refId, type], value: { key: type, value: threshold } }
+                  - { at: 2, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
+                  - { at: 2, member: model/conditions/0/evaluator, keys: [params, type] }
+          - id: update_alert_rule
+            description: "Changes one Grafana-managed alert rule the agent manages (sends the whole rule the grafana-alerts script read and changed)."
+            name: Change an alert rule
+            host: "{instance}"
+            path: "/api/v1/provisioning/alert-rules/*"
+            methods: [PUT]
+            body_check:
+              refuse_keys: [record]
+              # The rule is the one the script read back, so the keys it accepts are the
+              # script's own plus what a recent Grafana adds to a rule it answers: the change
+              # tool takes `keep_firing_for` (a duration the server answers with on every read,
+              # which the script resends unchanged — a person may have set it) and, when the
+              # server runs the feature, `missingSeriesEvalsToResolve` (a count). Neither
+              # routes anything, so both pass through as read: the create tool does not take
+              # them, because a rule the script builds carries neither. A `record` block and
+              # everything not listed stay refused.
+              allow_keys: [orgID, title, ruleGroup, folderUID, condition, data, for, noDataState, execErrState, isPaused, keep_firing_for, missingSeriesEvalsToResolve, labels, annotations, notification_settings, uid]
+              only_keys:
+                labels: [managed_by, expires, service]
+                annotations: [summary, expires]
+                notification_settings: [receiver]
+              exact_len:
+                data: 3
+              entry_keys:
+                data: [refId, datasourceUid, queryType, relativeTimeRange, model]
+              entry_value:
+                data: { from: 1, key: datasourceUid, value: __expr__ }
+              # The steps carry exactly the script's refIds: the query step is `A`, the reduce
+              # step `B`, the threshold step `C`; the reduce step reads `A` and the threshold
+              # step reads `B`; and the top-level `condition` is `C`, the step the card reads
+              # its decision from. A body that swaps or renames them shows one decision on the
+              # card and runs another (a `condition` naming the raw query step fires on
+              # whatever the query returns, with the threshold step only shown).
+              value: { condition: C }
+              entry_at:
+                data:
+                  - { at: 0, key: refId, value: A }
+                  - { at: 1, key: refId, value: B }
+                  - { at: 2, key: refId, value: C }
+                  - { at: 1, member: model, key: expression, value: A }
+                  - { at: 2, member: model, key: expression, value: B }
+              entry_member:
+                data:
+                  - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                  # The two expression steps the receiver runs itself: each model is what the
+                  # script's builder sends, its `type` is the one the script builds, and the
+                  # conditions the card reads its comparison and threshold from carry no
+                  # second spelling for the receiver's parser to prefer.
+                  - { at: 1, member: model, keys: [conditions, datasource, expression, reducer, refId, type], value: { key: type, value: reduce } }
+                  - { at: 1, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
+                  - { at: 1, member: model/conditions/0/evaluator, keys: [params, type] }
+                  - { at: 2, member: model, keys: [conditions, datasource, expression, refId, type], value: { key: type, value: threshold } }
+                  - { at: 2, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
+                  - { at: 2, member: model/conditions/0/evaluator, keys: [params, type] }
+              # The two keys a newer server answers with are scalars when it adds them: the
+              # duration is a string (or a number for seconds) and the count is an integer.
+              # A body carrying either as an object is refused, whatever its keys say. The
+              # card does not show them: it holds at most 20 fields and this tool needs the
+              # slot for the rule's uid, so two pass-through values stay off it.
+              kinds: { keep_firing_for: [string, number], missingSeriesEvalsToResolve: [integer] }
+          - { id: delete_alert_rule, description: "Deletes one Grafana-managed alert rule the agent manages.", name: Delete an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [DELETE] }
     approvals:
       create_annotation:
         title: add an annotation
@@ -151,6 +299,63 @@ apps:
         title: end a silence
         fields:
           - { label: Silence, source: path, segment: 7 }
+      create_alert_rule:
+        title: create an alert rule
+        # The script's fixed shape, field by field: the card's template cannot print a map's keys
+        # (a `*` step lists an object's values only), so every key is shown as its own field and a
+        # body made by hand could carry fields no card field shows. The script is the only way to
+        # write a rule; the docs and the skill say so.
+        fields:
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Folder, source: body, steps: [ { json: /folderUID } ] }
+          - { label: Group, source: body, steps: [ { json: /ruleGroup } ] }
+          - { label: Evaluate for, source: body, steps: [ { json: /for } ] }
+          - { label: Data source, source: body, steps: [ { json: /data/0/datasourceUid } ] }
+          - { label: Query, source: body, steps: [ { json: /data/0/model/expr } ] }
+          - { label: Comparison, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/type } ] }
+          - { label: Threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/0 } ] }
+          - { label: Reducer, source: body, steps: [ { json: /data/1/model/reducer } ] }
+          - { label: Second threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/1 } ] }
+          - { label: Condition step, source: body, steps: [ { json: /condition } ] }
+          - { label: No data state, source: body, steps: [ { json: /noDataState } ] }
+          - { label: On query error, source: body, steps: [ { json: /execErrState } ] }
+          - { label: Paused, source: body, steps: [ { json: /isPaused } ] }
+          - { label: Managed by, source: body, steps: [ { json: /labels/managed_by } ] }
+          - { label: Service, source: body, steps: [ { json: /labels/service } ] }
+          - { label: Expires, source: body, steps: [ { json: /labels/expires } ] }
+          - { label: Summary, source: body, steps: [ { json: /annotations/summary } ] }
+          - { label: Expires annotation, source: body, steps: [ { json: /annotations/expires } ] }
+          - { label: Receiver, source: body, steps: [ { json: /notification_settings/receiver } ] }
+      update_alert_rule:
+        title: change an alert rule
+        # The card holds at most 20 fields and this tool needs one for the rule's uid, so the
+        # annotation copy of the expiry is dropped here: the `Expires` label above shows the
+        # same date from the rule's labels.
+        fields:
+          - { label: Rule, source: path, segment: 5 }
+          - { label: Title, source: body, steps: [ { json: /title } ] }
+          - { label: Folder, source: body, steps: [ { json: /folderUID } ] }
+          - { label: Group, source: body, steps: [ { json: /ruleGroup } ] }
+          - { label: Evaluate for, source: body, steps: [ { json: /for } ] }
+          - { label: Data source, source: body, steps: [ { json: /data/0/datasourceUid } ] }
+          - { label: Query, source: body, steps: [ { json: /data/0/model/expr } ] }
+          - { label: Comparison, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/type } ] }
+          - { label: Threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/0 } ] }
+          - { label: Reducer, source: body, steps: [ { json: /data/1/model/reducer } ] }
+          - { label: Second threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/1 } ] }
+          - { label: Condition step, source: body, steps: [ { json: /condition } ] }
+          - { label: No data state, source: body, steps: [ { json: /noDataState } ] }
+          - { label: On query error, source: body, steps: [ { json: /execErrState } ] }
+          - { label: Paused, source: body, steps: [ { json: /isPaused } ] }
+          - { label: Managed by, source: body, steps: [ { json: /labels/managed_by } ] }
+          - { label: Service, source: body, steps: [ { json: /labels/service } ] }
+          - { label: Expires, source: body, steps: [ { json: /labels/expires } ] }
+          - { label: Summary, source: body, steps: [ { json: /annotations/summary } ] }
+          - { label: Receiver, source: body, steps: [ { json: /notification_settings/receiver } ] }
+      delete_alert_rule:
+        title: delete an alert rule
+        fields:
+          - { label: Rule, source: path, segment: 5 }
       query_datasources:
         title: run a data source query
         fields:
@@ -169,4 +374,12 @@ apps:
         list_datasources or in a dashboard's panels. The data source proxy GET tools (prometheus_*,
         loki_*) are a fallback: a 3xx from them means use query_datasources. Keep time ranges and
         steps small; send only read statements.
+        To leave a Grafana alert rule, read the grafana-alerts skill and use its script: never
+        create, change or delete a rule without the script's managed_by label and expiry, and
+        never name a contact point that list_contact_points does not show. The script is the only
+        way to write a rule: build no rule body by hand — the gateway refuses a rule body the
+        script cannot build (a recording rule, a second query, or a label, annotation or receiver
+        setting the script does not set), and the approval card shows the shape the script builds
+        and cannot show fields outside it. There is no tool for contact points,
+        notification policies, mute timings or templates: a person makes those.
       operations: operations.json

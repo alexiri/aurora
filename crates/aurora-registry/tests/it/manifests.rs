@@ -32,6 +32,47 @@ fn minimal_parses() {
     assert!(v.is_empty(), "{v:#?}");
 }
 
+// (lane review 2026-11-25) A `project` of plain `$`-paths is a valid tool field.
+#[test]
+fn a_tool_project_of_plain_paths_is_valid() {
+    let v = run(&METHODS.replace(
+        "connect_methods: [token] }",
+        "connect_methods: [token], project: [\"$.name\", \"$.type\"] }",
+    ));
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+// A `kinds` rule type-checks the keys a newer server adds to a read-back: the key names an
+// identifier and carries at least one kind.
+#[test]
+fn a_body_check_kinds_rule_is_valid() {
+    let v = run(&METHODS.replace(
+        "connect_methods: [token] }",
+        "connect_methods: [token], body_check: { allow_keys: [title, keep_firing_for], kinds: { keep_firing_for: [string, number] } } }",
+    ));
+    assert!(v.is_empty(), "{v:#?}");
+}
+
+#[test]
+fn a_body_check_kinds_rule_that_allows_no_kind_is_invalid() {
+    let v = run(&METHODS.replace(
+        "connect_methods: [token] }",
+        "connect_methods: [token], body_check: { kinds: { keep_firing_for: [] } } }",
+    ));
+    let got: BTreeSet<&str> = v.iter().map(|x| x.code).collect();
+    assert_eq!(got, BTreeSet::from(["body_check_kinds"]), "{v:#?}");
+}
+
+#[test]
+fn a_body_check_kinds_key_that_is_not_an_identifier_is_invalid() {
+    let v = run(&METHODS.replace(
+        "connect_methods: [token] }",
+        "connect_methods: [token], body_check: { kinds: { bad-key: [string] } } }",
+    ));
+    let got: BTreeSet<&str> = v.iter().map(|x| x.code).collect();
+    assert_eq!(got, BTreeSet::from(["body_check_key"]), "{v:#?}");
+}
+
 #[test]
 fn invalid_fixtures_yield_expected_code() {
     let table: &[(&str, &str)] = &[
@@ -426,6 +467,165 @@ fn connect_method_rules_reject_each_invalid_case() {
             "a read tool with approval: ask",
             METHODS.replace("connect_methods: [token] }", "connect_methods: [token], approval: ask }"),
             "tool_approval_read",
+        ),
+        // A `body_check` key name is what the refusal message quotes: an identifier only.
+        (
+            "a body_check key that is not an identifier",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { refuse_keys: [bad-key] } }",
+            ),
+            "body_check_key",
+        ),
+        (
+            "a body_check with more than eight refuse keys",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                &format!(
+                    "connect_methods: [token], body_check: {{ refuse_keys: [{}] }} }}",
+                    (0..9).map(|i| format!("k{i}")).collect::<Vec<_>>().join(", ")
+                ),
+            ),
+            "body_check_refuse_keys",
+        ),
+        (
+            "a body_check exact_len of zero",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { exact_len: { data: 0 } } }",
+            ),
+            "body_check_exact_len",
+        ),
+        // An `entry_member` path is quoted in the refusal message: identifiers and indexes only.
+        (
+            "an entry_member path that is not identifiers or indexes",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_member: { data: [ { at: 0, member: \"model/bad name\", keys: [expr] } ] } } }",
+            ),
+            "body_check_key",
+        ),
+        (
+            "an entry_member with more than eight members",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                &format!(
+                    "connect_methods: [token], body_check: {{ entry_member: {{ data: [{}] }} }} }}",
+                    (0..9)
+                        .map(|i| format!("{{ at: {i}, member: model, keys: [expr] }}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ),
+            "body_check_entry_member",
+        ),
+        (
+            "an entry_member that allows no key",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_member: { data: [ { at: 0, member: model, keys: [] } ] } } }",
+            ),
+            "body_check_entry_member",
+        ),
+        (
+            "an entry_member value that is an object",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_member: { data: [ { at: 0, member: model, keys: [type], value: { key: type, value: { a: 1 } } } ] } } }",
+            ),
+            "body_check_entry_member",
+        ),
+        // An `entry_value` rule forces a key onto every entry from `from` on: the key must be
+        // one `entry_keys` lists, or the two rules contradict each other.
+        (
+            "an entry_value key that entry_keys does not list",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_keys: { data: [refId] }, entry_value: { data: { from: 1, key: datasourceUid, value: __expr__ } } } }",
+            ),
+            "body_check_entry_value",
+        ),
+        // An `entry_at` pin forces a key onto exactly one entry: on the entry itself the key
+        // must be one `entry_keys` lists, or the two rules contradict each other.
+        (
+            "an entry_at key that entry_keys does not list",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_keys: { data: [refId] }, entry_at: { data: [ { at: 0, key: datasourceUid, value: __expr__ } ] } } }",
+            ),
+            "body_check_entry_at",
+        ),
+        // An `entry_at` member path is quoted in the refusal message: identifiers and
+        // indexes only, like an `entry_member` path.
+        (
+            "an entry_at member path that is not identifiers or indexes",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_at: { data: [ { at: 1, member: \"model/bad name\", key: expr, value: A } ] } } }",
+            ),
+            "body_check_key",
+        ),
+        (
+            "an entry_at beyond entry 64",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_at: { data: [ { at: 65, key: refId, value: A } ] } } }",
+            ),
+            "body_check_entry_at",
+        ),
+        (
+            "an entry_at value that is an object",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { entry_at: { data: [ { at: 0, key: refId, value: { a: 1 } } ] } } }",
+            ),
+            "body_check_entry_at",
+        ),
+        // A `value` pin is a scalar the body carries exactly, named by an identifier.
+        (
+            "a body_check value that is an object",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { value: { condition: { a: 1 } } } }",
+            ),
+            "body_check_value",
+        ),
+        (
+            "a body_check value key that is not an identifier",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], body_check: { value: { bad-key: C } } }",
+            ),
+            "body_check_key",
+        ),
+        // (lane review 2026-11-25) A `project` selects named fields of every answer item:
+        // plain `$`-paths only, at most 8.
+        (
+            "a project with a wildcard path",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], project: [\"$.a[*].b\"] }",
+            ),
+            "tool_project",
+        ),
+        (
+            "a project with an empty path list",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                "connect_methods: [token], project: [] }",
+            ),
+            "tool_project",
+        ),
+        (
+            "a project with more than eight paths",
+            METHODS.replace(
+                "connect_methods: [token] }",
+                &format!(
+                    "connect_methods: [token], project: [{}] }}",
+                    (0..9).map(|i| format!("\"$.k{i}\"")).collect::<Vec<_>>().join(", ")
+                ),
+            ),
+            "tool_project",
         ),
         // (P5-POLISH-3, C-1031) The package text for people has limits.
         (

@@ -136,6 +136,20 @@ export function usePeerTasks(agent: string) {
   });
 }
 
+/** (FIX-252) The person who asked cancels their delegated task from the origin card (the stored requester only). */
+export function useCancelPeerTask() {
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.POST("/v1/peer-tasks/{id}/cancel", { params: { path: { id } } })),
+  });
+}
+
+/** (FIX-252) Ask the people who may decide in the approval's workspace by e-mail (the web card's Ask an approver). */
+export function useAskApprovers() {
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.POST("/v1/approvals/{id}/ask-approver", { params: { path: { id } } })),
+  });
+}
+
 export function useSetLinkPolicy(agent: string) {
   const qc = useQueryClient();
   return useMutation({

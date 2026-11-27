@@ -103,3 +103,398 @@
   connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
   request: { method: GET, url: "https://grafana.example.org/api/alertmanager/grafana/api/v2/silence/silence-fixture-1" }
   expect: { app: grafana, no_tool: true }
+- name: "create_alert_rule: a new rule is held for approval with its whole shape"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-09","service":"api"},"annotations":{"summary":"p95 over 2s","expires":"2026-12-09"},"notification_settings":{"receiver":"oncall"}}'
+  expect:
+    app: grafana
+    tool: create_alert_rule
+    summary:
+      title: "create an alert rule"
+      fields:
+        Title: "p95 over 2s"
+        Folder: "night-folder"
+        Group: "agent-night"
+        Evaluate for: "300s"
+        Data source: "prom-main"
+        Query: "max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))"
+        Comparison: "gt"
+        Threshold: "2"
+        Reducer: "last"
+        Condition step: "C"
+        No data state: "NoData"
+        On query error: "Error"
+        Paused: "false"
+        Managed by: "night"
+        Service: "api"
+        Expires: "2026-12-09"
+        Summary: "p95 over 2s"
+        Expires annotation: "2026-12-09"
+        Receiver: "oncall"
+    upstream:
+      url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+      headers: { authorization: "Bearer tok-fixture-1", x-disable-provenance: "true" }
+- name: "create_alert_rule: a range comparison shows both threshold values"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 between 2s and 5s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2,5],"type":"within"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 between 2s and 5s"},"notification_settings":{"receiver":"oncall"}}'
+  expect:
+    app: grafana
+    tool: create_alert_rule
+    summary:
+      title: "create an alert rule"
+      fields:
+        Title: "p95 between 2s and 5s"
+        Comparison: "within"
+        Threshold: "2"
+        Second threshold: "5"
+        Reducer: "last"
+        Condition step: "C"
+        Receiver: "oncall"
+- name: "negative create_alert_rule: a contact point write (another provisioning path) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/contact-points"
+    headers: { content-type: application/json }
+    body: '{"name":"oncall","type":"email"}'
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_alert_rule: a notification policy write selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/policies", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_alert_rule: a mute timing write selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/mute-timings", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_alert_rule: a notification template write selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/v1/provisioning/templates", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative create_alert_rule: the Alertmanager config route selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: POST, url: "https://grafana.example.org/api/alertmanager/grafana/config/api/v1/alerts", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative update_alert_rule: the rule collection itself (no uid) selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: PUT, url: "https://grafana.example.org/api/v1/provisioning/alert-rules", headers: { content-type: application/json } }
+  expect: { app: grafana, no_tool: true }
+- name: "negative update_alert_rule: a whole rule group under a folder selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/folder/night-folder/rule-groups/agent-night"
+    headers: { content-type: application/json }
+    body: '{"title":"p95 over 2s","rules":[]}'
+  expect: { app: grafana, no_tool: true }
+- name: "update_alert_rule: changing one rule shows the rule, the change and the whole shape"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect:
+    app: grafana
+    tool: update_alert_rule
+    summary:
+      title: "change an alert rule"
+      fields:
+        Rule: "tripwire-p95"
+        Title: "p95 over 3s"
+        Folder: "night-folder"
+        Group: "agent-night"
+        Evaluate for: "600s"
+        Data source: "prom-main"
+        Query: "max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))"
+        Comparison: "gt"
+        Threshold: "3"
+        Condition step: "C"
+        No data state: "NoData"
+        On query error: "Error"
+        Paused: "false"
+        Managed by: "night"
+        Service: "api"
+        Expires: "2026-12-02"
+        Summary: "p95 over 3s"
+        Receiver: "nightmanager"
+    upstream:
+      url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+      headers: { authorization: "Bearer tok-fixture-1", x-disable-provenance: "true" }
+# The reduce step's reducer and both threshold values: a person can change a rule's evaluator
+# outside the script and the change tool resends the rule it read, so the card shows a range
+# comparison's second value too.
+- name: "update_alert_rule: a range comparison shows both threshold values and the reducer"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2,5],"type":"within"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect:
+    app: grafana
+    tool: update_alert_rule
+    summary:
+      title: "change an alert rule"
+      fields:
+        Rule: "tripwire-p95"
+        Comparison: "within"
+        Threshold: "2"
+        Second threshold: "5"
+        Reducer: "last"
+        Condition step: "C"
+        Receiver: "nightmanager"
+- name: "delete_alert_rule: deleting one rule shows the rule and carries the provenance header"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95" }
+  expect:
+    app: grafana
+    tool: delete_alert_rule
+    summary: { title: "delete an alert rule", fields: { Rule: "tripwire-p95" } }
+    upstream:
+      url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+      headers: { authorization: "Bearer tok-fixture-1", x-disable-provenance: "true" }
+- name: "negative delete_alert_rule: the rule collection itself selects no tool"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request: { method: DELETE, url: "https://grafana.example.org/api/v1/provisioning/alert-rules" }
+  expect: { app: grafana, no_tool: true }
+# The declared body shape: a body the grafana-alerts script cannot build is refused before the
+# approval, on both rule tools (the gateway checks it before any rule or approval sees it).
+- name: "refused create_alert_rule: a recording rule (the body carries record)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"record p95","ruleGroup":"agent-night","folderUID":"night-folder","record":{"from":"A"},"data":[{},{},{}]}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a second data step with its own SQL query"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A"},{"refId":"B"},{"refId":"C"},{"refId":"D","datasourceUid":"sql-main","model":{"rawSql":"select 1"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+# The entry count is right, but the reduce step queries its own SQL data source instead of being
+# the receiver's own expression step: the steps after the first are the server's `__expr__` ones.
+- name: "refused create_alert_rule: the reduce step queries its own SQL data source"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"expr":"up"}},{"refId":"B","datasourceUid":"sql-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"rawSql":"select 1"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"expression":"B"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: a label a notification policy could route on"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night","expires":"2026-12-09","severity":"page"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: mute timings in the notification settings"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall","mute_time_intervals":["nights"]}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+# A receiver's parser matches key names without case and keeps the last match: the same body
+# under another spelling of a known key would become the checked key to it, so every spelling
+# is refused, and only the keys the grafana-alert script sends are accepted at all.
+- name: "refused create_alert_rule: key names the receiver folds onto the script's (Data, Record, Labels)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main"},{"refId":"B","datasourceUid":"__expr__"},{"refId":"C","datasourceUid":"__expr__"}],"Data":[{"refId":"A"},{"refId":"B"},{"refId":"C"},{"refId":"D","datasourceUid":"sql-main","model":{"rawSql":"select 1"}}],"Record":{"from":"A"},"Labels":{"severity":"page"},"Notification_Settings":{"receiver":"oncall"},"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a top-level key the script never sends"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"},"uid":"tripwire-p95"}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: a long-s spelling of a checked key"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{},{},{}],"for":"300s","noDataState":"NoData","execErrState":"Error","labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"Notification_ſettings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+# The first step's model: the only step that queries a data source, so it carries exactly the
+# keys the grafana-alert script's builder sends and no other spelling of one (the receiver's
+# parser matches key names without case and keeps the last match) — a query the card's
+# /data/0/model/expr does not show is refused before anything else sees it.
+- name: "refused create_alert_rule: a SQL query in the first step's model (rawSql)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","rawSql":"select count(*) from secrets","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a case-variant expr in the first step's model"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","Expr":"histogram_quantile(0.5, x[5m])","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a key the script never sends in the first step's model"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto","refId":"A","intervalMs":1000}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+# Changing a rule sends the whole rule the script read back. A recent Grafana answers a rule
+# read with fields the script never builds (keep_firing_for always, and, when the server runs
+# the feature, missingSeriesEvalsToResolve): the script resends them unchanged — they are part
+# of the rule the person could have set, and neither routes anything — so the check accepts
+# them on the change tool and the read-only fields (id, updated, provenance) stay stripped.
+- name: "update_alert_rule: a rule read back with keep_firing_for and missingSeriesEvalsToResolve is held for approval"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","keep_firing_for":"0s","missingSeriesEvalsToResolve":2,"noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect:
+    app: grafana
+    tool: update_alert_rule
+    summary:
+      title: "change an alert rule"
+      fields:
+        Rule: "tripwire-p95"
+        Title: "p95 over 3s"
+        Folder: "night-folder"
+        Group: "agent-night"
+        Evaluate for: "600s"
+        Data source: "prom-main"
+        Query: "max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))"
+        Comparison: "gt"
+        Threshold: "3"
+        Condition step: "C"
+        No data state: "NoData"
+        On query error: "Error"
+        Paused: "false"
+        Managed by: "night"
+        Service: "api"
+        Expires: "2026-12-02"
+        Summary: "p95 over 3s"
+        Receiver: "nightmanager"
+# The keys a newer server answers with are scalars: a body that carries either as an object
+# (or the count with a fractional part) is refused before the approval.
+- name: "refused update_alert_rule: keep_firing_for carried as an object"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","keep_firing_for":{"for":"5m"},"noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: missingSeriesEvalsToResolve with a fractional part"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","keep_firing_for":"0s","missingSeriesEvalsToResolve":2.5,"noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a rule made with keep_firing_for (the script builds none)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","keep_firing_for":"5m","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+# The two expression steps the receiver runs itself: each model is the object the script's
+# builder sends, its `type` is the one the script builds (reduce, threshold), and the
+# conditions the approval card reads its comparison and threshold from carry no second
+# spelling for the receiver's parser to prefer.
+- name: "refused create_alert_rule: a math step instead of the script's reduce step"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"$A * 0","refId":"B","type":"math"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: a case-variant Conditions key in the threshold step's model"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"Conditions":[{"evaluator":{"params":[999],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a case-variant Evaluator in the threshold step"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"Evaluator":{"params":[999],"type":"gt"},"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a case-variant Params in the threshold step's evaluator"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"Params":[999],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+# The steps' refIds, the expression links between them and the top-level `condition` are the
+# script's own: a body that swaps or renames them shows one decision on the card and runs
+# another (a `condition` naming the raw query step fires on whatever the query returns, with
+# the threshold step only shown).
+- name: "refused create_alert_rule: the query step named C and the threshold step named A"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"C","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"C","reducer":"last","refId":"B","type":"reduce"}},{"refId":"A","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: the condition naming the reduce step"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"B","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a body with no condition at all"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 2s","ruleGroup":"agent-night","folderUID":"night-folder","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[2],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"300s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night"},"annotations":{"summary":"p95 over 2s"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: the expression links swapped (the reduce step reads the threshold step)"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"C","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","refId":"C","type":"threshold"}}],"for":"600s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }

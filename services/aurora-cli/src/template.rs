@@ -287,6 +287,11 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<TreeFile>) -> Result<()> {
             .map_err(|_| anyhow::anyhow!("a file name is not valid UTF-8"))?;
         let path = format!("{prefix}/{name}");
         if md.is_dir() {
+            // A `.github` folder is a repository's own metadata, never template content: not
+            // walked, not packed (aurora_core::meta_paths).
+            if name == ".github" {
+                continue;
+            }
             walk(&e.path(), &path, out)?;
         } else {
             #[cfg(unix)]

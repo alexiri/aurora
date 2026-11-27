@@ -47,3 +47,10 @@
 # caldav `any_of` groups, GitHub release-URL and gitlab.cern.ch library addresses). The crate parses
 # template data; the names appear only in test fixtures, never in shipped behaviour.
 ^crates/aurora-template/src/test_fixtures\.rs$:([Jj]ira|[Aa]tlassian|[Mm]icrosoft|[Cc]al[Dd][Aa][Vv]|[Gg]it[Hh]ub|[Gg]it[Ll]ab)
+
+# (PART 0, fix-241-243 lane) The repository-metadata rule: a `.github` folder is a repository's own
+# metadata, never package, template or library content. The only forge name the core knows is the
+# path predicate and the folder literal it matches: `has_github_segment` (and its `a_github_folder`
+# tests), `.github` in the predicate, its callers and their comments, and the plugin packer, which
+# skips such paths when collecting skill files. No integration behaviour.
+^(crates/aurora-core/src/meta_paths|crates/aurora-registry/src/package|crates/aurora-template/src/archive|crates/aurora-template/src/validate|(crates|services)/aurora-cli/src/template|services/aurora-cli/src/plugin/pack|services/aurora-api/src/domains/agent_templates/check|services/aurora-api/src/domains/skill_libraries/content|services/aurora-api/src/domains/skill_libraries/git/mod)\.rs$:[._]github

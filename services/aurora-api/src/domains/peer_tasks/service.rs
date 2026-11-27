@@ -549,8 +549,40 @@ async fn close_inner(
             format!("Task to {who} was closed: it used up its budget of {n} messages."),
         ),
     };
-    post_report(conn, &closed, code, &line, report.as_deref()).await?;
+    post_report(conn, &closed, code, &line, report.as_deref(), None).await?;
+    // (FIX-252) The task ended without its approvals: any approval still pending in its
+    // conversation is abandoned (the origin card settles, the outcome notices stop).
+    let abandoned = aurora_db::repo::approvals::abandon_pending_of_conversation(
+        conn,
+        closed.task_conversation_id,
+    )
+    .await?;
+    for e in &abandoned {
+        tracing::info!(approval = %e.id, task = %closed.id, "peer task closed with a pending approval abandoned");
+    }
     Ok(Some(closed))
+}
+
+/// The one durable notice in the origin conversation.
+async fn post_notice(
+    conn: &mut PgConnection,
+    task: &PeerTaskRow,
+    code: &str,
+    line: &str,
+    extra: Option<Value>,
+) -> Result<(), ApiError> {
+    if !convs::lock(&mut *conn, task.origin_conversation_id).await? {
+        return Ok(());
+    }
+    let mut payload = json!({"code": code, "text": line, "peer_task_id": task.id,
+        "status": task.status});
+    if let Some(map) = extra.as_ref().and_then(|e| e.as_object()) {
+        for (k, v) in map {
+            payload[k] = v.clone();
+        }
+    }
+    conv::append_event(conn, task.origin_conversation_id, None, "notice", &payload).await?;
+    Ok(())
 }
 
 /// The one report: a durable `notice` in the origin conversation, plus a system follow-up turn
@@ -561,16 +593,13 @@ async fn post_report(
     code: &str,
     line: &str,
     report: Option<&str>,
+    extra: Option<Value>,
 ) -> Result<(), ApiError> {
-    if !convs::lock(&mut *conn, task.origin_conversation_id).await? {
-        return Ok(());
-    }
-    let mut payload = json!({"code": code, "text": line, "peer_task_id": task.id,
-        "status": task.status});
+    let mut extra = extra.unwrap_or_else(|| json!({}));
     if let Some(r) = report {
-        payload["report"] = json!(r);
+        extra["report"] = json!(r);
     }
-    conv::append_event(conn, task.origin_conversation_id, None, "notice", &payload).await?;
+    post_notice(conn, task, code, line, Some(extra)).await?;
     if turns::active_turn(&mut *conn, task.origin_conversation_id)
         .await?
         .is_some()
@@ -716,6 +745,213 @@ pub async fn cancel(
     }
 }
 
+/// (FIX-252) How a requester-side cancel ended: the task, already closed, or no such task of
+/// theirs (the stored requester is the fire-time identity; nobody else may cancel).
+#[allow(clippy::large_enum_variant)] // one short-lived row per call; the other variants are tiny
+pub enum RequesterCancel {
+    Done(PeerTaskRow),
+    AlreadyClosed,
+    NotYours,
+}
+
+/// (FIX-252) The person who asked cancels their task from the origin card or the web route:
+/// only the stored `requester_user_id`, and only while the task is open.
+pub async fn cancel_by_requester(
+    conn: &mut PgConnection,
+    user: Uuid,
+    id: Uuid,
+) -> Result<RequesterCancel, ApiError> {
+    let Some(task) = repo::get_for_update(&mut *conn, id)
+        .await?
+        .filter(|t| t.requester_user_id == Some(user))
+    else {
+        return Ok(RequesterCancel::NotYours);
+    };
+    match close_with_promotion(conn, &task, &Close::Cancelled(None)).await? {
+        Some(t) => Ok(RequesterCancel::Done(t)),
+        None => Ok(RequesterCancel::AlreadyClosed),
+    }
+}
+
+/// (FIX-252) The origin card's **Ask an approver**, shared by the channel button and the web
+/// route: e-mails the people with `can_approve` in the approval's workspace at once — the same
+/// mail the notifier sends, claimed so the sweep does not repeat it. It grants nobody a right;
+/// a failed mail is logged and never fails the ask. Returns the deciders e-mailed.
+pub async fn ask_approvers(
+    s: &crate::app::AppState,
+    a: &aurora_db::repo::approvals::ApprovalRow,
+) -> Result<usize, ApiError> {
+    let deciders = aurora_db::repo::approval_notify::deciders(
+        &s.pool,
+        a.org_id,
+        a.workspace_id,
+        a.conversation_id,
+    )
+    .await?;
+    let u = ask_mail_facts(&s.pool, a).await?;
+    let mut mailed = 0usize;
+    for d in &deciders {
+        // The ask is the approval's initial mail: claiming it keeps the notifier from sending
+        // the same mail again after the delay.
+        if aurora_db::repo::approval_notify::claim(&s.pool, a.id, d.user_id, "gateway", "mail")
+            .await?
+        {
+            mailed += 1;
+            let mail = crate::domains::approvals::notify::approval_mail(
+                &s.config.external_url,
+                &d.email,
+                &u,
+                0,
+            );
+            if let Err(e) = s.mailer.send(mail).await {
+                // A failed notice never fails or undoes the ask.
+                tracing::error!(error = %e, "approval ask e-mail send failed");
+            }
+        }
+    }
+    Ok(mailed)
+}
+
+/// (FIX-252) The mail facts of a peer approval's **Ask an approver**: the same sanitized facts
+/// the approval notifier sends (title as one line, never a request body or summary field).
+async fn ask_mail_facts(
+    pool: &PgPool,
+    a: &aurora_db::repo::approvals::ApprovalRow,
+) -> Result<aurora_db::repo::approval_notify::Unseen, ApiError> {
+    let (workspace_name, workspace_slug, org_slug) =
+        aurora_db::repo::approval_notify::workspace_labels(pool, a.workspace_id)
+            .await?
+            .unwrap_or_else(|| ("the workspace".into(), "workspace".into(), "org".into()));
+    let (org_name,): (String,) = sqlx::query_as("SELECT name FROM organizations WHERE id = $1")
+        .bind(a.org_id)
+        .fetch_one(pool)
+        .await
+        .map_err(DbError::from)?;
+    let title = match a.summary.get("source").and_then(|v| v.as_str()) {
+        Some("generic") | None => format!("send a {} request to {}", a.method, a.host),
+        _ => a
+            .summary
+            .get("title")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("send a {} request to {}", a.method, a.host)),
+    };
+    Ok(aurora_db::repo::approval_notify::Unseen {
+        id: a.id,
+        kind: "gateway".into(),
+        org_id: a.org_id,
+        workspace_id: a.workspace_id,
+        agent_id: a.agent_id,
+        conversation_id: a.conversation_id,
+        batch_id: a.batch_id.clone(),
+        title,
+        rule_name: a.rule_name.clone(),
+        expires_at: a.deadline,
+        agent_name: a.agent_name.clone().unwrap_or_else(|| "unknown".into()),
+        workspace_name,
+        workspace_slug,
+        org_name,
+        org_slug,
+    })
+}
+
+/// (FIX-252) The origin side of an approval raised in a task conversation, called from the
+/// approval transcript writers (`approvals/transcript.rs`) so the decision transaction, the bus
+/// listener and the sweeps all reach it without duplicating: a `peer_waiting_for_approval`
+/// notice when the approval is raised (no follow-up turn — the person is already in the thread
+/// or gets the card), and a `peer_approval_decided` notice with the delegating agent's
+/// follow-up turn when it is answered or expires (as `post_report` does for completion).
+/// Idempotent: the notice's existence check makes redelivery harmless. D-178: the line carries
+/// the agent, the action in words and who asked — never the request's fields.
+pub async fn approval_notice(
+    conn: &mut PgConnection,
+    row: &aurora_db::repo::approvals::ApprovalRow,
+) -> Result<(), ApiError> {
+    if !matches!(
+        row.status.as_str(),
+        "pending" | "approved" | "denied" | "expired"
+    ) {
+        return Ok(());
+    }
+    let Some(cid) = row.conversation_id else {
+        return Ok(());
+    };
+    let Some(task) = repo::by_task_conversation(&mut *conn, cid).await? else {
+        return Ok(());
+    };
+    let a = crate::domains::approvals::dto::Approval::from(row.clone());
+    let action = sanitize::one_line(&a.sentence.action, 120);
+    // The target workspace, so the web card asks the API whether its reader may decide there
+    // (never inferred client-side) and can name it.
+    let mut extra = json!({"approval_id": row.id, "workspace_id": row.workspace_id});
+    let (code, line) = match row.status.as_str() {
+        "pending" => {
+            let asker = agent(conn, task.from_agent_id).await?;
+            (
+                "peer_waiting_for_approval",
+                format!(
+                    "{} is waiting for your approval to {} (asked for by {})",
+                    a.sentence.agent.name,
+                    action,
+                    agent_label(&asker)
+                ),
+            )
+        }
+        "approved" | "denied" => {
+            extra["outcome"] = json!(row.status);
+            // (FIX-252 review, D-178 Q-R5-9) The approver's name is a detail: a shared origin
+            // space (the thread link is not `direct`) gets the fact only, the name stays in a
+            // direct conversation — the same redaction the origin card follows. No thread link
+            // (a web chat) is the requester's own conversation.
+            let shared = aurora_db::repo::channel_cards::latest_thread_link(
+                &mut *conn,
+                task.origin_conversation_id,
+            )
+            .await?
+            .is_some_and(|l| l.kind != "direct");
+            let by = match row.decided_by_name.as_deref() {
+                Some(n) if !shared => format!(" by {}", sanitize::one_line(n, 120)),
+                _ => String::new(),
+            };
+            (
+                "peer_approval_decided",
+                format!("The approval to {action} was {}{by}.", row.status),
+            )
+        }
+        _ => {
+            extra["outcome"] = json!("expired");
+            (
+                "peer_approval_decided",
+                format!("The approval to {action} expired without a decision."),
+            )
+        }
+    };
+    let line = sanitize::one_line(&line, 240);
+    // One notice per (code, approval): the decision transaction, the bus listener and the sweeps
+    // all reach this, and one pass can write both the `pending` transcript event and the outcome
+    // (an expired row the listener never saw waiting), so the event's own check is not enough.
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM transcript_events WHERE conversation_id = $1 \
+         AND type = 'notice' AND payload->>'code' = $2 AND payload->>'approval_id' = $3)",
+    )
+    .bind(task.origin_conversation_id)
+    .bind(code)
+    .bind(row.id.to_string())
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(DbError::from)?;
+    if exists {
+        return Ok(());
+    }
+    if row.status == "pending" {
+        // The person is already in the thread or gets the card: no follow-up turn.
+        post_notice(conn, &task, code, &line, Some(extra)).await
+    } else {
+        post_report(conn, &task, code, &line, None, Some(extra)).await
+    }
+}
+
 // ---------------------------------------------------------------- turn hook
 
 /// Hook from `lifecycle::finish`: the receiving agent's turn in a task conversation ended while
@@ -730,6 +966,14 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
         return Ok(());
     };
     if task.status != "open" {
+        return Ok(());
+    }
+    // (FIX-252) A task waiting for an approval is not cancelled by the end of the receiving
+    // turn: the approval's own decision or deadline ends the wait (FIX-253 generalizes the
+    // waiting state).
+    if aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, t.conversation_id)
+        .await?
+    {
         return Ok(());
     }
     let why = match t.status.as_str() {

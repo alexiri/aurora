@@ -1415,6 +1415,425 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         );
                     }
                 }
+                // (lane review 2026-11-25) A `project` selects named fields of every answer
+                // item: plain `$`-paths only (no wildcards, no filters), at most 8.
+                if let Some(project) = &it.project {
+                    let pp = format!("/tools/{gname}/items/{j}/project");
+                    if project.is_empty() || project.len() > 8 {
+                        cx.v(
+                            "tool_project",
+                            &pp,
+                            format!("tool `{}`: `project` holds 1 to 8 paths", it.id),
+                        );
+                    }
+                    for p in project {
+                        match crate::library::JsonPath::parse(p) {
+                            Ok(path) if path.simple() => {}
+                            _ => cx.v(
+                                "tool_project",
+                                &pp,
+                                format!(
+                                    "tool `{}`: `{p}` is not a plain `$`-path of member names",
+                                    it.id
+                                ),
+                            ),
+                        }
+                    }
+                }
+                // A `body_check` only ever refuses, and its key names are quoted in the
+                // refusal message, so they are plain identifiers and the lists stay small.
+                if let Some(bc) = &it.body_check {
+                    let bp = format!("/tools/{gname}/items/{j}/body_check");
+                    let key_ok = |k: &str| {
+                        !k.is_empty()
+                            && k.len() <= 64
+                            && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    };
+                    macro_rules! name {
+                        ($field:expr, $k:expr) => {
+                            if !key_ok($k) {
+                                cx.v(
+                                    "body_check_key",
+                                    &format!("{bp}/{}", $field),
+                                    format!(
+                                        "tool `{}`: `{}` names `{}`, not an identifier of at most 64 characters",
+                                        it.id, $field, $k
+                                    ),
+                                );
+                            }
+                        };
+                    }
+                    if bc.refuse_keys.len() > 8 {
+                        cx.v(
+                            "body_check_refuse_keys",
+                            &format!("{bp}/refuse_keys"),
+                            format!("tool `{}`: `refuse_keys` holds at most 8 keys", it.id),
+                        );
+                    }
+                    for (a, k) in bc.refuse_keys.iter().enumerate() {
+                        if bc.refuse_keys[..a].contains(k) {
+                            cx.v(
+                                "body_check_refuse_keys",
+                                &format!("{bp}/refuse_keys"),
+                                format!("tool `{}`: `refuse_keys` names `{k}` twice", it.id),
+                            );
+                        }
+                        name!("refuse_keys", k);
+                    }
+                    if bc.allow_keys.len() > 16 {
+                        cx.v(
+                            "body_check_allow_keys",
+                            &format!("{bp}/allow_keys"),
+                            format!("tool `{}`: `allow_keys` holds at most 16 keys", it.id),
+                        );
+                    }
+                    for k in &bc.allow_keys {
+                        name!("allow_keys", k);
+                    }
+                    if bc.only_keys.len() > 8 {
+                        cx.v(
+                            "body_check_only_keys",
+                            &format!("{bp}/only_keys"),
+                            format!("tool `{}`: `only_keys` covers at most 8 keys", it.id),
+                        );
+                    }
+                    for (k, allowed) in &bc.only_keys {
+                        name!("only_keys", k);
+                        if allowed.is_empty() {
+                            cx.v(
+                                "body_check_only_keys",
+                                &format!("{bp}/only_keys/{k}"),
+                                format!(
+                                    "tool `{}`: `only_keys.{k}` allows at least one key",
+                                    it.id
+                                ),
+                            );
+                        }
+                        if allowed.len() > 16 {
+                            cx.v(
+                                "body_check_only_keys",
+                                &format!("{bp}/only_keys/{k}"),
+                                format!("tool `{}`: `only_keys.{k}` allows at most 16 keys", it.id),
+                            );
+                        }
+                        for a in allowed {
+                            name!("only_keys", a);
+                        }
+                    }
+                    for (k, len) in &bc.exact_len {
+                        name!("exact_len", k);
+                        if *len == 0 {
+                            cx.v(
+                                "body_check_exact_len",
+                                &format!("{bp}/exact_len/{k}"),
+                                format!("tool `{}`: `exact_len.{k}` is at least 1", it.id),
+                            );
+                        }
+                    }
+                    for (k, allowed) in &bc.entry_keys {
+                        name!("entry_keys", k);
+                        if allowed.is_empty() {
+                            cx.v(
+                                "body_check_entry_keys",
+                                &format!("{bp}/entry_keys/{k}"),
+                                format!(
+                                    "tool `{}`: `entry_keys.{k}` allows at least one key",
+                                    it.id
+                                ),
+                            );
+                        }
+                        if allowed.len() > 16 {
+                            cx.v(
+                                "body_check_entry_keys",
+                                &format!("{bp}/entry_keys/{k}"),
+                                format!(
+                                    "tool `{}`: `entry_keys.{k}` allows at most 16 keys",
+                                    it.id
+                                ),
+                            );
+                        }
+                        for a in allowed {
+                            name!("entry_keys", a);
+                        }
+                    }
+                    for (k, ev) in &bc.entry_value {
+                        name!("entry_value", k);
+                        name!("entry_value", &ev.key);
+                        // The rule forces `key` onto every entry from `from` on: a key the
+                        // matching `entry_keys` does not list would have the two rules refuse
+                        // every body, whatever it carries.
+                        if !bc
+                            .entry_keys
+                            .get(k)
+                            .is_some_and(|allowed| allowed.contains(&ev.key))
+                        {
+                            cx.v(
+                                "body_check_entry_value",
+                                &format!("{bp}/entry_value/{k}/key"),
+                                format!(
+                                    "tool `{}`: `entry_value.{k}.key` names `{}`, which `entry_keys.{k}` does not list",
+                                    it.id, ev.key
+                                ),
+                            );
+                        }
+                        if ev.from > 64 {
+                            cx.v(
+                                "body_check_entry_value",
+                                &format!("{bp}/entry_value/{k}/from"),
+                                format!("tool `{}`: `entry_value.{k}.from` is at most 64", it.id),
+                            );
+                        }
+                        if ev.value.is_object() || ev.value.is_array() {
+                            cx.v(
+                                "body_check_entry_value",
+                                &format!("{bp}/entry_value/{k}/value"),
+                                format!(
+                                    "tool `{}`: `entry_value.{k}.value` is a scalar the body must carry exactly",
+                                    it.id
+                                ),
+                            );
+                        } else if ev.value.to_string().len() > 64 {
+                            cx.v(
+                                "body_check_entry_value",
+                                &format!("{bp}/entry_value/{k}/value"),
+                                format!(
+                                    "tool `{}`: `entry_value.{k}.value` is at most 64 characters of JSON",
+                                    it.id
+                                ),
+                            );
+                        }
+                    }
+                    for (k, members) in &bc.entry_member {
+                        name!("entry_member", k);
+                        if members.len() > 8 {
+                            cx.v(
+                                "body_check_entry_member",
+                                &format!("{bp}/entry_member/{k}"),
+                                format!(
+                                    "tool `{}`: `entry_member.{k}` checks at most 8 members",
+                                    it.id
+                                ),
+                            );
+                        }
+                        for m in members {
+                            // The member path is quoted in the refusal message: object keys
+                            // and array indexes, at most 8 of them.
+                            let segs: Vec<&str> = m.member.split('/').collect();
+                            let seg_ok = |s: &str| s.parse::<u32>().is_ok() || key_ok(s);
+                            if m.member.is_empty()
+                                || segs.len() > 8
+                                || segs.iter().any(|s| !seg_ok(s))
+                            {
+                                cx.v(
+                                    "body_check_key",
+                                    &format!("{bp}/entry_member/{k}/member"),
+                                    format!(
+                                        "tool `{}`: `entry_member.{k}.member` is a path of at most 8 identifiers or indexes",
+                                        it.id
+                                    ),
+                                );
+                            }
+                            if m.at > 64 {
+                                cx.v(
+                                    "body_check_entry_member",
+                                    &format!("{bp}/entry_member/{k}/at"),
+                                    format!(
+                                        "tool `{}`: `entry_member.{k}.at` is at most 64",
+                                        it.id
+                                    ),
+                                );
+                            }
+                            if m.keys.is_empty() {
+                                cx.v(
+                                    "body_check_entry_member",
+                                    &format!("{bp}/entry_member/{k}/keys"),
+                                    format!(
+                                        "tool `{}`: `entry_member.{k}.keys` allows at least one key",
+                                        it.id
+                                    ),
+                                );
+                            }
+                            if m.keys.len() > 16 {
+                                cx.v(
+                                    "body_check_entry_member",
+                                    &format!("{bp}/entry_member/{k}/keys"),
+                                    format!(
+                                        "tool `{}`: `entry_member.{k}.keys` allows at most 16 keys",
+                                        it.id
+                                    ),
+                                );
+                            }
+                            for a in &m.keys {
+                                name!("entry_member", a);
+                            }
+                            if let Some(v) = &m.value {
+                                name!("entry_member", &v.key);
+                                if v.value.is_object() || v.value.is_array() {
+                                    cx.v(
+                                        "body_check_entry_member",
+                                        &format!("{bp}/entry_member/{k}/value"),
+                                        format!(
+                                            "tool `{}`: `entry_member.{k}.value` is a scalar the body must carry exactly",
+                                            it.id
+                                        ),
+                                    );
+                                } else if v.value.to_string().len() > 64 {
+                                    cx.v(
+                                        "body_check_entry_member",
+                                        &format!("{bp}/entry_member/{k}/value"),
+                                        format!(
+                                            "tool `{}`: `entry_member.{k}.value` is at most 64 characters of JSON",
+                                            it.id
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    if bc.value.len() > 8 {
+                        cx.v(
+                            "body_check_value",
+                            &format!("{bp}/value"),
+                            format!("tool `{}`: `value` covers at most 8 keys", it.id),
+                        );
+                    }
+                    for (k, v) in &bc.value {
+                        name!("value", k);
+                        if v.is_object() || v.is_array() {
+                            cx.v(
+                                "body_check_value",
+                                &format!("{bp}/value/{k}"),
+                                format!(
+                                    "tool `{}`: `value.{k}` is a scalar the body must carry exactly",
+                                    it.id
+                                ),
+                            );
+                        } else if v.to_string().len() > 64 {
+                            cx.v(
+                                "body_check_value",
+                                &format!("{bp}/value/{k}"),
+                                format!(
+                                    "tool `{}`: `value.{k}` is at most 64 characters of JSON",
+                                    it.id
+                                ),
+                            );
+                        }
+                    }
+                    if bc.kinds.len() > 8 {
+                        cx.v(
+                            "body_check_kinds",
+                            &format!("{bp}/kinds"),
+                            format!("tool `{}`: `kinds` covers at most 8 keys", it.id),
+                        );
+                    }
+                    for (k, kinds) in &bc.kinds {
+                        name!("kinds", k);
+                        if kinds.is_empty() {
+                            cx.v(
+                                "body_check_kinds",
+                                &format!("{bp}/kinds/{k}"),
+                                format!("tool `{}`: `kinds.{k}` allows at least one kind", it.id),
+                            );
+                        }
+                        if kinds.len() > 4 {
+                            cx.v(
+                                "body_check_kinds",
+                                &format!("{bp}/kinds/{k}"),
+                                format!("tool `{}`: `kinds.{k}` allows at most 4 kinds", it.id),
+                            );
+                        }
+                        for (a, kind) in kinds.iter().enumerate() {
+                            if kinds[..a].contains(kind) {
+                                cx.v(
+                                    "body_check_kinds",
+                                    &format!("{bp}/kinds/{k}"),
+                                    format!("tool `{}`: `kinds.{k}` names `{kind:?}` twice", it.id),
+                                );
+                            }
+                        }
+                    }
+                    for (k, pins) in &bc.entry_at {
+                        name!("entry_at", k);
+                        if pins.is_empty() {
+                            cx.v(
+                                "body_check_entry_at",
+                                &format!("{bp}/entry_at/{k}"),
+                                format!("tool `{}`: `entry_at.{k}` holds at least one pin", it.id),
+                            );
+                        }
+                        if pins.len() > 16 {
+                            cx.v(
+                                "body_check_entry_at",
+                                &format!("{bp}/entry_at/{k}"),
+                                format!("tool `{}`: `entry_at.{k}` holds at most 16 pins", it.id),
+                            );
+                        }
+                        for p in pins {
+                            name!("entry_at", &p.key);
+                            if p.at > 64 {
+                                cx.v(
+                                    "body_check_entry_at",
+                                    &format!("{bp}/entry_at/{k}/at"),
+                                    format!("tool `{}`: `entry_at.{k}.at` is at most 64", it.id),
+                                );
+                            }
+                            if let Some(m) = &p.member {
+                                // The member path is quoted in the refusal message: object
+                                // keys and array indexes, at most 8 of them.
+                                let segs: Vec<&str> = m.split('/').collect();
+                                let seg_ok = |s: &str| s.parse::<u32>().is_ok() || key_ok(s);
+                                if m.is_empty() || segs.len() > 8 || segs.iter().any(|s| !seg_ok(s))
+                                {
+                                    cx.v(
+                                        "body_check_key",
+                                        &format!("{bp}/entry_at/{k}/member"),
+                                        format!(
+                                            "tool `{}`: `entry_at.{k}.member` is a path of at most 8 identifiers or indexes",
+                                            it.id
+                                        ),
+                                    );
+                                }
+                            } else {
+                                // A pin on the entry itself forces a key onto it: one
+                                // `entry_keys` lists, or the two rules contradict each
+                                // other and refuse every body, whatever it carries.
+                                if !bc
+                                    .entry_keys
+                                    .get(k)
+                                    .is_some_and(|allowed| allowed.contains(&p.key))
+                                {
+                                    cx.v(
+                                        "body_check_entry_at",
+                                        &format!("{bp}/entry_at/{k}/key"),
+                                        format!(
+                                            "tool `{}`: `entry_at.{k}.key` names `{}`, which `entry_keys.{k}` does not list",
+                                            it.id, p.key
+                                        ),
+                                    );
+                                }
+                            }
+                            if p.value.is_object() || p.value.is_array() {
+                                cx.v(
+                                    "body_check_entry_at",
+                                    &format!("{bp}/entry_at/{k}/value"),
+                                    format!(
+                                        "tool `{}`: `entry_at.{k}.value` is a scalar the body must carry exactly",
+                                        it.id
+                                    ),
+                                );
+                            } else if p.value.to_string().len() > 64 {
+                                cx.v(
+                                    "body_check_entry_at",
+                                    &format!("{bp}/entry_at/{k}/value"),
+                                    format!(
+                                        "tool `{}`: `entry_at.{k}.value` is at most 64 characters of JSON",
+                                        it.id
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }

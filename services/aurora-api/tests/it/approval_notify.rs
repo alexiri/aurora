@@ -347,3 +347,325 @@ async fn stream_registers_a_watcher_and_created_carries_only_the_notice() {
         "{seen}"
     );
 }
+
+// ---------------------------------------------------------------- FIX-252: the requester
+
+/// A pending gateway approval raised in a peer task conversation that `requester` asked for.
+async fn peer_approval(h: &Harness, f: &crate::approvals::Fx, requester: Uuid) -> Uuid {
+    let p = h.pool();
+    let from = crate::approvals::agent(h, f.org, f.ws, "delegator").await;
+    let (a, b) = if from < f.agent {
+        (from, f.agent)
+    } else {
+        (f.agent, from)
+    };
+    let link = Uuid::now_v7();
+    sqlx::query("INSERT INTO agent_links (id, agent_a_id, agent_b_id, policy_a, policy_b) VALUES ($1,$2,$3,'allow','allow')")
+        .bind(link).bind(a).bind(b).execute(p).await.unwrap();
+    let origin = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'api',$1::text, now())",
+    )
+    .bind(origin).bind(from).bind(f.ws).execute(p).await.unwrap();
+    let task = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'peer',$1::text, now())",
+    )
+    .bind(task).bind(f.agent).bind(f.ws).execute(p).await.unwrap();
+    sqlx::query(
+        "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
+            origin_conversation_id, task_conversation_id, status, message_budget, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'open',20, now() + interval '1 day')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(link)
+    .bind(from)
+    .bind(f.agent)
+    .bind(requester)
+    .bind(origin)
+    .bind(task)
+    .execute(p)
+    .await
+    .unwrap();
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, gateway_instance_id, conversation_id,
+            method, host, path, summary, status, deadline)
+         VALUES ($1,$2,$3,$4,$5,$6,'POST','api.example.com','/x',
+            '{\"title\":\"Deploy\",\"fields\":[{\"label\":\"k\",\"value\":\"SECRETFIELD\"}],\"source\":\"template\"}',
+            'pending', now() + interval '10 minutes')",
+    )
+    .bind(id).bind(f.org).bind(f.ws).bind(f.agent).bind(f.gw).bind(task)
+    .execute(p).await.unwrap();
+    id
+}
+
+/// (FIX-252) The person who asked for the task is mailed about the approval wait once — after
+/// the same delay as every approval mail, with the one-line facts only (D-178), whatever
+/// surfaces the approval already has.
+#[tokio::test]
+async fn the_requester_of_a_peer_task_is_mailed_about_the_wait_once() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    // No decider binding in the workspace at all: the decider mail serves nobody.
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0);
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    let mails = h.mail.sent();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, "req@x.io");
+    assert!(
+        mails[0]
+            .subject
+            .contains("Your delegated task is waiting for an approval"),
+        "{}",
+        mails[0].subject
+    );
+    assert!(
+        mails[0].body.contains("What: Bot wants to Deploy"),
+        "{}",
+        mails[0].body
+    );
+    assert!(!mails[0].body.contains("SECRETFIELD"), "{}", mails[0].body);
+    assert!(
+        mails[0].link.ends_with(&format!("/approvals?focus={id}")),
+        "{}",
+        mails[0].link
+    );
+    // Claimed: the next sweep does not repeat it.
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0);
+    assert_eq!(h.mail.sent().len(), 1);
+}
+
+/// (FIX-252) A requester who is also a decider is served once: the mail claim is the shared
+/// `(approval, user, stage)` row.
+#[tokio::test]
+async fn a_requester_who_is_also_a_decider_gets_one_mail() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", Some("approver")).await;
+    peer_approval(&h, &f, requester).await;
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(h.mail.sent().len(), 1);
+    assert_eq!(h.mail.sent()[0].to, "req@x.io");
+}
+
+/// (FIX-252) The requester's mail follows the deciders' rule: while a live surface already
+/// shows the card — here the origin card posted to the thread they asked in — nothing is sent;
+/// once the surface is gone the mail goes out after the same delay.
+#[tokio::test]
+async fn a_live_card_at_the_origin_keeps_the_requesters_mail_quiet() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    // The origin card finished posting: the person asked in that thread and sees it there.
+    let integ = Uuid::now_v7();
+    sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', '{}', 'active')")
+        .bind(vec![0u8; 32]).execute(h.pool()).await.unwrap();
+    sqlx::query("INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label, config, credentials_ref, status) VALUES ($1,$2,'chat','T','T','{}','x','active')")
+        .bind(integ).bind(f.org).execute(h.pool()).await.unwrap();
+    let op = Uuid::now_v7();
+    sqlx::query("INSERT INTO channel_ops (id, connector_id, integration_id, kind, payload, dedupe_key, status) VALUES ($1,'chat',$2,'message.post','{}','k1','done')")
+        .bind(op).bind(integ).execute(h.pool()).await.unwrap();
+    let card = Uuid::now_v7();
+    sqlx::query("INSERT INTO channel_cards (id, subject_kind, subject_id, integration_id, post_op_id, space_ref, thread_ref, state) VALUES ($1,'approval',$2,$3,$4,'C','t','posted')")
+        .bind(card).bind(id).bind(integ).bind(op).execute(h.pool()).await.unwrap();
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0, "card delivered");
+    assert!(h.mail.sent().is_empty());
+    // The surface goes away (the post was withdrawn): the mail is the fallback.
+    sqlx::query("DELETE FROM channel_cards WHERE id = $1")
+        .bind(card)
+        .execute(h.pool())
+        .await
+        .unwrap();
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(h.mail.sent().len(), 1);
+    assert_eq!(h.mail.sent()[0].to, "req@x.io");
+}
+
+/// (FIX-252) A requester watching the approvals page live (a fresh watcher row of their own,
+/// possible only when they can decide there) is not mailed about the wait either.
+#[tokio::test]
+async fn a_requester_watching_live_is_not_mailed() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", Some("approver")).await;
+    peer_approval(&h, &f, requester).await;
+    sqlx::query("INSERT INTO approval_watchers (replica_id, user_id, workspace_id, last_seen_at) VALUES ($1,$2,$3,now())")
+        .bind(Uuid::now_v7()).bind(requester).bind(f.ws).execute(h.pool()).await.unwrap();
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 0);
+    assert!(h.mail.sent().is_empty());
+}
+
+/// A posted card for `approval` whose `message.post` op is done (the FIX-252 review's card
+/// fixtures: the same shape `fanout` writes, at whatever thread the post went to).
+async fn posted_card(h: &Harness, approval: Uuid, org: Uuid) {
+    let integ = Uuid::now_v7();
+    sqlx::query("INSERT INTO connectors (id, token_hash, display_name, manifest, status) VALUES ('chat', $1, 'chat', '{}', 'active')")
+        .bind(vec![0u8; 32]).execute(h.pool()).await.unwrap();
+    sqlx::query("INSERT INTO channel_integrations (id, org_id, connector_id, tenant_ref, tenant_label, config, credentials_ref, status) VALUES ($1,$2,'chat','T','T','{}','x','active')")
+        .bind(integ).bind(org).execute(h.pool()).await.unwrap();
+    let op = Uuid::now_v7();
+    sqlx::query("INSERT INTO channel_ops (id, connector_id, integration_id, kind, payload, dedupe_key, status) VALUES ($1,'chat',$2,'message.post','{}','k1','done')")
+        .bind(op).bind(integ).execute(h.pool()).await.unwrap();
+    sqlx::query("INSERT INTO channel_cards (id, subject_kind, subject_id, integration_id, post_op_id, space_ref, thread_ref, state) VALUES ($1,'approval',$2,$3,$4,'C','t','posted')")
+        .bind(Uuid::now_v7()).bind(approval).bind(integ).bind(op).execute(h.pool()).await.unwrap();
+}
+
+// ------------------------------------------------- FIX-252 review: the approvers' mail
+
+/// (FIX-252 review a) A peer approval whose card was posted to the REQUESTER'S origin thread
+/// still e-mails the approvers after the delay: the card at the origin is for the requester,
+/// not for the approvers, so it is no live surface for them (D-178's push went out, the mail
+/// never did).
+#[tokio::test]
+async fn the_origin_card_does_not_keep_the_approvers_mail_quiet() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    person(&h, &f, "appr@x.io", "member", Some("approver")).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    posted_card(&h, id, f.org).await;
+    age(&h).await;
+    assert_eq!(
+        notify_once(&h.state).await.unwrap(),
+        1,
+        "approvers mailed despite the origin card"
+    );
+    assert_eq!(recipients(&h), BTreeSet::from(["appr@x.io".to_owned()]));
+}
+
+/// (FIX-252 review b) The requester's claim (their own channels, another replica) must never
+/// suppress the approvers' mail: only a decider's own claim counts.
+#[tokio::test]
+async fn the_requesters_claim_does_not_suppress_the_approvers_mail() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    person(&h, &f, "appr@x.io", "member", Some("approver")).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    // The requester's sweep ran first and claimed the mail.
+    sqlx::query(
+        "INSERT INTO approval_notifications (approval_id, user_id, kind, sent_at, delivery) \
+         VALUES ($1,$2,'gateway',now(),'mail')",
+    )
+    .bind(id)
+    .bind(requester)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(recipients(&h), BTreeSet::from(["appr@x.io".to_owned()]));
+}
+
+/// (FIX-252 review c) And the reverse: an approver's claim must not suppress the requester's
+/// mail (that query only ever looks at the requester's own row).
+#[tokio::test]
+async fn an_approvers_claim_does_not_suppress_the_requesters_mail() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let approver = person(&h, &f, "appr@x.io", "member", Some("approver")).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    let id = peer_approval(&h, &f, requester).await;
+    // A decider was served by another replica.
+    sqlx::query(
+        "INSERT INTO approval_notifications (approval_id, user_id, kind, sent_at, delivery) \
+         VALUES ($1,$2,'gateway',now(),'mail')",
+    )
+    .bind(id)
+    .bind(approver)
+    .execute(h.pool())
+    .await
+    .unwrap();
+    age(&h).await;
+    assert_eq!(notify_once(&h.state).await.unwrap(), 1);
+    assert_eq!(recipients(&h), BTreeSet::from(["req@x.io".to_owned()]));
+}
+
+/// (FIX-252) The web card's **Ask an approver** route serves the stored requester and nobody
+/// else (the route inventory's REQUESTER list): the ask mails the deciders at once (claimed,
+/// so the notifier does not repeat it), another person's and an org admin's session find
+/// nothing (404), another user's API key never reaches the session-only route, and the
+/// requester can ask.
+#[tokio::test]
+async fn the_ask_route_serves_the_stored_requester_only() {
+    let h = Harness::new().await;
+    let f = fixture(&h).await;
+    let requester = person(&h, &f, "req@x.io", "member", None).await;
+    person(&h, &f, "appr@x.io", "member", Some("approver")).await;
+    let id = peer_approval(&h, &f, requester).await;
+    let uri = format!("/v1/approvals/{id}/ask-approver");
+    let (_, tok) = h.good_session(requester).await;
+    // The person who asked: the deciders are e-mailed at once.
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("cookie", &cookie(&tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["asked"], 1, "{v}");
+    assert_eq!(h.mail.sent().len(), 1);
+    assert_eq!(h.mail.sent()[0].to, "appr@x.io");
+    // Claimed: a second ask mails nobody (and the notifier will not repeat it).
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("cookie", &cookie(&tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["asked"], 0, "{v}");
+    assert_eq!(h.mail.sent().len(), 1);
+    // Another person: not their task, 404.
+    let other = person(&h, &f, "other@x.io", "member", None).await;
+    let (_, other_tok) = h.good_session(other).await;
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("cookie", &cookie(&other_tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    // An org admin with no workspace binding: no administrative right reaches this route.
+    let admin = h.user("admin@x.io", false).await;
+    h.member(f.org, admin, "admin", "active").await;
+    let (_, admin_tok) = h.good_session(admin).await;
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("cookie", &cookie(&admin_tok)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    // Another user's API key: the route takes sessions only.
+    let (_, key) = h.api_key(other, f.org, Some(f.ws), false).await;
+    let (s, _, v) = h
+        .send(
+            Method::POST,
+            &uri,
+            &[("authorization", &bearer(&key)), ("origin", ORIGIN)],
+            None,
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(v["error"]["code"], "session_required", "{v}");
+    assert_eq!(h.mail.sent().len(), 1);
+}

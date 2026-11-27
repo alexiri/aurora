@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { Avatar } from "@/components/agent-avatar";
@@ -9,7 +10,9 @@ import { CardGrid } from "@/components/ui/card-grid";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { AppIcon } from "@/components/ui/app-icon";
 import { Notice } from "@/components/ui/notice";
+import { useMe } from "@/lib/api/queries";
 import { useTemplatePlan, useWorkspaceTemplates, templateAvatarUrl, type TemplateCard } from "@/lib/api/agent-templates";
+import { adminRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 import { TemplateReadme } from "./template-readme";
@@ -196,6 +199,7 @@ export function TemplateGalleryDialog({
   onUse: (templateId: string) => void;
 }) {
   const appName = useAppName();
+  const me = useMe();
   const templates = useWorkspaceTemplates(wsId, open);
   const [selected, setSelected] = useState<string | null>(null);
   const card = templates.data?.items.find((t) => t.template_id === selected) ?? null;
@@ -229,7 +233,22 @@ export function TemplateGalleryDialog({
         ) : card ? (
           <TemplateDetails card={card} wsId={wsId} onBack={() => setSelected(null)} onUse={() => onUse(card.template_id)} />
         ) : templates.data.items.length === 0 ? (
-          <p className="py-6 text-center text-sm text-ink-2">No templates have been offered here yet.</p>
+          // (FIX-245) An empty gallery says why, and an administrator gets the way out: the versions
+          // may still be waiting for review.
+          <div className="space-y-2 py-6 text-center text-sm text-ink-2" data-testid="gallery-empty">
+            {me.data?.user.is_instance_admin ? (
+              <>
+                <p>No templates are approved yet. Review the ones waiting.</p>
+                <p>
+                  <Link className="text-link underline" href={adminRoutes.agentPolicy("templates")}>
+                    Open Agent templates
+                  </Link>
+                </p>
+              </>
+            ) : (
+              <p>Your administrators have not approved any agent templates yet.</p>
+            )}
+          </div>
         ) : (
           <CardGrid aria-label="Agent templates">
             {templates.data.items.map((t) => (

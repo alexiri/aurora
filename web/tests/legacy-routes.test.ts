@@ -19,6 +19,8 @@ const CASES: [string, string][] = [
   ["/admin/instances", "/admin/apps?tab=self-hosted"],
   ["/admin/oauth-clients", "/admin/apps?tab=oauth-clients"],
   ["/admin/connectors", "/admin/chat-platforms"],
+  // (FIX-245) The stored review address of the first template attention items: to the review page.
+  ["/admin/agent-templates/nightmanager/versions/1.4.0", "/admin/internet-access/templates/nightmanager/1.4.0"],
   ["/admin/secret-stores", "/admin/platform?tab=secret-stores"],
   ["/admin/runners", "/admin/platform?tab=runners"],
   ["/admin/storage", "/admin/data?tab=storage"],

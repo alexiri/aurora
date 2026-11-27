@@ -6,11 +6,11 @@ import { SecretBox, SecretOnce, useSecretCopy } from "@/components/ui/secret-onc
 
 /** A second one-time value in the dialog (the secret beside the address), with its own Copy. */
 function ValueBox({ label, value }: { label: string; value: string }) {
-  const { used, state, copy } = useSecretCopy(value);
+  const { used, state, copies, copy, boxRef } = useSecretCopy(value);
   return (
     <div className="space-y-1.5">
       <p className="text-sm font-medium text-ink">{label}</p>
-      <SecretBox secret={value} used={used} state={state} onCopy={copy} />
+      <SecretBox secret={value} used={used} state={state} onCopy={copy} copies={copies} boxRef={boxRef} />
     </div>
   );
 }

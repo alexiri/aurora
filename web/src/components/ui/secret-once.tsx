@@ -1,20 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CheckIcon } from "@/components/ui/icons";
 import { Dialog, DialogContent, type DialogSize } from "@/components/ui/dialog";
 
 /**
- * (P5-REFINE-2) The copy state of a one-time secret: `used` becomes true with the first successful copy and stays true,
- * `state` is the button's own ("copied" for two seconds, "failed" when the browser refused). The state lives with the
- * component that shows the secret, so it starts over with the next secret.
+ * (P5-REFINE-2, FIX-248) The copy state of a one-time secret: `used` becomes true with the first successful copy and
+ * stays true (it only gates the "You haven't copied it. Close anyway?" confirm), `state` is the button's own ("copied"
+ * for two seconds, "failed" when the browser refused), `copies` counts the successful copies (so the screen-reader line
+ * can word every one differently). `boxRef` sits on the secret's box, for the select-and-execCommand fallback. The state
+ * lives with the component that shows the secret, so it starts over with the next secret.
  */
 export function useSecretCopy(secret: string | null) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const [used, setUsed] = useState(false);
+  const [copies, setCopies] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const boxRef = useRef<HTMLElement | null>(null);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -23,29 +27,66 @@ export function useSecretCopy(secret: string | null) {
   );
   function copy() {
     if (secret === null) return;
-    let write: Promise<void> | undefined;
-    try {
-      write = navigator.clipboard?.writeText(secret);
-    } catch {
-      write = undefined;
-    }
-    if (!write) return setState("failed");
-    write.then(
-      () => {
-        setUsed(true);
-        setState("copied");
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => setState("idle"), 2000);
-      },
-      () => setState("failed"),
-    );
+    void writeToClipboard(secret, boxRef.current).then((ok) => {
+      if (!ok) return setState("failed");
+      setUsed(true);
+      setCopies((n) => n + 1);
+      setState("copied");
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setState("idle"), 2000);
+    });
   }
-  return { used, state, copy };
+  return { used, state, copies, copy, boxRef };
 }
 
 /**
- * The secret in a scrollable mono box that never wraps, with **Copy** on its right; Copy turns into **Copied** and stays
- * so once used. `data-testid="secret-key"` is on the box.
+ * The clipboard write. `navigator.clipboard.writeText` can be missing or refuse silently inside a dialog (a focus trap,
+ * an iframe, a non-secure context), so a refusal — or no async clipboard at all — falls back to selecting the box's text
+ * and the deprecated-but-ubiquitous `document.execCommand("copy")`.
+ */
+async function writeToClipboard(text: string, box: HTMLElement | null): Promise<boolean> {
+  let write: Promise<void> | undefined;
+  try {
+    write = navigator.clipboard?.writeText(text);
+  } catch {
+    write = undefined;
+  }
+  if (write) {
+    try {
+      await write;
+      return true;
+    } catch {
+      // fall through to the fallback
+    }
+  }
+  if (!box || typeof document.execCommand !== "function") return false;
+  const selection = window.getSelection();
+  if (!selection) return false;
+  const range = document.createRange();
+  range.selectNodeContents(box);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  selection.removeAllRanges();
+  return ok;
+}
+
+/** The screen-reader line's words after a copy: worded differently each time, because a repeated identical text is not announced. */
+function copiedWords(copies: number): string {
+  if (copies <= 1) return "Copied";
+  if (copies === 2) return "Copied again.";
+  return `Copied ${copies} times.`;
+}
+
+/**
+ * The secret in a scrollable mono box that never wraps, with **Copy** on its right; after a click it says **Copied** for
+ * about two seconds, then goes back to **Copy again** — every click copies and gives that feedback (FIX-248), and a
+ * refused copy keeps the button on Copy and says so in red. `data-testid="secret-key"` is on the box.
  */
 export function SecretBox({
   secret,
@@ -53,17 +94,25 @@ export function SecretBox({
   state,
   onCopy,
   copyLabel = "Copy",
+  copies = 0,
+  boxRef,
 }: {
   secret: string;
   used: boolean;
   state: "idle" | "copied" | "failed";
   onCopy: () => void;
   copyLabel?: string;
+  /** How many copies have succeeded, for the screen-reader line's wording. */
+  copies?: number;
+  /** Ref on the box, for the select-and-execCommand copy fallback. */
+  boxRef?: RefObject<HTMLElement | null>;
 }) {
+  const label = state === "copied" ? "Copied" : used ? "Copy again" : copyLabel;
   return (
     <div>
       <div className="flex min-w-0 items-center gap-2">
         <code
+          ref={boxRef}
           data-testid="secret-key"
           tabIndex={0}
           aria-label="Value shown once"
@@ -71,19 +120,19 @@ export function SecretBox({
         >
           {secret}
         </code>
-        <Button type="button" variant="outline" onClick={onCopy} aria-label={used ? "Copied" : copyLabel} className="shrink-0">
-          {used ? (
+        <Button type="button" variant="outline" onClick={onCopy} aria-label={label} className="shrink-0">
+          {state === "copied" ? (
             <>
               <CheckIcon aria-hidden="true" className="size-4" />
               Copied
             </>
           ) : (
-            copyLabel
+            label
           )}
         </Button>
       </div>
       <p role="status" aria-live="polite" className={state === "failed" ? "mt-1 text-xs text-danger-ink" : "sr-only"}>
-        {state === "failed" ? "Your browser blocked copying; select the text instead." : used ? "Copied" : ""}
+        {state === "failed" ? "Your browser blocked copying; select the text instead." : copies > 0 ? copiedWords(copies) : ""}
       </p>
     </div>
   );
@@ -153,7 +202,7 @@ function OpenSecret({
   size?: DialogSize;
   label?: string;
 }) {
-  const { used, state, copy } = useSecretCopy(secret);
+  const { used, state, copies, copy, boxRef } = useSecretCopy(secret);
   const [asking, setAsking] = useState(false);
   const tryClose = () => (used ? onClose() : setAsking(true));
   return (
@@ -161,7 +210,7 @@ function OpenSecret({
       <DialogContent title={title} description={description} size={size}>
         <div className="space-y-4">
           {label ? <p className="text-sm font-medium text-ink">{label}</p> : null}
-          <SecretBox secret={secret} used={used} state={state} onCopy={copy} copyLabel={copyLabel} />
+          <SecretBox secret={secret} used={used} state={state} onCopy={copy} copyLabel={copyLabel} copies={copies} boxRef={boxRef} />
           {children}
           {asking && !used ? <CloseAnywayConfirm onCopy={copy} onClose={onClose} /> : null}
           <div className="flex justify-end">

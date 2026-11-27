@@ -566,6 +566,303 @@ async fn turn_events(r: &Rig, turn: &str) -> Vec<(String, Value)> {
     .unwrap()
 }
 
+/// The `background_*` notices of the test conversation, in order.
+async fn background_notices(r: &Rig) -> Vec<(String, Value)> {
+    sqlx::query_as::<_, (String, Value)>(
+        "SELECT payload->>'code', payload FROM transcript_events
+         WHERE type = 'notice' AND payload->>'code' IN
+           ('background_activity','background_stop_requested','background_stopped')
+         ORDER BY seq",
+    )
+    .fetch_all(r.h.pool())
+    .await
+    .unwrap()
+}
+
+/// (FIX-253 review) The commands in the **Background activity** entry are masked like every
+/// other displayed text (tokens, `Authorization:` values, `KEY=value` env assignments) and
+/// capped: at most 10 items, each at most 200 characters.
+#[tokio::test]
+async fn background_activity_commands_are_masked_and_capped() {
+    let r = rig().await;
+    let lv = r.boot("bgmask").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    let mut items: Vec<Value> = vec![
+        json!({"command": "curl -H 'Authorization: aub_secret123' https://x", "started_at": 1700000000u64}),
+        json!({"command": "API_KEY=hunter2 ./deploy.sh", "started_at": 1700000000u64}),
+        json!({"command": format!("long-{}", "x".repeat(300)), "started_at": 1700000000u64}),
+    ];
+    for i in 0..12 {
+        items.push(json!({"command": format!("job{i}"), "started_at": 1700000000u64}));
+    }
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [ev(1, "background", json!({"items": items}))]}),
+    )
+    .await;
+    let evs = background_notices(&r).await;
+    assert_eq!(evs.len(), 1, "{evs:?}");
+    let items = evs[0].1["items"].as_array().unwrap();
+    assert_eq!(items.len(), 10, "at most 10 items: {items:?}");
+    assert_eq!(
+        // (FIX-253 fixes2 F) The whole `Authorization:` value is masked, not just its tail.
+        items[0]["command"],
+        "curl -H 'Authorization: *** https://x",
+        "{items:?}"
+    );
+    assert_eq!(items[1]["command"], "API_KEY=*** ./deploy.sh", "{items:?}");
+    let long = items[2]["command"].as_str().unwrap();
+    assert!(
+        long.chars().count() <= 200,
+        "each command is capped: {}",
+        long.chars().count()
+    );
+}
+
+/// (FIX-253 review) A turn's own Stop ends at the terminal transition: an aborted turn's
+/// `abort_requested_at` is cleared at finish, so the answer-Stop never turns into a
+/// background-stop request — the **Background activity** entry stands with its Stop, no release
+/// is dispatched and no stopped notice appears by itself.
+#[tokio::test]
+async fn an_aborted_turns_stop_does_not_release_the_background_activity() {
+    let r = rig().await;
+    let lv = r.boot("bgnostop").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [ev(
+            1, "background",
+            json!({"items": [{"command": "npm run e2e:full", "started_at": 1700000000u64}]}),
+        )]}),
+    )
+    .await;
+    // The person stops the answer while it runs.
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    // The turn ends aborted.
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "aborted"}),
+    )
+    .await;
+    let (armed,): (bool,) =
+        sqlx::query_as("SELECT abort_requested_at IS NOT NULL FROM turns WHERE id = $1::uuid")
+            .bind(&turn)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert!(!armed, "the answer-Stop is cleared at finish");
+    assert!(
+        r.work()
+            .await
+            .iter()
+            .all(|i| i["kind"] != "session.release"),
+        "no background-stop release is dispatched"
+    );
+    let codes: Vec<String> = background_notices(&r)
+        .await
+        .iter()
+        .map(|n| n.0.clone())
+        .collect();
+    assert_eq!(
+        codes,
+        ["background_activity"],
+        "no stop request, no stopped notice: {codes:?}"
+    );
+}
+
+/// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
+/// `background` turn event: one visible **Background activity** notice (deduped while it keeps
+/// running), and Stop on a finished turn records **Stop requested** and dispatches one
+/// `session.release` (re-sent on its lease until acknowledged) — the durable **stopped** notice
+/// is written only when the supervisor acknowledges the release (FIX-253 review).
+#[tokio::test]
+async fn background_activity_is_visible_deduped_and_stoppable() {
+    let r = rig().await;
+    let lv = r.boot("bg").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+
+    let bg = |n: u64| {
+        ev(
+            n,
+            "background",
+            json!({"items": [{"command": "npm run e2e:full", "started_at": 1700000000u64}]}),
+        )
+    };
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [bg(1)]}),
+    )
+    .await;
+    let notices = background_notices(&r).await;
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(notices[0].0, "background_activity");
+    assert_eq!(
+        notices[0].1["text"],
+        "Background activity, still running: `npm run e2e:full`"
+    );
+    assert_eq!(notices[0].1["items"][0]["command"], "npm run e2e:full");
+
+    // Still running at the next turn end: one entry, not two.
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [bg(2)]}),
+    )
+    .await;
+    assert_eq!(background_notices(&r).await.len(), 1);
+
+    // Stop on the finished turn: the request mark, then one session.release (sent once per
+    // lease until acknowledged).
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    let evs = background_notices(&r).await;
+    assert_eq!(evs.len(), 2, "{evs:?}");
+    assert_eq!(evs[1].0, "background_stop_requested", "{evs:?}");
+    assert_eq!(evs[1].1["text"], "Stop requested.");
+    let items = r.work().await;
+    let rel = items
+        .iter()
+        .find(|i| i["kind"] == "session.release")
+        .unwrap();
+    assert_eq!(
+        rel["conversation_id"],
+        json!(lv.conv),
+        "the idle session of the conversation is released"
+    );
+    assert!(
+        r.work()
+            .await
+            .iter()
+            .all(|i| i["kind"] != "session.release"),
+        "sent once per lease, not every poll"
+    );
+
+    // Not acknowledged yet: the entry still stands, only **Stop requested**.
+    assert_eq!(background_notices(&r).await.len(), 2);
+
+    // The supervisor acknowledges the release: the durable **stopped** notice, once.
+    let st = r
+        .report(
+            &lv,
+            json!({"kind": "session.released", "conversation_id": lv.conv, "ok": true}),
+        )
+        .await;
+    assert_eq!(st, "applied", "{st}");
+    r.report(
+        &lv,
+        json!({"kind": "session.released", "conversation_id": lv.conv, "ok": true}),
+    )
+    .await;
+    let evs = background_notices(&r).await;
+    assert_eq!(evs.len(), 3, "{evs:?}");
+    assert_eq!(evs[2].0, "background_stopped");
+    assert_eq!(evs[2].1["text"], "Background activity stopped.");
+    assert!(
+        r.work()
+            .await
+            .iter()
+            .all(|i| i["kind"] != "session.release"),
+        "the acknowledged request is closed"
+    );
+
+    // Without an unstopped entry the same right is the ordinary finished-turn refusal.
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 409, "{v}");
+}
+
+/// (FIX-253 review) A deferred background stop (the supervisor could not release yet — a turn
+/// was running) stays **requested**: no stopped notice, the request stays armed, and only the
+/// later acknowledgement writes the **stopped** notice.
+#[tokio::test]
+async fn a_deferred_background_stop_stays_requested_until_acknowledged() {
+    let r = rig().await;
+    let lv = r.boot("bgdefer").await;
+    let d = r.deliver().await;
+    let turn = d["turn_id"].as_str().unwrap().to_owned();
+    r.report(&lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.events", "turn_id": turn, "events": [ev(
+            1, "background",
+            json!({"items": [{"command": "npm run e2e:full", "started_at": 1700000000u64}]}),
+        )]}),
+    )
+    .await;
+    r.report(
+        &lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+    let (s, v) = r
+        .user_call(Method::POST, &format!("/v1/turns/{turn}/abort"), None)
+        .await;
+    assert_eq!(s, 202, "{v}");
+    assert_eq!(
+        background_notices(&r)
+            .await
+            .iter()
+            .map(|n| n.0.as_str())
+            .collect::<Vec<_>>(),
+        ["background_activity", "background_stop_requested"]
+    );
+    // The release is claimed but deferred: the request stays armed.
+    let (armed,): (bool,) =
+        sqlx::query_as("SELECT abort_requested_at IS NOT NULL FROM turns WHERE id = $1::uuid")
+            .bind(&turn)
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    assert!(armed, "the request stays armed while in flight");
+    let st = r
+        .report(
+            &lv,
+            json!({"kind": "session.released", "conversation_id": lv.conv, "ok": false}),
+        )
+        .await;
+    assert_eq!(
+        st, "duplicate",
+        "the deferral changed nothing (like a purge)"
+    );
+    assert_eq!(
+        background_notices(&r)
+            .await
+            .iter()
+            .map(|n| n.0.as_str())
+            .collect::<Vec<_>>(),
+        ["background_activity", "background_stop_requested"],
+        "a deferral writes no stopped notice"
+    );
+    // The release finally happens (the turn ended): the acknowledgement closes the request.
+    r.report(
+        &lv,
+        json!({"kind": "session.released", "conversation_id": lv.conv, "ok": true}),
+    )
+    .await;
+    let evs = background_notices(&r).await;
+    assert_eq!(evs.last().unwrap().0, "background_stopped", "{evs:?}");
+}
+
 /// (P5-REFINE-7, C-1075) Stop keeps what was written (`partial: true`) and leaves the
 /// `turn_stopped` mark before `turn.finished`; a queued turn stopped before it ran gets the
 /// mark alone.

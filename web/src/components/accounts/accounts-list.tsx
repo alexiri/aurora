@@ -2,11 +2,14 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
+import { scopeWords } from "@/components/agents/answer-fix";
 import { ConnectDialog } from "@/components/apps/connect-dialog";
 import { ConnectJourney } from "@/components/apps/connect-journey/connect-journey";
 import { OrgConnectJourney } from "@/components/apps/connect-journey/org-journey";
 import { useUrlDialog } from "@/components/apps/use-url-dialog";
+import { ChoiceCards } from "@/components/ui/choice-cards";
 import { Notice } from "@/components/ui/notice";
 import { appKeys, useConnectChannel } from "@/lib/api/apps";
 import { LlmKeyForm, useFooterSlot } from "@/components/credentials/llm-form";
@@ -16,7 +19,11 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Card } from "@/components/ui/card";
 import { CardGrid, CardGridSkeleton } from "@/components/ui/card-grid";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { showUndoToast } from "@/components/ui/undo-toast";
 import { accountKeys, useAccounts, type Account } from "@/lib/api/accounts";
+import { useAgentAiKeys } from "@/lib/api/agent-ai-keys";
+import { useGrantSecretToAgent } from "@/lib/api/credential-grants";
+import { errorMessage } from "@/lib/api/errors";
 import type { SecretScope } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
 import { useOrg } from "@/lib/api/queries";
@@ -47,22 +54,118 @@ export function soleAgentOf(items: Pick<Account, "agents">[]): string | undefine
   return items[0]?.agents[0]?.agent.name;
 }
 
-/** (P5-POLISH-11, A1) Add an AI key: the form without its own card, Cancel and Add key in the dialog's footer row. */
-function AddKeyDialog({ scope, orgId, agentId, onClose }: { scope: SecretScope; orgId: string; agentId?: string; onClose: () => void }) {
+/**
+ * (P5-POLISH-11, A1; FIX-249, C-1168) "Add an AI key" for one agent. When the agent could be given
+ * a key that already exists — an active key of its organization or workspace it does not have yet
+ * (`GET /v1/agents/{agent}/ai-keys`, owners only) — the dialog opens on the first choice:
+ * **Use a key you already have** (the list, an unusable key disabled with its reason in plain
+ * words; **Give <Agent> this key** grants it and closes with the toast) or **Add a new key**
+ * (today's service choice and form, unchanged). With no existing key, or without an agent, the
+ * dialog opens straight on today's form. Keys exist at two scopes only — the organization's and
+ * the workspace's; there are no instance-level keys. When every listed key is unusable, the
+ * dialog opens straight on the form too.
+ */
+function AddKeyDialog({ scope, orgId, agent, onClose }: { scope: SecretScope; orgId: string; agent?: { id: string; name: string }; onClose: () => void }) {
   const { footer, target } = useFooterSlot();
+  const keys = useAgentAiKeys(agent?.id, !!agent);
+  const items = keys.data?.items ?? [];
+  // `null` = the first choice; only reachable when an existing key could be given.
+  const [choice, setChoice] = useState<"pick" | "new" | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const grant = useGrantSecretToAgent();
+
+  async function give() {
+    if (!agent || !picked) return;
+    try {
+      await grant.mutateAsync({ secretId: picked, agentId: agent.id });
+      showUndoToast(`${agent.name} can answer now`);
+      onClose();
+    } catch {
+      // The notice above the list says what failed; the dialog stays open.
+    }
+  }
+
+  let body: ReactNode;
+  if (agent && keys.isPending) {
+    body = <Loading variant="rows" label="Loading your keys…" />;
+  } else if (agent && choice === null && items.some((k) => k.usable)) {
+    body = (
+      <ChoiceCards<"pick" | "new" | "">
+        legend={`Give ${agent.name} an AI key`}
+        value={choice ?? ""} /* nothing is chosen until one card is clicked */
+        onChange={(v) => {
+          if (v) setChoice(v);
+        }}
+        options={[
+          { value: "pick", label: "Use a key you already have", description: "One of the keys of your organization and of this workspace." },
+          { value: "new", label: "Add a new key", description: "Choose the service, then paste the key." },
+        ]}
+      />
+    );
+  } else if (agent && choice === "pick") {
+    body = (
+      <div className="space-y-3">
+        {grant.isError ? (
+          <Notice tone="danger" role="alert">
+            {errorMessage(grant.error)}
+          </Notice>
+        ) : null}
+        <ChoiceCards
+          legend={`Which key should ${agent.name} use?`}
+          value={picked ?? ""}
+          onChange={setPicked}
+          options={items.map((k) => ({
+            value: k.secret_id,
+            label: k.name,
+            badge: k.starter ? "Starter" : undefined,
+            description: k.usable ? scopeWords(k) : `${scopeWords(k)} · ${k.reason ?? "It cannot be used here."}`,
+            disabled: !k.usable,
+          }))}
+        />
+        <p className="text-sm">
+          <button type="button" className="text-link underline" onClick={() => setChoice("new")}>
+            Add a new key instead
+          </button>
+        </p>
+      </div>
+    );
+  } else {
+    // "Add a new key": today's form. A workspace's key is saved with its access: the dialog closes
+    // and the row shows the key's check. An organization's key goes on to Give access.
+    body = (
+      <LlmKeyForm
+        scope={scope}
+        orgId={orgId}
+        preselect={agent ? [agent.id] : undefined}
+        submitLabel="Add key"
+        onCancel={onClose}
+        onSaved={scope.kind === "workspace" ? onClose : undefined}
+        footerTarget={target}
+      />
+    );
+  }
+
+  // The slot row stays mounted whatever the step: the pick's buttons portal into it exactly like the form's do.
+  const footerButtons =
+    agent && choice === "pick" && target ? (
+      createPortal(
+        <>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={grant.isPending}>
+            Cancel
+          </Button>
+          <Button type="button" className="ml-auto" disabled={!picked || grant.isPending} onClick={() => void give()}>
+            {grant.isPending ? "Giving…" : `Give ${agent.name} this key`}
+          </Button>
+        </>,
+        target,
+      )
+    ) : null;
+
   return (
     <Dialog open onOpenChange={(o) => (o ? null : onClose())}>
       <DialogContent size="lg" title="Add an AI key" footer={footer}>
-        {/* A workspace's key is saved with its access: the dialog closes and the row shows the key's check. An organization's key goes on to Give access. */}
-        <LlmKeyForm
-          scope={scope}
-          orgId={orgId}
-          preselect={agentId ? [agentId] : undefined}
-          submitLabel="Add key"
-          onCancel={onClose}
-          onSaved={scope.kind === "workspace" ? onClose : undefined}
-          footerTarget={target}
-        />
+        {body}
+        {footerButtons}
       </DialogContent>
     </Dialog>
   );
@@ -214,7 +317,7 @@ export function AccountsList({
       ) : null}
       {bulkable ? <AccountsBulkBar picked={picked} scope={scope} orgId={orgId} onClear={sel.clear} /> : null}
       {/* (P5-POLISH-7, D1) Add an AI key is a dialog like every other add, not a card inside the page. */}
-      {addingKey ? <AddKeyDialog scope={scope} orgId={orgId} agentId={agent?.id} onClose={() => setAddingKey(false)} /> : null}
+      {addingKey ? <AddKeyDialog scope={scope} orgId={orgId} agent={agent} onClose={() => setAddingKey(false)} /> : null}
       {items.length === 0 && appId ? (
         <p className="text-sm text-ink-2">No accounts of this app {scope.kind === "workspace" ? "in this workspace" : "for the whole organization"} yet.</p>
       ) : items.length === 0 ? (

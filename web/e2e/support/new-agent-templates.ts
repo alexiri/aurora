@@ -123,7 +123,15 @@ export async function mockWorkspaceTemplates(page: Page): Promise<GalleryMock> {
   let linearConnected = false;
   const created = {
     agent: rexAgent, grants: [], notes: [], skills: [],
-    webhooks: [{ webhook: { id: id(70), name: "Alerts" }, url: `/v1/workspaces/${ws.id}/webhooks/${id(70)}`, secret: "whsec-9f8e7d6c5b4a3210" }],
+    webhooks: [{
+      webhook: {
+        id: id(70), name: "Alerts",
+        // FIX-248: the dialog says which verification the sender pastes the secret into, and that the webhook starts paused.
+        verification: { kind: "hmac_sha256", header: "X-Signature", format: "sha256=<hex of the HMAC-SHA256 of the raw body, keyed with the secret>" },
+        enabled: false,
+      },
+      url: `/v1/workspaces/${ws.id}/webhooks/${id(70)}`, secret: "whsec-9f8e7d6c5b4a3210",
+    }],
   };
   await page.route(/\/v1\/workspaces\/[^/]+\/agent-templates/, async (route) => {
     const req = route.request();

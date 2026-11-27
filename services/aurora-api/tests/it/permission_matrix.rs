@@ -1015,7 +1015,13 @@ const ROWS: &[Row] = &[
         G::Administer,
         false,
     ),
-    r("GET", "/v1/workspaces/{ws}/agents", G::WsUse, false),
+    // (FIX-246) Own access, or the administer fallback (a list without briefs).
+    r(
+        "GET",
+        "/v1/workspaces/{ws}/agents",
+        G::WsUseOrAdminister,
+        false,
+    ),
     r("POST", "/v1/workspaces/{ws}/agents", G::WsUse, false),
     // (phase 3, RFE-013, C-313) agent-token lists: workspace owner / org owner or admin.
     r(
@@ -1315,6 +1321,8 @@ const ROWS: &[Row] = &[
         G::WsUse,
         false,
     ),
+    // (FIX-249, C-1168) The keys the agent could be given: `can_own`, like the grant route.
+    r("GET", "/v1/agents/{agent}/ai-keys", G::WsOwn, false),
     r("GET", "/v1/agents/{agent}/grants", G::WsOwn, false),
     r(
         "PUT",
@@ -1475,11 +1483,20 @@ const ROWS: &[Row] = &[
     r("PATCH", "/v1/eval-schedules/{id}", G::WsUse, false),
     r("DELETE", "/v1/eval-schedules/{id}", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/peer-tasks", G::WsUse, false),
+    // (FIX-252) The stored requester only — a session-only route with no workspace right at
+    // all: another person's session finds nothing (404, the id is not a seeded one here). The
+    // requester-only ladder is it/channels_cards.rs (the card tests) and it/peer_tasks.rs.
+    r("POST", "/v1/peer-tasks/{id}/cancel", G::Auth, true),
+    // (FIX-252) The web origin card's Ask an approver: the stored requester of the peer task
+    // the approval was raised in; sessions only. The ladder is it/approval_notify.rs.
+    r("POST", "/v1/approvals/{id}/ask-approver", G::Auth, true),
     // (P5-REFINE-9, C-1083, C-1084, SEC-143) the agent timeline: `can_use`; its stream is
     // session-only. Rows of conversations the reader may not see: tests/it/timeline.rs.
     r("GET", "/v1/agents/{agent}/timeline", G::WsUse, false),
     r("GET", "/v1/agents/{agent}/timeline/stream", G::WsUse, true),
     r("POST", "/v1/conversations/{id}/continue", G::WsUse, false),
+    // (FIX-253, D-490) The notice's reminder action: the same write right as a message.
+    r("POST", "/v1/conversations/{id}/reminder", G::WsUse, false),
     // P2-010 (RFE-010): the per-conversation decision (direct user / turn author / `can_own`) needs
     // a real conversation and is covered by tests/it/conversation_lifecycle.rs; the matrix asserts
     // the visibility floor (`can_use`).
@@ -2084,6 +2101,9 @@ fn body_for_inner(method: &str, path: &str, fx: &Fx) -> Value {
             json!({"decision": "deny", "agent_id": fx.agent})
         }
         ("POST", "/v1/conversations/{id}/messages") => json!({"text": "hi"}),
+        ("POST", "/v1/conversations/{id}/reminder") => {
+            json!({"turn_id": Uuid::now_v7()})
+        }
         ("POST", "/v1/orgs/{org}/api-keys" | "/v1/workspaces/{ws}/api-keys") => {
             json!({"name": "k"})
         }

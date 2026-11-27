@@ -201,6 +201,8 @@ async fn create_schedule(
         timezone: req.timezone,
         gate_command: req.gate_command,
         gate_description: req.gate_description,
+        // A person's own dashboard schedule is not bounded by a task.
+        ends_at: None,
     };
     let row = service::create(&s.pool, &a, create, Some(c.user_id), None).await?;
     record(&c, &s, &a, &row, "schedule.create");

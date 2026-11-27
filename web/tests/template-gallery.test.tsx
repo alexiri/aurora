@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { notReadyWords } from "@/components/templates/words";
-import { runsOnItsOwn, TemplateCardView, TemplateDetails } from "@/components/templates/gallery";
+import { runsOnItsOwn, TemplateCardView, TemplateDetails, TemplateGalleryDialog } from "@/components/templates/gallery";
 import { wrap } from "./support/render";
 import { json, type Handler } from "./support/api";
 
@@ -67,6 +67,40 @@ afterEach(() => {
 });
 
 describe("More templates… (C-1116)", () => {
+  // (FIX-245) The gallery is always reachable from the Agents page, so an empty one explains itself.
+  describe("empty gallery", () => {
+    function stubEmpty(me: Record<string, unknown>) {
+      const fn = vi.fn(async (input: Request | string | URL) => {
+        const method = input instanceof Request ? input.method : "GET";
+        const p = new URL(input instanceof Request ? input.url : String(input), "http://localhost").pathname;
+        const routes: Record<string, Handler> = {
+          "GET /v1/workspaces/w1/agent-templates": () => json(200, { items: [] }),
+          "GET /v1/me": () => json(200, me),
+        };
+        const h = routes[`${method} ${p}`];
+        return h ? h(input as Request) : json(404, { error: { code: "not_found", message: "nf" } });
+      });
+      vi.stubGlobal("fetch", fn);
+    }
+
+    it("a member reads that the administrators have not approved any yet, with no dead end", async () => {
+      stubEmpty({ user: { display_name: "Pat Person", email: "p@x.io" } });
+      wrap(<TemplateGalleryDialog open onOpenChange={() => undefined} wsId="w1" onUse={() => undefined} />);
+      const dlg = await screen.findByRole("dialog", { name: "More templates" });
+      expect(await within(dlg).findByText("Your administrators have not approved any agent templates yet.")).toBeTruthy();
+      expect(within(dlg).queryByRole("link")).toBeNull();
+    });
+
+    it("an administrator is told to review the waiting ones and sent to the Agent templates tab", async () => {
+      stubEmpty({ user: { display_name: "Ada Admin", email: "a@x.io", is_instance_admin: true } });
+      wrap(<TemplateGalleryDialog open onOpenChange={() => undefined} wsId="w1" onUse={() => undefined} />);
+      const dlg = await screen.findByRole("dialog", { name: "More templates" });
+      expect(await within(dlg).findByText("No templates are approved yet. Review the ones waiting.")).toBeTruthy();
+      const link = within(dlg).getByRole("link", { name: "Open Agent templates" });
+      expect(link.getAttribute("href")).toBe("/admin/internet-access?tab=templates");
+    });
+  });
+
   it("appears in the Start from row when the workspace has templates, and opens the gallery", async () => {
     stubFetch([card()]);
     wrap(<CreateAgentDialog wsId="w1" />);

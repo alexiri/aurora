@@ -221,6 +221,13 @@ impl JsonPath {
         Ok(Self(segs))
     }
 
+    /// Whether the path is at least one plain key and nothing else (a projection selects named
+    /// fields, not a wildcard and not the whole item).
+    #[must_use]
+    pub fn simple(&self) -> bool {
+        !self.0.is_empty() && !self.0.iter().any(|s| matches!(s, Seg::Each))
+    }
+
     /// Every value the path selects.
     #[must_use]
     pub fn select<'a>(&self, root: &'a Value) -> Vec<&'a Value> {

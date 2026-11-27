@@ -271,6 +271,40 @@ fn is_session(c: &Caller) -> bool {
     matches!(c.principal, Principal::Session { .. })
 }
 
+/// (FIX-252) The web origin card's **Ask an approver**: the stored requester of the peer task
+/// the approval was raised in e-mails the people with `can_approve` in the approval's workspace
+/// (the channel card's button does the same through its action token). Nobody else's task is
+/// revealed (404 — a session-only route, the route inventory's REQUESTER list), and the ask
+/// grants nobody a right. Returns the deciders e-mailed and the approval row (for the audit).
+pub async fn ask_approvers(
+    s: &AppState,
+    user: Uuid,
+    id: Uuid,
+) -> Result<(u32, ApprovalRow), ApiError> {
+    let a = approvals::get(&s.pool, id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Approval not found."))?;
+    if a.status != "pending" {
+        return Err(ApiError::conflict(
+            "not_pending",
+            "That approval is no longer waiting.",
+        ));
+    }
+    let Some(conv) = a.conversation_id else {
+        return Err(ApiError::not_found("Approval not found."));
+    };
+    let mut conn = s.pool.acquire().await.map_err(aurora_db::DbError::from)?;
+    let task = aurora_db::repo::peer_tasks::by_task_conversation(&mut *conn, conv)
+        .await?
+        .ok_or_else(|| ApiError::not_found("Approval not found."))?;
+    if task.requester_user_id != Some(user) {
+        return Err(ApiError::not_found("Approval not found."));
+    }
+    crate::domains::peer_tasks::service::ask_approvers(s, &a)
+        .await
+        .map(|n| (n as u32, a))
+}
+
 pub async fn decide_batch(
     s: &AppState,
     c: &Caller,

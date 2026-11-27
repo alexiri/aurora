@@ -119,6 +119,18 @@ session (`harness_session_ref`) inside the shared sandbox.
 Direct conversations die with their user. `origin_conversation_id` points at the
 conversation where results of schedules, webhooks and peer tasks are reported.
 
+(FIX-252, D-489) **An approval a peer task needs is reported to the origin too**,
+as two `notice` events next to the close line: `peer_waiting_for_approval`
+`{ code, text, approval_id, peer_task_id, workspace_id, status: "open" }` when
+the approval is raised in the task's conversation (the card's home at the
+origin), and `peer_approval_decided` `{ code, text, approval_id, peer_task_id,
+workspace_id, outcome: "approved" \| "denied" \| "expired" }` when it is
+answered or expires, with the delegating agent's follow-up turn after it. Both
+go only to the origin conversation and carry only the words — the agent's name
+and a one-line action — never a request field. A later `peer_task_closed`
+notice settles a waiting card the same way (an abandoned approval, e.g. the
+task cancelled, fires no decision notice).
+
 (phase 5, P5-REFINE-7, D-409, C-1073, C-1074) **Titles and folders.**
 - `title_source` says who named a conversation: `auto` (none yet, or the first line of the
   first person message: whitespace collapsed, markup and `@` removed, cut at 60 characters
@@ -253,6 +265,10 @@ silent (D-470).
 - **Abort** (`POST /v1/turns/{id}/abort`): sets `abort_requested_at`; queued
 turns become `aborted` immediately; dispatched/running ones get
 `turn.abort` and end `aborted` on the terminal event (or by stall recovery).
+(FIX-253, D-490) On a **finished** turn the same right stops the turn's still-running
+**Background activity** (below): it records the durable `background_stopped`
+notice and the conversation's idle harness session is released, so the child's
+background work dies with it.
 
 ### Turn context (phase 5, P5-PERSON, D-402, C-1052, C-1053, SEC-139)
 
@@ -433,6 +449,19 @@ its last tool call is written as durable `text` events before the `error` event 
   durable `notice` `{ code: "turn_stopped", text: "You stopped this answer.", turn_id }` and
   `turn.finished`, in one transaction. A queued turn stopped before it started gets the notice only.
   Freeze and deprovision endings keep their own notices.
+- **Background activity (FIX-253, D-490).** At turn end the supervisor lists the harness child's
+  own background commands that outlive the turn (the claude-code adapter tracks the model's
+  `Bash` calls with `run_in_background`); the API records one durable `notice`
+  `{ code: "background_activity", turn_id, items: [{ command, started_at }], text }` — one entry
+  per conversation while it stands (re-reports are deduped), with Stop in the web (`10 §Abort`).
+  Stopping records `notice` `{ code: "background_stopped", turn_id, text }`. Other adapters report
+  nothing (their child has no such mode, or it is gone).
+- **A promise without a wake (FIX-253, D-490).** When an agent turn ends `done` in a delegated
+  task's conversation whose peer task is still open and nothing is set to wake the agent (no armed
+  watch on the conversation, no uncompleted schedule anchored to it), the platform records one
+  `notice` `{ code: "no_wakeup", turn_id, agent_id, agent_name, text }` — "<Agent> said it would
+  continue, but nothing is set to wake it." The signal is the open task, never the wording of the
+  reply; a failed turn, a person turn and a conversation with a wake registered record nothing.
 - **An error shows once (C-1076).** When a turn fails and a buffered message is the harness's own
   error line (it equals, contains or starts with the failure message, or starts with `API Error`, as
   the Claude Code adapter prints a failed model call), it is not written as the agent's `text`: the
@@ -998,7 +1027,9 @@ trailing `.git`, `/-/tree/<ref>/<path>` and `/tree|blob/<ref>/<path>` page forms
 and folder fill `ref` and `path` when those are absent; `http:`, `git:`, ssh, credentials in the address, a
 query or a fragment are refused, 422 `library_url_invalid` with a `reason`). `ref` (branch, tag or commit; default the
 repository's default branch) matches the ref grammar; `path` is the directory that holds the skill directories
-(default the root; at most 4 segments). **A read before saving:** creation reads the repository (discovery,
+(default the root; at most 4 segments). A `.github` folder anywhere in the repository is never a skill
+directory: it is not listed, not read and not counted, and a repository that holds nothing else still
+reports "no skills found". **A read before saving:** creation reads the repository (discovery,
 resolve the ref, list the folder) and fails with a fixed reason if it cannot (422 `library_unreachable`:
 "The repository needs an access token", "The access token was refused", "The repository was not found, or the
 token cannot read it", "The branch or tag was not found", the redirect, size, timeout and address reasons of C-1125);
@@ -1211,6 +1242,12 @@ thread link, the answer is posted there too (`13 §Mirror`).
   opted-in devices get one Web Push (`schedule_answer`, `07 §Web Push`). Origin notices (finished,
   failed, disabled) of any schedule are written into a direct conversation only while its person
   is the schedule's current creator (a creator-less schedule names nobody else and keeps them).
+  (FIX-253, D-490) A one-time schedule made in a **delegated task's conversation** (a peer turn,
+  no speaker) belongs to the task's requester — the requester must still be able to use the agent,
+  re-checked at create and at fire time, never widened — and `origin_for_run` sends the wake into
+  that task conversation while the task is not closed (`queued`/`open`); a closed task's
+  conversation is nobody's chat any more, so the run keeps its own run thread. The Web Push never
+  fires for these (the claim requires the creator's direct chat).
 
 ## Webhooks
 
@@ -1226,6 +1263,14 @@ possible ("Anyone with the address"). `POST /v1/webhooks/{id}/rotate-secret` mak
 a new one and the old stops working at once. `Webhook.verification` shows the
 effective header and the `format` of its value, so the dashboard can say how to
 call it.
+- `kind: "bearer"` (the password kind) verifies `Authorization: Bearer <secret>`
+instead of a signature; the secret is sealed like any secret, shown once, and
+`rotate-secret` works the same (the old secret stops working at once). Callers
+that cannot produce the signed format should use this kind — Grafana's webhook
+contact point, for example, can send an `Authorization` header but not Aurora's
+`sha256=<hex>` HMAC:
+`curl -X POST "$WEBHOOK_URL" -H "Content-Type: application/json" -H "Authorization: Bearer $SECRET" -d "$BODY"`
+(the card's *How to call it* shows the same recipe for each kind).
 - Disabled or creator lost access (phase 2, RFE-021: for `anchor = workspace`, no
   active owner) → 410 / 403 and a `webhook_deliveries` row.
   (phase 2, RFE-006) Effectively frozen agent → 410 `frozen` and a delivery row

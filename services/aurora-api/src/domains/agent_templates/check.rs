@@ -145,6 +145,19 @@ async fn read_head(
 /// [`DirFailure::TooLarge`] is a definite outcome: the tree holds more files than a template
 /// may carry, answered after at most `TEMPLATE_FILES_MAX + 1` blobs were fetched — the rest
 /// are never read (SEC-146; before, every blob was fetched and only the parse then refused).
+/// Whether a tree entry is template content. The `.github` skip tests the path relative to the
+/// template folder `dir`, as the library reader tests it relative to the library folder
+/// (`content.rs`): a template folder under the repository's own `.github` still reads, and a
+/// `.github` folder inside the template is still skipped. A path outside `dir` (a source that
+/// lists the whole tree) is tested as it arrived.
+fn is_content(dir: &str, path: &str) -> bool {
+    let rel = path
+        .strip_prefix(dir)
+        .and_then(|r| r.strip_prefix('/'))
+        .unwrap_or(path);
+    !aurora_core::meta_paths::has_github_segment(rel)
+}
+
 async fn read_dir_at(
     state: &AppState,
     source: &SourceRow,
@@ -174,6 +187,14 @@ async fn read_dir_at(
         let mut files = Vec::with_capacity(entries.len());
         for e in &entries {
             if e.kind != "blob" {
+                continue;
+            }
+            // A `.github` folder is a repository's own metadata, never template content: its
+            // files are not fetched and not counted (owner request, 2026-11-25). The skip tests
+            // the path relative to the template folder, as the library reader tests it relative
+            // to the library folder: a template folder that lives under the repository's own
+            // `.github` still reads, and a `.github` folder inside the template is still skipped.
+            if !is_content(&dir, &e.path) {
                 continue;
             }
             // The file cap is enforced before the next blob is fetched: one past the cap
@@ -927,4 +948,31 @@ async fn process_awaiting(
         Some(archive_sha),
         Some(size),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_github_skip_tests_the_path_relative_to_the_template_folder() {
+        // Inside a normal template: the template's own `.github` folders are skipped, the rest
+        // of the tree reads.
+        assert!(is_content("t", "t/template.yaml"));
+        assert!(!is_content("t", "t/.github/workflows/ci.yml"));
+        assert!(!is_content("t", "t/skills/x/.github/a.txt"));
+        // A template folder that lives under the repository's `.github` still reads: the skip
+        // is about the template's own tree, not where the folder sits in the repository.
+        assert!(is_content(
+            ".github/templates/t",
+            ".github/templates/t/template.yaml"
+        ));
+        assert!(!is_content(
+            ".github/templates/t",
+            ".github/templates/t/.github/a.txt"
+        ));
+        // A path outside the folder is tested as it arrived.
+        assert!(!is_content("t", ".github/workflows/ci.yml"));
+        assert!(is_content("t", "other/template.yaml"));
+    }
 }

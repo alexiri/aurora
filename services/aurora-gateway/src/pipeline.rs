@@ -91,6 +91,12 @@ pub trait PostHook: Send + 'static {
     fn echo_needles(&self) -> Vec<Vec<u8>> {
         Vec::new()
     }
+    /// (lane review 2026-11-25) A matched tool's response projection: the `$`-paths every item
+    /// of the tool's JSON answer keeps, applied by the gateway on the response path for every
+    /// caller. `None` = the answer streams through untouched.
+    fn response_project(&self) -> Option<&[String]> {
+        None
+    }
     /// (FIX-166, D-368) Ids and the decision for the wire log's `forwarded` event; never values.
     fn wire_context(&self) -> crate::wire::Decided {
         crate::wire::Decided::default()

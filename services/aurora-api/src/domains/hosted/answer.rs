@@ -8,7 +8,7 @@ use crate::app::AppState;
 use crate::domains::conversations::service::load_agent;
 use crate::domains::placement::service as placement;
 use crate::domains::secrets::gov;
-use crate::http::auth::Caller;
+use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path};
 use crate::http::who_can::{WhoCan, WhoCanRole};
@@ -256,6 +256,101 @@ pub async fn compute(s: &AppState, c: &Caller, a: &AgentRow) -> Result<AnswerRea
         usable_keys: usable as u32,
         fix: Some(fix),
     })
+}
+
+/// (FIX-249, C-1168) One AI key that exists in the agent's organization or workspace and is not
+/// granted to the agent yet. Metadata only: never the value, never an endpoint address.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+pub struct AgentAiKey {
+    pub secret_id: Uuid,
+    pub name: String,
+    /// `organization` | `workspace`.
+    pub scope: String,
+    /// One of the organization's starter keys.
+    pub starter: bool,
+    /// Whether the dispatcher could use this key for the agent now.
+    pub usable: bool,
+    /// Why not, in short plain words (the dispatcher's own reason); `null` when usable.
+    pub reason: Option<String>,
+}
+
+/// The answer of `GET /v1/agents/{agent}/ai-keys`: the starter key first, then the dispatcher's
+/// order, at most 50.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AgentAiKeys {
+    pub items: Vec<AgentAiKey>,
+}
+
+/// The dispatcher's per-key reason in short plain words, for the key pickers (`08 §Model
+/// readiness` is the check order; here only the words, never the internal code).
+fn reason_words(r: model::Reason) -> &'static str {
+    match r {
+        model::Reason::NotActive => "It is not active.",
+        model::Reason::EndpointUnknown => "Its service is not set up here.",
+        model::Reason::ProviderDisabled => "Its service is not allowed here.",
+        model::Reason::ScopeNotPermitted => "Keys like this one are not allowed here.",
+        model::Reason::OriginUnverified => "Its account still needs to be verified.",
+        model::Reason::OriginNotCompliant => "Its account is not on the allowed list.",
+        model::Reason::NoSharedDialect => "It does not work with this agent's model tool.",
+    }
+}
+
+/// The AI keys this agent does **not** have yet that exist in its organization or workspace
+/// (`can_own` on the agent's workspace, the grant route's refusal for everyone else; FIX-249,
+/// C-1168). The starter key first, then the dispatcher's order; a key the dispatcher cannot use
+/// is listed with its reason instead of being dropped. Metadata only, at most 50.
+#[utoipa::path(get, path = "/agents/{agent}/ai-keys", operation_id = "getAgentAiKeys", tag = "agents",
+    params(("agent" = Uuid, Path, description = "Agent id")),
+    responses((status = 200, body = AgentAiKeys),
+              (status = 403, description = "Forbidden", body = ErrorEnvelope),
+              (status = 404, description = "Not found, not hosted, or not visible", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+pub(super) async fn agent_ai_keys(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(agent): Path<Uuid>,
+) -> Result<Json<AgentAiKeys>, ApiError> {
+    let a = load_agent(&s, &c, agent).await?;
+    let auth = c.workspace(&s, a.workspace_id).await?;
+    require_own(&auth)?;
+    if a.kind != "hosted" {
+        return Err(ApiError::not_found("Agent has no sandbox."));
+    }
+    let harness = a
+        .harness
+        .clone()
+        .unwrap_or_else(|| s.ops().hosted.default_harness.clone());
+    let llm = s.llm();
+    let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
+    let cands =
+        placement_repo::ungranted_llm_keys(&mut *conn, a.id, a.org_id, a.workspace_id).await?;
+    let starters = placement_repo::get(&mut *conn)
+        .await?
+        .map(|row| placement::starter_ids(&row).0)
+        .unwrap_or_default();
+    let eff = gov::effective_for(&s, a.org_id).await?;
+    let mut keys = model::key_states(&s, &llm, &eff, &harness, cands);
+    drop(conn);
+    keys.sort_by_key(|k| !starters.contains(&k.secret.id)); // stable: the starter first
+    keys.truncate(50);
+    Ok(Json(AgentAiKeys {
+        items: keys
+            .into_iter()
+            .map(|k| AgentAiKey {
+                secret_id: k.secret.id,
+                name: k.secret.name,
+                scope: if k.secret.workspace_id.is_some() {
+                    "workspace"
+                } else {
+                    "organization"
+                }
+                .to_owned(),
+                starter: starters.contains(&k.secret.id),
+                usable: k.reason.is_none(),
+                reason: k.reason.map(reason_words).map(str::to_owned),
+            })
+            .collect(),
+    }))
 }
 
 #[cfg(test)]

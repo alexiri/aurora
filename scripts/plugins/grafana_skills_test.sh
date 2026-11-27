@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Tests the three scripts that the built-in grafana package ships in its skills: `grafana-query`
-# (grafana-query/scripts), `grafana-os` (grafana-opensearch/scripts) and `grafana-prom`
-# (grafana-prometheus/scripts; one script per skill because of the 32000-character skill limit), with no network: a stub
+# Tests the four scripts that the built-in grafana package ships in its skills: `grafana-query`
+# (grafana-query/scripts), `grafana-os` (grafana-opensearch/scripts), `grafana-prom`
+# (grafana-prometheus/scripts; one script per skill because of the 32000-character skill limit) and
+# `grafana-alert` (grafana-alerts/scripts), with no network: a stub
 # `aurora-agent` first on PATH records its arguments and the request bodies and answers canned files
 # from scripts/plugins/fixtures/grafana/. The canned frames follow the shapes of Grafana's
 # POST /api/ds/query answer (documented in its HTTP API reference, public/openapi3.json of v13.3.1:
@@ -15,13 +16,14 @@ SKILLS="$ROOT/plugins/builtin/grafana/skills/grafana"
 SCRIPT="$SKILLS/grafana-query/scripts/grafana-query"
 OSCRIPT="$SKILLS/grafana-opensearch/scripts/grafana-os"
 PSCRIPT="$SKILLS/grafana-prometheus/scripts/grafana-prom"
+ASCRIPT="$SKILLS/grafana-alerts/scripts/grafana-alert"
 FIX="$ROOT/scripts/plugins/fixtures/grafana"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR" "$WORK/bin" "$WORK/bodies"
 export STUB_FIX="$FIX" STUB_LOG="$WORK/calls.log" STUB_BODIES="$WORK/bodies"
-unset STUB_EMPTY STUB_FAIL_CALL
+unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE STUB_RECORD_RULE STUB_MISMATCH_RULE STUB_NOEXPIRY_RULE STUB_GRAFANA12_RULE
 
 # The stub: `aurora-agent call grafana <operation> [name=value ...] [--body @file] [--account A] --out FILE`.
 cat > "$WORK/bin/aurora-agent" <<'STUB'
@@ -42,6 +44,16 @@ case "$out" in /*) ;; *) echo "stub: --out must be absolute: $out" >&2; exit 2 ;
 case "$op" in
   list_datasources) if [ -n "${STUB_EMPTY:-}" ]; then echo '[]' > "$out"; else cp "$STUB_FIX/list_datasources.json" "$out"; fi ;;
   get_dashboard) cp "$STUB_FIX/get_dashboard.json" "$out" ;;
+  get_current_org) cp "$STUB_FIX/get_current_org.json" "$out" ;;
+  list_contact_points) if [ -n "${STUB_NO_CP:-}" ]; then echo '[]' > "$out"; else cp "$STUB_FIX/list_contact_points.json" "$out"; fi ;;
+  list_alert_rules) cp "$STUB_FIX/list_alert_rules${STUB_RULES:+-$STUB_RULES}.json" "$out" ;;
+  get_alert_rule) if [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; elif [ -n "${STUB_RECORD_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_record.json" "$out"; elif [ -n "${STUB_MISMATCH_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_mismatch.json" "$out"; elif [ -n "${STUB_NOEXPIRY_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_noexpiry.json" "$out"; elif [ -n "${STUB_GRAFANA12_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_grafana12.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
+  list_alert_rule_states) cp "$STUB_FIX/list_alert_rule_states.json" "$out" ;;
+  create_alert_rule|update_alert_rule)
+    n=$(find "$STUB_BODIES" -type f | wc -l)
+    cp "$body" "$STUB_BODIES/body-$((n + 1)).json"
+    if [ "$op" = create_alert_rule ]; then echo '{"uid": "new-rule"}' > "$out"; else echo '{}' > "$out"; fi ;;
+  delete_alert_rule) echo '{}' > "$out" ;;
   query_datasources)
     n=$(find "$STUB_BODIES" -type f | wc -l)
     cp "$body" "$STUB_BODIES/body-$((n + 1)).json"
@@ -67,21 +79,23 @@ G() { "$SCRIPT" "$@"; }
 O() { "$OSCRIPT" "$@"; }
 PR() { "$PSCRIPT" "$@"; }
 
-for s in "$SCRIPT" "$OSCRIPT" "$PSCRIPT"; do
+for s in "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT"; do
   if [ -x "$s" ]; then ok "$(basename "$s") is executable"; else bad "$(basename "$s") is not executable"; fi
   if python3 -I -m py_compile "$s"; then ok "py_compile $(basename "$s")"; else bad "py_compile $(basename "$s")"; fi
 done
 find "$SKILLS" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 # The scripts each carry their own copy of the small helpers (a skill may hold at most 32000
 # characters, so no shared module): the copies must stay identical.
-if python3 -I - "$SCRIPT" "$OSCRIPT" "$PSCRIPT" <<'PY'
+if python3 -I - "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT" <<'PY'
 import ast, sys
-files = dict(zip(("query", "os", "prom"), sys.argv[1:]))
+files = dict(zip(("query", "os", "prom", "alert"), sys.argv[1:]))
 want = {
-    "query,os,prom": ["clean", "die", "tmp_dir", "mktemp", "parse_step", "norm_time"],
-    "query,prom": ["agent", "fit_step", "read_json", "send_body"],
+    "query,os,prom": ["norm_time"],
+    "query,os,prom,alert": ["clean", "die", "tmp_dir", "mktemp", "parse_step"],
+    "query,prom": ["fit_step", "read_json", "send_body"],
+    "query,prom,alert": ["agent"],
 }
-consts = {"query,os,prom": ["CTRL", "UID_RE", "UNIT_S", "TIMEOUT"], "query,prom": ["POINTS_MAX"]}
+consts = {"query,os,prom,alert": ["CTRL", "UID_RE", "UNIT_S", "TIMEOUT"], "query,prom": ["POINTS_MAX"]}
 src = {k: open(p, encoding="utf-8").read() for k, p in files.items()}
 tree = {k: ast.parse(s) for k, s in src.items()}
 bad = 0
@@ -443,21 +457,213 @@ JSON
 out=$(G frames "$WORK/esc.json" --wide)
 if grep -q $'\033' <<<"$out"; then bad "wide / display names: an escape character reached the output"; else ok "wide / display names: control characters are replaced"; fi
 
-# --- size budgets (D-471): the app must not grow back silently ---------------------------------------------------------
+# --- grafana-alert: managed alert rules, guardrails and refusals -------------------------------------------------------
+AL() { "$ASCRIPT" "$@"; }
+refuse() {
+  local want="$1"; shift
+  local rc=0
+  AL "$@" >"$WORK/out" 2>"$WORK/err" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    bad "grafana-alert $* was expected to refuse with '$want'"
+  elif grep -qF -- "$want" "$WORK/err"; then
+    ok "grafana-alert refuses: $want"
+  else
+    bad "grafana-alert refused ($rc) without '$want'"; cat "$WORK/err" >&2
+  fi
+}
+EXP=$(date -u -d "+14 days" +%F)
+
+# create builds the exact body: the three-step model, the guard labels and the expiry
+reset
+if AL create --managed-by night --folder night-folder --group agent-night --title "p95 over 2s" \
+  --ds prom-main --expr 'max(rate(http_request_duration_seconds_count{job="api"}[5m]))' \
+  --op gt --threshold 2 --for 5m --receiver oncall --expires 14d --service api >"$WORK/out" \
+  && python3 -I - "$WORK/bodies/body-1.json" "$EXP" <<'PY'
+import json, sys
+body, exp = json.load(open(sys.argv[1])), sys.argv[2]
+def step(ref, dsu, model):
+    return {"refId": ref, "datasourceUid": dsu, "queryType": "",
+            "relativeTimeRange": {"from": 300, "to": 0}, "model": model}
+def cond(ref, ty, params):
+    return {"evaluator": {"params": params, "type": ty}, "operator": {"type": "and"},
+            "query": {"params": [ref]}, "reducer": {"params": [], "type": "last"}, "type": "query"}
+x = {"type": "__expr__", "uid": "__expr__"}
+expr = 'max(rate(http_request_duration_seconds_count{job="api"}[5m]))'
+want = {"orgID": 1, "title": "p95 over 2s", "ruleGroup": "agent-night", "folderUID": "night-folder",
+        "condition": "C", "for": "300s", "noDataState": "NoData", "execErrState": "Error",
+        "isPaused": False, "labels": {"managed_by": "night", "expires": exp, "service": "api"},
+        "annotations": {"summary": "p95 over 2s", "expires": exp},
+        "notification_settings": {"receiver": "oncall"},
+        "data": [step("A", "prom-main", {"editorMode": "code", "expr": expr, "instant": True,
+                                         "legendFormat": "__auto", "refId": "A"}),
+                 step("B", "__expr__", {"conditions": [cond("B", "gt", [])], "datasource": x,
+                                        "expression": "A", "reducer": "last", "refId": "B",
+                                        "type": "reduce"}),
+                 step("C", "__expr__", {"conditions": [cond("C", "gt", [2.0])], "datasource": x,
+                                        "expression": "B", "refId": "C", "type": "threshold"})]}
+if body == want:
+    sys.exit(0)
+for k in want:
+    if body.get(k) != want[k]:
+        print(f"create body[{k}]:\n  want {want[k]!r}\n  got  {body.get(k)!r}", file=sys.stderr)
+sys.exit(1)
+PY
+then ok "create builds the exact body (three-step model, guard labels, expires, receiver)"; else bad "create body differs"; fi
+
+refuse "create needs --expires" create --managed-by night --folder night-folder --group agent-night \
+  --title t --ds prom-main --expr 'x[5m]' --op gt --threshold 1 --for 5m --receiver oncall
+refuse "--expires is 1d to 30d" create --managed-by night --folder night-folder --group agent-night \
+  --title t --ds prom-main --expr 'x[5m]' --op gt --threshold 1 --for 5m --receiver oncall --expires 31d
+refuse "a range of at least 5 minutes" create --managed-by night --folder night-folder \
+  --group agent-night --title t --ds prom-main --expr 'cpu_seconds > 1' --op gt --threshold 1 \
+  --for 5m --receiver oncall --expires 14d
+STUB_NO_CP=1 refuse "no contact point named 'nope'" create --managed-by night --folder night-folder \
+  --group agent-night --title t --ds prom-main --expr 'x[5m]' --op gt --threshold 1 --for 5m \
+  --receiver nope --expires 14d
+refuse "is a loki data source" create --managed-by night --folder night-folder --group agent-night \
+  --title t --ds loki-main --expr 'x[5m]' --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
+STUB_RULES=cap refuse "already manages 10 rules" create --managed-by night --folder night-folder \
+  --group agent-night --title t --ds prom-main --expr 'x[5m]' --op gt --threshold 1 --for 5m \
+  --receiver oncall --expires 14d
+refuse "evaluates every 10s" create --managed-by night --folder night-folder --group fast \
+  --title t --ds prom-main --expr 'x[5m]' --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
+
+# update and delete refuse anything the agent does not manage, or outside its folder
+STUB_PERSON_RULE=1 refuse "not managed by 'night'" update cpu-watch --managed-by night \
+  --folder night-folder
+refuse "is in folder night-folder, not other-folder" update tripwire-p95 --managed-by night \
+  --folder other-folder
+refuse "pass --renew with --reason" update tripwire-p95 --managed-by night --folder night-folder \
+  --expires 14d
+STUB_PERSON_RULE=1 refuse "not managed by 'night'" delete cpu-watch --managed-by night \
+  --folder night-folder
+
+# update refuses a rule that left the shape the script builds (recording rule, extra label,
+# extra receiver setting): none of it is sent back
+STUB_RECORD_RULE=1 refuse "a recording rule" update tripwire-p95 --managed-by night \
+  --folder night-folder
+
+# the expiry is read from the `expires` label only; the annotation is a copy the script writes the
+# same, so a rule whose two disagree was changed outside the script and is refused
+STUB_MISMATCH_RULE=1 refuse "the expires label (2026-11-20) and the expires annotation (2027-01-01) disagree" \
+  update tripwire-p95 --managed-by night --folder night-folder
+STUB_RULES=mismatch refuse "the expires label (2026-11-20) and the expires annotation (2027-01-01) disagree" \
+  expire --managed-by night --folder night-folder
+
+# expire is folder-scoped and says so; a rule with no readable expiry needs --renew --reason to
+# get one (setting an expiry may be extending how long the rule lives after all)
+refuse "expire needs --folder" expire --managed-by night
+STUB_NOEXPIRY_RULE=1 refuse "the rule has no readable expiry" update tripwire-p95 --managed-by night \
+  --folder night-folder --expires 14d
+STUB_NOEXPIRY_RULE=1 refuse "the rule has no readable expiry" update tripwire-p95 --managed-by night \
+  --folder night-folder --expires 14d --renew
+
+# update sends the whole changed rule; the read-only fields are stripped
+reset
+if AL update tripwire-p95 --managed-by night --folder night-folder --title "p95 over 3s" --for 10m \
+  --receiver nightmanager --expires 7d --renew --reason "keep the tripwire a week longer" >"$WORK/out" \
+  && python3 -I - "$WORK/bodies/body-1.json" "$(date -u -d "+7 days" +%F)" <<'PY'
+import json, sys
+body, exp = json.load(open(sys.argv[1])), sys.argv[2]
+problems = []
+if body.get("title") != "p95 over 3s":
+    problems.append(f"title {body.get('title')!r}")
+if body.get("for") != "600s":
+    problems.append(f"for {body.get('for')!r}")
+if (body.get("notification_settings") or {}).get("receiver") != "nightmanager":
+    problems.append(f"receiver {body.get('notification_settings')!r}")
+if (body.get("labels") or {}).get("expires") != exp:
+    problems.append(f"labels.expires {body.get('labels')!r}")
+if (body.get("annotations") or {}).get("expires") != exp:
+    problems.append(f"annotations.expires {body.get('annotations')!r}")
+for gone in ("id", "updated", "updatedBy", "created", "createdBy", "version", "provenance", "metadata"):
+    if gone in body:
+        problems.append(f"read-only field {gone} sent back")
+if len(problems) == 0:
+    sys.exit(0)
+print("; ".join(problems), file=sys.stderr)
+sys.exit(1)
+PY
+then ok "update sends the changed rule (new title, for, receiver, expiry), read-only fields stripped"; else bad "update body differs"; fi
+
+# a rule read back from a newer Grafana carries fields the script never writes (keep_firing_for,
+# missingSeriesEvalsToResolve); update still accepts it and sends them back unchanged
+reset
+if STUB_GRAFANA12_RULE=1 AL update tripwire-p95 --managed-by night --folder night-folder --title "p95 over 3s" --for 10m \
+  --receiver nightmanager --expires 7d --renew --reason "keep the tripwire a week longer" >"$WORK/out" \
+  && python3 -I - "$WORK/bodies/body-1.json" <<'PY'
+import json, sys
+body = json.load(open(sys.argv[1]))
+problems = []
+if body.get("keep_firing_for") != "0s":
+    problems.append(f"keep_firing_for {body.get('keep_firing_for')!r}")
+if body.get("missingSeriesEvalsToResolve") != 2:
+    problems.append(f"missingSeriesEvalsToResolve {body.get('missingSeriesEvalsToResolve')!r}")
+for gone in ("id", "updated", "provenance"):
+    if gone in body:
+        problems.append(f"read-only field {gone} sent back")
+# The per-step fields the server adds to every stored step model: the script strips them
+# like the other read-only fields, so the resend is the script's shape again.
+for i, s in enumerate(body.get("data") or []):
+    for gone in ("intervalMs", "maxDataPoints"):
+        if gone in (s.get("model") or {}):
+            problems.append(f"step {i} model carries {gone}")
+if len(problems) == 0:
+    sys.exit(0)
+print("; ".join(problems), file=sys.stderr)
+sys.exit(1)
+PY
+then ok "update accepts a rule read back with keep_firing_for and missingSeriesEvalsToResolve, read-only fields stripped"; else bad "update of the newer Grafana rule differs"; fi
+
+# expire deletes only the expired managed ones, each delete still held for approval
+reset
+out=$(AL expire --managed-by night --folder night-folder)
+if grep -qF "1 deleted" <<<"$out" && [ "$(grep -c 'delete_alert_rule' "$STUB_LOG")" = 1 ] \
+  && grep -qF 'delete_alert_rule uid=tripwire-p95' "$STUB_LOG" \
+  && ! grep -qF 'uid=tripwire-5xx' "$STUB_LOG" && ! grep -qF 'uid=cpu-watch' "$STUB_LOG"; then
+  ok "expire deletes only the expired managed rule (tripwire-p95)"
+else
+  bad "expire did not delete exactly the expired managed rule"; echo "$out" >&2; cat "$STUB_LOG" >&2
+fi
+
+# list shows the agent's managed rules, not other people's
+out=$(AL list --managed-by night)
+if grep -qF 'tripwire-p95' <<<"$out" && grep -qF 'tripwire-5xx' <<<"$out" \
+  && ! grep -qF 'cpu-watch' <<<"$out"; then
+  ok "list shows the managed rules and not other people's"
+else
+  bad "list output wrong"; echo "$out" >&2
+fi
+
+# --- size budgets (D-484): the app must not grow back silently ---------------------------------------------------------
 PKG="$ROOT/plugins/builtin/grafana"
 total=$(find "$SKILLS" -type f -exec cat {} + | wc -c)
 bodies=$(cat "$SKILLS"/*/SKILL.md | wc -c)
-echo "sizes: all skill files $total (budget 59000), SKILL.md bodies $bodies (budget 16000)"
-for f in "$SKILLS"/*/SKILL.md "$SCRIPT" "$OSCRIPT" "$PSCRIPT"; do echo "sizes: $(wc -c < "$f") ${f#"$SKILLS"/}"; done
-if [ "$total" -le 59000 ]; then ok "all skill files together are at most 59000 characters ($total)"; else bad "all skill files are $total characters, over 59000"; fi
-if [ "$bodies" -le 16000 ]; then ok "SKILL.md bodies together are at most 16000 characters ($bodies)"; else bad "SKILL.md bodies are $bodies characters, over 16000"; fi
-expect_eq "exactly three skills" "grafana-opensearch grafana-prometheus grafana-query" "$(find "$SKILLS" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd' ')"
+echo "sizes: all skill files $total (budget 75000), SKILL.md bodies $bodies (budget 20000)"
+for f in "$SKILLS"/*/SKILL.md "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT"; do echo "sizes: $(wc -c < "$f") ${f#"$SKILLS"/}"; done
+if [ "$total" -le 75000 ]; then ok "all skill files together are at most 75000 characters ($total)"; else bad "all skill files are $total characters, over 75000"; fi
+if [ "$bodies" -le 20000 ]; then ok "SKILL.md bodies together are at most 20000 characters ($bodies)"; else bad "SKILL.md bodies are $bodies characters, over 20000"; fi
+expect_eq "exactly four skills" "grafana-alerts grafana-opensearch grafana-prometheus grafana-query" "$(find "$SKILLS" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd' ')"
 expect_eq "only grafana-query's description says to read it first" "grafana-query" \
   "$(for f in "$SKILLS"/*/SKILL.md; do grep -m1 '^description:' "$f" | grep -qi 'first' && basename "$(dirname "$f")"; done | paste -sd' ')"
 if grep -rnIE 'grafana-api-notes|investigate-a-spike|sweep' "$PKG" >&2; then bad "a removed skill or subcommand is still mentioned in the package"; else ok "no mention of grafana-api-notes, investigate-a-spike or sweep in the package"; fi
 
+# --- the setup walkthrough names Grafana's settings exactly and needs no notification policy -------------------------------
+SETUP="$PKG/docs/setup.md"
+for name in 'Max Alerts' 'Authentication Header Scheme' 'Authentication Header Credentials' 'Disable resolved message' 'Configure notifications' 'truncatedAlerts' 'Contact points' 'HTTP Method'; do
+  if grep -qF "$name" "$SETUP"; then ok "setup.md names Grafana's \"$name\""; else bad "setup.md no longer says \"$name\""; fi
+done
+if grep -qF '**Max Alerts**: **10**' "$SETUP"; then ok "setup.md sets Max Alerts to 10"; else bad "setup.md does not say Max Alerts: 10"; fi
+if tr '\n' ' ' < "$SETUP" | sed 's/> / /g; s/  */ /g' | grep -qF 'You do not need a notification policy'; then ok "setup.md says no notification policy is needed"; else bad "setup.md does not say no notification policy is needed"; fi
+if grep -qiE 'older Grafana|policy whose matcher|repeat interval of at least|make a notification policy|create a notification policy' "$SETUP" "$PKG/plugin.yaml" "$SKILLS"/*/SKILL.md; then
+  bad "the setup or skill text still asks for a notification policy"
+else
+  ok "the setup and skill text ask for no notification policy"
+fi
+if grep -rqiE 'cap how many alerts' "$PKG" || grep -rqE 'Max alerts' "$PKG"; then bad "the package has a vague alert cap or a misspelt Max Alerts"; else ok "no vague alert cap wording in the package"; fi
+
 # --- hygiene -------------------------------------------------------------------------------------------------------------------------
-for s in "$SCRIPT" "$OSCRIPT" "$PSCRIPT"; do
+for s in "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT"; do
   if grep -nE '\bcurl\b|\bwget\b|requests|urllib|http\.client|import socket|eval\(|exec\(|shell=True|os\.system|GRAFANA_|TOKEN|Authorization' "$s"; then
     bad "$(basename "$s") uses the network, a shell or credentials directly"
   else

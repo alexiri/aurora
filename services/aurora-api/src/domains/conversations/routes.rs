@@ -41,6 +41,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(post_message))
         .routes(routes!(abort_turn))
         .routes(routes!(send_now))
+        .routes(routes!(remind_conversation))
         .routes(routes!(list_followups))
         .routes(routes!(steer_followup))
         .routes(routes!(cancel_followup))
@@ -621,6 +622,27 @@ async fn send_now(
     Ok((
         StatusCode::ACCEPTED,
         Json(service::send_now(&s, &c, id).await?),
+    ))
+}
+
+/// (FIX-253, D-490) The "Remind it in 15 minutes" action on the `no_wakeup` notice: one one-time
+/// schedule 15 minutes ahead in this conversation, attributed to the caller; a second press
+/// returns the already-set time.
+#[utoipa::path(post, path = "/conversations/{id}/reminder", operation_id = "remindConversation", tag = "conversations",
+    params(("id" = Uuid, Path, description = "Conversation id")),
+    request_body = ReminderRequest,
+    responses((status = 200, body = ReminderSet), (status = 403, body = ErrorEnvelope),
+        (status = 404, body = ErrorEnvelope),
+        (status = 409, description = "reminder_not_offered", body = ErrorEnvelope)),
+    security(("session" = []), ("api_key" = [])))]
+async fn remind_conversation(
+    c: Caller,
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(b): Json<ReminderRequest>,
+) -> Result<Json<ReminderSet>, ApiError> {
+    Ok(Json(
+        service::remind_in_15_minutes(&s, &c, id, b.turn_id).await?,
     ))
 }
 

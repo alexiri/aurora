@@ -357,6 +357,59 @@ async fn one_page_without_all_says_whether_there_is_more() {
 }
 
 #[tokio::test]
+async fn a_projected_operation_returns_only_the_declared_fields_and_fails_closed() {
+    let m = mock(|r, _| {
+        if r.target.contains("/bad") {
+            Resp::json(200, &json!({"message": "unexpected shape"}))
+        } else {
+            Resp::json(
+                200,
+                &json!([
+                    {"name": "slack", "type": "slack", "uid": "u1",
+                     "settings": {"url": "https://hooks.example.test/x", "addresses": ["ops@corp.test"]}},
+                    {"name": "mail", "type": "email", "settings": {"address": "a@b"}}
+                ]),
+            )
+        }
+    })
+    .await;
+    let s = sandbox("project");
+    let cp = op(
+        "cp",
+        "GET",
+        "/cps",
+        json!({"items": "$", "project": ["$.name", "$.type"]}),
+    );
+    let bad = op(
+        "cp_bad",
+        "GET",
+        "/cps/bad",
+        json!({"items": "$.data", "project": ["$.name"]}),
+    );
+    write_api(&s.apps, "demo", &api_doc(m.port, 1, json!([cp, bad])));
+    let o = agent_cli::execute(&s.env, &s.apps, call("demo", &["cp"])).await;
+    assert_eq!(o.code, 0, "{}", o.err);
+    let t = text(&o);
+    assert!(t.contains("slack") && t.contains("email"), "{t}");
+    assert!(!t.contains("hooks.example.test"), "{t}");
+    assert!(!t.contains("ops@corp.test"), "{t}");
+    // The saved file is the reduced answer too.
+    let saved: Value = serde_json::from_slice(&std::fs::read(saved_path(&o)).unwrap()).unwrap();
+    assert_eq!(
+        saved,
+        json!([{"name": "slack", "type": "slack"}, {"name": "mail", "type": "email"}])
+    );
+    // Anything that does not fit the declared shape fails instead of passing through.
+    let o = agent_cli::execute(&s.env, &s.apps, call("demo", &["cp_bad"])).await;
+    assert_eq!(o.code, 1, "{}", text(&o));
+    assert!(
+        o.err.contains("not the shape the operation projects"),
+        "{}",
+        o.err
+    );
+}
+
+#[tokio::test]
 async fn link_header_follows_the_same_origin_only() {
     let m = mock(|r, port| {
         if r.target.contains("page=2") {

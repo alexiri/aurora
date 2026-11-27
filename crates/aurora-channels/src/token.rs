@@ -62,6 +62,14 @@ pub enum ActionKind {
         side: BoundedString<32>,
         decision: Decision,
     },
+    /// (FIX-252) The peer-origin approval card's **Ask an approver**: notifies the people with
+    /// `can_approve` in the approval's workspace. Grants no right.
+    #[serde(rename = "peer_approval.ask_approver")]
+    PeerTaskAskApprover,
+    /// (FIX-252) The peer-origin approval card's **Cancel the task**: the person who asked for
+    /// the task only, checked at click time.
+    #[serde(rename = "peer_approval.cancel_task")]
+    PeerTaskCancel,
 }
 
 impl ActionKind {

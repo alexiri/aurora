@@ -9700,6 +9700,86 @@
         ]
       }
     },
+    "/v1/agents/{agent}/ai-keys": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "The AI keys this agent does **not** have yet that exist in its organization or workspace\n(`can_own` on the agent's workspace, the grant route's refusal for everyone else; FIX-249,\nC-1168). The starter key first, then the dispatcher's order; a key the dispatcher cannot use\nis listed with its reason instead of being dropped. Metadata only, at most 50.",
+        "operationId": "getAgentAiKeys",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentAiKeys"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, not hosted, or not visible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
     "/v1/agents/{agent}/answer-readiness": {
       "get": {
         "tags": [
@@ -18005,6 +18085,81 @@
         ]
       }
     },
+    "/v1/approvals/{id}/ask-approver": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "(FIX-252) The web origin card's **Ask an approver**: the stored requester of the peer task\nthe approval was raised in e-mails the people with `can_approve` in the approval's\nworkspace (the channel card's button does the same). Sessions only, the stored requester\nonly — nobody else's task is revealed (404); the ask grants nobody a right.",
+        "operationId": "askApprovalApprovers",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Approval id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskApprovers"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/v1/approvals/{id}/decision": {
       "post": {
         "tags": [
@@ -22263,6 +22418,104 @@
           },
           "422": {
             "description": "hosted_disabled, idempotency_key_invalid, idempotency_key_reused (details.turn_id | details.followup_id), reply_target_invalid (details.reason: not_found | not_replyable | redacted)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/conversations/{id}/reminder": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "(FIX-253, D-490) The \"Remind it in 15 minutes\" action on the `no_wakeup` notice: one one-time\nschedule 15 minutes ahead in this conversation, attributed to the caller; a second press\nreturns the already-set time.",
+        "operationId": "remindConversation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Conversation id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReminderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReminderSet"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "reminder_not_offered",
             "content": {
               "application/json": {
                 "schema": {
@@ -34137,6 +34390,90 @@
           },
           {
             "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/peer-tasks/{id}/cancel": {
+      "post": {
+        "tags": [
+          "peer-tasks"
+        ],
+        "summary": "(FIX-252) The person who asked for a peer task cancels it (the origin card's button and the\nweb card): sessions only, the stored requester only — nobody else's task is revealed (404).",
+        "operationId": "cancelPeerTask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Peer task id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PeerTask"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
           }
         ]
       }
@@ -46909,6 +47246,60 @@
           "use"
         ]
       },
+      "AgentAiKey": {
+        "type": "object",
+        "description": "(FIX-249, C-1168) One AI key that exists in the agent's organization or workspace and is not\ngranted to the agent yet. Metadata only: never the value, never an endpoint address.",
+        "required": [
+          "secret_id",
+          "name",
+          "scope",
+          "starter",
+          "usable"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why not, in short plain words (the dispatcher's own reason); `null` when usable."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`organization` | `workspace`."
+          },
+          "secret_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "starter": {
+            "type": "boolean",
+            "description": "One of the organization's starter keys."
+          },
+          "usable": {
+            "type": "boolean",
+            "description": "Whether the dispatcher could use this key for the agent now."
+          }
+        }
+      },
+      "AgentAiKeys": {
+        "type": "object",
+        "description": "The answer of `GET /v1/agents/{agent}/ai-keys`: the starter key first, then the dispatcher's\norder, at most 50.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentAiKey"
+            }
+          }
+        }
+      },
       "AgentLink": {
         "type": "object",
         "description": "A link seen from one of its two agents.",
@@ -49260,6 +49651,20 @@
           }
         },
         "additionalProperties": false
+      },
+      "AskApprovers": {
+        "type": "object",
+        "description": "(FIX-252) The answer of the origin card's **Ask an approver**: how many deciders were\ne-mailed (a second ask mails nobody — the claim keeps the notifier from repeating it).",
+        "required": [
+          "asked"
+        ],
+        "properties": {
+          "asked": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
       },
       "AskBody": {
         "type": "object",
@@ -70613,6 +71018,32 @@
           },
           "version": {
             "type": "string"
+          }
+        }
+      },
+      "ReminderRequest": {
+        "type": "object",
+        "description": "(FIX-253, D-490) `POST /conversations/{id}/reminder` body: the turn whose \"nothing is set to\nwake it\" notice the button sits on.",
+        "required": [
+          "turn_id"
+        ],
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ReminderSet": {
+        "type": "object",
+        "description": "(FIX-253, D-490) The reminder the notice's action set (or already had set).",
+        "required": [
+          "reminder_for"
+        ],
+        "properties": {
+          "reminder_for": {
+            "type": "string",
+            "description": "The local wall time the reminder fires at (\"HH:MM\")."
           }
         }
       },

@@ -262,9 +262,12 @@ pub async fn finish(
             constraint: Some("turns_finish_status".into()),
         });
     }
+    // (FIX-253 review) The answer's Stop ends at the terminal transition: a leftover flag would
+    // arm the background-stop dispatch for a turn whose Background activity entry only says what
+    // kept running. A stop of the finished turn's entry sets the flag again afterwards.
     let done = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE turns SET status = $2, error_code = $3, error_message = $4, usage = COALESCE($5, usage),
-            finished_at = now(), updated_at = now()
+            abort_requested_at = NULL, finished_at = now(), updated_at = now()
          WHERE id = $1 AND role = 'turn' AND status IN {ACTIVE}"
     )))
     .bind(id)
@@ -285,6 +288,37 @@ pub async fn request_abort(conn: &mut PgConnection, id: Uuid) -> Result<Option<T
     let done = sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE turns SET abort_requested_at = COALESCE(abort_requested_at, now()), updated_at = now()
          WHERE id = $1 AND role = 'turn' AND status IN {ACTIVE}"
+    )))
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get(conn, id).await
+}
+
+/// (FIX-253, D-490) Set the abort flag on a **finished** turn so the due-work dispatch releases
+/// the conversation's idle harness session and its background work with it. Only a turn that has
+/// an unstopped Background activity entry qualifies, and only once: the **Stop requested** mark
+/// the first request leaves stands until the supervisor's release is acknowledged
+/// (FIX-253 review) — until then the request is in flight, never re-armed by a second Stop.
+pub async fn request_background_stop(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<TurnRow>, DbError> {
+    let done = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE turns SET abort_requested_at = COALESCE(abort_requested_at, now()), updated_at = now()
+         WHERE id = $1 AND role = 'turn' AND status NOT IN {ACTIVE}
+           AND EXISTS (
+             SELECT 1 FROM transcript_events e
+             WHERE e.conversation_id = turns.conversation_id AND e.turn_id = turns.id
+               AND e.type = 'notice' AND e.payload->>'code' = 'background_activity'
+               AND NOT EXISTS (
+                 SELECT 1 FROM transcript_events e2
+                 WHERE e2.conversation_id = e.conversation_id AND e2.seq > e.seq
+                   AND e2.type = 'notice'
+                   AND e2.payload->>'code' IN ('background_stopped', 'background_stop_requested')))"
     )))
     .bind(id)
     .execute(&mut *conn)

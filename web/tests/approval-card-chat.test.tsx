@@ -5,6 +5,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { describe, expect, it, vi } from "vitest";
 
 import { ApprovalCard } from "@/components/chat/approval-card";
+import { PEER_DECIDED_CODE, PEER_WAITING_CODE, PeerApprovalCard, PeerApprovalOutcome } from "@/components/chat/peer-approval-card";
 import type { TranscriptEvent } from "@/lib/api/conversations";
 import { applyEvents, emptyTranscript } from "@/lib/chat/transcript";
 import { json } from "./support/api";
@@ -100,5 +101,79 @@ describe("the approval card in the conversation", () => {
     stub("owner", []);
     show([pendingEvent, ev(3, "approval.expired", { approval_id: "ap1", reason: "deadline" })]);
     expect(await screen.findByText("Expired")).toBeInTheDocument();
+  });
+});
+
+// (FIX-252) The delegated task's approval card at the origin: the buttons follow the reader's
+// rights at the approval's workspace (the API says so), and the outcome settles the card.
+const waitingEvent = ev(1, "notice", {
+  code: PEER_WAITING_CODE,
+  text: "Fixer is waiting for your approval to send a POST request to api.example.com (asked for by Daneel)",
+  approval_id: "ap1", peer_task_id: "pt1", workspace_id: "w2", status: "open",
+});
+const peerDecided = ev(5, "notice", {
+  code: PEER_DECIDED_CODE, text: "The approval to send a POST request to api.example.com was approved by Ada.",
+  approval_id: "ap1", peer_task_id: "pt1", workspace_id: "w2", outcome: "approved",
+});
+
+function stubPeer(role: "owner" | "member", posts: { path: string; body: unknown }[] = []) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: Request) => {
+      const url = new URL(input.url, "http://localhost");
+      if (input.method === "POST") {
+        const text = await input.text();
+        posts.push({ path: url.pathname, body: text ? JSON.parse(text) : null });
+        return json(200, { asked: 1 });
+      }
+      if (url.pathname === "/v1/workspaces/w2") return json(200, { my_role: role, contacts: {} });
+      return json(404, { error: { code: "not_found", message: "nf" } });
+    }),
+  );
+}
+
+const wrapPeer = (ui: React.ReactElement) =>
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>{ui}</QueryClientProvider>);
+
+describe("the delegated task's approval card at the origin", () => {
+  it("offers Approve and Deny when the reader may decide in the approval's workspace, and decides there", async () => {
+    const posts: { path: string; body: unknown }[] = [];
+    stubPeer("owner", posts);
+    wrapPeer(<PeerApprovalCard ev={waitingEvent} events={[waitingEvent]} />);
+    expect(await screen.findByTestId("peer-approval-card").then((c) => c.textContent)).toContain("Fixer is waiting for your approval");
+    // The buttons wait for the API's answer about this reader's rights at the approval's workspace.
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    await waitFor(() =>
+      expect(posts).toEqual([{ path: "/v1/approvals/ap1/decision", body: { decision: "approve" } }]),
+    );
+  });
+
+  it("offers Ask an approver and Cancel the task to a reader who may not decide there — never inferred", async () => {
+    const posts: { path: string; body: unknown }[] = [];
+    stubPeer("member", posts);
+    wrapPeer(<PeerApprovalCard ev={waitingEvent} events={[waitingEvent]} />);
+    await screen.findByTestId("peer-approval-card");
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Deny" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ask an approver" }));
+    await waitFor(() => expect(posts.map((p) => p.path)).toEqual(["/v1/approvals/ap1/ask-approver"]));
+    expect(await screen.findByTestId("peer-asked")).toBeInTheDocument();
+  });
+
+  it("folds away once the outcome notice arrives, and the outcome is one line", () => {
+    stubPeer("owner");
+    const { container } = wrapPeer(<PeerApprovalCard ev={waitingEvent} events={[waitingEvent, peerDecided]} />);
+    expect(container.textContent).toBe("");
+    wrapPeer(<PeerApprovalOutcome ev={peerDecided} />);
+    const line = screen.getByTestId("peer-approval-outcome");
+    expect(line.textContent).toContain("Approved");
+    expect(line.textContent).toContain("was approved by Ada");
+  });
+
+  it("folds away when the task is cancelled (the close line carries the outcome)", () => {
+    stubPeer("member");
+    const closed = ev(6, "notice", { code: "peer_task_closed", peer_task_id: "pt1", text: "The task was cancelled." });
+    const { container } = wrapPeer(<PeerApprovalCard ev={waitingEvent} events={[waitingEvent, closed]} />);
+    expect(container.textContent).toBe("");
   });
 });

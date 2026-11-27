@@ -170,6 +170,22 @@ fn archive_rules() {
     assert!(read_codes(&b).contains(&"file_missing"));
 }
 
+/// A `.github` folder in a package is the repository's own metadata, never content: no
+/// `path_unknown`, and its files are absent from the package (owner request, 2026-11-25).
+#[test]
+fn a_github_folder_is_not_package_content() {
+    let y = manifest("aurora", "api.todoist.com");
+    let mut b = PackageBuilder::new(&y);
+    b.push_raw(".github", EntryType::Directory, b"");
+    b.push_raw(".github/workflows/", EntryType::Directory, b"");
+    b.push_raw(".github/workflows/ci.yml", EntryType::Regular, b"on: push");
+    b.push_raw("skills/.github/thing.md", EntryType::Regular, b"x");
+    let p = read(&b);
+    assert!(p.file(".github/workflows/ci.yml").is_none());
+    assert!(p.file("skills/.github/thing.md").is_none());
+    assert!(p.file("plugin.yaml").is_some());
+}
+
 #[test]
 fn oversize() {
     let b = PackageBuilder::new(&manifest("aurora", "api.todoist.com"));

@@ -10,7 +10,7 @@ use super::dto::{AttentionItem, AttentionKind, AttentionLevel, AttentionList};
 use crate::app::AppState;
 use crate::domains::auth::mail::Mail;
 use crate::domains::connectors::manifest;
-use aurora_core::{ApiError, limits, sanitize};
+use aurora_core::{ApiError, dash_paths, limits, sanitize};
 use aurora_db::repo::admin_attention as repo;
 use aurora_db::repo::orgs;
 use sqlx::PgConnection;
@@ -161,9 +161,10 @@ pub fn template_version_waiting_text(template_name: &str, version: &str) -> (Str
     )
 }
 
-/// The dashboard page that resolves a template version item (the review screen).
+/// The dashboard page that resolves a template version item (the review screen,
+/// `web` `adminRoutes.templateReview`).
 pub fn template_version_href(template_id: &str, version: &str) -> String {
-    format!("/admin/agent-templates/{template_id}/versions/{version}")
+    dash_paths::template_version_review(template_id, version)
 }
 
 fn down_text(display_name: &str, errored: bool) -> (String, String) {
@@ -192,10 +193,15 @@ fn ownerless_text(slug: &str, members: i64) -> (String, String) {
 /// The dashboard page that resolves a package or source item (the names of `web/src/lib/routes.ts`).
 pub fn package_href(package_row_id: &str, conflict: bool) -> String {
     if conflict {
-        "/admin/apps?tab=advanced#host-conflicts".to_owned()
+        dash_paths::admin_apps("advanced") + "#host-conflicts"
     } else {
-        format!("/admin/apps/packages/{package_row_id}")
+        dash_paths::admin_app_package(package_row_id)
     }
+}
+
+/// The dashboard page that resolves an add-on source's key change (its row in the Advanced tab).
+fn addon_source_href(source_id: &str) -> String {
+    dash_paths::admin_apps("advanced") + "#" + source_id
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -281,12 +287,17 @@ pub async fn notify_template_version(
 // GET /v1/admin/attention (C-1022)
 // ---------------------------------------------------------------------------------------------
 
-/// (P5-REFINE-8, C-1080) The rail topic of a C-1022 kind.
+/// (P5-REFINE-8, C-1080) The rail topic of a C-1022 kind: the Administration entry whose page
+/// resolves the item.
 fn topic_of(kind: AttentionKind) -> &'static str {
-    use crate::domains::attention::service::{TOPIC_APPS, TOPIC_CHAT, TOPIC_PEOPLE};
+    use crate::domains::attention::service::{
+        TOPIC_AGENT_POLICY, TOPIC_APPS, TOPIC_CHAT, TOPIC_PEOPLE,
+    };
     match kind {
         AttentionKind::ConnectorApproval | AttentionKind::ConnectorDown => TOPIC_CHAT,
         AttentionKind::OwnerlessOrg => TOPIC_PEOPLE,
+        // (FIX-245) A template version is reviewed in What agents may do › Agent templates, not on Apps.
+        AttentionKind::AgentTemplateVersion => TOPIC_AGENT_POLICY,
         _ => TOPIC_APPS,
     }
 }
@@ -341,7 +352,7 @@ pub async fn open_items(s: &AppState) -> Result<Vec<AttentionItem>, ApiError> {
             c.id.clone(),
             connector_text(&c.display_name, c.version.as_deref(), update, &widening),
             c.since,
-            "/admin/chat-platforms".to_owned(),
+            dash_paths::admin_chat_platforms(),
         ));
     }
     for p in repo::held_packages(&s.pool).await? {
@@ -364,7 +375,7 @@ pub async fn open_items(s: &AppState) -> Result<Vec<AttentionItem>, ApiError> {
             k.id.to_string(),
             key_changed_text(&k.name),
             k.since,
-            format!("/admin/apps?tab=advanced#{}", k.id),
+            addon_source_href(&k.id.to_string()),
         ));
     }
     // (P6-TPL-2, C-1108) The template versions: one decision item per `pending_approval`
@@ -387,7 +398,7 @@ pub async fn open_items(s: &AppState) -> Result<Vec<AttentionItem>, ApiError> {
             d.id,
             down_text(&d.display_name, d.errored),
             d.since,
-            "/admin/chat-platforms".to_owned(),
+            dash_paths::admin_chat_platforms(),
         ));
     }
     for o in orgs::list_ownerless(&s.pool).await? {
@@ -396,7 +407,7 @@ pub async fn open_items(s: &AppState) -> Result<Vec<AttentionItem>, ApiError> {
             o.slug.clone(),
             ownerless_text(&o.slug, o.members),
             o.created_at,
-            "/admin/people?tab=organizations".to_owned(),
+            dash_paths::admin_people("organizations"),
         ));
     }
     for v in repo::template_versions_awaiting(&s.pool, 3600.0).await? {

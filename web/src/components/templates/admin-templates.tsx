@@ -1,18 +1,62 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import { Section } from "@/components/ui/section";
+import { adminRoutes } from "@/lib/routes";
 import {
   useAdminTemplates,
   useTemplateSources,
+  type AdminTemplateView,
 } from "@/lib/api/agent-templates";
 
 import { AddSourceDialog } from "./add-source-dialog";
 import { SourcesTable } from "./sources-table";
 import { TemplatesTable } from "./templates-table";
+
+/** One waiting version: the template, the version, and the Review button that opens the review page. */
+function WaitingRow({ t, version }: { t: AdminTemplateView; version: string }) {
+  return (
+    <li
+      className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-line bg-surface p-3"
+      data-testid="needs-review-row"
+    >
+      <p className="min-w-0 text-sm text-ink">
+        <span className="font-medium">{t.name}</span> <span className="text-muted">{version}</span> is waiting for review
+      </p>
+      <Button asChild>
+        <Link href={adminRoutes.templateReview(t.template_id, version)}>Review</Link>
+      </Button>
+    </li>
+  );
+}
+
+/**
+ * (FIX-245) The versions waiting for review, at the top of the tab: a version a person cannot use yet
+ * is the first thing an administrator sees here, with its Review button.
+ */
+function NeedsYou({ templates }: { templates: AdminTemplateView[] }) {
+  const waiting = templates.flatMap((t) =>
+    t.versions.filter((v) => v.status === "pending_approval").map((v) => ({ t, version: v.version })),
+  );
+  if (waiting.length === 0) return null;
+  return (
+    <Section
+      id="needs-you"
+      title="Needs you"
+      description="Agent template versions waiting for review. People cannot use a version until you approve it."
+    >
+      <ul className="space-y-2" data-testid="templates-needs-you">
+        {waiting.map(({ t, version }) => (
+          <WaitingRow key={`${t.template_id}:${version}`} t={t} version={version} />
+        ))}
+      </ul>
+    </Section>
+  );
+}
 
 /**
  * Administration › What agents may do › Agent templates (C-1114): the template repositories an instance admin adds
@@ -27,6 +71,7 @@ export function AdminTemplates() {
   const templateItems = templates.data?.items ?? [];
   return (
     <div className="space-y-10">
+      <NeedsYou templates={templateItems} />
       <Section
         id="template-sources"
         title="Template repositories"

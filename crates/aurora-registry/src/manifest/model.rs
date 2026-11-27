@@ -7,6 +7,7 @@ use serde_yaml::Value;
 
 pub use aurora_policy::params::{ParamCondition, ParamMatch, ParamSource};
 
+use crate::manifest::BodyCheck;
 use crate::template::Template;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -998,6 +999,25 @@ pub struct ToolItem {
     /// only; absent = no package default (and no change to the package's snapshot hash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<ToolDefaultApproval>,
+    /// A request-body shape the gateway enforces for this tool's raw sends: a body that is
+    /// not the declared shape is refused before any rule, approval or injection, so nothing
+    /// the approval card cannot show is ever held for a person's approval. Absent = no
+    /// body check (and no change to the package's snapshot hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_check: Option<BodyCheck>,
+    /// The tool declares no query parameters: a request that carries a query string is
+    /// refused before any rule, approval or injection (a parameter could make the answer
+    /// carry what the tool's description says never reaches the agent, an alert server's
+    /// `decrypt=true` on contact points). Absent = the query is not checked.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub refuse_query: bool,
+    /// (lane review 2026-11-25) Response projection: of every item of the tool's JSON array
+    /// answer (or of the object itself) only these `$`-paths stay, applied by the gateway on
+    /// the response path for every caller; an answer that is not JSON in the projected shape
+    /// is withheld. The agent CLI reduces what it saves and prints the same way. Absent = the
+    /// answer is forwarded as it arrived (and no change to the package's snapshot hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<Vec<String>>,
 }
 
 /// (P5-TOOLASK, C-1042) The values of a tool's `approval`; only `ask` exists.

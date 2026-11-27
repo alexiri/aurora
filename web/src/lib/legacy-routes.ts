@@ -58,6 +58,12 @@ const ADMIN: [RegExp, Rule][] = [
   [/^\/admin\/instances$/, () => adminRoutes.selfHosted()],
   [/^\/admin\/oauth-clients$/, () => adminRoutes.oauthClients()],
   [/^\/admin\/connectors$/, () => adminRoutes.chatPlatforms()],
+  // (FIX-245) The review address the first template attention items and notices carried: the review
+  // page lives under What agents may do, so the old address is replaced by it.
+  [
+    /^\/admin\/agent-templates\/([^/]+)\/versions\/([^/]+)$/,
+    (m) => adminRoutes.templateReview(decodeURIComponent(m[1]!), decodeURIComponent(m[2]!)),
+  ],
   [/^\/admin\/secret-stores$/, () => adminRoutes.platform("secret-stores")],
   [/^\/admin\/runners$/, () => adminRoutes.platform("runners")],
   [/^\/admin\/storage$/, () => adminRoutes.data("storage")],

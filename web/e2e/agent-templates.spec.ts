@@ -76,8 +76,8 @@ for (const width of [1280, 390]) {
       await expect(readme.getByText("remote picture")).toBeVisible();
       await expect(readme.getByText("docs")).toBeVisible();
       await expect(readme.getByRole("heading", { level: 3, name: "Schedule manager" })).toBeVisible();
-      // the diff against the offered version, then the decision bound to the shown hash
-      await expect(page.getByRole("region", { name: "Changes against 1.0.0" })).toContainText("+ Triage carefully.");
+      // what changed against the offered version, inside the Instructions section (FIX-250), then the decision bound to the shown hash
+      await expect(page.getByLabel("Diff of Instructions")).toContainText("+ Triage carefully.");
       await page.getByRole("button", { name: "Approve" }).click();
       await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
       await expect.poll(() => mock.writes.at(-1)).toEqual({ key: "POST /v1/admin/agent-templates/schedule-manager/versions/1.1.0/approve", body: { content_sha256: "c".repeat(64) } });

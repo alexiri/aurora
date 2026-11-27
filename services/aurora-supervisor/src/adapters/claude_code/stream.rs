@@ -65,7 +65,13 @@ pub struct StreamMapper {
     block_kinds: HashMap<u64, String>,
     stop_reason: Option<String>,
     tool_names: HashMap<String, String>,
+    /// (FIX-253, D-490) Where the mapper records the child's own background commands (`Bash` with
+    /// `run_in_background`): they outlive the turn and, with no turn open, nobody reads stdout.
+    backgrounds: Option<BackgroundSink>,
 }
+
+/// (FIX-253, D-490) Shared record of the child's background commands: (command, started unix secs).
+pub type BackgroundSink = Arc<StdMutex<Vec<(String, u64)>>>;
 
 fn trunc(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(max).collect();
@@ -109,8 +115,15 @@ impl StreamMapper {
         Self {
             baseline,
             steers,
+            backgrounds: None,
             ..Self::default()
         }
+    }
+
+    /// (FIX-253, D-490) Record the child's own background commands in `sink` while mapping.
+    pub fn with_backgrounds(mut self, sink: BackgroundSink) -> Self {
+        self.backgrounds = Some(sink);
+        self
     }
 
     /// Clears per-turn state (call when a new user message is sent).
@@ -274,6 +287,20 @@ impl StreamMapper {
                     let name = b.get("name").and_then(Value::as_str).unwrap_or("tool");
                     let input = b.get("input").unwrap_or(&Value::Null);
                     self.tool_names.insert(call_id.to_owned(), name.to_owned());
+                    if input.get("run_in_background").and_then(Value::as_bool) == Some(true)
+                        && let Some(command) = input.get("command").and_then(Value::as_str)
+                        && let Some(sink) = &self.backgrounds
+                        && let Ok(mut bg) = sink.lock()
+                        && !bg.iter().any(|(c, _)| c == command)
+                    {
+                        bg.push((
+                            command.to_owned(),
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ));
+                    }
                     out.events.push(HarnessEvent::ToolStarted {
                         call_id: call_id.to_owned(),
                         name: name.to_owned(),

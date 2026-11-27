@@ -273,6 +273,68 @@ so it is never offered (`levels`, `send_only` on the app and account DTOs) and i
 custom list keeps its own `empty_custom` refusal. The access notice names the account: "Dani can
 now send to Ops alerts, and asks you first." / "… without asking."
 
+**Body shape (`body_check`).** A tool may declare `body_check` — `refuse_keys: [keys]`,
+`allow_keys: [keys]`, `only_keys: { key: [allowed keys] }`, `exact_len: { key: length }`,
+`entry_keys: { key: [allowed keys] }`, `entry_value: { key: { from, key, value } }`,
+`entry_member: { key: [{ at, member, keys, value? }] }`, `entry_at: { key: [{ at, member?, key,
+value }] }` and `value: { key: scalar }` — a
+request-body shape the gateway enforces on the tool's raw sends: a body carrying a refused key, a
+key outside the declared allow list, an `only_keys` object with a key outside its list, or an
+`exact_len` array of the wrong length is refused with `tool_body_refused` before any rule,
+approval or injection, so nothing the approval card cannot show is ever held for approval. The
+entry rules read the entries of an array: every entry of an `entry_keys` array is an object with
+no keys but the listed ones, and from the `from`-th entry on, an `entry_value` array's entries
+carry the named key with exactly the named scalar value — so an array of a fixed length whose
+later entries must be the receiver's own processing steps (never another query of the agent's
+own) is declarable. An `entry_member` rule checks the object an entry names along a `member`
+path (member names and indexes) the way `only_keys` does — no keys but the listed ones, and,
+when `value` is set, its `key` with exactly that scalar — and an `entry_at` rule pins one
+entry's key, on the entry itself or along such a path, to exactly that scalar; a `value` rule
+pins a top-level key the body must carry with exactly that scalar (a body without it is refused
+too). A `kinds` rule checks a top-level key's JSON type when the body carries it — one of
+`string`, `number`, `integer` or `boolean` (an integer is a number without a fractional part);
+a key the body does not carry is allowed, and a value of another kind, such as an object where
+a duration belongs, is refused. Fail
+closed: an absent, truncated, non-JSON or non-object body is refused too. Receivers match object
+key names without regard to case and keep the last match, so a key the case-folded form of which
+(the Kelvin sign U+212A and the long s U+017F fold to `k` and `s`) equals a checked or allowed key
+but is not spelled exactly that way is refused wherever the check reads — at the top level,
+inside `only_keys` objects, inside `entry_keys` arrays and inside the objects the member rules
+read — and a duplicated exact key is checked
+as the receiver reads it, by
+its last occurrence. Every part is a refusal, never an allowance; key names are identifiers of at
+most 64 characters, the lists are small (`refuse_keys` at most 8, `allow_keys` at most 16,
+`only_keys` and `entry_keys` at most 8 keys of at most 16 allowed, `entry_member` at most 8
+members of at most 16 keys, `entry_at` at most 16 pins, `value` at most 8 keys, member paths at
+most 8 segments, `entry_value` and pin values at most
+64 characters of JSON, lengths at least 1), and an absent `body_check`
+checks nothing and changes no hash. Additive in contract 1. Built-in user: `grafana` (1.8.0: the
+alert-rule tools accept only the top-level keys the grafana-alert script sends, every `data` step
+is the object the script sends, the steps after the first are the server's own expression steps
+whose refIds, expression links and the top-level `condition` are pinned to the script's values,
+and any spelling the receiver would fold onto one of these keys is refused).
+
+**No query parameters (`refuse_query: true`).** A read tool that serves only a fixed path may
+declare that it sends no query parameters; the gateway then refuses any request on the tool that
+carries a query string with `tool_query_refused`, before any rule, approval or injection — a
+parameter could make the answer carry what the tool's description says never reaches the agent.
+A request without a query string is unaffected. Absent = the query is not checked (and no change
+to the package's snapshot hash). Built-in user: `grafana` (1.7.0: `list_contact_points`, whose
+endpoint would answer `decrypt=true` with the contact points' settings and secrets).
+
+**Response projection (`project: [$-paths]`).** A tool whose answer is a JSON array of objects
+with settings may declare the `$`-paths every item keeps (plain member names, 1 to 8, at most 8
+segments — no wildcards, no filters); the gateway reduces every answer to those paths on the
+response path, for every caller: the body is buffered whole (at most 1 MiB), parsed and
+rewritten, and an answer that is truncated, not JSON or not in the projected shape is withheld
+with `502 tool_response_unprojectable` instead of forwarded. An upstream error on a projected
+tool is withheld the same way — its body never passed the projection — and is replaced with a
+short fixed note carrying the upstream status (`tool_error_withheld`). The agent CLI reduces what it saves
+and prints the same way. Absent = the answer is forwarded as it arrived (and no change to the
+package's snapshot hash). Built-in user: `grafana` (1.8.0: `list_contact_points`, whose answer
+keeps only each contact point's name and type, so the endpoint's settings and secrets reach no
+caller, raw send or CLI call alike).
+
 `scopes: []` with `default_scopes: []` is valid: the authorization request then carries no `scope`
 parameter and the connection has no scopes (FIX-133: a **GitHub App's user authorization**, whose
 permissions come from the app's registration, is the package's `oauth_app` method, with its own

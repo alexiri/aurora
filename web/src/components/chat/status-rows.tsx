@@ -417,3 +417,74 @@ export function ContinueNotice({ text, convId }: { text: string; convId: string 
 export function SystemRow({ children }: { children: React.ReactNode }) {
   return <p className="mx-auto max-w-chat-notice rounded-control bg-subtle px-3 py-1.5 text-center text-xs text-ink-2">{children}</p>;
 }
+
+/**
+ * (FIX-253, D-490) The **Background activity** notice: what the harness child keeps doing after
+ * the turn ended, with Stop. The row stays (the transcript renders it muted once the durable
+ * `background_stopped` notice exists); the button is only for a still-running entry, and is
+ * disabled while the release is in flight (the **Stop requested** notice stands, FIX-253 review).
+ */
+export function BackgroundActivityNotice({ text, turnId, requested = false }: { text: string; turnId: string; requested?: boolean }) {
+  const [err, setErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Notice className="mx-auto flex max-w-chat-notice flex-wrap items-center gap-2" data-testid="background-activity">
+      <p className="min-w-0 flex-1">{text}</p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy || requested}
+        onClick={() => {
+          setBusy(true);
+          setErr(null);
+          chatApi
+            .abort(turnId)
+            .catch(setErr)
+            .finally(() => setBusy(false));
+        }}>
+        Stop
+      </Button>
+      {err ? (
+        <p role="alert" className="w-full text-danger-ink">
+          {err instanceof ApiError ? err.message : "Could not stop the background activity."}
+        </p>
+      ) : null}
+    </Notice>
+  );
+}
+
+/**
+ * (FIX-253, D-490) The self-check notice ("… said it would continue, but nothing is set to wake
+ * it") with its **Remind it in 15 minutes** action: one press sets one one-time reminder for the
+ * agent in this conversation, attributed to the presser (the POST is idempotent per turn). The
+ * button is disabled once the durable `no_wakeup_set` notice exists — it reads
+ * **"A reminder is set for HH:MM."** on its own line.
+ */
+export function NoWakeupNotice({ text, convId, turnId, set = false }: { text: string; convId: string; turnId: string; set?: boolean }) {
+  const [err, setErr] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Notice className="mx-auto flex max-w-chat-notice flex-wrap items-center gap-2" data-testid="no-wakeup">
+      <p className="min-w-0 flex-1">{text}</p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={busy || set}
+        onClick={() => {
+          setBusy(true);
+          setErr(null);
+          chatApi
+            .remind(convId, turnId)
+            .catch(setErr)
+            .finally(() => setBusy(false));
+        }}>
+        Remind it in 15 minutes
+      </Button>
+      {err ? (
+        <p role="alert" className="w-full text-danger-ink">
+          {err instanceof ApiError ? err.message : "Could not set the reminder."}
+        </p>
+      ) : null}
+    </Notice>
+  );
+}

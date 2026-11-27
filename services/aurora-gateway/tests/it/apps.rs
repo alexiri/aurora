@@ -52,6 +52,10 @@ mod account_health;
 #[path = "own_server.rs"]
 mod own_server;
 
+// (lane review 2026-11-25) The response-projection tests share this file's harness.
+#[path = "response_projection.rs"]
+mod response_projection;
+
 // (FIX-166, D-368) Request-body framing on the upstream hop, seen by a frame-level oracle.
 #[path = "wire_framing.rs"]
 mod wire_framing;
@@ -212,6 +216,12 @@ struct Env {
     shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
 
+/// The contact-point answer the upstream returns: names and types, and settings a projected
+/// tool's caller must never see (the Grafana endpoint's `settings` carries e-mail addresses
+/// and URLs).
+const CONTACT_POINTS: &str = r#"[{"name":"hook","type":"hook","uid":"cp-1","settings":{"url":"https://hooks.example.org/x","addresses":["ops@example.org"],"token":"s"}},
+    {"name":"mail","type":"email","uid":"cp-2","settings":{"addresses":["oncall@example.org"]}}]"#;
+
 async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
     let (parts, body) = req.into_parts();
     let body = body
@@ -237,6 +247,28 @@ async fn upstream(req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infal
         }
     }
     out.push_str(&format!("body={}\n", String::from_utf8_lossy(&body)));
+    // (lane review 2026-11-25) The response-projection tests: a contact-point-like answer with
+    // settings a projected tool's caller must never see, and a non-JSON one (fail closed).
+    if parts.uri.path() == "/cps" || parts.uri.path() == "/raw" || parts.uri.path() == "/cpskey" {
+        return Ok(Response::new(Full::new(Bytes::from_static(
+            CONTACT_POINTS.as_bytes(),
+        ))));
+    }
+    if parts.uri.path() == "/cpsbad" {
+        return Ok(Response::new(Full::new(Bytes::from_static(
+            b"<html>not json</html>",
+        ))));
+    }
+    // A projected tool whose upstream answers with an error: the error body (here one that
+    // repeats the credential the request carried and the settings a projection exists to
+    // keep from the caller) never passed the projection, so the gateway withholds it.
+    if parts.uri.path() == "/cpserr" {
+        let mut r = Response::new(Full::new(Bytes::from_static(
+            br#"{"error":"not found","credential":"T","settings":{"token":"s"}}"#,
+        )));
+        *r.status_mut() = http::StatusCode::NOT_FOUND;
+        return Ok(r);
+    }
     // (FIX-104) The gateway withholds a response that echoes a value it put in the URL; a test
     // that wants to see the whole request asks for it hex-encoded (`x-echo-hex`).
     if parts.headers.contains_key("x-echo-hex") {

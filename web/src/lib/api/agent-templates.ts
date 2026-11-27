@@ -21,6 +21,65 @@ export type TemplateContentView = components["schemas"]["TemplateContentView"];
 export type FileView = components["schemas"]["FileView"];
 export type OrgTemplateItem = components["schemas"]["OrgTemplateItem"];
 
+// ---- The C-1104 shapes passed through as stored (`content_json`) -------------------------------
+// `TemplateContentView.inputs`, `.apps`, `.skill_refs` and `.automations` are C-1104's shapes,
+// passed through as stored; the review reads them as data. These are those shapes as TypeScript.
+
+/** One declared input of `template.yaml` (C-1104's `InputDecl`), as stored. */
+export interface TemplateInputView {
+  id: string;
+  label: string;
+  help: string | null;
+  /** `text` | `choice`. */
+  kind: string;
+  required: boolean;
+  pattern: string | null;
+  max_length: number | null;
+  options: string[] | null;
+  default: string | null;
+}
+
+/** The tool split of an app entry with a custom choice (`tools:`), as stored. */
+export interface TemplateAppToolsView {
+  allow: string[];
+  ask: string[];
+}
+
+/** One `apps:` entry of `template.yaml` (C-1104's `AppEntry`), as stored. */
+export interface TemplateAppEntryView {
+  app?: string;
+  any_of?: string[];
+  required: boolean;
+  /** `read` | `ask` | `act`. */
+  level: string;
+  tools?: TemplateAppToolsView | null;
+  why: string;
+}
+
+/** One skill reference of `template.yaml` (C-1104's `SkillRef`), as stored. */
+export interface TemplateSkillRefView {
+  /** `library` | `organization`. */
+  kind: string;
+  address?: string;
+  ref?: string | null;
+  path?: string | null;
+  skill?: string;
+  name?: string;
+  required: boolean;
+  why: string;
+}
+
+/** One automation of the export's shapes (C-1104), as stored. */
+export interface TemplateAutomationView {
+  /** `schedule` | `webhook`. */
+  kind: string;
+  name: string;
+  prompt?: string;
+  cron?: string;
+  instructions?: string;
+  verification?: string;
+}
+
 // ---- Workspace catalogue, plan and create (C-1110, C-1111, C-1116) -----------------------------
 
 export type TemplateCard = components["schemas"]["TemplateCard"];

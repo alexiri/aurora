@@ -881,7 +881,9 @@ item shows on Administration, `14 §Needs your attention`).
 When a one-time schedule's run that happened in its creator's own chat (`10 §Schedules`) ends
 `done`, the same delivery loop claims `schedule_runs.answer_pushed_at` and sends **one push to each
 opted-in device of the schedule's creator** (the claim requires the conversation to still be that
-person's direct chat, so no other person's device is ever reached). The payload is
+person's direct chat, so no other person's device is ever reached). (FIX-253, D-490) A schedule
+made in a delegated task's conversation belongs to the task's requester and wakes in the task
+conversation, which is not a direct chat: the claim never matches, so no push is sent. The payload is
 `{ "v": 1, "type": "schedule_answer", "url": "/o/<org>/w/<ws>/agents/<handle>?c=<conversation>" }`,
 plus `title` (the schedule's name, `NAME`-capped) only on a device with `show_details`; never the
 answer, the prompt or any other text, so a lock screen shows only the service worker's fixed
@@ -976,6 +978,21 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   messages and `PEER_TASK_TTL`; exactly one report reaches the requester's
   origin conversation — the receiver's `complete_task` report, or the
   platform's own close line on budget/TTL exhaustion or cancellation.
+  (FIX-252, D-489) **An approval raised in the task's conversation travels back
+  to the origin**: the origin conversation gets the same approval card a chat
+  raises, with the D-178 redaction of the origin link's kind (in a shared
+  channel only the agent and a one-line action plus a link), and later the
+  outcome (approved, denied, expired) as a notice with the delegating agent's
+  follow-up turn. The card's buttons add no right: Approve and Deny still mean
+  `can_approve` in the approval's (target) workspace; a plain requester sees
+  Ask an approver (e-mails the deciders at once, one claim per approval so the
+  notifier does not repeat it) and Cancel the task (the stored requester only).
+  The requester also hears through their own channels — the same e-mail and
+  push a decider gets, after the same delay, and skipped when a live surface
+  already shows the card (the origin conversation watched, or the card posted).
+  A task with a pending approval is not closed by the end of the receiving
+  turn; it stays open until the approval is decided, expires or the requester
+  cancels the task.
 - **App-turn cap**: turns whose speaker is a bot or agent increment
   `conversations.app_turn_streak`; any person-authored turn resets it. When the
   streak reaches `APP_TURN_CAP` further bot/agent turns are refused with a

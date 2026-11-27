@@ -423,6 +423,20 @@ pub struct RedactRequest {
     pub reset_session: bool,
 }
 
+/// (FIX-253, D-490) `POST /conversations/{id}/reminder` body: the turn whose "nothing is set to
+/// wake it" notice the button sits on.
+#[derive(Deserialize, ToSchema)]
+pub struct ReminderRequest {
+    pub turn_id: Uuid,
+}
+
+/// (FIX-253, D-490) The reminder the notice's action set (or already had set).
+#[derive(Serialize, ToSchema)]
+pub struct ReminderSet {
+    /// The local wall time the reminder fires at ("HH:MM").
+    pub reminder_for: String,
+}
+
 /// (phase 2, RFE-010) Result of a redaction.
 #[derive(Serialize, ToSchema)]
 pub struct RedactResult {

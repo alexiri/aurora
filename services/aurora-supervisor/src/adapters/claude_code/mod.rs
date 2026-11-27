@@ -42,8 +42,8 @@ use tokio::sync::{Mutex, Notify, mpsc};
 use tokio::time::Instant;
 
 use crate::harness::{
-    HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEvent, HarnessEventStream,
-    HarnessSession, SessionOptions, SteerAck, SteerInput, TurnInput,
+    BackgroundWork, HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEvent,
+    HarnessEventStream, HarnessSession, SessionOptions, SteerAck, SteerInput, TurnInput,
 };
 use launcher::{ChildIo, Launcher, ProcessLauncher};
 use stream::StreamMapper;
@@ -211,6 +211,8 @@ struct Live {
     usage_base: stream::Baseline,
     /// (FIX-225) Steers handed to this child and not yet echoed.
     steers: stream::Steers,
+    /// (FIX-253, D-490) The child's own background commands, as mapped from the turn's tool calls.
+    backgrounds: stream::BackgroundSink,
 }
 
 type KillSlot = Arc<StdMutex<Option<Box<dyn FnOnce() + Send>>>>;
@@ -263,6 +265,7 @@ impl ClaudeSession {
             dead: Arc::default(),
             usage_base: Arc::default(),
             steers: Arc::default(),
+            backgrounds: Arc::default(),
         });
         Ok(())
     }
@@ -280,6 +283,7 @@ struct Pump {
     user_line: String,
     usage_base: stream::Baseline,
     steers: stream::Steers,
+    backgrounds: stream::BackgroundSink,
     kill: KillSlot,
 }
 
@@ -295,7 +299,8 @@ impl Pump {
     async fn drive(&self) -> HarnessEvent {
         let aborted = || err("aborted", "turn aborted");
         let mut lines = self.lines.lock().await;
-        let mut mapper = StreamMapper::with_baseline(self.usage_base.clone(), self.steers.clone());
+        let mut mapper = StreamMapper::with_baseline(self.usage_base.clone(), self.steers.clone())
+            .with_backgrounds(self.backgrounds.clone());
         if !self.ready.load(Ordering::SeqCst) {
             let started = Instant::now();
             let mut deadline = started + self.hold_timeout.min(INIT_GRACE);
@@ -441,6 +446,7 @@ impl HarnessSession for ClaudeSession {
             user_line: config::user_message_line(&config::render_turn(&input)),
             usage_base: live.usage_base.clone(),
             steers: live.steers.clone(),
+            backgrounds: live.backgrounds.clone(),
             kill: live.kill.clone(),
         };
         let running = self.running.clone();
@@ -519,6 +525,31 @@ impl HarnessSession for ClaudeSession {
             l.kill();
         }
         Ok(())
+    }
+
+    /// (FIX-253, D-490) The live child's own background commands. A dead child's background work
+    /// died with it, so a dead (or released) child reports none.
+    fn background_work(&self) -> Vec<BackgroundWork> {
+        let Some(live) = &self.live else {
+            return Vec::new();
+        };
+        if live.dead.load(Ordering::SeqCst) {
+            return Vec::new();
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        live.backgrounds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, started_at)| *started_at <= now)
+            .map(|(command, started_at)| BackgroundWork {
+                command: command.clone(),
+                started_at: *started_at,
+            })
+            .collect()
     }
 }
 

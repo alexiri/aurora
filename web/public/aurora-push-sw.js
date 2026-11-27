@@ -20,6 +20,7 @@ const TYPES = [
   "workspace_lifecycle",
   "org_lifecycle",
   "default_store",
+  "peer_approval",
 ];
 const URL_PATTERN = /^\/o\/[A-Za-z0-9._~%/-]+(\?[A-Za-z0-9._~%=&-]*)?$/;
 
@@ -92,6 +93,19 @@ function build(raw) {
       title: item ? "Aurora — " + item : "Aurora — a scheduled task has an answer for you",
       body: "Open the conversation to read it.",
       tag: "aurora-schedule",
+      url: URL_PATTERN.test(url) ? url : "/",
+    };
+  }
+  if (data.type === "peer_approval") {
+    // (FIX-252) A delegated task's approval wait, told to the person who asked for the task.
+    // Fixed text; the agent's name only when the device turned names on. Never a request field.
+    const agent = text(data.agent, 40);
+    return {
+      title: agent
+        ? "Aurora — " + agent + " is waiting for an approval"
+        : "Aurora — a delegated task is waiting for an approval",
+      body: "Open the approvals page to review it.",
+      tag: "aurora-peer-approval",
       url: URL_PATTERN.test(url) ? url : "/",
     };
   }

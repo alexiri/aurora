@@ -86,6 +86,8 @@ pub enum Kind {
     OrgLifecycle,
     /// (FIX-244, D-486) The instance's default secret store changed; the orgs' owners are told.
     DefaultStore,
+    /// (FIX-252) A delegated task's approval wait, told to the person who asked for the task.
+    PeerApproval,
 }
 
 impl Kind {
@@ -105,6 +107,7 @@ impl Kind {
             Self::WorkspaceLifecycle => "workspace_lifecycle",
             Self::OrgLifecycle => "org_lifecycle",
             Self::DefaultStore => "default_store",
+            Self::PeerApproval => "peer_approval",
         }
     }
 }
@@ -150,6 +153,32 @@ pub fn approval_message(kind: Kind, sub: &SubRow, w: &Waiting) -> Result<Message
         "expires_at": w.expires_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         "parked": w.parked,
         "url": path_of(w, true),
+    });
+    if sub.show_details {
+        v["agent"] = json!(sanitize::one_line(&w.agent_name, NAME_MAX));
+        v["workspace"] = json!(sanitize::one_line(&w.workspace_name, NAME_MAX));
+    }
+    let remaining = (w.expires_at - Utc::now()).num_seconds().max(0) as u64;
+    finish_message(
+        v,
+        remaining.min(PUSH_TTL_MAX.as_secs()).max(TTL_MIN_SECS),
+        "high",
+        topic(sub.id, w.id.as_bytes()),
+    )
+}
+
+/// (FIX-252) The push to the person who asked for a peer task: its type, the approvals page of
+/// the workspace that must decide and, only on a device that turned names on, the agent and the
+/// workspace. The notification text itself is fixed in the service worker (C-835): a lock
+/// screen never shows a request's fields.
+pub fn peer_approval_message(sub: &SubRow, w: &repo::RequesterWaiting) -> Result<Message, String> {
+    let mut v = json!({
+        "v": 1,
+        "type": Kind::PeerApproval.type_str(),
+        "approval_id": w.id,
+        "workspace_id": w.workspace_id,
+        "expires_at": w.expires_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        "url": format!("/o/{}/w/{}/approvals?focus={}", w.org_slug, w.workspace_slug, w.id),
     });
     if sub.show_details {
         v["agent"] = json!(sanitize::one_line(&w.agent_name, NAME_MAX));
@@ -778,6 +807,63 @@ pub async fn sweep_once(state: &AppState) -> Result<usize, ApiError> {
     // The reminder stage of a parked approval (C-828 timing), its own claim per (approval, user).
     for w in &repo::reminders(&state.pool, ttl, SWEEP_LIMIT).await? {
         sent += serve(state, w, true).await?;
+    }
+    // (FIX-252) The person who asked for a peer task hears about the approval wait.
+    sent += serve_requesters(state).await?;
+    Ok(sent)
+}
+
+/// (FIX-252) One push per device of the person who asked for a peer task whose approval is
+/// waiting, after the same delay as every approval push and under the deciders' rule (a watcher
+/// row of their own keeps them quiet); the hourly cap folds the rest (the dashboard and the
+/// origin conversation still show the card). The shared `(approval, user, stage)` claim serves
+/// a requester who is also a decider once. Returns the pushes attempted.
+async fn serve_requesters(state: &AppState) -> Result<usize, ApiError> {
+    let mut sent = 0;
+    for w in &repo::waiting_for_requesters(
+        &state.pool,
+        APPROVAL_PUSH_DELAY.as_secs_f64(),
+        APPROVAL_WATCHER_TTL.as_secs_f64(),
+        SWEEP_LIMIT,
+    )
+    .await?
+    {
+        if repo::claimed(&state.pool, w.id, w.requester_user_id, "initial").await? {
+            continue; // served as a decider, or another replica won
+        }
+        let devices = deliverable(state, w.requester_user_id).await?;
+        if devices.is_empty() {
+            continue;
+        }
+        // Decided, expired or gone since the sweep read it: nothing is sent (C-834).
+        if !repo::still_pending(&state.pool, w.id, "gateway").await? {
+            continue;
+        }
+        let (pushes, _digest_sent) = repo::hourly(&state.pool, w.requester_user_id).await?;
+        if pushes >= i64::from(PUSH_PER_USER_HOUR) {
+            repo::claim(
+                &state.pool,
+                w.id,
+                w.requester_user_id,
+                "gateway",
+                "initial",
+                "digest",
+            )
+            .await?;
+            continue;
+        }
+        if repo::claim(
+            &state.pool,
+            w.id,
+            w.requester_user_id,
+            "gateway",
+            "initial",
+            "push",
+        )
+        .await?
+        {
+            sent += send_all(state, &devices, |s| peer_approval_message(s, w)).await;
+        }
     }
     Ok(sent)
 }

@@ -160,6 +160,11 @@ fn call(b: &Booted, tool: &str, args: Value) -> Value {
            "conversation_id": b.conv, "turn_id": b.turn, "tool": tool, "args": args})
 }
 
+fn call_in(b: &Booted, conv: Uuid, turn: Uuid, tool: &str, args: Value) -> Value {
+    json!({"sandbox_id": b.sandbox, "boot_id": b.boot, "call_id": "c1",
+           "conversation_id": conv, "turn_id": turn, "tool": tool, "args": args})
+}
+
 #[tokio::test]
 async fn catalogue_lists_available_tools_with_schemas() {
     let r = rig().await;
@@ -399,6 +404,604 @@ async fn a_frozen_agent_cannot_use_platform_tools() {
         .unwrap();
     let (s, v) = r.tool(call(&a, "list_agents", json!({}))).await;
     assert_eq!(s, 200, "{v}");
+}
+
+/// (FIX-253, D-490) `schedule_create` from a delegated task's conversation (a peer turn, no
+/// speaker): the schedule belongs to the task's requester and its origin is the task
+/// conversation, and the wake runs there while the task is not closed. Without a requester, or
+/// with a requester who cannot use the agent, it refuses.
+#[tokio::test]
+async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+
+    // A peer task conversation of a1 with an agent-speaker turn, and the open task behind it.
+    let peer = |status, requester: Option<Uuid>| {
+        let r = &r;
+        async move { peer_task_conv(r, a.agent, requester, status).await }
+    };
+
+    // The wake: a one-time schedule from the peer turn belongs to the requester, origin the task
+    // conversation, and `origin_for_run` sends the fire there while the task is open.
+    let (conv, turn) = peer("open", Some(requester)).await;
+    let (s, v) = r
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "check", "prompt": "Look again.", "run_at": "2026-12-01T09:00"}),
+        ))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let row: (Option<Uuid>, Option<Uuid>) = sqlx::query_as(
+        "SELECT creator_user_id, origin_conversation_id FROM schedules ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(row, (Some(requester), Some(conv)));
+    let schedule: Uuid =
+        sqlx::query_scalar("SELECT id FROM schedules ORDER BY created_at DESC LIMIT 1")
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let row = aurora_db::repo::schedules::get(&mut *conn, schedule)
+        .await
+        .unwrap()
+        .unwrap();
+    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut conn, &row)
+        .await
+        .unwrap();
+    assert_eq!(fire_at, Some(conv));
+    drop(conn);
+    // A closed task's conversation is nobody's chat any more.
+    sqlx::query("UPDATE peer_tasks SET status = 'completed' WHERE task_conversation_id = $1")
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let row = aurora_db::repo::schedules::get(&mut *conn, schedule)
+        .await
+        .unwrap()
+        .unwrap();
+    let fire_at = aurora_db::repo::schedules::origin_for_run(&mut conn, &row)
+        .await
+        .unwrap();
+    assert_eq!(fire_at, None);
+    drop(conn);
+
+    // A peer turn with no requester still refuses.
+    let (conv, turn) = peer("open", None).await;
+    let (s, v) = r
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        ))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+
+    // A requester who cannot use the agent never gets the schedule.
+    let stranger = r.h.user("stranger@x.io", false).await;
+    r.h.member(r.org, stranger, "member", "active").await;
+    let (conv, turn) = peer("open", Some(stranger)).await;
+    sqlx::query("UPDATE peer_tasks SET requester_user_id = $1 WHERE task_conversation_id = $2")
+        .bind(stranger)
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let (s, v) = r
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        ))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    assert!(
+        v.to_string().contains("can no longer use this agent"),
+        "{v}"
+    );
+}
+
+/// (FIX-253 review) Only a peer turn of a task that is still open may schedule for the
+/// requester: a closed, cancelled or expired task refuses, and a speakerless watch or schedule
+/// turn fired in the task conversation refuses (a wake never schedules itself again).
+#[tokio::test]
+async fn only_a_peer_turn_of_an_open_task_schedules_for_the_requester() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req2@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+
+    // A closed, cancelled or expired task's conversation is nobody's chat any more.
+    for status in ["completed", "cancelled", "expired"] {
+        let (conv, turn) = peer_task_conv(&r, a.agent, Some(requester), status).await;
+        let (s, v) = r
+            .tool(call_in(
+                &a,
+                conv,
+                turn,
+                "schedule_create",
+                json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+            ))
+            .await;
+        assert_eq!(s, 200, "{status}: {v}");
+        assert_eq!(v["ok"], false, "{status}: {v}");
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules")
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "{status}");
+    }
+
+    // A watch or schedule turn fired in the task conversation has no speaker: it must not
+    // schedule itself again.
+    let (conv, _) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    sqlx::query("UPDATE turns SET status = 'done' WHERE conversation_id = $1")
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let fired = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text)
+         VALUES ($1,$2,$3,'turn','running','{}','system','Watch','A watch you set fired.')",
+    )
+    .bind(fired)
+    .bind(conv)
+    .bind(a.agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let (s, v) = r
+        .tool(call_in(
+            &a,
+            conv,
+            fired,
+            "schedule_create",
+            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        ))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+/// (FIX-253 review) From a delegated task's peer turn only a one-time wake-up (`run_at`) is
+/// possible: a recurring schedule would outlive the task, running as the requester. And a task
+/// conversation is capped at 3 open one-time schedules (finished ones don't count).
+#[tokio::test]
+async fn a_peer_turn_sets_only_one_time_wakeups_and_at_most_three_open_ones() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req3@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+    let (conv, turn) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    let call = |args: Value| {
+        let r = &r;
+        let a = &a;
+        let (conv, turn) = (conv, turn);
+        async move {
+            let (s, v) = r
+                .tool(call_in(a, conv, turn, "schedule_create", args))
+                .await;
+            assert_eq!(s, 200, "{v}");
+            v
+        }
+    };
+
+    // A recurring schedule from a peer turn is refused.
+    for args in [
+        json!({"name": "n", "prompt": "p", "cron": "0 10 27 11 *"}),
+        // A request for both is recurring too.
+        json!({"name": "n", "prompt": "p", "cron": "0 10 27 11 *", "run_at": "2026-12-01T09:00"}),
+    ] {
+        let v = call(args).await;
+        assert_eq!(v["ok"], false, "{v}");
+        assert!(
+            v.to_string()
+                .contains("a delegated task can only set a one-time wake-up"),
+            "{v}"
+        );
+    }
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0, "nothing was created");
+
+    // The cap: three open one-time schedules, then the fourth refuses.
+    for i in 0..3 {
+        let v = call(json!({
+            "name": format!("w{i}"), "prompt": "p", "run_at": "2026-12-01T09:00"
+        }))
+        .await;
+        assert_eq!(v["ok"], true, "{v}");
+    }
+    let v = call(json!({"name": "w3", "prompt": "p", "run_at": "2026-12-01T09:00"})).await;
+    assert_eq!(v["ok"], false, "{v}");
+    assert!(v.to_string().contains("three open wake-ups"), "{v}");
+
+    // Finishing one frees a slot.
+    sqlx::query("UPDATE schedules SET completed_at = now() WHERE name = 'w0' AND agent_id = $1")
+        .bind(a.agent)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let v = call(json!({"name": "w4", "prompt": "p", "run_at": "2026-12-01T09:00"})).await;
+    assert_eq!(v["ok"], true, "{v}");
+}
+
+/// (FIX-253 fixes2 A) From a peer turn, `schedule_update` and `schedule_delete` only touch
+/// schedules created from this task conversation (the same scope the create has) and can never
+/// make one recurring; the task conversation's cap of three open one-time wake-ups holds for a
+/// re-arm too, and holds when several creates race.
+#[tokio::test]
+async fn a_peer_turn_updates_and_deletes_only_its_own_task_schedules_and_rearming_is_capped() {
+    use aurora_api::domains::schedules::service;
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req4@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+    let (conv, turn) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    let call = |tool: &str, args: Value| {
+        let r = &r;
+        let a = &a;
+        let (conv, turn) = (conv, turn);
+        let tool = tool.to_owned();
+        async move {
+            let (s, v) = r.tool(call_in(a, conv, turn, &tool, args)).await;
+            assert_eq!(s, 200, "{tool}: {v}");
+            v
+        }
+    };
+
+    // One wake-up from the peer turn and one from the person's own chat (no origin).
+    let v = call(
+        "schedule_create",
+        json!({"name": "task_wake", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+    )
+    .await;
+    assert_eq!(v["ok"], true, "{v}");
+    let task_schedule: Uuid =
+        sqlx::query_scalar("SELECT id FROM schedules WHERE name = 'task_wake'")
+            .fetch_one(r.h.pool())
+            .await
+            .unwrap();
+    let own_schedule: Uuid = sqlx::query_scalar(
+        "INSERT INTO schedules (id, agent_id, name, prompt, run_at, timezone, anchor)
+         VALUES ($1, $2, 'own_chat', 'p', '2026-12-01T09:00Z', 'UTC', 'creator') RETURNING id",
+    )
+    .bind(Uuid::now_v7())
+    .bind(a.agent)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+
+    // Updating the person's own-chat schedule from the peer turn refuses.
+    let v = call(
+        "schedule_update",
+        json!({"id": own_schedule.to_string(), "name": "hijacked"}),
+    )
+    .await;
+    assert_eq!(v["ok"], false, "{v}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules WHERE name = 'hijacked'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    // ... and so does deleting it.
+    let v = call("schedule_delete", json!({"id": own_schedule.to_string()})).await;
+    assert_eq!(v["ok"], false, "{v}");
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM schedules WHERE id = $1")
+        .bind(own_schedule)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+
+    // The peer turn's own schedule can be renamed...
+    let v = call(
+        "schedule_update",
+        json!({"id": task_schedule.to_string(), "name": "task_wake_2"}),
+    )
+    .await;
+    assert_eq!(v["ok"], true, "{v}");
+    // ... but never made recurring.
+    let v = call(
+        "schedule_update",
+        json!({"id": task_schedule.to_string(), "cron": "0 10 27 11 *"}),
+    )
+    .await;
+    assert_eq!(v["ok"], false, "{v}");
+    let cron: Option<String> = sqlx::query_scalar("SELECT cron FROM schedules WHERE id = $1")
+        .bind(task_schedule)
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(cron, None);
+
+    // The re-arm cap: a task conversation keeps at most three open one-time wake-ups, and a
+    // re-arm obeys the cap too — while the three open ones include the schedule itself, changing
+    // its time is fine; with three *other* open ones a finished schedule cannot be re-armed.
+    let v = call(
+        "schedule_update",
+        json!({"id": task_schedule.to_string(), "run_at": "2026-12-02T09:00"}),
+    )
+    .await;
+    assert_eq!(v["ok"], true, "{v}");
+    for i in 0..2 {
+        let v = call(
+            "schedule_create",
+            json!({"name": format!("extra{i}"), "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        )
+        .await;
+        assert_eq!(v["ok"], true, "{v}");
+    }
+    sqlx::query("UPDATE schedules SET completed_at = now() WHERE id = $1")
+        .bind(task_schedule)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO schedules (id, agent_id, name, prompt, run_at, timezone, anchor,
+            origin_conversation_id)
+         VALUES ($1, $2, 'legacy', 'p', '2026-12-05T09:00Z', 'UTC', 'creator', $3)",
+    )
+    .bind(Uuid::now_v7())
+    .bind(a.agent)
+    .bind(conv)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let v = call(
+        "schedule_update",
+        json!({"id": task_schedule.to_string(), "run_at": "2026-12-03T09:00"}),
+    )
+    .await;
+    assert_eq!(v["ok"], false, "{v}");
+    assert!(v.to_string().contains("three open wake-ups"), "{v}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM schedules WHERE completed_at IS NOT NULL AND name = 'task_wake_2'",
+    )
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1, "the finished one stayed finished");
+
+    // The cap also holds when the creates race: exactly three of six concurrent one-time
+    // wake-ups land.
+    let (conv2, _) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    let agent = aurora_db::repo::agents::get(r.h.pool(), a.agent)
+        .await
+        .unwrap()
+        .unwrap();
+    let runs: Vec<bool> = futures::future::join_all((0..6).map(|i| {
+        let pool = r.h.pool().clone();
+        let agent = agent.clone();
+        async move {
+            service::create(
+                &pool,
+                &agent,
+                service::Create {
+                    name: format!("race{i}"),
+                    prompt: "p".into(),
+                    cron: None,
+                    run_at: Some("2026-12-01T09:00".into()),
+                    timezone: None,
+                    gate_command: None,
+                    gate_description: None,
+                    anchor: "creator",
+                    ends_at: None,
+                },
+                Some(requester),
+                Some(conv2),
+            )
+            .await
+            .is_ok()
+        }
+    }))
+    .await;
+    assert_eq!(runs.iter().filter(|ok| **ok).count(), 3, "{runs:?}");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM schedules WHERE origin_conversation_id = $1 AND completed_at IS NULL",
+    )
+    .bind(conv2)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 3);
+}
+
+/// (FIX-253 fixes2 G) A wake-up created from a delegated task's peer turn carries the task's
+/// `ends_at` and does not outlive it: once the task is closed, the fire skips (a
+/// `skipped_task_closed` run) and the schedule is disabled with `task_ended` — it does not move
+/// to its own run thread and it does not fire.
+#[tokio::test]
+async fn a_peer_created_wakeup_skips_and_disables_when_the_task_has_ended() {
+    let r = rig().await;
+    let a = r.booted("a1").await;
+    let requester = r.h.user("req5@x.io", false).await;
+    r.h.member(r.org, requester, "member", "active").await;
+    r.h.bind_ws(r.ws, requester, "member").await;
+    let (conv, turn) = peer_task_conv(&r, a.agent, Some(requester), "open").await;
+    let (s, v) = r
+        .tool(call_in(
+            &a,
+            conv,
+            turn,
+            "schedule_create",
+            json!({"name": "wake", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        ))
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["ok"], true, "{v}");
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM schedules WHERE name = 'wake'")
+        .fetch_one(r.h.pool())
+        .await
+        .unwrap();
+
+    // The schedule carries the task's ends_at.
+    let (ends_at, expires_at): (
+        Option<chrono::DateTime<chrono::Utc>>,
+        chrono::DateTime<chrono::Utc>,
+    ) = sqlx::query_as(
+        "SELECT s.ends_at, t.expires_at FROM schedules s
+              JOIN peer_tasks t ON t.task_conversation_id = s.origin_conversation_id
+              WHERE s.id = $1",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(ends_at, Some(expires_at));
+
+    // A schedule from the person's own chat carries no ends_at.
+    let own: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "INSERT INTO schedules (id, agent_id, name, prompt, run_at, timezone, anchor)
+         VALUES ($1, $2, 'own_chat', 'p', '2026-12-01T09:00Z', 'UTC', 'creator')
+         RETURNING ends_at",
+    )
+    .bind(Uuid::now_v7())
+    .bind(a.agent)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(own, None);
+
+    // Close the task and fire: the wake skips and the schedule is disabled, not run.
+    sqlx::query("UPDATE peer_tasks SET status = 'completed' WHERE task_conversation_id = $1")
+        .bind(conv)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE schedules SET next_fire_at = now() - interval '2 days' WHERE id = $1")
+        .bind(id)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    let mut tx = r.h.pool().begin().await.unwrap();
+    aurora_api::domains::schedules::fire::arm9(&r.h.state, &mut tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let (enabled, reason, outcome): (bool, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT enabled, disabled_reason, last_outcome FROM schedules WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        (enabled, reason.as_deref(), outcome.as_deref()),
+        (false, Some("task_ended"), Some("skipped_task_closed"))
+    );
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM schedule_runs WHERE schedule_id = $1 AND outcome = 'fired'",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 0, "the wake never ran");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM schedule_runs WHERE schedule_id = $1 AND outcome = 'skipped_task_closed'",
+    )
+    .bind(id)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+}
+
+/// A `peer` conversation of `agent` with an agent-speaker turn, and an open peer task behind it
+/// (requester `None` = the refusal case).
+async fn peer_task_conv(
+    r: &Rig,
+    agent: Uuid,
+    requester: Option<Uuid>,
+    status: &str,
+) -> (Uuid, Uuid) {
+    let conv = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+         VALUES ($1,$2,$3,'peer',$1::text, now())",
+    )
+    .bind(conv)
+    .bind(agent)
+    .bind(r.ws)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let turn = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO turns (id, conversation_id, agent_id, role, status, door, speaker_kind, speaker_label, text)
+         VALUES ($1,$2,$3,'turn','running','{}','agent','a1','working')",
+    )
+    .bind(turn)
+    .bind(conv)
+    .bind(agent)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let other =
+        r.h.hosted_agent(r.org, r.ws, &format!("peer-{}", Uuid::now_v7().simple()))
+            .await;
+    let (x, y) = if agent < other {
+        (agent, other)
+    } else {
+        (other, agent)
+    };
+    let link = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO agent_links (id, agent_a_id, agent_b_id, policy_a, policy_b)
+         VALUES ($1,$2,$3,'allow','allow')",
+    )
+    .bind(link)
+    .bind(x)
+    .bind(y)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    let task = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
+            origin_conversation_id, task_conversation_id, status, message_budget, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,5, now() + interval '1 hour')",
+    )
+    .bind(task)
+    .bind(link)
+    .bind(other)
+    .bind(agent)
+    .bind(requester)
+    .bind(conv)
+    .bind(conv)
+    .bind(status)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+    (conv, turn)
 }
 
 struct Slow;

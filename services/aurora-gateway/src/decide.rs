@@ -188,6 +188,9 @@ struct Hook {
     backstop: Option<(Arc<Governance>, BackstopInfo)>,
     /// Injected values placed in the URL (FIX-104).
     echo: Vec<Vec<u8>>,
+    /// (lane review 2026-11-25) The matched tool's response projection: every answer is
+    /// reduced to these `$`-paths on the response path, for every caller.
+    project: Option<Vec<String>>,
     /// (P4-LLM-1, C-808) `(provider, endpoint id)` of an injected LLM key: the response is classified for the
     /// request log and `aurora_gateway_llm_upstream_total`.
     llm: Option<(String, String)>,
@@ -231,6 +234,10 @@ impl Hook {
 impl PostHook for Hook {
     fn echo_needles(&self) -> Vec<Vec<u8>> {
         self.echo.clone()
+    }
+
+    fn response_project(&self) -> Option<&[String]> {
+        self.project.as_deref()
     }
 
     fn wire_context(&self) -> crate::wire::Decided {
@@ -1410,6 +1417,30 @@ impl PolicyHandler {
             )
         });
         ctx.tool_id = tool.map(|t| t.id.clone());
+        // A tool's declared body shape is enforced before any rule, approval or injection:
+        // nothing the approval card cannot show is ever held for a person's approval. Fail
+        // closed: a body the gateway cannot check in full is refused too.
+        if let Some(bc) = tool.and_then(|t| t.body_check.as_ref())
+            && let Some(msg) = bc.violation(&body_prefix, truncated)
+        {
+            let err = ApiError::new(
+                StatusCode::FORBIDDEN,
+                "tool_body_refused",
+                format!("This request was refused: {msg}."),
+            );
+            return Outcome::Respond(self.refuse(ctx, &err, "tool_body_refused"));
+        }
+        // A tool that declares no query parameters refuses any query string before any rule,
+        // approval or injection: a parameter could make the answer carry what the tool's
+        // description says never reaches the agent.
+        if tool.is_some_and(|t| t.refuse_query) && query.as_deref().is_some_and(|q| !q.is_empty()) {
+            let err = ApiError::new(
+                StatusCode::FORBIDDEN,
+                "tool_query_refused",
+                "This tool sends no query parameters: repeat the request without the query string.",
+            );
+            return Outcome::Respond(self.refuse(ctx, &err, "tool_query_refused"));
+        }
         // (P5-MODELS-2, C-880) The model the request asks for, read the way the allow-list check reads it
         // (same body prefix); logged for every request with an injected key on a governed LLM endpoint.
         if let (Some(gov), Some(g)) = (&self.governance, &rv.governance)
@@ -1977,6 +2008,14 @@ impl PolicyHandler {
                     query.as_deref(),
                 )
             };
+            // (lane review 2026-11-25) A tool that declares a response projection has every
+            // answer reduced to the projected paths on the response path, for every caller:
+            // the answer must arrive readable, so the request asks for no compressed encoding
+            // (an upstream that compresses anyway is withheld, never streamed unchecked).
+            let project = tool.and_then(|t| t.project.clone());
+            if project.is_some() {
+                headers.remove("accept-encoding");
+            }
             let hook = self.hook(
                 &rv,
                 ctx,
@@ -1985,6 +2024,7 @@ impl PolicyHandler {
                 passthrough,
                 None,
                 echo,
+                project,
             );
             let retry = match (pre, &self.tokens, &registry) {
                 (Some((h0, q0)), Some(t), Some(l)) => Some(Box::new(StaleRetry {
@@ -2151,6 +2191,7 @@ impl PolicyHandler {
                 false,
                 backstop,
                 echo,
+                None,
             );
             hook.llm = llm;
             return Outcome::Forward(PreparedRequest {
@@ -2180,6 +2221,7 @@ impl PolicyHandler {
             passthrough,
             None,
             Vec::new(),
+            None,
         );
         Outcome::Forward(PreparedRequest {
             scheme,
@@ -2748,6 +2790,7 @@ impl PolicyHandler {
         passthrough_challenge: bool,
         backstop: Option<(Arc<Governance>, BackstopInfo)>,
         echo: Vec<Vec<u8>>,
+        project: Option<Vec<String>>,
     ) -> Box<Hook> {
         let links = self.links(rv);
         // (C-959) A refusal that knows the agent (every request has one) carries the journey's
@@ -2779,6 +2822,7 @@ impl PolicyHandler {
             app,
             backstop,
             echo,
+            project,
         })
     }
 }

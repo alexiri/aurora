@@ -264,6 +264,7 @@ fn convert(op: &Operation, notes: &mut Vec<String>) -> Option<OOperation> {
         body,
         pagination,
         items: op.items.clone(),
+        project: None,
         tool: Some(id.clone()),
     })
 }

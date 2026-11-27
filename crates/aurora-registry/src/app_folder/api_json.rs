@@ -72,6 +72,7 @@ struct OpOut {
     body: Option<BodyOut>,
     pagination: Option<Pagination>,
     items: Option<String>,
+    project: Option<Vec<String>>,
     tool: Option<String>,
     access: BTreeMap<String, &'static str>,
     /// (C-911) The account letter an operation is bound to (a webhook), else `null`.
@@ -399,6 +400,7 @@ fn webhook_operations(
             }),
             pagination: None,
             items: None,
+            project: None,
             tool: Some(WEBHOOK_TOOL.to_owned()),
             access,
             account: Some(letter.clone()),
@@ -471,6 +473,12 @@ pub(super) fn render(
             body: op.body.as_ref().map(body_out),
             pagination: op.pagination.as_ref().map(pagination_out),
             items: op.items.as_deref().map(|i| inline(i, 200)),
+            project: op.project.as_ref().map(|v| {
+                v.iter()
+                    .map(|p| inline(p, 200))
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            }),
             tool: tool.map(|t| inline(&t, 64)),
             access,
             account: None,
@@ -504,6 +512,7 @@ pub(super) fn render(
             body: None,
             pagination: None,
             items: None,
+            project: None,
             tool: Some(inline(&t.id, 64)),
             access: access_of(&t.id),
             account: None,

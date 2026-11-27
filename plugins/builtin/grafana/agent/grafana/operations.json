@@ -397,6 +397,16 @@
       "tool": "list_silences"
     },
     {
+      "id": "list_contact_points",
+      "method": "GET",
+      "path": "/api/v1/provisioning/contact-points",
+      "summary": "Contact points (notification destinations) by name and type; settings and secrets never reach the agent",
+      "tags": ["alerting"],
+      "items": "$",
+      "project": ["$.name", "$.type"],
+      "tool": "list_contact_points"
+    },
+    {
       "id": "list_annotations",
       "method": "GET",
       "path": "/api/annotations",
@@ -494,6 +504,67 @@
         { "name": "id", "in": "path", "required": true, "type": "string", "description": "Silence id from list_silences" }
       ],
       "tool": "delete_silence"
+    },
+    {
+      "id": "create_alert_rule",
+      "method": "POST",
+      "path": "/api/v1/provisioning/alert-rules",
+      "summary": "Create a Grafana-managed alert rule; build it with the grafana-alerts skill's script",
+      "tags": ["alerting"],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "title", "required": true, "type": "string", "description": "Rule name, unique in the folder" },
+          { "name": "folderUID", "required": true, "type": "string", "description": "Folder the rule belongs to; the account needs edit permission on it" },
+          { "name": "ruleGroup", "required": true, "type": "string", "description": "Evaluation group; its interval is how often the rule runs. Use a group only for agent-managed rules: a rule's provenance must match its group's" },
+          { "name": "for", "required": true, "type": "string", "description": "How long the condition must hold before the rule fires, e.g. 2m; at least 2 minutes" },
+          { "name": "data", "required": true, "type": "array", "description": "The three-step query model (query, reduce last, threshold); pass as data:=<json> or use --body @file. The grafana-alerts script builds it" },
+          { "name": "labels", "type": "string", "description": "Labels object; must carry managed_by and expires (pass as labels:=<json>)" },
+          { "name": "annotations", "type": "string", "description": "Annotations object; summary and expires (pass as annotations:=<json>)" },
+          { "name": "notification_settings", "type": "string", "description": "Object with receiver: the contact point name that gets this rule's alerts (pass as notification_settings:=<json>)" },
+          { "name": "noDataState", "type": "string", "enum": ["NoData", "Alerting", "OK"], "default": "NoData", "description": "State when the query returns no data" },
+          { "name": "execErrState", "type": "string", "enum": ["Error", "Alerting", "OK"], "default": "Error", "description": "State when the query fails" }
+        ]
+      },
+      "tool": "create_alert_rule"
+    },
+    {
+      "id": "update_alert_rule",
+      "method": "PUT",
+      "path": "/api/v1/provisioning/alert-rules/{uid}",
+      "summary": "Change one Grafana-managed alert rule (send the whole rule; read it first)",
+      "tags": ["alerting"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Alert rule UID" }
+      ],
+      "body": {
+        "content_type": "application/json",
+        "fields": [
+          { "name": "title", "required": true, "type": "string", "description": "Rule name" },
+          { "name": "folderUID", "required": true, "type": "string", "description": "Folder the rule belongs to" },
+          { "name": "ruleGroup", "required": true, "type": "string", "description": "Evaluation group" },
+          { "name": "for", "required": true, "type": "string", "description": "How long the condition must hold before the rule fires, e.g. 2m" },
+          { "name": "data", "required": true, "type": "array", "description": "The three-step query model (query, reduce last, threshold); the grafana-alerts script rebuilds it" },
+          { "name": "labels", "type": "string", "description": "Labels object; keep managed_by and expires" },
+          { "name": "annotations", "type": "string", "description": "Annotations object; summary and expires" },
+          { "name": "notification_settings", "type": "string", "description": "Object with receiver: the contact point name that gets this rule's alerts" },
+          { "name": "noDataState", "type": "string", "enum": ["NoData", "Alerting", "OK"] },
+          { "name": "execErrState", "type": "string", "enum": ["Error", "Alerting", "OK"] },
+          { "name": "isPaused", "type": "boolean", "default": false }
+        ]
+      },
+      "tool": "update_alert_rule"
+    },
+    {
+      "id": "delete_alert_rule",
+      "method": "DELETE",
+      "path": "/api/v1/provisioning/alert-rules/{uid}",
+      "summary": "Delete one Grafana-managed alert rule",
+      "tags": ["alerting"],
+      "params": [
+        { "name": "uid", "in": "path", "required": true, "type": "string", "description": "Alert rule UID" }
+      ],
+      "tool": "delete_alert_rule"
     }
   ]
 }

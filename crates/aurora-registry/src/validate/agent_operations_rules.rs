@@ -393,6 +393,31 @@ pub fn rules(app: &App, path: &str, bytes: &[u8], out: &mut Vec<Violation>) {
         if let Some(it) = &o.items {
             check_json_path(it, format!("{at}/items"), out);
         }
+        if let Some(p) = &o.project {
+            let at = format!("{at}/project");
+            if p.is_empty() || p.len() > 8 {
+                out.push(v(
+                    "agent_operations_project",
+                    at.clone(),
+                    "1 to 8 paths expected",
+                ));
+            }
+            for (j, ptr) in p.iter().enumerate() {
+                match JsonPath::parse(ptr) {
+                    Ok(path) if path.simple() => {}
+                    Ok(_) => out.push(v(
+                        "agent_operations_project",
+                        format!("{at}/{j}"),
+                        format!("`{ptr}`: only plain `.name` segments, no wildcards"),
+                    )),
+                    Err(e) => out.push(v(
+                        "agent_operations_project",
+                        format!("{at}/{j}"),
+                        format!("`{ptr}`: {e}"),
+                    )),
+                }
+            }
+        }
         if let Some(t) = &o.tool
             && !tools.contains(t.as_str())
         {

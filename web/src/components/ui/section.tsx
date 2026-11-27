@@ -27,7 +27,7 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section aria-labelledby={`${id}-h`} className={cn("space-y-3", className)}>
+    <section id={id} aria-labelledby={`${id}-h`} className={cn("space-y-3", className)}>
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <h2 id={`${id}-h`} className="font-display text-base font-semibold text-ink">
