@@ -104,5 +104,80 @@ Sonnet `nextjs-developer` (one panel, reuse of a shared component).
 
 ## Completion report
 
-Commits; screenshots (1256 dark/light, 390) beside `after/mem-4*.png`; differences with reasons; tests changed; commands
-and results.
+Built 2026-11-27 on `alexiri/p5-skm-web2` after merging master (`6b56bb21`) (one commit, "P5-MEMORY-3: …"). Not
+pushed. Web only: no API change, shapes from `schema.d.ts`.
+
+### What changed
+
+- New `components/memory/memory-history.tsx`; `revision-history.tsx` and the `RevisionHistory` export are gone.
+  `memory-words.ts` gains the version's actor, verb and context; `memory-tab.tsx` shows History **in place of** the
+  reading view (only the detail column's branch changed; P5-MEMORY-4's mount step and `memory-editor.tsx` are untouched);
+  `memory-view.tsx` loses "Hide history".
+- **Shared `ui/diff-view.tsx`** (approved by the coordinator, option A): an additive prop `wrap`, default `false`. With
+  it, a line's cell is `whitespace-pre-wrap wrap-anywhere` instead of `whitespace-pre`. Nothing else in the component
+  changed, `lib/line-diff.ts` is unchanged, and only History passes it, so the other callers render as before. Without
+  it, in this column the diff scrolled 189 px sideways and the fold row's buttons were cut off.
+- "+n added · −n removed in this version" is counted outside `DiffView`, from `buildDiff` (`changeCounts`).
+
+### Readings of the brief to check
+
+1. **"removed the text of version n" is not a row's verb.** A removal writes no version and the API gives neither who
+   removed the text nor when, so naming someone would be a guess. The removed version keeps its own verb (the person
+   who wrote it did write it) and its context ends "its text was removed".
+2. "created it" only for version 1: after pruning, the oldest kept version "changed it" and says "The version before is
+   no longer kept, so there is nothing to compare with." (not drawn).
+3. Name: the person behind a person, API key or template write (mem-4: "Bob Builder changed it · through an API key");
+   else the agent, the key or the template; "Someone" for an unknown writer. A file the agent wrote on its computer
+   (`via: harvest`) has no context line: it was not a conversation.
+4. **Remove** is the two-step confirm (menu, then a danger dialog), as deleting a memory is; the brief allows typed or
+   two-step.
+5. **Undo** restores the version that was current before, as one more version; if that fails a toast says "Couldn't
+   undo the restore: <reason>". Nothing else is undone by it (the lock never changes).
+6. Not drawn, worded here: "The first version", "Remove the text of version n?" and its sentence, "Remove text".
+
+### Comparison with the mockups
+
+Looked at `after/mem-4{,-light}.png` and the HTML before coding and again against the built panel at 1256 and 390 px in
+both themes (mocked data). Not committed; `MEMORY_SHOTS=<dir> … web playwright e2e/memory-history.spec.ts` writes
+`mem-4-{1256,390}-{dark,light}` (↔ `after/mem-4{,-light}.png`) and `mem-4-menu-…` (the open menu).
+
+| Difference kept | Reason |
+|---|---|
+| No **Restore this version** while **Current** is selected (the mockup draws it there) | Scope 4: not on Current |
+| The menu on Current is disabled and carries the reason | Scope 5 |
+| Times are "2 min ago", then "26 Nov, 19:47" ("Nov 26" in the test browser's locale), not "yesterday" / "25 Nov"; the same inside "Compared with the version before (…)" | Scope 2: the time is `When` (`14` §Dates) |
+| The diff has two line-number columns, three lines of context with a folded "n unchanged lines" row and its buttons, word highlights, and a **Show the whole file** switch | The shared `DiffView` as it is (D-496, owner: no second diff component; mem-4's text: "same line numbers, folded unchanged lines and word highlights everywhere"). The switch says "file" because it is that component's word |
+| For version 1 the diff's header adds "(added)" | `DiffView`'s own mark for a text compared with nothing |
+| On a phone, "‹ Back to the memory" is the sub-screen's header and **Current** can wrap under the time; the agent header stays | Scope 6; `SubScreenHeader`; the real shell |
+| Initials are tinted by name | The shared `Avatar` |
+| List data in the screenshots is one memory | The spec's mock; the list is P5-MEMORY-2's and unchanged |
+| Shell, sub-nav entries, ink **New memory** | As in P5-MEMORY-2's report |
+
+### Tests
+
+- New: `tests/memory-history.test.tsx` (23), `e2e/memory-history.spec.ts` (8: 1256 and 390 px, both themes: open,
+  select, diff, the disabled remove with its reason, Restore and Undo, remove after asking twice; axe serious+critical,
+  no sideways scroll of the page **or of the diff box**, the three fold buttons inside the box). One `wrap` case in
+  `tests/diff-view.test.tsx`.
+- Changed with the old component: `tests/memory-skills.test.tsx` loses its `RevisionHistory` case (restore, redact with
+  confirmation and "disabled on latest" are in `memory-history`; `canRedact` stays); `tests/memory-page.test.tsx` opens
+  the History panel instead of the "Revision history" region.
+- No production or real-stack spec visits Memory: **none to run nightly**.
+
+### Commands and results
+
+- Fail first: `memory-history` before the panel existed: **22 failed, 1 passed** (the emergency reader never saw
+  history). The `wrap` unit case and the diff-box check before the prop: failed (189 px of sideways scroll, 4 runs).
+- `test.sh web vitest`, the files that render `DiffView` (directly or through the review dialogs and skill libraries)
+  and the Memory ones, 15 files: **243/243**. The whole suite was not run (the coordinator's gate; CI runs it).
+- `test.sh web playwright … --project=mocked`: `memory-history` **8/8**, `memory` **14/14**,
+  `fix-247-template-review-diff` **4/4**, `agent-tabs` **13/13**. `fix-250` and `skill-libraries` were not run
+  (the gate asked for one `DiffView` spec).
+- `pnpm typecheck`, eslint on touched files, `cargo fmt --all --check`, `scripts/guards/run-all.sh`,
+  `extract-schema.py --check`: all clean on the final tree. `pnpm build` not run.
+
+### Security notes
+
+No SEC row. Names are the API's display names (never an e-mail; tested); a conversation is named only from its reference
+and title and is never linked; an emergency reader is shown no History and no revisions are requested; version texts
+reach the page only through `DiffView` as text.

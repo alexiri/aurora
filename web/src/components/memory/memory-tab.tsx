@@ -14,6 +14,7 @@ import { useMemories, useMemorySearch, type MemorySearchHit } from "@/lib/api/me
 import { useMe } from "@/lib/api/queries";
 
 import { MemoryEditor } from "./memory-editor";
+import { MemoryHistory } from "./memory-history";
 import {
   FilterChips,
   MemoryRows,
@@ -27,9 +28,6 @@ import {
   type MemorySort,
 } from "./memory-list";
 import { MemoryView, type MemoryMatch } from "./memory-view";
-import { RevisionHistory } from "./revision-history";
-
-export { RevisionHistory } from "./revision-history";
 
 /** How long after the last keystroke the search is sent. */
 export const SEARCH_DEBOUNCE_MS = 250;
@@ -169,8 +167,7 @@ export function MemoryTab({
     typeSearch("");
     address(selected, historyOpen);
   };
-  const toggleHistory = () => {
-    const open = !historyOpen;
+  const showHistory = (open: boolean) => {
     setHistoryOpen(open);
     if (currentKey) address(currentKey, open);
   };
@@ -276,34 +273,40 @@ export function MemoryTab({
       onClose={leaveForm}
       onBack={back}
     />
+  ) : shown && historyOpen && !readOnly ? (
+    // History takes the reading view's place. An emergency reader has no history route.
+    <MemoryHistory
+      key={shown.key}
+      agentId={agentId}
+      memory={shown}
+      agentName={agentName}
+      narrow={narrow}
+      onBack={() => showHistory(false)}
+      onRestored={() => showHistory(false)}
+    />
   ) : shown ? (
-    <div className="min-w-0 space-y-4">
-      <MemoryView
-        key={shown.key}
-        agentId={agentId}
-        memory={shown}
-        agentName={agentName}
-        me={me}
-        readOnly={readOnly}
-        narrow={narrow}
-        match={match}
-        historyOpen={historyOpen}
-        onBack={back}
-        onEdit={() => {
-          saved.clear();
-          setForm({ kind: "edit", key: shown.key });
-        }}
-        onHistory={toggleHistory}
-        onDeleted={() => {
-          setSelected(null);
-          setHit(null);
-          setHistoryOpen(false);
-          address(null, false);
-        }}
-      />
-      {/* An emergency reader has no history route. */}
-      {historyOpen && !readOnly ? <RevisionHistory key={shown.key} agentId={agentId} memory={shown} /> : null}
-    </div>
+    <MemoryView
+      key={shown.key}
+      agentId={agentId}
+      memory={shown}
+      agentName={agentName}
+      me={me}
+      readOnly={readOnly}
+      narrow={narrow}
+      match={match}
+      onBack={back}
+      onEdit={() => {
+        saved.clear();
+        setForm({ kind: "edit", key: shown.key });
+      }}
+      onHistory={() => showHistory(true)}
+      onDeleted={() => {
+        setSelected(null);
+        setHit(null);
+        setHistoryOpen(false);
+        address(null, false);
+      }}
+    />
   ) : narrow ? (
     <SubScreenHeader backLabel="Memory" onBack={back} />
   ) : null;

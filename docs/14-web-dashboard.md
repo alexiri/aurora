@@ -1257,7 +1257,7 @@ here, add it here and document it.
 | Card | `Card` | A bordered `surface` panel (borders replace shadows in dark). |
 | List | `ItemList` + `ListRow` | Divided rows with an actions slot; rows wrap on narrow screens. For few, rich rows (agents, members, keys). |
 | Data table | `DataTable`, `Th`, `Td` | For columns of comparable data. The wrapper scrolls inside itself at 390 px, so the page never scrolls horizontally. Always give `caption`. |
-| Diff | `DiffView` (in `web/src/components/ui/diff-view.tsx`) | (phase 6, FIX-250) The one GitLab-style line diff — the template review's, the person's Review changes dialog's and the skill library update review's. Every change with old and new line numbers and three lines of context; longer runs of unchanged lines fold into one "N unchanged lines" row with **Show 20 more above / below** and **Show all** (expanding in steps, like GitLab); a **Show the whole file** switch in the file header; a changed-line pair highlights the words that differ (in a block of removed then added lines they pair up in order); a file that was added or removed says so (one with no text: "The file is empty."); files with no change show as "Unchanged." only, never as a diff. (FIX-271) A file too large to compare says "This file is too large to compare line by line; the whole old and new text are below." with both texts in closed folds. Long lines scroll inside the box (a named region), never the page; the fold rows are labelled buttons naming the line range. No other component renders a line diff. |
+| Diff | `DiffView` (in `web/src/components/ui/diff-view.tsx`) | (phase 6, FIX-250) The one GitLab-style line diff — the template review's, the person's Review changes dialog's and the skill library update review's. Every change with old and new line numbers and three lines of context; longer runs of unchanged lines fold into one "N unchanged lines" row with **Show 20 more above / below** and **Show all** (expanding in steps, like GitLab); a **Show the whole file** switch in the file header; a changed-line pair highlights the words that differ (in a block of removed then added lines they pair up in order); a file that was added or removed says so (one with no text: "The file is empty."); files with no change show as "Unchanged." only, never as a diff. (FIX-271) A file too large to compare says "This file is too large to compare line by line; the whole old and new text are below." with both texts in closed folds. Long lines scroll inside the box (a named region), never the page; the fold rows are labelled buttons naming the line range. (P5-MEMORY-3) The optional `wrap` prop, off by default, is for prose in a narrow column (a memory's History): long lines wrap, so the box never scrolls sideways and the fold row's buttons stay inside it. No other component renders a line diff. |
 | Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
 | Checkbox | `CheckboxField` | A checkbox with its label and optional hint; use it for boolean settings instead of a bare `<input type="checkbox">`. |
 | Setting | `SettingField` | (phase 5, SET-1) One instance setting (`§Instance administration`, Settings): label, hint, the control (built from `Field`, `CheckboxField` or a list editor) and a source `Badge` — "Helm", "Dashboard" or "Default". **Locked** (source Helm): the effective value as read-only text, the note "Configured in Helm (`<helm key>`)" and no control. **Dashboard**: a ghost **Reset to default** action naming the default. Its `id` is the key, so `#<key>` links scroll to it. |
@@ -2877,6 +2877,24 @@ the page is one empty state.
   **Edit** and **…** (Delete) at the top, **Lock** and **History** at the bottom; the settings heading and sub-nav step
   aside there. Edit opens the form full width.
 - **Emergency reader:** the list and the reading view only: no search, no actions, no history, no form.
+
+**Memory › History** (P5-MEMORY-3, D-497(d), C-1170; mockup mem-4; `memory-history.tsx`). **…** › History (on a narrow
+screen the **History** button) replaces the reading view, with "‹ Back to the memory" (on a narrow screen it is its own
+screen); `&history=1` deep-links to it. "History", then "<memory> · n versions" (the versions kept, at most 50).
+- **Versions**, newest first, the selected one highlighted (the newest on opening): an initial, **<name>** and what
+  they did ("created it" for version 1, "restored version n", else "changed it"), the time (`When`), **Current** on the
+  newest, and where: "through an API key", "in “<conversation>”" (or "in a conversation"), "from the template <name>
+  <version>", "its text was removed". The name is the person (also behind a key or a template), else the agent, the
+  key or the template; never an e-mail address, and nothing is linked.
+- **What changed:** "Compared with the version before (<name>, <when>)" ("The first version" for version 1, compared
+  with nothing), the shared `DiffView` of the two texts, and "+n added · −n removed in this version". When either side
+  was removed: "This version's text was removed". When the oldest kept version is not version 1 it has nothing to be
+  compared with, and says so.
+- **Restore this version** (not on the current one, nor on a removed one) does not ask: it restores, returns to the
+  memory and shows the toast "Restored version n" with **Undo**, which restores the version that was current.
+- **…** › **Remove this version's text…** asks first ("Remove the text of version n?" → **Remove text**; it can't be
+  undone). On the current version the item is disabled and says "The current version can't be removed: change the
+  memory first."; a removed version has no **…**.
 
 **Skills.** Name, "Use it when…" (the API's one-line `description`), Instructions (the `body`), "On for <Agent>",
 Save and Delete. The folder name is made by Aurora (`lib/skill-name.ts`: kebab-case, at most 64 characters, `aurora-`

@@ -3,7 +3,7 @@
  * named only when the API returned its reference with a title; otherwise it is "in a conversation" — never a guess, and
  * never a link.
  */
-import type { ConversationRef, Memory, MemoryActor } from "@/lib/api/memory";
+import type { ConversationRef, Memory, MemoryActor, MemoryRevision } from "@/lib/api/memory";
 import { formatAge, formatShortDay } from "@/lib/format-date";
 import { personName } from "@/lib/workspace-name";
 
@@ -39,6 +39,33 @@ export function sourceWords(actor: MemoryActor, agentName: string, me: string | 
     default:
       return "Added";
   }
+}
+
+// ---- History (P5-MEMORY-3, C-1170, D-497(d)): who wrote a version, what they did and where. Never an e-mail. ----
+
+/** The name in a version's row: the person (also behind a key or a template), else the agent, key or template. */
+export function versionActor(v: MemoryRevision, agentName: string): string {
+  const a = v.author;
+  if (a.kind === "agent") return a.agent?.name || agentName;
+  if (a.person) return personName(a.person.display_name);
+  return a.api_key?.name || a.template?.name || "Someone";
+}
+
+/** "created it" (version 1), "restored version n", else "changed it". */
+export function versionVerb(v: MemoryRevision): string {
+  if (v.restored_from != null) return `restored version ${v.restored_from}`;
+  return v.revision === 1 ? "created it" : "changed it";
+}
+
+/** Where it was written, and "its text was removed" for a removed version; null when there is nothing to add. */
+export function versionContext(v: MemoryRevision): string | null {
+  const a = v.author;
+  let where: string | null = null;
+  if (a.kind === "api_key" || v.via === "api") where = "through an API key";
+  // Only a write made in a conversation is "in a conversation": a file the agent wrote on its computer is not.
+  else if (v.via === "conversation" || a.conversation) where = conversationWords(a.conversation);
+  else if (a.template) where = `from the template ${a.template.name} ${a.template.version}`;
+  return [where, v.redacted ? "its text was removed" : null].filter(Boolean).join(" · ") || null;
 }
 
 /** The row's third line: "Added by you · 2 days ago". */
