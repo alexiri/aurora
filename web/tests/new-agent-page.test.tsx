@@ -483,6 +483,60 @@ describe("the four-step page (C-1116)", () => {
     expect(screen.queryByTestId("secret-key")).toBeNull();
   });
 
+  it("a text input shows its default, which Next accepts and Create sends (FIX-272, D-500)", async () => {
+    let body: { inputs?: unknown } = {};
+    const withDefault = {
+      ...plan.content,
+      inputs: [{ id: "project", label: "Jira project key", help: null, kind: "text", required: true, pattern: null, max_length: 20, options: null, default: "OPS" }, plan.content.inputs[1]],
+    };
+    openPlan(
+      {
+        "POST /v1/workspaces/w1/agents/from-template": async (req) => {
+          body = (await (req as Request).json()) as typeof body;
+          return json(201, { agent: { id: "a2", name: "Rex", handle: "rex", kind: "hosted" }, grants: [], notes: [], skills: [], webhooks: [] });
+        },
+      },
+      { content: withDefault },
+    );
+    const field = (await screen.findByLabelText("Jira project key")) as HTMLInputElement;
+    await waitFor(() => expect(field.value).toBe("OPS"));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Rex" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+    // The untouched choice and text inputs both reach the server with what the fields show.
+    await waitFor(() => expect(body.inputs).toEqual({ project: "OPS", region: "eu" }));
+  });
+
+  it("copying one webhook's secret does not count for the next: closing the second still asks (FIX-272)", async () => {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn(async () => {}) }, configurable: true });
+    const hook = (id: string, name: string, secret: string) => ({
+      webhook: { id, name, verification: { kind: "bearer", header: "Authorization", format: "Bearer <secret>" }, enabled: false },
+      url: `/v1/workspaces/w1/webhooks/${id}`,
+      secret,
+    });
+    const created = {
+      agent: { id: "a2", name: "Rex", handle: "rex", kind: "hosted" },
+      grants: [], notes: [], skills: [],
+      webhooks: [hook("wh1", "Alerts", "whsec_1"), hook("wh2", "Pager", "whsec_2")],
+    };
+    openPlan({ "POST /v1/workspaces/w1/agents/from-template": () => json(201, created) });
+    await gotoReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }));
+    expect((await screen.findByTestId("secret-key")).textContent).toBe("whsec_1");
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await screen.findByRole("button", { name: "Copied" });
+    fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    expect((await screen.findByTestId("secret-key")).textContent).toBe("whsec_2");
+    // The second secret has not been copied: Copy again would be a lie, and Done asks first.
+    expect(screen.queryByRole("button", { name: /Copied|Copy again/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "I have saved it" }));
+    expect(screen.getByText("You haven't copied it. Close anyway?")).toBeTruthy();
+    expect(push).not.toHaveBeenCalled();
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+  });
+
   it("a 409 template_version_changed swaps in the plan the refusal carries and asks for a look", async () => {
     const nextPlan = { ...plan, version: "1.1.0", readme: "# Swapped in\n" };
     let body: Record<string, unknown> | null = null;

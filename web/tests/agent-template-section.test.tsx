@@ -3,6 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentTemplateSection } from "@/components/templates/template-section";
+import { queryKeys } from "@/lib/api/queries";
+import { scheduleKeys } from "@/lib/api/schedules";
+import { skillKeys } from "@/lib/api/skills";
+import { webhookKeys } from "@/lib/api/webhooks";
 import { json, mockFetch } from "./support/api";
 
 // C-1117, C-1143: the agent's Template section on Settings › Manage — shown only for agents with a
@@ -13,8 +17,9 @@ const agent = {
   id: "a1",
   name: "Daneel",
   handle: "daneel",
+  workspace_id: "w1",
   template: null,
-} as { id: string; name: string; handle: string; template: { template_id: string; name: string; version: string } | null };
+} as { id: string; name: string; handle: string; workspace_id: string; template: { template_id: string; name: string; version: string } | null };
 
 const withTemplate = { ...agent, template: { template_id: "schedule-manager", name: "Schedule manager", version: "1.0.0" } };
 
@@ -37,13 +42,18 @@ function serve(extra: Record<string, (req: Request) => Response> = {}) {
   });
 }
 
-function mount(a = agent) {
+function mountWithClient(a = agent) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  render(
     <QueryClientProvider client={qc}>
       <AgentTemplateSection agent={a} agentBase="/o/o1/w/w1/agents/daneel" />
     </QueryClientProvider>,
   );
+  return qc;
+}
+
+function mount(a = agent) {
+  mountWithClient(a);
 }
 
 afterEach(() => {
@@ -126,6 +136,51 @@ describe("the agent's Template section (C-1117)", () => {
     expect(dlg).toHaveTextContent("its updates are no longer offered");
     fireEvent.click(within(dlg).getByRole("button", { name: "Stop following" }));
     await waitFor(() => expect(detached).toBe(1));
+  });
+
+  it("drops Made from after a detach, though the agent it was given still carries the template (FIX-272)", async () => {
+    let detached = false;
+    serve({
+      "GET /v1/agents/a1/template": () =>
+        json(200, { template: detached ? null : withTemplate.template, available: !detached, notes: [] }),
+      "DELETE /v1/agents/a1/template": () => {
+        detached = true;
+        return json(204, null);
+      },
+    });
+    const qc = mountWithClient(withTemplate);
+    await screen.findByTestId("template-made-from");
+    qc.setQueryData(queryKeys.agents("w1"), { items: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Stop following this template" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Stop following this template?" })).getByRole("button", { name: "Stop following" }));
+    await waitFor(() => expect(screen.queryByTestId("template-made-from")).not.toBeInTheDocument());
+    expect(qc.getQueryState(queryKeys.agents("w1"))?.isInvalidated).toBe(true);
+  });
+
+  it("after an apply, the agent, skills and automations are read again (FIX-272)", async () => {
+    const status = {
+      template: withTemplate.template,
+      available: true,
+      notes: [],
+      update: { version: "1.1.0", content_sha256: "c".repeat(64), readme: "# New", changelog: null, inputs_needed: [], apps_added: [], parts: [] },
+    };
+    serve({
+      "GET /v1/agents/a1/template": () => json(200, status),
+      "POST /v1/agents/a1/template/apply": () => json(200, { template: { ...withTemplate.template, version: "1.1.0" }, available: true, notes: [] }),
+    });
+    const qc = mountWithClient(withTemplate);
+    await screen.findByTestId("template-update");
+    const keys = [
+      queryKeys.agents("w1"),
+      skillKeys.agent("a1"),
+      skillKeys.effective("a1"),
+      scheduleKeys.list("a1"),
+      webhookKeys.list("a1"),
+    ];
+    for (const key of keys) qc.setQueryData(key, {});
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Skip this version" }));
+    await waitFor(() => expect(keys.map((k) => qc.getQueryState(k)?.isInvalidated)).toEqual(keys.map(() => true)));
   });
 
   it("views the helper files: path, size, Executable, and the text as plain text", async () => {

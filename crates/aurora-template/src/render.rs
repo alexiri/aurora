@@ -424,6 +424,32 @@ mod tests {
     }
 
     #[test]
+    fn a_default_is_used_when_the_person_gives_none() {
+        let inputs = vec![
+            InputDecl {
+                default: Some("OPS".into()),
+                ..decl("project", true)
+            },
+            InputDecl {
+                default: Some("eu".into()),
+                ..decl("zone", false)
+            },
+            decl("plain", false),
+        ];
+        // Absent and empty both take the default, before the required rule runs.
+        for given in [vec![], vec![("project", ""), ("zone", "")]] {
+            let ok = checked(&inputs, &given);
+            assert_eq!(ok.get("project"), Some("OPS"), "{given:?}");
+            assert_eq!(ok.get("zone"), Some("eu"), "{given:?}");
+            // An optional input without a default stays the empty string.
+            assert_eq!(ok.get("plain"), Some(""), "{given:?}");
+        }
+        // A given value wins over the default.
+        let ok = checked(&inputs, &[("project", "NET")]);
+        assert_eq!(ok.get("project"), Some("NET"));
+    }
+
+    #[test]
     fn pattern_matches_the_whole_value() {
         let inputs = vec![InputDecl {
             pattern: Some("^[A-Z][A-Z0-9]+$".into()),
