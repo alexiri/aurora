@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-import { mockApi } from "./support/mock-api";
+import { mockApi, org, user, ws } from "./support/mock-api";
 import { openThemed, overflow, type Scheme } from "./support/open";
 import { mockSkills } from "./support/skills";
 
@@ -31,6 +31,17 @@ async function open(page: Page, scheme: Scheme, path = AGENT) {
   const mock = await mockSkills(page);
   await openThemed(page, path, scheme);
   return { errors, mock };
+}
+
+/** The shared mock's `/v1/me` names no organization role; an admin may add a library. */
+async function asOrgAdmin(page: Page) {
+  await page.route("**/v1/me", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ user, memberships: [{ org, role: "owner", status: "active", workspaces: [{ ...ws, personal: false }] }], default_org_id: org.id }),
+    }),
+  );
 }
 
 const skills = (page: Page) => page.getByRole("list", { name: "Skills", exact: true });
@@ -140,6 +151,49 @@ for (const scheme of ["light", "dark"] as const) {
         expect(errors).toEqual([]);
       });
 
+      // (P5-SKILLS-4, skill-5)
+      test("add a skill from a library: only what can be added, a preview, then Add", async ({ page }) => {
+        const { errors, mock } = await open(page, scheme);
+        await asOrgAdmin(page);
+        await page.reload();
+        await page.getByRole("button", { name: "Add skill" }).click();
+        await page.getByRole("menuitem", { name: "Add from a library" }).click();
+        const dialog = page.getByRole("dialog", { name: "Add a skill from a library" });
+        const libraries = dialog.getByRole("navigation", { name: "Libraries" });
+        await expect(libraries.getByRole("button", { name: /^Anthropic skills\s*17 skills$/ })).toHaveAttribute("aria-current", "true");
+        await expect(libraries.getByRole("button", { name: "Add a library" })).toBeVisible();
+        const list = dialog.getByRole("list", { name: "Library skills" });
+        await expect(list.getByRole("listitem")).toHaveCount(7);
+        await expect(list.getByRole("button", { name: /^pdf.*Added$/ })).toBeVisible();
+        await dialog.getByRole("button", { name: /^Brand guidelines/ }).click();
+        const preview = dialog.getByRole("group", { name: "Preview of what will be stored" });
+        await expect(preview.getByRole("heading", { name: "Typography" })).toBeVisible();
+        await expect(preview.getByRole("button", { name: /^LICENSE\.txt\s*0\.3 KB$/ })).toBeVisible();
+        await expect(preview).toContainText("Pinned to e4bb5d9 when added.");
+        await expect(preview).toContainText("image: a pixel");
+        expect(await preview.locator("img").count()).toBe(0);
+        // The three columns stand side by side, inside the dialog.
+        const [nav, mid, right] = await Promise.all([libraries.boundingBox(), list.boundingBox(), preview.boundingBox()]);
+        expect(mid!.x).toBeGreaterThanOrEqual(nav!.x + nav!.width - 1);
+        expect(right!.x).toBeGreaterThan(mid!.x + mid!.width);
+        await shot(page, `skill-5-${width}-${scheme}`);
+        await clean(page, "add from a library");
+        // The line is pinned at the foot of the column, on screen without scrolling.
+        await expect(dialog.getByRole("button", { name: /8 can’t be added/ })).toBeInViewport({ ratio: 1 });
+        await dialog.getByRole("button", { name: /8 can’t be added/ }).click();
+        const reasons = dialog.getByRole("list", { name: "Skills that can’t be added" });
+        await expect(reasons).toContainText("A skill named release-notes is already on Daneel.");
+        await expect(reasons.getByRole("listitem").first()).toBeInViewport();
+        await shot(page, `skill-5-why-${width}-${scheme}`);
+        await clean(page, "why");
+        await dialog.getByRole("button", { name: "Add to Daneel" }).click();
+        await expect(dialog).toHaveCount(0);
+        await expect(page.getByRole("article", { name: "Brand guidelines" })).toBeVisible();
+        expect(JSON.parse(mock.writes.at(-1)!.body)).toMatchObject({ from_library: { path: "brand-guidelines" } });
+        expect(await page.getByRole("article", { name: "Brand guidelines" }).locator("img").count()).toBe(0);
+        expect(errors).toEqual([]);
+      });
+
       for (const level of [
         { name: "workspace", path: "/o/acme/w/main/skills", column: /^For /, count: 3 },
         { name: "organization", path: "/o/acme/skills", column: /^For Acme Labs$/, count: 4 },
@@ -194,6 +248,39 @@ for (const scheme of ["light", "dark"] as const) {
       await page.getByRole("button", { name: "Skills", exact: true }).click();
       await expect(skills(page)).toBeVisible();
       await expect(page.getByRole("tablist", { name: "Settings pages" })).toBeVisible();
+      expect(errors).toEqual([]);
+    });
+
+    test("add a skill from a library on a narrow screen", async ({ page }) => {
+      const { errors, mock } = await open(page, scheme);
+      await page.getByRole("button", { name: "Add skill" }).click();
+      await page.getByRole("menuitem", { name: "Add from a library" }).click();
+      const dialog = page.getByRole("dialog", { name: "Add a skill from a library" });
+      const list = dialog.getByRole("list", { name: "Library skills" });
+      await expect(list.getByRole("listitem")).toHaveCount(7);
+      // Below 768 px the libraries are a select and the skill its own screen; from 768 px the three columns.
+      const phone = width < 768;
+      await expect(dialog.getByLabel("Library", { exact: true })).toHaveCount(phone ? 1 : 0);
+      const dialogOverflow = () => dialog.evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(await dialogOverflow()).toBeLessThanOrEqual(0);
+      await shot(page, `skill-5-list-${width}-${scheme}`);
+      await clean(page, "library list");
+      await dialog.getByRole("button", { name: /^Brand guidelines/ }).click();
+      await expect(dialog.getByRole("group", { name: "Preview of what will be stored" })).toBeVisible();
+      await expect(list).toHaveCount(phone ? 0 : 1);
+      expect(await dialogOverflow()).toBeLessThanOrEqual(0);
+      await expect(dialog.getByRole("button", { name: "Add to Daneel" })).toBeInViewport({ ratio: 1 });
+      await shot(page, `skill-5-preview-${width}-${scheme}`);
+      await clean(page, "library preview");
+      if (phone) {
+        await dialog.getByRole("button", { name: "Skills", exact: true }).click();
+        await expect(list).toBeVisible();
+        await dialog.getByRole("button", { name: /^Brand guidelines/ }).click();
+      }
+      await dialog.getByRole("button", { name: "Add to Daneel" }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByRole("article", { name: "Brand guidelines" })).toBeVisible();
+      expect(mock.writes).toHaveLength(1);
       expect(errors).toEqual([]);
     });
 

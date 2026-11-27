@@ -16,11 +16,11 @@ import { SaveBar, useSaveBar } from "@/components/ui/save-bar";
 import { useAgentSkills,useEffectiveSkills, useOrgSkills, useSetAgentSkillOff, useSetSkillEnabled, useWorkspaceSkills } from "@/lib/api/skills";
 
 import { SkillEditor } from "./editor";
-import { AddFromLibrary, PendingUpdatesNotice, useCanAddFromLibrary } from "./library";
+import { AddFromLibrary, useCanAddFromLibrary } from "./add-from-library";
+import { PendingUpdatesNotice } from "./library";
 import { SkillChips, SkillCompactList, SkillSearch, SkillTable, SkillsFootnote, SourceChip } from "./list";
 import {
   agentRows,
-  isLibrary,
   levelRows,
   matchesFilter,
   matchesSearch,
@@ -144,11 +144,9 @@ export function SkillsList({ page }: { page: SkillPage }) {
   const busyId = setEnabled.isPending ? setEnabled.variables?.id : setOff.isPending ? setOff.variables?.skillId : undefined;
   const busyKey = busyId ?? null;
 
-  // The folder names in use where this page writes.
+  // The folder names in use where this page writes, and the skills kept there.
   const taken = rows.filter((r) => r.tier === tier).map((r) => r.skill.name);
-  // Library content of this level counts toward its budget (docs/10 §Git skill library).
-  const fromLibraries = rows.filter((r) => r.tier === tier && isLibrary(r.skill));
-  const budgetUse = { bytes: fromLibraries.reduce((n, r) => n + r.skill.total_size, 0), count: fromLibraries.length };
+  const keptHere = new Set(rows.flatMap((r) => (r.tier === tier && r.skill.id ? [r.skill.id] : [])));
 
   const addMenu = canWrite ? (
     <Menu>
@@ -255,7 +253,7 @@ export function SkillsList({ page }: { page: SkillPage }) {
       ) : (
         listColumn
       )}
-      <AddFromLibrary scope={scope} orgId={page.orgId} tier={tier} usage={budgetUse} open={library} onOpenChange={setLibrary} onAdded={show} />
+      <AddFromLibrary orgId={page.orgId} open={library} onOpenChange={setLibrary} target={{ scope, subject, skillIds: keptHere, onAdded: show }} />
       <UploadSkillDialog
         open={upload}
         onOpenChange={setUpload}

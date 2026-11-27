@@ -90,6 +90,48 @@ export interface SkillsMock {
   writes: { key: string; body: string }[];
 }
 
+// ---- the libraries of skill-5 -------------------------------------------------------------------
+
+const LIBRARIES = [
+  { id: id(700), scope: "org", org_id: id(1), label: "Anthropic skills", status: "active", skills_offered: 17 },
+  { id: id(701), scope: "org", org_id: id(1), label: "Acme team recipes", status: "active", skills_offered: 5 },
+  { id: id(702), scope: "org", org_id: id(1), label: "Platform tools", status: "active", skills_offered: 9 },
+];
+
+const offered = (name: string, description: string, files: number, kb: number, over: Record<string, unknown> = {}) => ({
+  path: name, name, description, valid: true, reason: null, size: kb * 1024, files, added: [], blocked: null, ...over,
+});
+
+/** Anthropic skills as the mockup lists it, with the eight that can't be added. `pdfId` is the agent's own copy. */
+const libraryCatalogue = (pdfId: string) => ({
+  commit_sha: SHA,
+  truncated: false,
+  next_cursor: null,
+  budget: { bytes: 1_048_576, used: 6144 },
+  items: [
+    offered("algorithmic-art", "Create generative art with p5.js, seeded randomness and interactive parameters.", 4, 19),
+    offered("brand-guidelines", "Apply Anthropic’s brand colors and typography to any artifact.", 2, 2),
+    offered("doc-coauthoring", "A structured workflow for co-authoring documentation, specs and proposals.", 1, 15),
+    offered("frontend-design", "Distinctive, intentional visual design when building a new UI.", 2, 9),
+    offered("internal-comms", "Formats for status reports, updates, newsletters, FAQs and incident reports.", 6, 2),
+    offered("pdf", "Read, merge, split and fill in PDF files.", 3, 6, { added: [{ tier: "agent", id: pdfId }], blocked: { reason: "name_taken", message: "This agent already has a skill named pdf." } }),
+    offered("skill-creator", "Guide for creating and improving skills.", 4, 11),
+    offered("release-notes", "Write release notes.", 1, 1, { blocked: { reason: "name_taken", message: "This agent already has a skill named release-notes." } }),
+    offered("canvas-design", "Posters and static art.", 80, 2048, { blocked: { reason: "budget", message: "Too large for the room left for library skills here (6144 of 1048576 characters used)." } }),
+    ...["docx", "pptx", "xlsx", "mcp-builder", "slack-gif-creator", "web-artifacts-builder"].map((name) =>
+      offered(name, "", 1, 0, { valid: false, reason: "the skill has more than 50 files", blocked: { reason: "invalid", message: "the skill has more than 50 files" } }),
+    ),
+  ],
+});
+
+const brandGuidelines = {
+  commit_sha: SHA, path: "brand-guidelines", name: "brand-guidelines", valid: true, reason: null,
+  description: "Apply Anthropic’s brand colors and typography to any artifact.",
+  body: "## Colors\n\n- Dark `#141413`, light `#faf9f5`\n- Accents: orange, blue and green\n\n## Typography\n\nHeadings in Poppins, body in Lora, with Arial and Georgia as fallbacks.\n\n![a pixel](/v1/me)\n",
+  size: 2252, content_sha256: "a".repeat(64),
+  files: [{ path: "LICENSE.txt", size: 307, executable: false, binary: false, content: "MIT\n", content_b64: null }],
+};
+
 /** The Skills routes of the agent Daneel, the workspace and the organization. */
 export async function mockSkills(page: Page): Promise<SkillsMock> {
   const all = skills();
@@ -127,8 +169,10 @@ export async function mockSkills(page: Page): Promise<SkillsMock> {
     if (p === `/v1/agents/${id(11)}/skills/effective`) return json(effective());
     if (p === `/v1/agents/${id(11)}/skills`) {
       if (method === "POST") {
-        const b = req.postDataJSON() as { name: string; title?: string; description: string; body: string; enabled?: boolean };
-        const made = make(60 + mock.writes.length, "agent", b.name, b.description, b.body, { title: b.title ?? null, enabled: b.enabled ?? true });
+        const b = req.postDataJSON() as { name: string; title?: string; description: string; body: string; enabled?: boolean; from_library?: { path: string } };
+        const made = b.from_library
+          ? make(60 + mock.writes.length, "agent", b.from_library.path, brandGuidelines.description, brandGuidelines.body, { source: library("Anthropic skills", b.from_library.path) })
+          : make(60 + mock.writes.length, "agent", b.name, b.description, b.body, { title: b.title ?? null, enabled: b.enabled ?? true });
         all.push(made);
         return json(made, 201);
       }
@@ -143,9 +187,10 @@ export async function mockSkills(page: Page): Promise<SkillsMock> {
     if (p === `/v1/workspaces/${id(2)}/skills` && method === "GET") return list(all.filter((s) => s.tier === "workspace"));
     if (p === `/v1/orgs/${id(1)}/skills` && method === "GET") return list(all.filter((s) => s.tier === "org"));
     if (p.endsWith("/skill-library-updates")) return json({ items: [] });
-    if (p === `/v1/orgs/${id(1)}/skill-libraries` && method === "GET") {
-      return json({ items: [{ id: id(700), scope: "org", org_id: id(1), label: "Anthropic skills", status: "active" }], next_cursor: null });
-    }
+    if (p === `/v1/orgs/${id(1)}/skill-libraries` && method === "GET") return json({ items: LIBRARIES, next_cursor: null });
+    if (p === `/v1/skill-libraries/${id(700)}/skills`) return json(libraryCatalogue(all.find((s) => s.tier === "agent" && s.name === "pdf")!.id));
+    if (p === `/v1/skill-libraries/${id(700)}/skills/brand-guidelines`) return json(brandGuidelines);
+    if (/^\/v1\/skill-libraries\/[^/]+\/skills\/.+/.test(p)) return json({ ...brandGuidelines, path: p.split("/").pop(), name: p.split("/").pop(), files: [] });
     const file = /^\/v1\/skills\/([^/]+)\/files\/(.+)$/.exec(p);
     if (file) {
       const skill = all.find((s) => s.id === file[1]);

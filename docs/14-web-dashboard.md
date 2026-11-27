@@ -1989,14 +1989,31 @@ every other topic is owners/admins and is not listed for a member.)
     P5-MEMORY-2).
   - **Skills** — one list of everything the agent can do, a panel that reads first and an editor (P5-SKILLS-3,
     §Skills below).
-    (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450(f)) **Add from a library** (in the Add skill menu, shown
-    when the organization **or the instance** has an active library): a picker of libraries in two
-    groups, "Your organization" and "Shared with every organization" (library labels are data; a paused
-    library is not offered; an instance library is browsed with `?org=` for this organization) → a searchable list of the library's skills at its current
-    commit (name, description, size, "already added" chips, invalid ones disabled with the reason) → a
-    full preview of exactly what would be stored (`SKILL.md` and files, rendered as text) with the
-    commit sha and the sentence "Pinned to this commit. Changes in the repository are not applied until
-    someone with permission approves them." → **Add** (disabled when over budget, with the numbers).
+    (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450(f); P5-SKILLS-4, skill-5, C-1176) **Add from a library** (in
+    the Add skill menu, shown when the organization **or the instance** has an active library;
+    `components/skills/add-from-library.tsx`): the dialog **Add a skill from a library**, "Skills are pinned to the
+    version you see here." (`2xl`, a full-screen sheet below 640 px), in three columns that scroll on their own.
+    - **Libraries** (left): the active ones with "n skills" (`skills_offered`; nothing before the first read), the
+      instance's under **Shared with every organization** (library labels are data; a paused one is not offered; an
+      instance library is browsed with `?org=`), and **Add a library** (the Add a library dialog) for the
+      organization's owners and admins only.
+    - **Skills** (middle): **Search skills** (the server's `q`); the browse names where the skill would go
+      (`?tier=agent&agent=` · `tier=workspace&workspace=` · `tier=organization`). A row: the display name, the
+      description on one line, "n files · k KB"; a skill already kept there stays, dimmed, with **Added**. Those
+      that can't be added are not in the list: pinned at its foot, "**n can’t be added · Why?**" opens their names
+      with the reason ("A skill named <name> is already on <target>.", "It would exceed <target>’s k KB of library
+      skills.", the server's sentence for the number of skills, the repository's validity reason). **Load more** and
+      the truncated notice as before.
+    - **Preview** (right; beside the list the first addable skill is shown at once): the name, the description as its
+      author wrote it, the instructions rendered with `Markdown images={false}`, the files with their sizes, each
+      opening read-only as text, and "Pinned to <sha7> when added.".
+    - **Footer:** "Adds a copy to <Agent>. You can turn it off or remove it later." ("Adds it to <Workspace|Org>’s
+      skills. …"), **Cancel**, **Add to <Agent|Workspace|Org>**, off with the reason when the skill is added, blocked,
+      or, once its files are read, broken or larger than the room left. Adding closes the dialog and opens the new
+      skill's panel; a 409 or 422 is said on the preview and the list is read again. The room and `blocked` are the
+      server's (`budget`, C-1176); the dashboard keeps no budget numbers.
+    - Below 768 px the libraries are a select with the two groups above the list, and a skill is its own screen with
+      **‹ Skills**. **Browse skills** on a library card is the same dialog, "Browse a library", with **Close** only.
     A library skill (the same for a skill from an instance library, whose update this organization approves or
     rejects itself) opens **read-only** in the panel (§Skills below); **Stop updates and edit** (in "…", confirmed)
     makes it an editable skill. **Review update**, offered to who may decide, opens the

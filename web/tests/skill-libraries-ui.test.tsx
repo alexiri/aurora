@@ -219,7 +219,8 @@ describe("organization Libraries tab", () => {
     const dlg = await screen.findByRole("dialog", { name: "Browse a library" });
     fireEvent.click(await within(dlg).findByRole("button", { name: /^triage/ }));
     expect(await within(dlg).findByLabelText("Preview of what will be stored")).toBeTruthy();
-    expect(within(dlg).queryByRole("button", { name: "Add" })).toBeNull();
+    // looking only: nothing to add, and no library to add from here
+    expect(within(dlg).queryByRole("button", { name: /^Add/ })).toBeNull();
     // the header's X and the footer's Close
     expect(within(dlg).getAllByRole("button", { name: "Close" })).toHaveLength(2);
   });
@@ -638,12 +639,14 @@ describe("Add from library with shared libraries", () => {
     );
     wrap(<OrgList />);
     await fromLibrary();
-    const pick = (await screen.findByLabelText("Library")) as HTMLSelectElement;
-    const groups = [...pick.querySelectorAll("optgroup")].map((g) => [g.label, [...g.querySelectorAll("option")].map((o) => o.textContent)]);
-    expect(groups).toEqual([["Your organization", ["Team <b>skills</b>"]], ["Shared with every organization", ["Company skills"]]]);
-    expect(pick.querySelector("b")).toBeNull();
-    fireEvent.change(pick, { target: { value: "l9" } });
-    expect(await screen.findByRole("button", { name: /^from-l9/ })).toBeTruthy();
+    // (P5-SKILLS-4) the libraries are a list on the left; the narrow screen's select keeps the two groups
+    const nav = await screen.findByRole("navigation", { name: "Libraries" });
+    expect(within(nav).getAllByRole("button").map((b) => b.textContent)).toEqual(["Team <b>skills</b>", "Company skills"]);
+    const shared = within(nav).getByRole("list", { name: "Shared with every organization" });
+    expect(within(shared).getAllByRole("button").map((b) => b.textContent)).toEqual(["Company skills"]);
+    expect(nav.querySelector("b")).toBeNull();
+    fireEvent.click(within(shared).getByRole("button", { name: "Company skills" }));
+    expect(await screen.findByRole("button", { name: /^From l9/ })).toBeTruthy();
     // an instance library is browsed as this organization
     expect(orgs).toEqual(["o1"]);
   });
@@ -652,7 +655,7 @@ describe("Add from library with shared libraries", () => {
     mockFetch(routes([{ id: "l9", label: "Company skills", status: "active", scope: "instance" }]));
     wrap(<OrgList />);
     await fromLibrary();
-    expect(await screen.findByRole("dialog", { name: "Add from a library" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Add a skill from a library" })).toBeTruthy();
   });
 
   it("is not offered when the only library is paused", async () => {
@@ -679,9 +682,9 @@ describe("Add from library with shared libraries", () => {
     );
     wrap(<OrgList />);
     await fromLibrary();
-    fireEvent.click(await screen.findByRole("button", { name: /^from-l9/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^From l9/ }));
     await screen.findByLabelText("Preview of what will be stored");
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add to Acme" }));
     await waitFor(() => expect(added).toEqual({ from_library: { library_id: "l9", path: "from-l9", commit_sha: SHA_B } }));
   });
 });

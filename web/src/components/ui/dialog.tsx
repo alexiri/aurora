@@ -47,8 +47,11 @@ export function DialogContent({
   back,
   variant = "centered",
   fixedHeight,
+  bodyClassName,
   ...props
 }: {
+  /** For a body laid out as columns that scroll on their own: it replaces the body's padding and scrolling. */
+  bodyClassName?: string;
   title: string;
   description?: string;
   children: ReactNode;
@@ -62,7 +65,7 @@ export function DialogContent({
   // Set through the CSSOM: a `style` attribute is not allowed by the CSP guard, a property set from script is.
   const heightRef = useCallback(
     (el: HTMLDivElement | null) => {
-      if (el && fixedHeight && window.matchMedia("(min-width: 640px)").matches) el.style.height = fixedHeight;
+      if (el && fixedHeight && window.matchMedia?.("(min-width: 640px)").matches) el.style.height = fixedHeight;
     },
     [fixedHeight],
   );
@@ -120,7 +123,7 @@ export function DialogContent({
           </div>
           {header ? <div className="mt-3">{header}</div> : null}
         </div>
-        <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div ref={bodyRef} className={cn("min-h-0 flex-1 overflow-y-auto px-6 py-4", bodyClassName)}>
           {children}
         </div>
         {footer ? <div className="shrink-0 border-t border-line px-6 py-3">{footer}</div> : null}

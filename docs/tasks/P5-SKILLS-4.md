@@ -100,4 +100,89 @@ Sonnet `nextjs-developer` (one dialog, data from new fields).
 
 ## Completion report
 
-Commits; screenshots beside `after/skill-5*.png`; differences with reasons; tests changed; commands and results.
+Built 2026-11-27 on `alexiri/p5-skills-3` over `3876d74f`. **Not merged, not pushed.** Web only: no API, DTO,
+migration or Rust change. One commit ("P5-SKILLS-4: …"), then a merge of master (FIX-276).
+
+### What changed
+
+- New `components/skills/add-from-library.tsx`: `LibraryBrowserDialog` (add and browse), `AddFromLibrary`,
+  `useCanAddFromLibrary`, `activeLibraries`, and the pure `splitCatalogue` / `blockedWords`. The old browser,
+  preview, "Already added" chips and `AddAction` left `library.tsx`, which keeps the update review and the notice.
+- `lib/api/skill-libraries.ts`: the browse takes where the skill would go (`BrowseFor`, C-1176); `LIBRARY_BUDGET`
+  is gone and `BudgetTier` is a plain type. **No budget number is left in the dashboard**, so the update review's
+  over-budget sentence no longer says "N skills, K KiB" ("Approving would exceed this <tier>'s library budget.
+  Remove a library skill or reject this update.").
+- `skills-list.tsx` passes the target (scope, name, the ids kept there); the client-side budget sum is gone.
+- `ui/dialog.tsx`, two small additions: `bodyClassName` (columns that scroll on their own), and `fixedHeight` no
+  longer throws where `matchMedia` is missing (jsdom). `lib/utils.ts` not touched (FIX-276).
+
+### Readings of the brief to check
+
+1. **The preview's first line is the library's description as written**, without "Use it to" (accepted at
+   P5-SKILLS-3's review for library text; the mockup shows the prefix).
+2. **Added** means this very library skill is kept at this level (an `added` id among the page's own). Added to
+   another agent shows nothing. An added row can be read; Add is off with "Already added to <name>.".
+3. A different skill with the same folder name is folded ("A skill named <name> is already on <target>.").
+4. The budget has a size and a number of skills. The size has the brief's sentence; the number keeps the server's
+   own. Add is also off when the files as read are larger than the listing's estimate and no longer fit.
+5. "n files · k KB" is the server's size (characters of body and files) over 1024.
+6. Beside the list the first addable skill is previewed at once, so the third column is never empty. Below 768 px
+   nothing is chosen for the person.
+7. **The instance's libraries keep a "Shared with every organization" heading** (D-450(f); the mockup's list is
+   flat). With none shared the column is the mockup's.
+8. **Add a library** opens P5-SKLIB-3's dialog over this one, for owners and admins of the organization.
+9. The fold counts what is loaded: with **Load more** still offered it can grow.
+10. **Browse skills** (a library card) is the same layout, read-only, with Close; there **Added** means added
+    anywhere the viewer can see.
+
+### Comparison with the mockups
+
+Looked at `after/skill-5.png` and `-light.png` (and the HTML for the words, `before/` L07 in the review's text)
+before coding, and again against the built dialog at 390, 768, 1256 and 1280 px in both themes, on mocked data
+shaped like the mockup (three libraries, seven listed, eight that can't be added).
+`SKILLS_SHOTS=<dir> scripts/dev/test.sh <lane> web playwright e2e/skills.spec.ts --project=mocked -g "from a library"`
+writes them again (`skill-5-1256-{dark,light}` ↔ `after/skill-5{,-light}.png`, `skill-5-why-…`, `skill-5-list-390-…`,
+`skill-5-preview-390-…`).
+
+| Difference kept | Reason |
+|---|---|
+| The dialog is 56 rem wide (mockup about 1000 px), so rows cut their description a few words sooner | The brief: size `2xl` |
+| At 1256×900 the dialog stops at its cap and the last row sits under the pinned line (mockup: all seven fit) | The shared dialog is anchored 12 % down and never taller than the window allows (`14`) |
+| The preview's line has no "Use it to" | Reading 1 |
+| The closed fold's chevron points right, and down when open (the mockup draws it down while closed) | The app's folds, as the editor's Files line in skill-4 |
+| "Doc coauthoring" (mockup "Doc co-authoring") | D-498(b): the folder name made readable; library skills have no title |
+| The sample picture line "image: a pixel" | Test data: it shows that outside text fetches nothing |
+| Title and text sizes, the close button, Cancel | Shared `DialogContent` and `Button` |
+| The page behind, the rail and the names | Illustrative |
+
+### Tests
+
+- New: `tests/add-from-library.test.tsx` (16: libraries and counts, the browse's tier, the split with every
+  `blocked` kind, the preview and that it fetches nothing, Add for agent, workspace and organization, Added, the two
+  late refusals, 409 and 422, search, **Add a library** for admins and not members, the narrow screens);
+  `e2e/skills.spec.ts` gains the journey at 390, 768, 1256 and 1280 px in both themes with axe and no sideways
+  scroll (page and dialog); `e2e/support/skills.ts` the mockup's libraries.
+- Changed with the UI, no case dropped: `skill-library` (folded instead of disabled rows, the new preview and
+  button; the client-side "26 of 25 skills" case is now the server's room), `skill-libraries-ui` (the left list
+  instead of the select on a wide screen, **Add to Acme**), e2e `skill-libraries` and its support.
+- Production specs and `scripts/e2e`: searched, no string or selector of this dialog; none to run nightly.
+
+### Commands and results
+
+- Fail first, on `3876d74f` (a temporary detached worktree): the new vitest file cannot import the module; with its
+  one imported constant written out so the cases run, **16 of 16 failed**.
+- Before the merge of master: `test.sh … web vitest` on 21 files (this dialog's, the skills pages', every test of a
+  shared dialog, the four drift guards and the source guards) **259/259**; `test.sh … web playwright skills
+  skill-libraries --project=mocked` **116/116**; `pnpm typecheck`, eslint on touched files, `cargo fmt --all
+  --check`, `scripts/guards/run-all.sh`, `extract-schema.py --check`: pass. No Rust changed (no clippy), no local
+  `pnpm build`, no whole suite (CI).
+- After the merge of master (`47c62f90`, FIX-276: no conflict; `cn()` now keeps `text-label`, and the skill chips
+  keep their own `text-xs`): vitest on 12 files with `cn` and the four drift guards **170/170**; Playwright
+  `skills skill-libraries` **116/116**; typecheck, eslint, fmt, guards and schema pass. Commits: `cd11744a` (the
+  work), `47c62f90` (the merge), and the one that adds these lines.
+
+### Security notes
+
+No SEC row. Everything from a repository (labels, names, descriptions, files) is React text; the instructions are
+`Markdown images={false}`, so previewing a skill fetches nothing (vitest and the browser journey). The server decides
+what may be added; the buttons only follow it and the role in `/v1/me`.

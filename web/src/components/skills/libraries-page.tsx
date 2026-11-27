@@ -12,7 +12,7 @@ import { orgRoutes } from "@/lib/routes";
 
 import { AddLibraryDialog } from "./libraries/add-library-dialog";
 import { LibraryCards } from "./libraries/library-cards";
-import { activeLibraries, LibraryBrowserDialog } from "./library";
+import { activeLibraries, LibraryBrowserDialog } from "./add-from-library";
 
 /**
  * Manage <org> › Skills › Libraries (docs/14, D-450, D-506): the organization's own libraries and the ones shared with
