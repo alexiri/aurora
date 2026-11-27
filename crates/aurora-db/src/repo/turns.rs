@@ -145,6 +145,22 @@ pub async fn active_turn<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
+/// The `turn` of a conversation that ran and finished last (a turn that never started, such as
+/// a cancelled queued one, does not count).
+pub async fn latest_finished<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation_id: Uuid,
+) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM turns WHERE conversation_id = $1 AND role = 'turn'
+           AND started_at IS NOT NULL AND finished_at IS NOT NULL
+         ORDER BY finished_at DESC, id DESC LIMIT 1",
+    )
+    .bind(conversation_id)
+    .fetch_optional(exec)
+    .await?)
+}
+
 pub async fn active_turns<'e, E: PgExecutor<'e>>(
     exec: E,
     conversation_ids: &[Uuid],

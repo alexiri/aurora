@@ -166,6 +166,11 @@ pub trait HarnessSession: Send {
   supervisor drains on the harvest tick and reports what it got as
   `turn.idle.events` anchored on the turn that ended (`16 §W5`). The reader
   forwards only text and tool calls; a `result` of an idle run ends nothing.
+  The API records them only against the conversation's latest finished turn
+  run on the current boot, at most 500 entries per such turn and 2,000 per
+  conversation; beyond that one notice says more activity was not recorded and
+  nothing further is added (the supervisor keeps reading the child's stream, so
+  a following turn never finds stale lines).
 - (FIX-253, part B) **Governance of idle work does not widen with the reader.**
   The idle child's own harness tools (e.g. `Bash`) run in its sandbox — the
   same rights the turn had; they are what the reader now makes visible. The

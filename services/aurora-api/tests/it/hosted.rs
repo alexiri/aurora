@@ -755,6 +755,137 @@ async fn turn_idle_events_become_after_the_turn_entries() {
     assert_eq!(st, "invalid", "an unknown anchor turn is refused");
 }
 
+/// A booted agent whose first turn ran and ended `done`: `(lv, turn)`.
+async fn idle_after_one_turn(r: &Rig, handle: &str) -> (Live, String) {
+    let lv = r.boot(handle).await;
+    let turn = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    run_turn_to_done(r, &lv, &turn).await;
+    (lv, turn)
+}
+
+async fn run_turn_to_done(r: &Rig, lv: &Live, turn: &str) {
+    r.report(lv, json!({"kind": "turn.started", "turn_id": turn}))
+        .await;
+    r.report(
+        lv,
+        json!({"kind": "turn.result", "turn_id": turn, "status": "done"}),
+    )
+    .await;
+}
+
+/// `count` idle tool calls with ids from `from`, anchored on `turn`.
+fn idle_calls(turn: &str, from: usize, count: usize) -> Value {
+    let events: Vec<Value> = (from..from + count)
+        .enumerate()
+        .map(|(i, c)| {
+            ev(
+                i as u64 + 1,
+                "tool.started",
+                json!({"call_id": format!("c{c}"), "name": "Bash", "summary": "Bash: true"}),
+            )
+        })
+        .collect();
+    json!({"kind": "turn.idle.events", "turn_id": turn, "events": events})
+}
+
+async fn after_turn_entries(r: &Rig, conv: Uuid) -> (usize, Vec<Value>) {
+    let evs = r.events(conv).await;
+    let entries = evs
+        .iter()
+        .filter(|(t, _)| t.starts_with("after_turn."))
+        .count();
+    let capped = evs
+        .into_iter()
+        .filter(|(t, p)| t == "notice" && p["code"] == "after_turn_capped")
+        .map(|(_, p)| p)
+        .collect();
+    (entries, capped)
+}
+
+/// (FIX-253 review, medium 4) Only the conversation's latest finished turn can be the anchor of
+/// idle work: an earlier one is refused and records nothing.
+#[tokio::test]
+async fn idle_events_anchor_only_on_the_latest_finished_turn() {
+    let r = rig().await;
+    let (lv, first) = idle_after_one_turn(&r, "idlestale").await;
+    r.say(lv.conv, "again").await;
+    let second = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    run_turn_to_done(&r, &lv, &second).await;
+
+    assert_eq!(r.report(&lv, idle_calls(&first, 0, 1)).await, "invalid");
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 0);
+    assert_eq!(r.report(&lv, idle_calls(&second, 0, 1)).await, "applied");
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 1);
+}
+
+/// (FIX-253 review, medium 4) The anchor must have run on the sandbox's current boot, and a
+/// report of another boot is fenced: an older boot's turn anchors nothing.
+#[tokio::test]
+async fn idle_events_of_another_boot_are_fenced() {
+    let r = rig().await;
+    let (mut lv, turn) = idle_after_one_turn(&r, "idleboot").await;
+
+    sqlx::query("UPDATE turns SET boot_id = $2 WHERE id = $1::uuid")
+        .bind(&turn)
+        .bind(Uuid::now_v7())
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(r.report(&lv, idle_calls(&turn, 0, 1)).await, "fenced");
+
+    lv.boot = Uuid::now_v7().to_string();
+    assert_eq!(r.report(&lv, idle_calls(&turn, 0, 1)).await, "fenced");
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 0);
+}
+
+/// (FIX-253 review, medium 4) At most 500 after-the-turn entries per anchor turn: then one line
+/// says more was not recorded, and nothing else is added.
+#[tokio::test]
+async fn idle_events_are_capped_per_anchor_turn() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlecap").await;
+    for batch in 0..7 {
+        r.report(&lv, idle_calls(&turn, batch * 100, 100)).await;
+    }
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 500);
+    assert_eq!(capped.len(), 1, "{capped:?}");
+    assert!(
+        capped[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("was not recorded"),
+        "{}",
+        capped[0]
+    );
+}
+
+/// (FIX-253 review, medium 4) At most 2,000 after-the-turn entries per conversation, whatever
+/// the anchors: then one line says so, once.
+#[tokio::test]
+async fn idle_events_are_capped_per_conversation() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idleconvcap").await;
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    for i in 0..1990 {
+        aurora_api::domains::conversations::service::append_event(
+            &mut conn,
+            lv.conv,
+            None,
+            "after_turn.tool",
+            &json!({"call_id": format!("earlier{i}")}),
+        )
+        .await
+        .unwrap();
+    }
+    drop(conn);
+    r.report(&lv, idle_calls(&turn, 0, 20)).await;
+    r.report(&lv, idle_calls(&turn, 20, 20)).await;
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 2000);
+    assert_eq!(capped.len(), 1, "{capped:?}");
+}
+
 /// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
 /// `background` turn event: one visible **Background activity** notice (deduped while it keeps
 /// running), and Stop on a finished turn records **Stop requested** and dispatches one
