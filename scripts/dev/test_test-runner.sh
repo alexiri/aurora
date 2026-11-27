@@ -16,6 +16,8 @@ STUBS="$TMP/bin"
 STATE="$TMP/state"
 mkdir -p "$STUBS" "$STATE"
 
+REAL_PATH=$PATH   # without the stubs: the queue tests need a real sleep
+
 # --- stubs -------------------------------------------------------------------
 
 # A one-container podman: state/container holds "running" or "stopped".
@@ -323,6 +325,103 @@ check "heavy.sh uses AURORA_HEAVY_DIR" out_has "$AURORA_HEAVY_DIR"
 check "and records the last run there" grep -qF "last: lane rc=7" "$AURORA_HEAVY_DIR/.heavy.status"
 run "$HEAVY" lane sh -c '[ ! -e /proc/$$/fd/9 ]'
 check "the slot descriptor is closed for the command" test "$rc" -eq 0
+# shellcheck disable=SC2016 # expanded by the inner shell, under heavy.sh
+run "$HEAVY" lane sh -c '[ ! -e /proc/$$/fd/5 ] && [ ! -e /proc/$$/fd/6 ]'
+check "and so are the ticket descriptors" test "$rc" -eq 0
+
+# --- heavy.sh: first come, first served --------------------------------------
+
+Q="$AURORA_HEAVY_DIR"
+# Real time from here on; every wait is bounded.
+until_true() {
+  local i
+  for ((i = 0; i < 300; i++)); do
+    "$@" && return 0
+    /bin/sleep 0.1
+  done
+  return 1
+}
+tickets() { find "$Q/.heavy.wait" -name 'q-*' | wc -l; }
+tickets_are() { [ "$(tickets)" -eq "$1" ]; }
+heavy() { PATH="$REAL_PATH" "$HEAVY" "$@"; }
+# shellcheck disable=SC2016 # expanded by the inner shell
+HOLD='touch "$1.held"; while [ ! -e "$1" ]; do sleep 0.1; done'
+# Jobs hold the two slots until their release file appears. (exec: $! is heavy.sh itself.)
+hold_both() {
+  rm -f "$STATE"/release*
+  PATH="$REAL_PATH" "$HEAVY" holder-1 sh -c "$HOLD" _ "$STATE/release-1" &
+  hold1=$!
+  PATH="$REAL_PATH" "$HEAVY" holder-2 sh -c "$HOLD" _ "$STATE/release-2" &
+  hold2=$!
+  until_true test -e "$STATE/release-1.held" -a -e "$STATE/release-2.held"
+}
+# queue <name> <exit code>: a waiter that records its turn. Sets $waiter to heavy.sh's pid.
+queue() {
+  local before
+  before="$(tickets)"
+  # shellcheck disable=SC2016 # expanded by the inner shell
+  PATH="$REAL_PATH" "$HEAVY" "$1" sh -c 'echo "$1" >>"$2"; exit "$3"' _ "$1" "$STATE/turns" "$2" &
+  waiter=$!
+  until_true tickets_are $((before + 1))
+}
+
+reset; rm -rf "$Q"; mkdir -p "$Q"
+hold_both
+queue first 0; w1=$waiter
+queue second 11; w2=$waiter
+rm -f "$Q/.heavy.ticket.seq"   # a lost counter must not let a newcomer ahead
+queue third 0; w3=$waiter
+/bin/sleep 1
+check "nobody runs while both slots are held" no_file turns
+# Free one slot only, so the three take their turns through it one by one.
+touch "$STATE/release-1"
+r1=0; wait "$w1" || r1=$?
+r2=0; wait "$w2" || r2=$?
+r3=0; wait "$w3" || r3=$?
+check "three waiters get the slot in the order they arrived" \
+  test "$(tr '\n' ';' <"$STATE/turns")" = "first;second;third;"
+check "a queued job's exit code passes through" test "$r1" -eq 0 -a "$r2" -eq 11 -a "$r3" -eq 0
+check "no ticket is left behind" tickets_are 0
+touch "$STATE/release-2"; wait "$hold1" "$hold2"
+
+reset; rm -rf "$Q"; mkdir -p "$Q"
+hold_both
+queue doomed 0; doomed=$waiter
+queue survivor 0; survivor=$waiter
+kill -9 "$doomed"; wait "$doomed" 2>/dev/null || true
+check "a killed waiter leaves its ticket behind" tickets_are 2
+touch "$STATE/release-1"
+check "the dead waiter's ticket is skipped" until_true grep -qsx survivor "$STATE/turns"
+check "the dead waiter never ran" test "$(tr '\n' ';' <"$STATE/turns")" = "survivor;"
+r1=0; wait "$survivor" || r1=$?
+check "and its ticket is dropped" tickets_are 0
+touch "$STATE/release-2"; wait "$hold1" "$hold2"
+
+# Callers of the old script: slot locks and "<seconds>-<pid>" waiter files, no tickets.
+reset; rm -rf "$Q"; mkdir -p "$Q/.heavy.wait"
+echo "old waiter" >"$Q/.heavy.wait/1700000000-1"
+echo "stale ticket of a dead process" >"$Q/.heavy.wait/q-000000000001"
+echo 1 >"$Q/.heavy.ticket.seq"
+PATH="$REAL_PATH" flock "$Q/.heavy.lock" sh -c "$HOLD" _ "$STATE/release-old" &
+old=$!
+until_true test -e "$STATE/release-old.held"
+rc=0; heavy new-caller true || rc=$?
+check "a slot held without a ticket leaves the other one usable" test "$rc" -eq 0
+check "an old-style waiter file is left alone" test -e "$Q/.heavy.wait/1700000000-1"
+PATH="$REAL_PATH" flock "$Q/.heavy.lock1" sh -c "$HOLD" _ "$STATE/release-old-1" &
+old1=$!
+until_true test -e "$STATE/release-old-1.held"
+queue behind-old 0; w1=$waiter
+# An old-script caller contending for the same slot at the same time.
+# shellcheck disable=SC2016 # expanded by the inner shell
+PATH="$REAL_PATH" flock "$Q/.heavy.lock" sh -c 'echo old-waiter >>"$1"' _ "$STATE/turns" &
+oldw=$!
+touch "$STATE/release-old"
+ra=0; wait "$w1" || ra=$?
+rb=0; wait "$oldw" || rb=$?
+check "a ticket holder and an old-style waiter both get through" \
+  test "$ra" -eq 0 -a "$rb" -eq 0 -a "$(grep -c . "$STATE/turns")" -eq 2
+touch "$STATE/release-old-1"; wait "$old" "$old1"
 
 echo
 echo "test-runner shell test: $passed passed, $failures failed"

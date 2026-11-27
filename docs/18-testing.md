@@ -1140,7 +1140,7 @@ scripts/dev/test.sh <lane> web playwright e2e/<spec> --project=mocked # the spec
 - **e2e scripts** (`scripts/e2e/*.sh`) are not run by `test.sh`: run them through `scripts/dev/heavy.sh`. Naming an
   e2e crate (`-p aurora-e2e-gateway`) works, with a warning that it starts its own stack.
 - **Slots and load.** Each crate or suite runs in its own slot of `scripts/dev/heavy.sh` (two slots for the whole
-  machine; don't wrap `test.sh` in it). Before it starts one, `test.sh` waits while the 1-minute load is above
+  machine, given out first come, first served; don't wrap `test.sh` in it). Before it starts one, `test.sh` waits while the 1-minute load is above
   2 × cores or more than 10 podman containers are running, and gives up after 30 minutes (exit 3).
 - **Caps.** Rust: `AURORA_TEST_THREADS` test threads (default 4, at most 8). vitest: 4 workers. Playwright: 2.
 - **Refused** (exit 2): no crate named, `--workspace`, a crate glob, more threads than the cap, a URL on port 55432
