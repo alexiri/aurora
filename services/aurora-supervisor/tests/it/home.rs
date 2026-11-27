@@ -1580,6 +1580,38 @@ fn a_helper_can_change_between_a_file_and_a_folder() {
     }
 }
 
+/// A link left in the staging area before the commit is refused: nothing is installed under its
+/// name, its target is left alone, and the rest of the generation is installed.
+#[test]
+fn a_staged_file_replaced_by_a_link_is_not_installed() {
+    let d = TempDir::new();
+    let outside = outside_dir();
+    let mut p = projector(d.path());
+    apply_all(
+        &mut p,
+        &generation(
+            1,
+            &[
+                (".claude/skills/s/SKILL.md", "linked"),
+                (".claude/skills/s/other.md", "fine"),
+            ],
+            &[],
+        ),
+    );
+    let staged = d
+        .path()
+        .join(".aurora/sync/files/.claude/skills/s/SKILL.md");
+    fs::remove_file(&staged).unwrap();
+    std::os::unix::fs::symlink(outside.path().join("victim"), &staged).unwrap();
+    p.commit(1).unwrap();
+    assert!(fs::symlink_metadata(d.path().join(".claude/skills/s/SKILL.md")).is_err());
+    assert_eq!(
+        fs::read_to_string(d.path().join(".claude/skills/s/other.md")).unwrap(),
+        "fine"
+    );
+    assert_untouched(outside.path());
+}
+
 /// A home with one locked memory installed, its sealed bytes, and the harvester over it.
 fn locked_home() -> (TempDir, HomeProjector, Vec<u8>, Harvester) {
     let d = TempDir::new();

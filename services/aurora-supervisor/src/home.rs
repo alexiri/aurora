@@ -2,7 +2,7 @@
 //!
 //! Parts of one generation are staged on disk under `.aurora/sync/` (never buffered in memory) and
 //! idempotently overwritten on replay. Only [`HomeProjector::commit`] touches the live projection:
-//! staged files are renamed into place, managed roots are pruned to the manifest and instruction
+//! staged files are installed, managed roots are pruned to the manifest and instruction
 //! files are re-rendered. A crash before commit leaves the previous projection intact; the next
 //! generation (or a restart of the same one at part 0) wipes the stale staging area.
 //!
@@ -224,10 +224,36 @@ fn prune_to(root: &Path, dir: &Path, keep: &BTreeSet<PathBuf>) {
     }
 }
 
-fn read_all(file: &mut fs::File) -> std::io::Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)?;
-    Ok(buf)
+/// Installs one staged file, `file` being `src` already opened and checked, at `dst` with
+/// `mode`, and removes `src`. The content comes from the open file, never from the path: the
+/// staging area is in the agent's home, so `src` may name something else by now. Returns the
+/// installed bytes.
+fn install_staged(
+    root: &Path,
+    file: fs::File,
+    src: &Path,
+    dst: &Path,
+    mode: u32,
+) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    file.take(STAGED_READ_MAX + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > STAGED_READ_MAX {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "staged file too large",
+        ));
+    }
+    if let Some(p) = dst.parent() {
+        // Every managed destination: no link in the chain from the home down.
+        if let Ok(rp) = p.strip_prefix(root) {
+            clear_link_chain(root, rp);
+        }
+        fs::create_dir_all(p)?;
+    }
+    nofollow::write_atomic(dst, &bytes, mode)?;
+    // The whole staging area is removed after the commit anyway.
+    let _ = fs::remove_file(src);
+    Ok(bytes)
 }
 
 fn walk_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -456,7 +482,7 @@ impl HomeProjector {
         Ok(())
     }
 
-    /// Installs the staged generation: renames staged files into place, prunes managed roots to the
+    /// Installs the staged generation: installs the staged files, prunes managed roots to the
     /// manifest (agent-edited memory files are kept until superseded), renders instructions.
     pub fn commit(&mut self, generation: u64) -> Result<(), HomeError> {
         let root = self.cfg.root.clone();
@@ -503,8 +529,8 @@ impl HomeProjector {
             let rel = rel.to_path_buf();
             let dst = root.join(&rel);
             // The staging area is in the agent's home too: only a regular file is installed, and
-            // its mode is read and set on the open descriptor.
-            let mut file = match nofollow::open_regular(&src) {
+            // its mode and content are read from the open descriptor.
+            let file = match nofollow::open_regular(&src) {
                 Ok(f) => f,
                 Err(error) => {
                     tracing::warn!(path = %rel.display(), %error, "staged file refused");
@@ -524,39 +550,26 @@ impl HomeProjector {
             } else {
                 0o444
             };
+            let bytes = match install_staged(&root, file, &src, &dst, mode) {
+                Ok(b) => b,
+                Err(error) => {
+                    if !is_helper_path(&rel) {
+                        return Err(error.into());
+                    }
+                    tracing::warn!(path = %rel.display(), %error, "helper file not installed; skipped");
+                    continue;
+                }
+            };
             if locked {
                 // The harvest restores these exact (sealed) bytes instead of uploading an edit.
                 match rel.file_name().and_then(|n| n.to_str()) {
-                    Some(n) => match read_all(&mut file) {
-                        Ok(b) => {
-                            locked_bytes.insert(n.trim_end_matches(".md").to_owned(), b);
-                        }
-                        Err(e) => {
-                            tracing::warn!(path = %rel.display(), error = %e, "locked memory file not recorded");
-                        }
-                    },
+                    Some(n) => {
+                        locked_bytes.insert(n.trim_end_matches(".md").to_owned(), bytes);
+                    }
                     None => {
                         tracing::warn!(path = %rel.display(), "locked memory file name refused")
                     }
                 }
-            }
-            let installed = (|| -> std::io::Result<()> {
-                if let Some(p) = dst.parent() {
-                    // Every managed destination: no link in the chain from the home down.
-                    if let Ok(rp) = p.strip_prefix(&root) {
-                        clear_link_chain(&root, rp);
-                    }
-                    fs::create_dir_all(p)?;
-                }
-                nofollow::set_mode(&file, mode)?;
-                fs::rename(&src, &dst)
-            })();
-            if let Err(error) = installed {
-                if !is_helper_path(&rel) {
-                    return Err(error.into());
-                }
-                tracing::warn!(path = %rel.display(), %error, "helper file not installed; skipped");
-                continue;
             }
             keep.insert(rel);
         }
@@ -810,6 +823,47 @@ fn lock_tree(root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fresh folder with `home/` and, beside it, a file outside the home at mode 0600.
+    fn scratch() -> (PathBuf, PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("aurora-home-{}", uuid::Uuid::now_v7()));
+        let home = dir.join("home");
+        fs::create_dir_all(&home).unwrap();
+        let victim = dir.join("victim");
+        fs::write(&victim, "outside").unwrap();
+        fs::set_permissions(&victim, fs::Permissions::from_mode(0o600)).unwrap();
+        (dir, home, victim)
+    }
+
+    fn mode_of(p: &Path) -> u32 {
+        fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    /// The staged path may become a link after it was opened and checked: what is installed is
+    /// what the open file holds, never whatever the path names by then.
+    #[test]
+    fn a_staged_path_swapped_for_a_link_installs_the_checked_file() {
+        let (dir, home, victim) = scratch();
+        let (src, dst) = (home.join("staged"), home.join("managed/file"));
+        fs::write(&src, "checked bytes").unwrap();
+        let file = nofollow::open_regular(&src).unwrap();
+        fs::remove_file(&src).unwrap();
+        std::os::unix::fs::symlink(&victim, &src).unwrap();
+
+        let installed = install_staged(&home, file, &src, &dst, 0o444).unwrap();
+
+        assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_file());
+        assert_eq!(fs::read(&dst).unwrap(), b"checked bytes");
+        assert_eq!(installed, b"checked bytes");
+        assert_eq!(mode_of(&dst), 0o444);
+        assert!(
+            fs::symlink_metadata(&src).is_err(),
+            "the staged path is removed"
+        );
+        assert_eq!(fs::read(&victim).unwrap(), b"outside");
+        assert_eq!(mode_of(&victim), 0o600);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     /// (P6-MEMLOCK, C-1149) `locked` is optional on a file entry: an older API never sends it and
     /// an unlocked memory's entry has no key at all; only `true` marks the file.
