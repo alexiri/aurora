@@ -561,15 +561,19 @@ async fn workspace_audience(
     caller: Uuid,
 ) -> Result<crate::domains::tenancy::dto::WorkspaceAudience, ApiError> {
     use crate::domains::tenancy::dto::{WorkspaceAudience, WorkspaceAudienceOwner};
-    let people: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM own_workspace_access WHERE workspace_id = $1")
-            .bind(ws)
-            .fetch_one(&s.pool)
-            .await
-            .map_err(DbError::from)?;
+    // (FIX-263) A disabled account is not one of the people: it cannot sign in to use or read.
+    let people: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM own_workspace_access o \
+         JOIN users u ON u.id = o.user_id AND u.disabled_at IS NULL \
+         WHERE o.workspace_id = $1",
+    )
+    .bind(ws)
+    .fetch_one(&s.pool)
+    .await
+    .map_err(DbError::from)?;
     let owners: Vec<(Uuid, String)> = sqlx::query_as(
         "SELECT o.user_id, u.display_name FROM own_workspace_access o \
-         JOIN users u ON u.id = o.user_id \
+         JOIN users u ON u.id = o.user_id AND u.disabled_at IS NULL \
          WHERE o.workspace_id = $1 AND o.role = 'owner' \
          ORDER BY u.display_name, o.user_id",
     )

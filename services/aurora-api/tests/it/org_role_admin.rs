@@ -1362,6 +1362,49 @@ async fn workspace_get_by_an_administrator_names_the_audience() {
     );
 }
 
+/// (FIX-263) A disabled account is not one of the workspace's people: it is not counted in
+/// `audience.people`, and a disabled owner is neither named nor counted in `owners_total`.
+#[tokio::test]
+async fn fix263_the_audience_leaves_out_disabled_accounts() {
+    let f = owner_case().await;
+    let ws = f.ws;
+    // Bob (owner), an enabled member, a disabled member and a disabled owner.
+    for (email, role, disabled) in [
+        ("carol263@x.io", "member", false),
+        ("dave263@x.io", "member", true),
+        ("erin263@x.io", "owner", true),
+    ] {
+        let u = f.h.user(email, false).await;
+        f.h.member(f.org, u, "member", "active").await;
+        f.h.bind_ws(ws, u, role).await;
+        if disabled {
+            sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1")
+                .bind(u)
+                .execute(f.h.pool())
+                .await
+                .unwrap();
+        }
+    }
+    let (s, v) = f
+        .call(
+            &f.bob_cookie,
+            Method::GET,
+            &format!("/v1/workspaces/{ws}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["audience"]["people"], json!(2), "{v}");
+    assert_eq!(v["audience"]["owners_total"], json!(1), "{v}");
+    let owners: Vec<&str> = v["audience"]["owners"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(owners, [f.bob.to_string()], "{v}");
+}
+
 /// The access report (C-1163): a seeded instance lists each of the five gaps and writes nothing.
 #[tokio::test]
 async fn the_access_report_lists_every_gap_and_writes_nothing() {

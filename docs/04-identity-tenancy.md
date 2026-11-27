@@ -966,7 +966,10 @@ maintains the list twice.
   absent claim. A group never creates or
   reactivates an org membership (above): a user who is not a member of the org gains
   nothing from the claim, and admission stays with invitations, JIT, D-143 role claims,
-  placement and SCIM.
+  placement and SCIM. **A group bound to a personal workspace takes only that workspace's
+  person** (D-480, D-503, FIX-263): for anyone else holding the claim the add is skipped
+  and logged (org and group ids, no names) and the sign-in goes on, as SCIM refuses the
+  same add.
 - **Read-only.** Members of an IdP-linked group cannot be added or removed by hand, by
   API or by SCIM (409 `managed_by_idp`); the dashboard shows "Members come from your
   sign-in provider (claim value `…`)" and each member's last sync time. Name, description,
