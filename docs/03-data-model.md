@@ -851,7 +851,7 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | requester_user_id | uuid null FK→users (set null) | |
 | origin_conversation_id | uuid FK→conversations (cascade) | where the report goes |
 | task_conversation_id | uuid FK→conversations (cascade) | conversation on the receiving agent |
-| status | text CHECK in (`queued`,`open`,`completed`,`cancelled`,`expired`) | |
+| status | text CHECK in (`queued`,`open`,`waiting`,`completed`,`cancelled`,`expired`) | `waiting` (FIX-253, D-490(b)): a wake is registered (an armed `process_watch` or a one-time schedule created from the task conversation, or a pending approval); the wake resumes the task to `open` |
 | messages_used | int not null default 0 | |
 | message_budget | int not null | |
 | report | text null | |

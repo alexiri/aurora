@@ -991,8 +991,25 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   push a decider gets, after the same delay, and skipped when a live surface
   already shows the card (the origin conversation watched, or the card posted).
   A task with a pending approval is not closed by the end of the receiving
-  turn; it stays open until the approval is decided, expires or the requester
-  cancels the task.
+  turn; it keeps the task out of cancellation until the approval is decided,
+  expires or the requester cancels the task.
+- (FIX-253, D-490(b)) **A peer task can wait.** When the receiving turn ends
+  while a wake is registered — an armed `process_watch` in the task
+  conversation, a one-time schedule created from that conversation, or a
+  pending approval (the FIX-252 minimum) — the task goes to `waiting` instead
+  of being cancelled, and the requester sees one `peer_task_waiting` notice
+  (words from `14 §Vocabulary`; a pending approval adds none beyond
+  FIX-252's card, and the notice shows once per wait, not per turn). Only the
+  receiving agent's own registrations count: a watch or a schedule of another
+  conversation never keeps the task alive, and a registration removed before
+  the turn ends (a deleted schedule, a finished watch) still cancels the task
+  as today ("finished without a report"). `waiting` holds no worker and no
+  sandbox — it is a state in the database. **The wake resumes the task**: the
+  watch firing, the schedule firing and the approval decision (or deadline)
+  each give the task conversation its own turn and return the task to `open`,
+  with the same grants and policy it had — a wake never extends rights. A
+  waiting task still ends by `complete_task`, Cancel, or its overall
+  expiry/budget (the expiry report reaches the requester as today).
 - **App-turn cap**: turns whose speaker is a bot or agent increment
   `conversations.app_turn_streak`; any person-authored turn resets it. When the
   streak reaches `APP_TURN_CAP` further bot/agent turns are refused with a

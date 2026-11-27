@@ -24,7 +24,7 @@ pub struct PeerTask {
     /// True when `origin_conversation_id` was redacted (phase 1, RFE-009).
     pub conversation_hidden: bool,
     pub task_conversation_id: Uuid,
-    /// `queued` | `open` | `completed` | `cancelled` | `expired`
+    /// `queued` | `open` | `waiting` | `completed` | `cancelled` | `expired`
     pub status: String,
     pub messages_used: i32,
     pub message_budget: i32,
@@ -66,12 +66,12 @@ impl PeerTask {
     }
 }
 
-pub const STATUSES: [&str; 5] = ["queued", "open", "completed", "cancelled", "expired"];
+pub const STATUSES: [&str; 6] = ["queued", "open", "waiting", "completed", "cancelled", "expired"];
 
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ListQuery {
-    /// `queued` | `open` | `completed` | `cancelled` | `expired`
+    /// `queued` | `open` | `waiting` | `completed` | `cancelled` | `expired`
     pub status: Option<String>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,

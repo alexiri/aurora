@@ -131,6 +131,17 @@ and a one-line action — never a request field. A later `peer_task_closed`
 notice settles a waiting card the same way (an abandoned approval, e.g. the
 task cancelled, fires no decision notice).
 
+(FIX-253, D-490(b)) **A waiting peer task.** A task whose receiving turn ends
+while a wake is registered (an armed watch on the task conversation, a one-time
+schedule created from it, or a pending approval) moves to `waiting` (`07 §Agent
+links and peer tasks`); the origin conversation gets one durable `notice`
+`{ code: "peer_task_waiting", peer_task_id, status: "waiting", text }` —
+"<Agent> is waiting for what it is watching to finish." or "<Agent> is waiting:
+a check is set for HH:MM." — once per wait. The wake gives the task conversation
+its own turn (a watch fire or schedule fire as those turns do, the approval
+decision as a `peer`-doored system turn) and the task is back to `open`; the
+task's own grants and policy apply to every wake turn.
+
 (phase 5, P5-REFINE-7, D-409, C-1073, C-1074) **Titles and folders.**
 - `title_source` says who named a conversation: `auto` (none yet, or the first line of the
   first person message: whitespace collapsed, markup and `@` removed, cut at 60 characters
@@ -461,7 +472,9 @@ its last tool call is written as durable `text` events before the `error` event 
   watch on the conversation, no uncompleted schedule anchored to it), the platform records one
   `notice` `{ code: "no_wakeup", turn_id, agent_id, agent_name, text }` — "<Agent> said it would
   continue, but nothing is set to wake it." The signal is the open task, never the wording of the
-  reply; a failed turn, a person turn and a conversation with a wake registered record nothing.
+  reply; a failed turn, a person turn and a conversation with a wake registered record nothing —
+  neither a task the peer hook just moved to `waiting` (FIX-253): its wake exists (the pending
+  approval's decision if nothing else).
 - **An error shows once (C-1076).** When a turn fails and a buffered message is the harness's own
   error line (it equals, contains or starts with the failure message, or starts with `API Error`, as
   the Claude Code adapter prints a failed model call), it is not written as the agent's `text`: the
