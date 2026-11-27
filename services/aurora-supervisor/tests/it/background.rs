@@ -621,6 +621,10 @@ struct Switches {
     /// What a later session says: a background command runs; a child of it is still ending.
     listing: AtomicBool,
     ending: AtomicBool,
+    /// The first session's release task dies instead.
+    die: AtomicBool,
+    /// Later sessions' releases wait for `open` too.
+    gate_all: AtomicBool,
 }
 
 /// The fake harness; only the first session's release waits.
@@ -673,7 +677,10 @@ impl HarnessSession for GatedSession {
         self.inner.abort().await
     }
     async fn release(&mut self) -> Result<(), HarnessError> {
-        if self.first {
+        if self.first || self.switches.gate_all.load(Ordering::SeqCst) {
+            if self.first && self.switches.die.load(Ordering::SeqCst) {
+                panic!("the release task dies");
+            }
             while !self.switches.open.load(Ordering::SeqCst) {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
@@ -812,6 +819,24 @@ async fn a_late_failure_is_not_acknowledged() {
     r.nothing_released("after a failed release").await;
     assert!(r.release().await, "the retry released it");
     r.nothing_released("after the normal acknowledgement").await;
+}
+
+/// (FIX-258) A release task that died bars the unasked acknowledgement only until the
+/// conversation is acknowledged again in the normal way.
+#[tokio::test]
+async fn a_normal_acknowledgement_forgets_a_lost_release() {
+    let (mut r, switches) = gated().await;
+    switches.die.store(true, Ordering::SeqCst);
+    r.short_turn(1).await;
+    assert!(!r.release().await, "a dead task is not released");
+    r.nothing_released("after a lost release").await;
+    assert!(r.release().await, "nothing is left to release");
+    // A later release that is only slow is acknowledged late as usual.
+    switches.gate_all.store(true, Ordering::SeqCst);
+    r.short_turn(2).await;
+    assert!(!r.release().await);
+    switches.open.store(true, Ordering::SeqCst);
+    r.released_late().await;
 }
 
 /// (FIX-258) A release put off because a turn runs ended no session, so nothing is said when

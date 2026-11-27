@@ -152,7 +152,7 @@ pub struct Supervisor {
     /// since: once nothing of theirs runs, `session.released { ok: true }` is sent unasked.
     owes_released: HashSet<Uuid>,
     /// (FIX-258) Conversations whose release task died: nothing can say any more that all of
-    /// theirs ended, so they are never told unasked.
+    /// theirs ended, so they are not told unasked until a request was answered `ok: true`.
     lost_releases: HashSet<Uuid>,
 }
 
@@ -641,7 +641,10 @@ impl Supervisor {
             Some(releases) => self.settle(conversation_id, releases, deadline).await,
         };
         if ok {
+            // The API has it from this answer: nothing is owed, and a release task that
+            // died earlier no longer says anything about a later one.
             self.owes_released.remove(&conversation_id);
+            self.lost_releases.remove(&conversation_id);
             self.forget_watch(conversation_id);
         }
         self.send_released(conversation_id, ok).await;
