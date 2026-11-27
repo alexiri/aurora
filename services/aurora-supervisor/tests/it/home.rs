@@ -11,6 +11,7 @@ use aurora_supervisor::harvest::{Harvester, seal, verify};
 use aurora_supervisor::home::{HomeConfig, HomeProjector, PartOutcome};
 use aurora_supervisor::outbound::{OutboundError, OutboundFile, send_file};
 use base64::Engine as _;
+use rustix::fs::{CWD, FileType, Mode, mknodat};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -1689,13 +1690,7 @@ fn a_fifo_in_place_of_a_locked_file_does_not_block_the_harvest() {
     let (d, p, sealed, mut h) = locked_home();
     let path = d.path().join("memory/pinned.md");
     fs::remove_file(&path).unwrap();
-    assert!(
-        std::process::Command::new("mkfifo")
-            .arg(&path)
-            .status()
-            .unwrap()
-            .success()
-    );
+    mknodat(CWD, &path, FileType::Fifo, Mode::from(0o600), 0).unwrap();
     let locked = p.locked_memories();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
