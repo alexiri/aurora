@@ -300,6 +300,25 @@ pub async fn end_lost_for_user(
     )
 }
 
+/// [`end_lost_for_user`] for a disabled account (FIX-262): every open grant `user` holds, in
+/// every organization. Same contract: the caller writes the audit rows in the same transaction.
+pub async fn end_lost_for_account(
+    tx: &mut PgConnection,
+    user: Uuid,
+) -> Result<Vec<EmergencyRow>, DbError> {
+    Ok(
+        sqlx::query_as::<_, EmergencyRow>(sqlx::AssertSqlSafe(format!(
+            "UPDATE workspace_emergency_access \
+         SET ended_at = now(), ended_by = NULL, end_reason = '{END_ACCESS_LOST}' \
+         WHERE user_id = $1 AND ended_at IS NULL \
+         RETURNING {COLS}"
+        )))
+        .bind(user)
+        .fetch_all(&mut *tx)
+        .await?,
+    )
+}
+
 /// Delete grants older than `age_days` (the 400-day retention, nightly sweep).
 pub async fn prune(pool: &crate::PgPool, age_days: u32) -> Result<u64, DbError> {
     let n = sqlx::query(

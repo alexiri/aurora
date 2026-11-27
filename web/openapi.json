@@ -9527,6 +9527,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -10428,6 +10438,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -13700,6 +13720,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -13962,6 +13992,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -15747,6 +15787,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -16071,6 +16121,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -17235,6 +17295,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -17535,6 +17605,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -35351,6 +35431,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -35771,6 +35861,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -37506,6 +37606,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -39090,6 +39200,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -39422,6 +39542,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -41217,6 +41347,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -41686,6 +41826,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -45081,6 +45231,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {

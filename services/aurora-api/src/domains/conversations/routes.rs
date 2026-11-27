@@ -2,6 +2,7 @@ use super::bus::BusMsg;
 use super::dto::*;
 use super::{lifecycle, service};
 use crate::app::AppState;
+use crate::domains::emergency_access::service::{ReadKind, record_read};
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -224,7 +225,7 @@ async fn list_conversations(
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Page<Conversation>>, ApiError> {
     // Authorise before parsing the query (FIX-181 F7, C-1041).
-    let (agent_row, read) = service::load_agent_read_auth(&s, &c, agent).await?;
+    let (_, read) = service::load_agent_read_auth(&s, &c, agent).await?;
     if let Some(k) = q.kind.as_deref()
         && !KINDS.contains(&k)
     {
@@ -256,11 +257,9 @@ async fn list_conversations(
     };
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     // RFE-009: owners see every direct conversation of the agent; others only their own. An
-    // emergency reader reads what an owner reads (C-1165, D-478(b)).
-    let owns = c
-        .workspace_read(&s, agent_row.workspace_id)
-        .await?
-        .can_own();
+    // emergency reader reads what an owner reads (C-1165, D-478(b)). The one authority resolved
+    // above also decides the record below (FIX-262): a grant opened in between changes neither.
+    let owns = read.can_own();
     let rows = convs::list_for_agent(
         &s.pool,
         agent,
@@ -378,7 +377,8 @@ async fn update_conversation(
 /// The agent's automation folders: one per schedule or webhook that has run threads (C-1074).
 #[utoipa::path(get, path = "/agents/{agent}/conversation-folders", operation_id = "listConversationFolders", tag = "conversations",
     params(("agent" = Uuid, Path, description = "Agent id"), FoldersQuery),
-    responses((status = 200, body = Page<ConversationFolder>), (status = 404, body = ErrorEnvelope)),
+    responses((status = 200, body = Page<ConversationFolder>), (status = 404, body = ErrorEnvelope),
+        (status = 503, description = "audit_unavailable", body = ErrorEnvelope)),
     security(("session" = []), ("api_key" = [])))]
 async fn list_conversation_folders(
     c: Caller,
@@ -386,7 +386,7 @@ async fn list_conversation_folders(
     Path(agent): Path<Uuid>,
     Query(q): Query<FoldersQuery>,
 ) -> Result<Json<Page<ConversationFolder>>, ApiError> {
-    service::load_agent_read(&s, &c, agent).await?;
+    let (_, read) = service::load_agent_read_auth(&s, &c, agent).await?;
     let p = Pagination::new(q.limit, q.cursor.as_deref())?;
     let rows = convs::list_folders(&s.pool, agent, p.after_key(), p.fetch()).await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.last_activity_at, r.automation_id));
@@ -400,6 +400,17 @@ async fn list_conversation_folders(
     let runs = aurora_db::repo::schedules::latest_runs(&s.pool, &ids_of("schedule")).await?;
     let deliveries =
         aurora_db::repo::webhooks::latest_deliveries(&s.pool, &ids_of("webhook")).await?;
+    // (FIX-262, D-502) The folders carry schedule and webhook names: for an emergency reader,
+    // recorded as a list read of each of the two kinds on the page.
+    let actor = crate::audit::AuditActor::from_caller(&c);
+    for (name, kind) in [
+        ("schedule", ReadKind::Schedule),
+        ("webhook", ReadKind::Webhook),
+    ] {
+        if !ids_of(name).is_empty() {
+            record_read(&s, &actor, &read, kind, None).await?;
+        }
+    }
     use crate::domains::schedules::results;
     Ok(Json(page.map(|f| {
         let last_result = if f.automation_kind == "schedule" {
@@ -675,6 +686,9 @@ struct Stream_ {
     /// (Verify LOW-3) The caller's emergency-view dedup window: `Unknown` until first needed,
     /// `NotReader` never gates, `Reader` gates content frames until the instant.
     window: WindowState,
+    /// (FIX-262, C-1165) A session opened this stream, so it may ride an emergency grant. A
+    /// stream opened with an API key reads on its holder's own access only.
+    session: bool,
 }
 
 /// (Verify LOW-3) See [`Stream_.window`].
@@ -702,7 +716,11 @@ impl Stream_ {
     /// fresh `emergency_view` row is written FIRST, and a failed write ends the stream — the
     /// client's reconnect is then refused until the audit writes again, so content never flows
     /// unrecorded. Returns false when the stream must close.
+    /// A key-opened stream never reads through a grant, so it is never gated.
     async fn ensure_recorded(&mut self) -> bool {
+        if !self.session {
+            return true;
+        }
         if let WindowState::Reader(until) = self.window
             && tokio::time::Instant::now() < until
         {
@@ -742,6 +760,19 @@ impl Stream_ {
                 false
             }
         }
+    }
+
+    /// Whether the viewer certainly lost the right to see this conversation (a failed check is
+    /// not a loss), by the authority the stream was opened with: a session's may be an
+    /// emergency grant, a key's never is (FIX-262).
+    async fn lost_visibility(&self) -> bool {
+        let seen = if self.session {
+            aurora_db::authz::can_see_conversation_id_emergency(&self.s.pool, self.user, self.conv)
+                .await
+        } else {
+            aurora_db::authz::can_see_conversation_id(&self.s.pool, self.user, self.conv).await
+        };
+        matches!(seen, Ok(false))
     }
 
     fn set_window(&mut self, until: chrono::DateTime<chrono::Utc>) {
@@ -833,6 +864,7 @@ async fn stream(
         tick,
         dirty: true,
         window: WindowState::Unknown,
+        session: c.is_session(),
     };
     let events = futures::stream::unfold(st, |mut st| async move {
         loop {
@@ -897,17 +929,7 @@ async fn stream(
                         Err(broadcast::error::RecvError::Lagged(_)) => true,
                         Err(broadcast::error::RecvError::Closed) => false,
                     };
-                    if relevant
-                        && matches!(
-                            aurora_db::authz::can_see_conversation_id_emergency(
-                                &st.s.pool,
-                                st.user,
-                                st.conv
-                            )
-                            .await,
-                            Ok(false)
-                        )
-                    {
+                    if relevant && st.lost_visibility().await {
                         st.close_access_changed();
                     }
                 }
@@ -915,15 +937,7 @@ async fn stream(
                     // RFE-009: a viewer who lost visibility (left the workspace, lost
                     // ownership, or whose emergency grant ended) stops receiving the stream at
                     // the next resync.
-                    if matches!(
-                        aurora_db::authz::can_see_conversation_id_emergency(
-                            &st.s.pool,
-                            st.user,
-                            st.conv
-                        )
-                        .await,
-                        Ok(false)
-                    ) {
+                    if st.lost_visibility().await {
                         st.close_access_changed();
                         continue;
                     }
@@ -932,8 +946,9 @@ async fn stream(
                     // dedup makes it a no-op otherwise). A failed write ends the stream — the
                     // client's reconnect is refused until the audit writes again, so content
                     // never flows unrecorded.
-                    if let Err(e) =
-                        service::refresh_emergency_view(&st.s, st.user, st.conv).await
+                    if st.session
+                        && let Err(e) =
+                            service::refresh_emergency_view(&st.s, st.user, st.conv).await
                     {
                         tracing::warn!(error = %e.code(), "conversation stream emergency view re-record failed");
                         st.close_access_changed();

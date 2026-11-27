@@ -20,6 +20,7 @@ use super::dto::{
 };
 use crate::app::AppState;
 use crate::audit::AuditActor;
+use crate::domains::emergency_access::service::{ReadKind, record_read};
 use crate::domains::schedules::results;
 use aurora_core::ApiError;
 use aurora_db::authz::ReadAuth;
@@ -272,11 +273,21 @@ impl<'a> Feed<'a> {
     /// through, written before the response body (a failed write fails the read with 503).
     /// `pub(crate)`: the stream's `build` calls it too, before its content leaves the server
     /// (review HIGH: the SSE stream records before it delivers, like the list endpoint).
+    /// (FIX-262, D-502) The timeline also carries rows that are no conversation's (approvals,
+    /// runs, requests), so the read itself is recorded too.
     pub(crate) async fn record_emergency_views(&self) -> Result<(), ApiError> {
         let grant = match &self.viewer.auth {
             ReadAuth::Emergency(g) => g,
             ReadAuth::Own(_) => return Ok(()),
         };
+        record_read(
+            self.s,
+            &self.viewer.actor,
+            &self.viewer.auth,
+            ReadKind::Timeline,
+            None,
+        )
+        .await?;
         let seen = self
             .emergency_seen
             .lock()
