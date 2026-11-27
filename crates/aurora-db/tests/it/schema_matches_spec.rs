@@ -10,6 +10,7 @@ use std::path::Path;
 use std::process::Command;
 
 use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::Row;
 
 const FIXTURE: &str = include_str!("../fixtures/spec_schema.json");
@@ -214,8 +215,9 @@ async fn column_type_diff(pool: &PgPool) -> Vec<String> {
     out
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn migrated_schema_matches_03(pool: PgPool) {
+#[tokio::test]
+async fn migrated_schema_matches_03() {
+    let (_db, pool) = TestDb::with_pool().await;
     assert_fixture_current();
 
     let spec = spec_tables();
@@ -237,8 +239,9 @@ async fn migrated_schema_matches_03(pool: PgPool) {
 }
 
 /// The guard bites: a column whose type or nullability differs from its declaration is reported.
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn a_wrong_column_type_or_nullability_fails_the_schema_guard(pool: PgPool) {
+#[tokio::test]
+async fn a_wrong_column_type_or_nullability_fails_the_schema_guard() {
+    let (_db, pool) = TestDb::with_pool().await;
     // users.display_name is `text not null` in docs/03.
     sqlx::query("ALTER TABLE users ALTER COLUMN display_name TYPE varchar(80)")
         .execute(&pool)

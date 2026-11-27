@@ -22,7 +22,11 @@ import { wrap } from "./support/render";
 import { type Handler, json, mockFetch } from "./support/api";
 
 // The create dialog navigates to the new agent (P5-REFINE-12).
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }), useParams: () => ({ org: "acme", ws: "w1" }) }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useParams: () => ({ org: "acme", ws: "w1" }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 const ORG = { id: "o1", slug: "acme", name: "Acme", my_role: "owner" } as unknown as Org;
 

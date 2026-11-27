@@ -2,13 +2,14 @@
 //! P5-REFINE-5 (D-407, C-1064): `20261201000261_display_name_edited.sql` marks a name that looks
 //! chosen ("Bob Builder") as edited and leaves the one that is the e-mail's local part ("alice",
 //! the bootstrap admin) for the next sign-in to correct. Case-insensitive.
-use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 
 const VERSION: i64 = 20_261_201_000_261;
 
-#[sqlx::test(migrations = false)]
-async fn the_backfill_keeps_chosen_names_and_frees_the_local_part_names(pool: PgPool) {
+#[tokio::test]
+async fn the_backfill_keeps_chosen_names_and_frees_the_local_part_names() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version < VERSION)

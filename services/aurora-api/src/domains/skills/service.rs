@@ -108,12 +108,34 @@ pub(crate) fn content_size(c: &[u8]) -> usize {
     skill_format::content_size(c)
 }
 
-fn check_total(body: &str, files: &[repo::FileRow]) -> Result<(), ApiError> {
-    let total = body.chars().count()
-        + files
-            .iter()
-            .map(|f| content_size(&f.content))
-            .sum::<usize>();
+fn files_limit() -> ApiError {
+    ApiError::conflict(
+        "skill_files_limit_reached",
+        format!(
+            "A skill can have at most {} files.",
+            limits::SKILL_FILES_MAX
+        ),
+    )
+}
+
+/// The limits of an edit, applied to a whole skill composed elsewhere (a template merge's
+/// result, FIX-251): the description's and body's own rules, the file count and the total —
+/// refused with the same errors.
+pub(crate) fn check_composed(
+    description: &str,
+    body: &str,
+    files: &[&[u8]],
+) -> Result<(), ApiError> {
+    validate_description(description)?;
+    validate_body(body)?;
+    if files.len() as i64 > limits::SKILL_FILES_MAX {
+        return Err(files_limit());
+    }
+    check_total(body, files.iter().copied())
+}
+
+fn check_total<'a>(body: &str, files: impl Iterator<Item = &'a [u8]>) -> Result<(), ApiError> {
+    let total = body.chars().count() + files.map(content_size).sum::<usize>();
     if total > limits::SKILL_TOTAL_MAX {
         return Err(ApiError::unprocessable(
             "skill_too_large",
@@ -418,11 +440,7 @@ pub(crate) async fn create_in_tx(
     // (FIX-110) The per-agent cap is checked under the agent row lock (the pattern
     // `schedules::service::create` uses), so concurrent creates cannot overshoot it.
     if let Some(agent) = owner.agent {
-        sqlx::query("SELECT 1 FROM agents WHERE id = $1 FOR UPDATE")
-            .bind(agent)
-            .execute(&mut *tx)
-            .await
-            .map_err(DbError::from)?;
+        agents::lock_for_write(&mut *tx, agent).await?;
         if repo::count_agent_own(&mut *tx, agent).await? >= limits::SKILL_PER_AGENT_MAX {
             return Err(ApiError::conflict(
                 "skill_limit_reached",
@@ -455,6 +473,18 @@ pub(crate) async fn create_in_tx(
     view(tx, row).await
 }
 
+/// Locks a skill for a change: the owning agent's row first (agent-tier skills), then the
+/// skill's own row. A template apply holds the agent's row while it writes skills, so every
+/// change of an existing skill takes the two in this order.
+pub(crate) async fn lock_for_edit(conn: &mut PgConnection, id: Uuid) -> Result<SkillRow, ApiError> {
+    // The owner of a skill never changes, so this unlocked read is enough to find it.
+    let owner = repo::get(conn, id).await?.ok_or_else(not_found)?.agent_id;
+    if let Some(agent) = owner {
+        agents::lock_for_write(&mut *conn, agent).await?;
+    }
+    repo::get_for_update(conn, id).await?.ok_or_else(not_found)
+}
+
 pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView, ApiError> {
     if let Some(d) = p.description {
         validate_description(d)?;
@@ -463,9 +493,7 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
         validate_body(b)?;
     }
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let cur = repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(not_found)?;
+    let cur = lock_for_edit(&mut tx, id).await?;
     // (P4-GSL) enable/disable stays allowed; the content changes only by an approved update.
     if cur.library_id.is_some() && (p.description.is_some() || p.body.is_some()) {
         return Err(readonly());
@@ -473,7 +501,7 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
     let body = p.body.unwrap_or(&cur.body);
     if p.body.is_some() {
         let files = repo::files(&mut tx, &[id]).await?;
-        check_total(body, &files)?;
+        check_total(body, files.iter().map(|f| f.content.as_slice()))?;
     }
     let row = repo::update(
         &mut tx,
@@ -491,9 +519,7 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
 
 pub async fn delete(pool: &PgPool, id: Uuid) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let cur = repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(not_found)?;
+    let cur = lock_for_edit(&mut tx, id).await?;
     repo::delete(&mut tx, id).await?;
     bump(&mut tx, &cur).await?;
     tx.commit().await.map_err(DbError::from)?;
@@ -509,9 +535,7 @@ pub async fn put_file(
 ) -> Result<SkillView, ApiError> {
     validate_path(path)?;
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let cur = repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(not_found)?;
+    let cur = lock_for_edit(&mut tx, id).await?;
     if cur.library_id.is_some() {
         return Err(readonly());
     }
@@ -519,13 +543,7 @@ pub async fn put_file(
     // (FIX-110) At most SKILL_FILES_MAX files per skill (a replaced path adds none); the skill
     // row is locked above, so the count is race-free.
     if !files.iter().any(|f| f.path == path) && files.len() as i64 >= limits::SKILL_FILES_MAX {
-        return Err(ApiError::conflict(
-            "skill_files_limit_reached",
-            format!(
-                "A skill can have at most {} files.",
-                limits::SKILL_FILES_MAX
-            ),
-        ));
+        return Err(files_limit());
     }
     files.retain(|f| f.path != path);
     files.push(repo::FileRow {
@@ -534,7 +552,7 @@ pub async fn put_file(
         content: content.to_vec(),
         executable: false,
     });
-    check_total(&cur.body, &files)?;
+    check_total(&cur.body, files.iter().map(|f| f.content.as_slice()))?;
     repo::upsert_file(&mut tx, id, path, content, executable).await?;
     repo::touch(&mut tx, id).await?;
     bump(&mut tx, &cur).await?;
@@ -546,9 +564,7 @@ pub async fn put_file(
 
 pub async fn delete_file(pool: &PgPool, id: Uuid, path: &str) -> Result<(), ApiError> {
     let mut tx = pool.begin().await.map_err(DbError::from)?;
-    let cur = repo::get_for_update(&mut tx, id)
-        .await?
-        .ok_or_else(not_found)?;
+    let cur = lock_for_edit(&mut tx, id).await?;
     if cur.library_id.is_some() {
         return Err(readonly());
     }

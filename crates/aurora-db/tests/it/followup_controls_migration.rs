@@ -3,6 +3,7 @@
 //! `cancelled` status without touching a row that existed before: every existing status stays valid,
 //! the new columns are NULL, and `cancelled` is allowed for follow-ups only.
 use aurora_db::PgPool;
+use aurora_testkit::TestDb;
 use sqlx::migrate::Migrator;
 use uuid::Uuid;
 
@@ -17,8 +18,9 @@ async fn snapshot(pool: &PgPool) -> Snapshot {
         .unwrap()
 }
 
-#[sqlx::test(migrations = false)]
-async fn existing_rows_are_untouched_and_cancelled_is_for_followups_only(pool: PgPool) {
+#[tokio::test]
+async fn existing_rows_are_untouched_and_cancelled_is_for_followups_only() {
+    let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
         .filter(|m| m.version < VERSION)

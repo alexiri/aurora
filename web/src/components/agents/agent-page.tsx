@@ -193,6 +193,18 @@ export function AgentPage() {
                   />
                 )}
                 {wsId ? <AgentAttentionChip workspaceId={wsId} agentId={agent.id} accessHref={`${base}/agents/${agent.handle}?tab=access`} /> : null}
+                {/* (FIX-251, D-488(a)) The Update available mark, the mark to the review on Settings › Manage. */}
+                {!byo && agent.needs_update ? (
+                  <Link
+                    href={`${base}/agents/${agent.handle}?tab=manage`}
+                    className="inline-flex shrink-0 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    aria-label={`Update available for ${agent.name}`}
+                  >
+                    <Badge tone="accent" data-testid="agent-header-needs-update">
+                      Update available
+                    </Badge>
+                  </Link>
+                ) : null}
               </span>
             </div>
           </div>

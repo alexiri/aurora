@@ -3,8 +3,8 @@
 //! then the gateway's statements run as that role. The privilege check happens at plan time, so
 //! `… WHERE false` statements prove a grant without needing rows.
 
-use aurora_db::PgPool;
 use aurora_db::grants::{GrantsError, apply_gateway_grants};
+use aurora_testkit::TestDb;
 use sqlx::{Connection, PgConnection};
 
 /// The SQLSTATE of a failed statement run as the role (`None` when it succeeded).
@@ -16,8 +16,9 @@ async fn code(conn: &mut PgConnection, sql: &str) -> Option<String> {
     }
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn missing_role_message_names_both_ways_out(pool: PgPool) {
+#[tokio::test]
+async fn missing_role_message_names_both_ways_out() {
+    let (_db, pool) = TestDb::with_pool().await;
     let err = apply_gateway_grants(&pool, "fix016_no_such_role")
         .await
         .unwrap_err();
@@ -28,8 +29,9 @@ async fn missing_role_message_names_both_ways_out(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrator = "aurora_db::MIGRATOR")]
-async fn grants_are_idempotent_and_sufficient_for_the_gateway(pool: PgPool) {
+#[tokio::test]
+async fn grants_are_idempotent_and_sufficient_for_the_gateway() {
+    let (_db, pool) = TestDb::with_pool().await;
     // The DBA's step: a login role with a password and nothing else (cluster-wide, so dropped below).
     let role = format!("aurora_test_gw_{}", uuid::Uuid::now_v7().simple());
     sqlx::query(sqlx::AssertSqlSafe(format!(

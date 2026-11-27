@@ -2,8 +2,10 @@
 # `cargo test` keeps working; see docs/ops/build-performance.md.
 # Tests get isolated databases from aurora-testkit, so process-per-test is safe.
 [profile.default]
-# Each test process opens its own pool to the shared dev Postgres (max_connections 100, shared by
-# every lane): 16 parallel processes hit "too many clients" (OPS-016 measurement). Keep it modest.
+# Each test process opens its own pool to a Postgres server (on the shared development machine the
+# one of scripts/dev/test-pg.sh, where tests run only through scripts/dev/test.sh, which passes its
+# own --test-threads): 16 parallel processes hit "too many clients" at max_connections 100
+# (OPS-016 measurement). Keep it modest.
 test-threads = 8
 retries = 0                       # a flaky test is a bug: report it, don't hide it
 fail-fast = false                 # run everything, list every failure
