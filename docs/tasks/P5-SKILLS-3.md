@@ -179,5 +179,122 @@ into commits per part (list, panel, read-only, editor, files, upload).
 
 ## Completion report
 
-Commits; screenshots (1256 dark/light, 390) beside `after/skill-1..4*.png`; differences with reasons; tests changed and
-why; commands and results; production specs for the nightly.
+Built 2026-11-27 on `alexiri/p5-skills-3`. **Not merged, not pushed.** Web only: no API, DTO, migration or Rust change.
+
+**Commits:** `cea396f1` (the work), `b7ab7745` (merge of master: one conflict, the imports of `memory-skills.test.tsx`;
+the compact list now uses master's `row-rail`), and the commit that adds this report (one unused import, docs).
+
+### What changed
+
+- `components/skills`: `skills-view.tsx` and `add-skill-button.tsx` removed (with the `create` prop). New `model.ts`
+  (the rows and every word, pure), `list.tsx`, `panel.tsx`, `files.tsx` (read tree, Add a file, the editor's files),
+  `editor.tsx`, `upload.tsx`, `skills-list.tsx` (the one page for all three levels), `header-slot.tsx`.
+- `library.tsx`: `LibraryBadge`, `LibraryManagedNotice` and `LibrarySkillActions` removed; `AddFromLibrary` is opened by
+  the menu (the dialog itself is unchanged, for P5-SKILLS-4); the update dialog's title uses the display name.
+- `lib/skill-name.ts` (D-498(b), the "Use it to …" line), `lib/skill-folder.ts` (new), `lib/api/skills.ts` (the
+  server's path rules, depth 4; per-agent off; create with files; the effective set is re-read before a write resolves).
+- Small, outside the brief's list: `agent-page.tsx` (passes the agent's address and workspace; drops `?skill=` when
+  leaving Skills), `topic-page.tsx` (the same for the organization's tabs). No shared `ui/` file changed.
+  `skill.files` is gone from the altitude registry.
+
+### Readings of the brief to check
+
+1. **List rows show the description as written** (first letter capitalized), without "Use it to". Scope 1 and
+   D-498(c) say so; the brief's own description of `skill-1.png` and the mockup show the prefix. The panel has it.
+2. The "Use it to …" line is added only for skills written in Aurora. Library and app text, and a description that is
+   a sentence of its own ("Use …", "When …", "Someone …", "This …"), stay as written: "Use it to comprehensive PDF
+   toolkit" would be wrong, and repository text does not follow Aurora's sentence rule.
+3. A switch is named "Turn off for <Agent>: <skill>" so that the switches of a list can be told apart.
+4. In the editor, **Add file** and **Delete** of an existing skill are written at once (each is its own confirmed
+   action); text edited in place is saved by the save bar. A new skill's files are written on Save.
+5. A skill with files (new, uploaded or duplicated) is created **off**, then switched on once every file is there; if
+   a file is refused the skill is removed again.
+6. **Duplicate as <Agent>'s own** is offered for inherited skills, and for app skills only when they have no other
+   files (no route reads an app skill's file for an agent; those files are listed but do not open).
+7. An uploaded file is made executable when it starts with `#!` (a browser does not give the bit). `.DS_Store`,
+   `Thumbs.db`, `desktop.ini`, `__MACOSX` and `.git` are left out and named. Only `name`, `title` and `description`
+   of the front matter are read.
+8. A skill another level's skill of the same name would outrank is not a row even when it is off.
+9. Choosing the open skill again closes the panel (the mockups draw no close button).
+10. The panel offers **Review update** only to who may decide. The dialog's "you can read, not approve" state is no
+    longer reachable from a skill page; its test renders the dialog directly.
+
+### Found while testing
+
+- **The Add file dialog saved the whole skill.** A portal's submit bubbles through React to the editor's form; fixed
+  with `stopPropagation`, covered by `skill-form.test.tsx`.
+- **A resize across 1100 px lost what was typed** (a Playwright full-page capture did it): `ListDetail`'s two layouts
+  are different trees. The skills page keeps the layout a form was opened in until it closes. **The Memory page uses
+  the same component and probably has the same loss**; not changed here (not this brief's files).
+- At 768 px the table's name column had no width; it now follows the table's own width (`@container`).
+- `tailwind-merge` reads `text-label` as a colour and drops it beside `text-*` colours, so **every `Badge` renders at
+  14 px** app-wide. The skill chips and tags set `text-xs`; `ui/badge.tsx` is not changed.
+
+### Comparison with the mockups
+
+Looked at `after/skill-1..4` (dark and light, and the HTML for the words) and `skill-6` before coding, and against the
+built pages at 390, 768, 1256 and 1280 px in both themes (mocked data shaped like `seed.py`, not a seeded cluster).
+`SKILLS_SHOTS=<dir> scripts/dev/test.sh <lane> web playwright e2e/skills.spec.ts --project=mocked` writes the
+screenshots again (`skill-1-1256-{dark,light}` ↔ `after/skill-1{,-light}.png`, `skill-2-…` ↔ `skill-2`, `skill-3-…`
+and `skill-3-library-…` ↔ the two frames of `skill-3`, `skill-4-…`, `-files-`, `-add-file-` ↔ `skill-4`,
+`skill-6-{workspace,organization}-…` ↔ the first frame of `skill-6`, `*-390-*` the phone).
+
+| Difference kept | Reason |
+|---|---|
+| Rail, agent header, Tests / Other agents, "Showing more controls", sample names and numbers | The real shell and mock data (README §How to read 2, 3) |
+| List rows and the pdf panel's line have no "Use it to" | Readings 1 and 2 |
+| **Add skill**, **Save**, **Add file** are the shared primary button; **Try it in chat** the `approve` variant | Shared `Button` |
+| The panel's … button is the shared outline button with `MoreIcon` | Shared primitives, as on Memory |
+| Write / Preview are underline tabs inside the box, with "Markdown · n of 24,000 characters" beside them (mockup: segmented tabs above, the count below) | The shared `MarkdownEditor`, which this brief must use and not fork |
+| The save bar floats at the bottom of the window with no amber dot (mockup: the panel's foot); a new skill's says "New skill · not saved yet"; an unchanged edit has **Done** | The shared `SaveBar`; a hidden bar leaves nothing to leave the form with |
+| "When should … use it?" is one line that scrolls (mockup wraps) | The brief: it must not wrap |
+| The **Executable** switch is on the right; the dialog's footer keeps a line for errors | Shared `SwitchField` and `FormDialog` |
+| **Update available** is the shared amber chip, then "— 3 files changed upstream." and **Review update** below; no "…" icon in the box | `AttentionChip` is the only amber element (D-384) |
+| No "Only <Org>'s admins can review and apply updates." and no disabled button for others | Scope 3: "nothing for others" |
+| A library row also carries **Update available** in the list | The pending-updates notice tells people to open a skill marked so |
+| Below a table width of 36 rem each row stacks (chip and switch under the text) | No room for three columns (`14` §Visual design) |
+| The library panel shows **Instructions** and a file tree (`scripts/` then `merge.py`), not a flat list; every file has its size | One panel for every skill (scope 2: files as a tree) |
+| The usage line's icon is the activity icon | No such "…" glyph in the shared set |
+| "Acme Labs’s admins" | The mock organization's name in the mockup's pattern |
+| Level pages: "How skills combine" under the list; their header and tabs are P5-SKILLS-2's | Scope 1 |
+| Sub-screens below 1100 px, not only on a phone | The shared `ListDetail` (as P5-MEMORY-2) |
+
+### Tests
+
+- New: `tests/skills-page.test.tsx` (list, chips, switches per tier, Compare, panel, files, usage and its privacy
+  fallback, Try it in chat link, read-only per tier and S-4, library update states, Stop updates, Duplicate, app
+  skills), `tests/support/skills.tsx`, `e2e/skills.spec.ts` (28: 390, 768, 1256 and 1280 px, both themes, axe serious
+  and critical, no sideways scroll), `e2e/support/skills.ts`.
+- Rewritten for the new UI, still-true cases kept: `skill-form.test.tsx` (names, 409 retry; now the editor, files,
+  Add a file, folder reading and upload), `workspace-skills.test.tsx` (its effective-set cases moved to
+  `skills-page`), `skill-library.test.tsx`.
+- Changed: `memory-skills` (path rules to the server's; the old inline upload case is the Add a file case in
+  `skill-form`; the total-size case now reads the editor's sentence), `agent-empty-states`, `refine-20-batch3`,
+  `skill-libraries-ui`; e2e `skill-libraries` and its support (the menu), `agent-content` (an app skill in the one
+  list), `support/mock-api.ts` (an empty effective set; without it the agent page crashed in `agent-tabs`).
+- No assertion skipped or loosened. Production specs, `scripts/e2e` and `tests/e2e-hosted`: searched, no skill-page
+  string or selector; **no production spec to run nightly** for this brief.
+
+### Commands and results
+
+- Fail first: the new `skills-page`, `skill-form` and `workspace-skills` on `6b56bb21` (a temporary detached
+  worktree): 3 files failed, **33 tests failed**; `skill-form` could not import `lib/skill-folder`.
+- On the merged tree, `test.sh … web vitest` on 30 files (the four drift guards `audit-actions`, `arbitrary-values`,
+  `ui-text`, `labels`, the other source guards, and every file of or rendering a changed component): **431/431**.
+  The whole suite was not run (the dispatch's minimal gate; CI runs it).
+- `test.sh … web playwright skills agent-tabs altitude try-it-in-chat skill-libraries agent-content
+  --project=mocked` on the merged tree: **180/180**; `skills` again at the end: 28/28. Before the merge,
+  `agent-tabs stage4-routes stage4-axe ia-navigation` filtered to the agent and skills pages: 40/40.
+- `pnpm typecheck`, eslint on the changed files (through `heavy.sh`), `cargo fmt --all --check`,
+  `scripts/guards/run-all.sh`, `extract-schema.py --check`: pass. No Rust changed, so no clippy. No local
+  `pnpm build` (CI).
+
+### Security notes
+
+No SEC row. No new request type: the per-agent off, file and skill routes decide who may; the buttons only follow the
+roles in `/v1/me`. A conversation is named only from the API's `ConversationRef`, else "in a conversation". Names,
+descriptions and files from libraries and apps are React text. **For the reviewer:** the panel renders library and app
+`SKILL.md` instructions with the shared sanitizing `Markdown` (scope 2), where they were plain text before. Scripts and
+handlers are stripped, an outside link or image is a link that opens only when pressed, but a **same-origin** image
+path is loaded, as in chat and memory, so opening such a skill can make the viewer's browser `GET` a path of this
+origin.
