@@ -43,9 +43,9 @@ test.describe("library catalogue paging", () => {
   test("Load more lists the skills of the next page (FIX-100)", async ({ page }) => {
     await openLibraryScreen(page, "add-list", "light");
     const list = page.getByRole("list", { name: "Library skills" });
-    await expect(list.getByRole("button", { name: /^triage-issues/ })).toHaveCount(0);
+    await expect(list.getByRole("button", { name: /^Triage issues/ })).toHaveCount(0);
     await page.getByRole("button", { name: "Load more" }).click();
-    await expect(list.getByRole("button", { name: /^triage-issues/ })).toBeVisible();
+    await expect(list.getByRole("button", { name: /^Triage issues/ })).toBeVisible();
     await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
   });
 });
@@ -143,15 +143,21 @@ for (const width of [1280, 390]) {
 
     test("organization: Add from library lists both groups and adds from the instance library", async ({ page }) => {
       const mock = await openLibraryScreen(page, "add-list", "light");
-      const pick = page.getByLabel("Library", { exact: true });
-      await expect(pick.locator("optgroup")).toHaveCount(2);
-      await expect(pick.locator("optgroup").nth(0)).toHaveAttribute("label", "Your organization");
-      await expect(pick.locator("optgroup").nth(1)).toHaveAttribute("label", "Shared with every organization");
-      await pick.selectOption({ label: "Company skills" });
-      await page.getByRole("button", { name: /^incident-notes/ }).click();
+      // (P5-SKILLS-4) the libraries on the left, the shared ones under their heading; on a phone a select with both groups
+      if (width >= 768) {
+        const nav = page.getByRole("navigation", { name: "Libraries" });
+        await nav.getByRole("list", { name: "Shared with every organization" }).getByRole("button", { name: /^Company skills/ }).click();
+      } else {
+        const pick = page.getByLabel("Library", { exact: true });
+        await expect(pick.locator("optgroup")).toHaveCount(2);
+        await expect(pick.locator("optgroup").nth(0)).toHaveAttribute("label", "Your organization");
+        await expect(pick.locator("optgroup").nth(1)).toHaveAttribute("label", "Shared with every organization");
+        await pick.selectOption({ label: "Company skills" });
+      }
+      await page.getByRole("button", { name: /^Incident notes/ }).click();
       await page.getByLabel("Preview of what will be stored").waitFor();
-      await page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }).click();
-      await expect(page.getByRole("dialog", { name: "Add from a library" })).toHaveCount(0);
+      await page.getByRole("dialog").getByRole("button", { name: "Add to Acme Labs" }).click();
+      await expect(page.getByRole("dialog", { name: "Add a skill from a library" })).toHaveCount(0);
       expect(mock.writes.find((w) => w.key.endsWith("/skills"))?.body).toMatchObject({ from_library: { library_id: id(701), path: "incident-notes" } });
     });
 

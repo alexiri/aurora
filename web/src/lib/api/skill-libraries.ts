@@ -18,15 +18,12 @@ export type LibraryUpdate = components["schemas"]["LibraryUpdateView"];
 export type LibraryDiff = components["schemas"]["LibraryDiff"];
 export type PendingUpdate = components["schemas"]["PendingLibraryUpdate"];
 
-/** `LIBRARY_BYTES_PER_*` and `LIBRARY_SKILLS_PER_*` (docs/02 §Limits); the API stays authoritative. */
-export const LIBRARY_BUDGET = {
-  agent: { bytes: 1_048_576, skills: 25 },
-  workspace: { bytes: 2_097_152, skills: 50 },
-  org: { bytes: 4_194_304, skills: 100 },
-} as const;
+/** The tiers that keep skills, each with its own library budget (the server says how large, C-1176). */
+export type BudgetTier = "agent" | "workspace" | "org";
+export type LibraryBudget = components["schemas"]["LibraryBudget"];
 
-/** The tiers that have a library budget. */
-export type BudgetTier = keyof typeof LIBRARY_BUDGET;
+/** (C-1176) Where a browsed skill would go, so that the listing says what can't be added there and the room left. */
+export type BrowseFor = { tier: "agent"; agent: string } | { tier: "workspace"; workspace: string } | { tier: "organization" };
 
 export type CheckLibraryRequest = components["schemas"]["CheckSkillLibraryRequest"];
 export type LibraryCheck = components["schemas"]["LibraryCheck"];
@@ -38,7 +35,7 @@ export const libraryKeys = {
   list: (org: string) => ["orgs", org, "skill-libraries"] as const,
   instance: () => ["admin", "skill-libraries"] as const,
   one: (id: string) => ["skill-libraries", id] as const,
-  catalogue: (id: string, q: string, org: string) => ["skill-libraries", id, "skills", q, org] as const,
+  catalogue: (id: string, q: string, org: string, target: BrowseFor | null) => ["skill-libraries", id, "skills", q, org, target] as const,
   content: (id: string, path: string, commit: string, org: string) => ["skill-libraries", id, "skill", path, commit, org] as const,
   info: (skill: string) => ["skills", skill, "library"] as const,
   pending: (scope: SkillScope) => ["skill-library-updates", scope.kind, scope.id] as const,
@@ -124,14 +121,14 @@ export function useCheckLibraryNow(org: LibraryOwner) {
  * The library's current head, live (cached 5 minutes server-side). Nothing is stored by browsing. `org` is the
  * organization to browse as: required for an instance library (C-1128), harmless for an organization's own.
  */
-export function useLibraryCatalogue(id: string | undefined, q: string, org: string | undefined) {
+export function useLibraryCatalogue(id: string | undefined, q: string, org: string | undefined, target?: BrowseFor) {
   return useInfiniteQuery({
-    queryKey: libraryKeys.catalogue(id ?? "", q, org ?? ""),
+    queryKey: libraryKeys.catalogue(id ?? "", q, org ?? "", target ?? null),
     initialPageParam: "",
     queryFn: ({ pageParam }) =>
       unwrap(
         api.GET("/v1/skill-libraries/{id}/skills", {
-          params: { path: { id: id! }, query: { q: q || undefined, cursor: pageParam || undefined, org } },
+          params: { path: { id: id! }, query: { q: q || undefined, cursor: pageParam || undefined, org, ...target } },
         }),
       ),
     getNextPageParam: (last) => last.next_cursor ?? undefined,

@@ -233,7 +233,8 @@ describe("update review", () => {
     mockFetch(base(() => json(200, review({ over_budget: true }))));
     const dlg = await open();
     expect((within(dlg).getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(within(dlg).getByText(/100 skills, 4096 KiB/)).toBeTruthy();
+    // (P5-SKILLS-4) the client keeps no budget numbers of its own
+    expect(within(dlg).getByText("Approving would exceed this organization's library budget. Remove a library skill or reject this update.")).toBeTruthy();
     cleanup();
     mockFetch(base(() => json(200, review()), {
       "POST /v1/skills/s1/library/updates/u1/approve": () => json(409, { error: { code: "update_superseded", message: "x" } }),
@@ -285,7 +286,7 @@ describe("Add from library", () => {
     expect(menuItems()).toEqual(["Write a new skill", "Upload a skill folder"]);
   });
 
-  it("lists skills at the commit, disables invalid ones with the reason, previews the exact content and adds it pinned", async () => {
+  it("lists skills at the commit, folds invalid ones with the reason, previews the exact content and adds it pinned", async () => {
     let added: unknown = null;
     mockFetch(routes({
       "POST /v1/orgs/o1/skills": async (r) => {
@@ -296,18 +297,20 @@ describe("Add from library", () => {
     wrap(<OrgList />);
     await fromLibrary();
     const list = await screen.findByRole("list", { name: "Library skills" });
-    expect(within(list).getByText("Already added · Organization")).toBeTruthy();
-    expect((within(list).getByRole("button", { name: /^Bad_Name/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect(within(list).getByText(/Cannot be added: the directory name is not a valid skill name/)).toBeTruthy();
+    // the invalid one is not in the list: it is folded, with why
+    expect(within(list).queryByRole("button", { name: /^Bad_Name/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /1 can’t be added/ }));
+    expect(within(screen.getByRole("list", { name: "Skills that can’t be added" })).getByText("the directory name is not a valid skill name")).toBeTruthy();
     // hostile description text is data
     expect(list.querySelector("img")).toBeNull();
     expect(within(list).getByText(/<img src=x onerror=alert\(1\)>/)).toBeTruthy();
-    fireEvent.click(within(list).getByRole("button", { name: /^release-notes/ }));
-    const preview = await screen.findByLabelText("Preview of what will be stored");
-    expect(within(preview).getByLabelText("SKILL.md body").textContent).toContain("Collect merged pull requests.");
-    expect(within(preview).getByLabelText("File template.md").textContent).toBe("# Notes");
-    expect(screen.getByText("Pinned to this commit. Changes in the repository are not applied until someone with permission approves them.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(within(list).getByRole("button", { name: /^Release notes/ }));
+    const preview = await screen.findByRole("group", { name: "Preview of what will be stored" });
+    expect(within(preview).getByRole("region", { name: "Instructions" }).textContent).toContain("Collect merged pull requests.");
+    fireEvent.click(within(preview).getByRole("button", { name: /^template\.md/ }));
+    expect(within(preview).getByRole("region", { name: "File template.md" }).textContent).toBe("# Notes");
+    expect(preview.textContent).toContain(`Pinned to ${SHA_B.slice(0, 7)} when added.`);
+    fireEvent.click(screen.getByRole("button", { name: "Add to Acme" }));
     await waitFor(() => expect(added).toEqual({ from_library: { library_id: "l1", path: "release-notes", commit_sha: SHA_B } }));
   });
 
@@ -339,22 +342,20 @@ describe("Add from library", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
-  it("disables Add when the tier's library budget is full, with the numbers", async () => {
-    const full = Array.from({ length: 25 }, (_, i) => skill({ id: `s${i}`, name: `lib-${i}`, tier: "agent", source: source({ path: `lib-${i}` }) as Skill["source"] }));
+  it("disables Add when the skill would not fit the room the server says is left", async () => {
     mockFetch({
-      "GET /v1/agents/a1/skills/effective": () =>
-        json(200, { items: full.map((s) => ({ skill: s, tier: "agent", enabled: true, shadows: [], off_for_agent: false, usage: null })), shadowed: [] }),
+      "GET /v1/agents/a1/skills/effective": () => json(200, { items: [], shadowed: [] }),
       "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [{ id: "l1", label: "Team skills", status: "active" }] }),
-      "GET /v1/skill-libraries/l1/skills": () => json(200, catalogue),
+      // the listing's estimate (10) fits; the files as read (40) do not
+      "GET /v1/skill-libraries/l1/skills": () => json(200, { ...catalogue, budget: { bytes: 2048, used: 2030 }, items: [{ ...catalogue.items[1], size: 10 }] }),
       "GET /v1/skill-libraries/l1/skills/release-notes": () => json(200, content),
       "GET /v1/agents/a1/skill-library-updates": () => json(200, { items: [] }),
     });
     wrap(<SkillsTab agentId="a1" orgId="o1" agentName="Daneel" />);
     await fromLibrary();
-    // (a heavier render than the other tests: allow for a loaded machine)
-    fireEvent.click(await screen.findByRole("button", { name: /^release-notes/ }));
-    expect(await screen.findByText(/26 of 25 skills/, undefined)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+    const button = await screen.findByRole("button", { name: "Add to Daneel" });
+    await waitFor(() => expect(button).toHaveAccessibleDescription("It would exceed Daneel’s 2 KB of library skills."));
+    expect((button as HTMLButtonElement).disabled).toBe(true);
   });
 });
 

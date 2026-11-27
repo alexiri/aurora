@@ -35,7 +35,7 @@ const TONE: Record<SourceTone, string> = {
 
 export function SourceChip({ page, row }: { page: SkillPage; row: SkillRow }) {
   const { label, tone } = sourceChip(page, row);
-  // `text-xs`, not the Badge's own size: the class merger reads `text-label` as a colour and drops it beside one.
+  // `text-xs`, a step above the Badge's own label size, as the mockups draw a source.
   return (
     <Badge data-testid="source-chip" className={cn("max-w-full text-xs [overflow-wrap:anywhere]", TONE[tone])}>
       {label}
