@@ -5195,6 +5195,339 @@ async fn an_apply_refuses_when_a_listed_part_changed_under_the_lock() {
     assert_eq!(brief_of(&u.w, u.agent).await, "Watch eu: raced.");
 }
 
+/// A person's brief edit that is under way when the apply starts is waited for and seen: the
+/// apply is the stale review's 409, and the person's text stays.
+#[tokio::test]
+async fn an_apply_waits_for_a_brief_edit_under_way_and_keeps_it() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    let mut edit = u.w.h.pool().begin().await.unwrap();
+    sqlx::query("UPDATE agents SET brief = 'Watch eu: mine.' WHERE id = $1")
+        .bind(u.agent)
+        .execute(&mut *edit)
+        .await
+        .unwrap();
+
+    let applied = AtomicBool::new(false);
+    let never = AtomicBool::new(false);
+    let apply = async {
+        let r = u.w.apply(&u.owner, u.agent, apply_instructions(&sha)).await;
+        applied.store(true, Ordering::SeqCst);
+        r
+    };
+    let release = async {
+        wait_for_lock_waiters(&u.w, 1, &never).await;
+        assert!(!applied.load(Ordering::SeqCst), "the apply waits");
+        edit.commit().await.unwrap();
+    };
+    let ((status, answer), ()) = tokio::join!(apply, release);
+
+    assert_eq!(
+        brief_of(&u.w, u.agent).await,
+        "Watch eu: mine.",
+        "no lost edit: {status} {answer}"
+    );
+    assert_eq!(status, 409, "{answer}");
+    assert_eq!(code(&answer), "template_version_changed", "{answer}");
+}
+
+/// An agent made from version 1.0.0 of a template without references, with 2.0.0 offered:
+/// it adds the library reference `beta`. The offer has been read once, so the library's
+/// listing is cached.
+struct RefOffer {
+    w: W,
+    owner: String,
+    agent: Uuid,
+    library: Uuid,
+    sha: String,
+    /// The apply body that takes the library skill.
+    take: Value,
+}
+
+async fn ref_offer_world() -> RefOffer {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    let library = seed_library(&w, org, &owner).await;
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "ref3",
+        "1.0.0",
+        &ref_files("ref3", "1.0.0", ""),
+    )
+    .await;
+    let created = w.create_agent(ws, &owner, "ref3", "1.0.0", json!({})).await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+    let refs = format!(
+        "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: beta\n    why: Does the other work.\n"
+    );
+    advance_fs(
+        &w,
+        id,
+        "acme/tpl",
+        "ref3",
+        "2.0.0",
+        &ref_files("ref3", "2.0.0", &refs),
+        &[],
+    )
+    .await;
+    let (_, v) = w.tpl_status(&owner, agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let part = &v["update"]["parts"][0];
+    let take = json!({
+        "version": "2.0.0",
+        "content_sha256": sha,
+        "skill_refs": [{
+            "index": 0,
+            "library_id": part["skill_ref"]["library"]["id"],
+            "commit_sha": part["skill_ref"]["library"]["commit_sha"],
+        }],
+        "parts": [{"kind": "library_skill", "key": part["key"]}],
+    });
+    RefOffer {
+        w,
+        owner,
+        agent,
+        library,
+        sha,
+        take,
+    }
+}
+
+/// The apply reads the libraries before its transaction: with a slow git host no session sits
+/// in an open transaction, and the agent's memory writes are not held up.
+#[tokio::test]
+async fn an_apply_holds_no_transaction_while_it_reads_a_library() {
+    let r = ref_offer_world().await;
+    r.w.git
+        .slow("acme/skills", std::time::Duration::from_secs(2));
+
+    let applied = AtomicBool::new(false);
+    let apply = async {
+        let out = r.w.apply(&r.owner, r.agent, r.take.clone()).await;
+        applied.store(true, Ordering::SeqCst);
+        out
+    };
+    let watch = async {
+        let uri = format!("/v1/agents/{}/memories", r.agent);
+        let mut longest_save = std::time::Duration::ZERO;
+        let mut long_idle = 0i64;
+        let mut n = 0;
+        while !applied.load(Ordering::SeqCst) {
+            n += 1;
+            let started = std::time::Instant::now();
+            let (s, v) =
+                r.w.h
+                    .call(
+                        &r.owner,
+                        Method::POST,
+                        &uri,
+                        Some(json!({"key": format!("note-{n}"), "content": "x"})),
+                    )
+                    .await;
+            assert_eq!(s, 201, "{v}");
+            longest_save = longest_save.max(started.elapsed());
+            let idle: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND state = 'idle in transaction'
+                   AND clock_timestamp() - state_change > interval '1 second'",
+            )
+            .fetch_one(r.w.h.pool())
+            .await
+            .unwrap();
+            long_idle = long_idle.max(idle);
+            // An agent holds at most 100 memories: paced to outlast a slow apply.
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
+        (longest_save, long_idle)
+    };
+    let ((status, answer), (longest_save, long_idle)) = tokio::join!(apply, watch);
+
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(long_idle, 0, "a transaction stayed open across a git read");
+    assert!(
+        longest_save < std::time::Duration::from_millis(1500),
+        "a memory write waited {longest_save:?} for the apply"
+    );
+    assert_eq!(
+        skills_of(&r.w, r.agent).await,
+        vec![("beta".to_owned(), Some(r.library))]
+    );
+}
+
+/// The library is paused after the apply read it and before it writes: the transaction's own
+/// look at the libraries differs from what was read, so the review is stale.
+#[tokio::test]
+async fn an_apply_refuses_when_the_library_changed_after_it_was_read() {
+    let r = ref_offer_world().await;
+    let pool = r.w.h.pool().clone();
+    let agent = r.agent;
+
+    let lock = hold_agent_lock(&pool, agent).await;
+    let task = tokio::spawn(app_call(
+        r.w.h.app.clone(),
+        r.owner.clone(),
+        Method::POST,
+        format!("/v1/agents/{agent}/template/apply"),
+        Some(r.take.clone()),
+    ));
+    wait_blocked(&pool).await;
+    let paused = sqlx::query("UPDATE skill_libraries SET status = 'paused' WHERE id = $1")
+        .bind(r.library)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(paused.rows_affected(), 1);
+    lock.rollback().await.unwrap();
+
+    let (s, v) = task.await.unwrap();
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    assert_eq!(skills_of(&r.w, agent).await, Vec::new());
+}
+
+/// The library's listing is cached and the host then fails: the plan and the offer show the
+/// references (the new one and the dropped one) as `library_unreadable`, and only an apply
+/// that needs the library's content is refused.
+#[tokio::test]
+async fn an_unreadable_library_does_not_fail_the_plan_the_offer_or_an_apply() {
+    let w = world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    seed_library(&w, org, &owner).await;
+    let reference = |skill: &str| {
+        format!(
+            "skills:\n  - library: {GIT_ORIGIN}/acme/skills\n    skill: {skill}\n    why: Does the work.\n"
+        )
+    };
+    let id = seed_fs(
+        &w,
+        "acme/tpl",
+        "ref4",
+        "1.0.0",
+        &ref_files("ref4", "1.0.0", &reference("alpha")),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "ref4").await;
+    let item = json!([{
+        "index": 0,
+        "library_id": plan["skill_refs"][0]["library"]["id"],
+        "commit_sha": plan["skill_refs"][0]["library"]["commit_sha"],
+    }]);
+    let mut agents = Vec::new();
+    for _ in 0..2 {
+        let a = w
+            .create_agent(ws, &owner, "ref4", "1.0.0", json!({"skill_refs": item}))
+            .await;
+        agents.push(a["agent"]["id"].as_str().unwrap().parse::<Uuid>().unwrap());
+    }
+
+    // 2.0.0 changes the instructions, drops `alpha` and adds `beta`.
+    let mut v2 = ref_files("ref4", "2.0.0", &reference("beta"));
+    for (path, bytes) in &mut v2 {
+        if path.ends_with("/instructions.md") {
+            *bytes = b"Watch {input.zone} closely.\n".to_vec();
+        }
+    }
+    advance_fs(&w, id, "acme/tpl", "ref4", "2.0.0", &v2, &[]).await;
+    // The listing is read (and cached) while the host still answers.
+    let before = w.plan(ws, &owner, "ref4").await;
+    assert_eq!(before["skill_refs"][0]["available"], true, "{before}");
+    w.git.override_status("acme/skills", 500, None);
+
+    let (s, plan) = ws_get(&w, ws, &owner, "/ref4").await;
+    assert_eq!(s, 200, "{plan}");
+    assert_eq!(plan["skill_refs"][0]["available"], false, "{plan}");
+    assert_eq!(
+        plan["skill_refs"][0]["unavailable_reason"], "library_unreadable",
+        "{plan}"
+    );
+
+    let (s, v) = w.tpl_status(&owner, agents[0]).await;
+    assert_eq!(s, 200, "{v}");
+    let parts = v["update"]["parts"].as_array().unwrap();
+    let new = parts
+        .iter()
+        .find(|p| p["kind"] == "library_skill" && p["state"] == "new")
+        .unwrap_or_else(|| panic!("no new library part: {v}"));
+    assert_eq!(
+        new["skill_ref"]["unavailable_reason"], "library_unreadable",
+        "{v}"
+    );
+    let dropped = parts
+        .iter()
+        .find(|p| p["kind"] == "library_skill" && p["state"] == "removed_upstream")
+        .unwrap_or_else(|| panic!("no dropped library part: {v}"));
+    assert_eq!(
+        dropped["skill_ref"]["unavailable_reason"], "library_unreadable",
+        "{v}"
+    );
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+
+    // An apply that takes the unreadable required reference is refused.
+    let (s, v) = w
+        .apply(
+            &owner,
+            agents[0],
+            json!({
+                "version": "2.0.0",
+                "content_sha256": sha,
+                "parts": [{"kind": "library_skill", "key": new["key"]}],
+            }),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_skill_unavailable"), "{v}");
+    // Taking only the instructions goes through, and so does "skip this version".
+    let (s, v) = w.apply(&owner, agents[0], apply_instructions(&sha)).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(brief_of(&w, agents[0]).await, "Watch eu closely.\n");
+    let (s, v) = w
+        .apply(
+            &owner,
+            agents[1],
+            json!({"version": "2.0.0", "content_sha256": sha, "parts": []}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["template"]["version"], "2.0.0", "{v}");
+}
+
+/// An apply never moves an agent to an older version, or to the one it is on: both the apply
+/// of a part and "skip this version" are the stale review's 409.
+#[tokio::test]
+async fn an_apply_never_moves_an_agent_backwards() {
+    let u = upd_world().await;
+    upd_advance(&u, "2.0.0").await;
+    let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let brief_before = brief_of(&u.w, u.agent).await;
+    let parts_before = parts_of(&u.w, u.agent).await;
+
+    for stored in ["3.0.0", "2.0.0"] {
+        // As after a source was removed and added again with an older head.
+        sqlx::query("UPDATE agents SET template_version = $2 WHERE id = $1")
+            .bind(u.agent)
+            .bind(stored)
+            .execute(u.w.h.pool())
+            .await
+            .unwrap();
+        let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+        assert!(v["update"].is_null(), "{v}");
+        for body in [
+            apply_instructions(&sha),
+            json!({"version": "2.0.0", "content_sha256": sha, "parts": []}),
+        ] {
+            let (s, v) = u.w.apply(&u.owner, u.agent, body).await;
+            assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+        }
+        let (_, v) = u.w.tpl_status(&u.owner, u.agent).await;
+        assert_eq!(v["template"]["version"], stored, "{v}");
+        assert_eq!(brief_of(&u.w, u.agent).await, brief_before);
+        assert_eq!(parts_of(&u.w, u.agent).await, parts_before);
+    }
+}
+
 #[tokio::test]
 async fn a_second_apply_of_the_same_version_does_not_duplicate_the_parts() {
     let u = upd_world().await;
