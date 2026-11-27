@@ -810,12 +810,16 @@ fn lock_tree(root: &Path) {
     let mut files = Vec::new();
     walk_files(root, &mut files);
     for f in files {
-        // Executable skill files stay 0555; everything else is 0444.
-        let exec = fs::metadata(&f).is_ok_and(|m| m.permissions().mode() & 0o100 != 0);
-        let _ = fs::set_permissions(
-            &f,
-            fs::Permissions::from_mode(if exec { 0o555 } else { 0o444 }),
-        );
+        // Only a regular file, and the mode is read and set on its open descriptor: a link
+        // here (planted after the link sweep) is never followed.
+        if !fs::symlink_metadata(&f).is_ok_and(|m| m.is_file()) {
+            continue;
+        }
+        let _ = nofollow::open_regular(&f).and_then(|file| {
+            // Executable skill files stay 0555; everything else is 0444.
+            let exec = file.metadata()?.permissions().mode() & 0o100 != 0;
+            nofollow::set_mode(&file, if exec { 0o555 } else { 0o444 })
+        });
     }
     set_dirs(root, 0o555);
 }
@@ -862,6 +866,29 @@ mod tests {
         );
         assert_eq!(fs::read(&victim).unwrap(), b"outside");
         assert_eq!(mode_of(&victim), 0o600);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A link may appear in a managed tree after the link sweep: locking the tree must not
+    /// change the mode of what it points at.
+    #[test]
+    fn locking_a_tree_does_not_chmod_through_a_link() {
+        let (dir, home, victim) = scratch();
+        let tree = home.join("helpers");
+        fs::create_dir_all(tree.join("sub")).unwrap();
+        for (name, mode) in [("run.sh", 0o700), ("sub/note", 0o600)] {
+            fs::write(tree.join(name), "x").unwrap();
+            fs::set_permissions(tree.join(name), fs::Permissions::from_mode(mode)).unwrap();
+        }
+        std::os::unix::fs::symlink(&victim, tree.join("sub/link")).unwrap();
+
+        lock_tree(&tree);
+
+        assert_eq!(mode_of(&victim), 0o600, "outside file chmodded");
+        assert_eq!(mode_of(&tree.join("run.sh")), 0o555);
+        assert_eq!(mode_of(&tree.join("sub/note")), 0o444);
+        assert_eq!(mode_of(&tree.join("sub")), 0o555);
+        set_dirs(&tree, 0o755);
         fs::remove_dir_all(dir).unwrap();
     }
 
