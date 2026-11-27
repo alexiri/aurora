@@ -14,11 +14,13 @@ import { Altitude, AltitudeScope, MoreControlsLine } from "@/components/ui/altit
 import { Button } from "@/components/ui/button";
 import { useAltitude, useHiddenControls } from "@/lib/altitude";
 import { ChevronLeftIcon, SettingsIcon } from "@/components/ui/icons";
+import { SubTabs } from "@/components/ui/sub-tabs";
 import { Tabs, tabId, tabPanelId } from "@/components/ui/tabs";
 import { useCanApprove } from "@/lib/api/approvals";
 import { useAgents, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useTabParam } from "@/lib/use-tab-param";
 import { isEmergencyReader } from "@/lib/emergency";
+import { cn } from "@/lib/utils";
 
 import { AccessTab } from "./access-tab";
 import { ChatTab } from "./chat-tab";
@@ -149,23 +151,20 @@ export function AgentPage() {
       }
     : null;
   const chatPage = tab === "chat" && !byo;
-  // (P5-REFINE-11, D-408) Settings is configuration behind a labelled button, not a tab: on a Settings page no tab is selected and
-  // the button shows the accent outline. Pause and Delete are the danger zone at the bottom of the Settings page.
   const isConfig = sectionId === "settings";
-  const barSections = sections.filter((s) => s.id !== "settings");
-  const triggerClass = isConfig ? "outline outline-2 outline-accent" : "";
-  const backPage: AgentPageId = byo ? "connect" : "chat";
+  // The phone's Status button belongs to Chat: a hosted agent has one, an emergency reader doesn't.
+  const hasStatus = !byo && !emergency;
 
   return (
     // The agent page uses the full content width (FIX-129); long-form panels keep a readable width inside themselves.
     <AltitudeScope>
-    <div className="min-w-0 space-y-2">
+    <div className="min-w-0 space-y-3">
       <HiddenPages availability={availability} allows={altitude.allows} />
-      {/* One line at xl (1280) and up (the longest state does not fit beside the tabs at 1024) (breadcrumb above the name beside the avatar · section switcher · Agent actions); below it
-          the name, state and Settings are one row and the section switcher the row under it, so the name is never squeezed out
-          (on a phone: back, avatar, name + status, actions, then the switcher; 14 §Agent page). */}
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 md:gap-x-4">
-        <div className="order-1 flex min-w-0 flex-1 items-center gap-2 md:gap-3">
+      {/* (D-507, 14 §Agent page) One header on every section: the breadcrumb above the name beside the avatar, with the
+          handle and state on the name's line (on a phone: back, avatar, name with the state under it), then the one row
+          of tabs. It takes the same room on every section, so the tabs never move. */}
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 md:gap-y-3">
+        <div className="order-1 flex min-h-11 min-w-0 flex-1 items-center gap-2 md:gap-3.5">
           <Link href={`${base}/agents`} aria-label="Back to agents" className="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink-2 hover:text-ink md:hidden">
             <ChevronLeftIcon className="size-5" />
           </Link>
@@ -173,7 +172,7 @@ export function AgentPage() {
             <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={32} />
           </span>
           <span className="hidden shrink-0 md:block">
-            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={40} />
+            <Avatar name={agent.name} url={agent.avatar_url} tintKey={agent.id} size={44} />
           </span>
           <div className="min-w-0">
             <nav aria-label="Breadcrumb" className="hidden text-xs leading-4 text-muted md:block">
@@ -182,11 +181,11 @@ export function AgentPage() {
               </Link>{" "}
               <span aria-hidden="true">/</span>
             </nav>
-            <div className="flex min-w-0 flex-col xl:flex-row xl:items-center xl:gap-x-3">
-              <h1 className="min-w-0 truncate font-display text-base font-semibold leading-5 text-ink md:text-xl md:leading-7">{agent.name}</h1>
+            <div className="flex min-w-0 flex-col md:flex-row md:flex-wrap md:items-baseline md:gap-x-2.5">
+              <h1 className="min-w-0 max-w-full truncate font-display text-base font-semibold leading-5 text-ink md:text-xl md:leading-7">{agent.name}</h1>
               {/* Each item keeps its words on one line, except a state with a reason ("Can't answer: no AI key"): it wraps inside the
-                  name column so all of it shows and nothing runs under the buttons (one line from xl, where the tabs share the row). */}
-              <span className="flex min-w-0 flex-wrap items-center gap-x-2 whitespace-nowrap text-sm text-ink-2 xl:shrink-0 xl:flex-nowrap">
+                  name column so all of it shows and nothing runs under the Status button. */}
+              <span className="flex min-w-0 flex-wrap items-center gap-x-2 whitespace-nowrap text-sm text-ink-2">
                 <Altitude id="agent.handle" level="expert">
                   <span className="hidden font-mono text-muted md:inline">@{agent.handle}</span>
                 </Altitude>
@@ -220,40 +219,51 @@ export function AgentPage() {
             </div>
           </div>
         </div>
-        <div className="order-2 flex shrink-0 items-center gap-2 xl:order-3">
-          {chatPage && !emergency ? (
-            <Button type="button" variant="outline" size="sm" className="min-h-11 md:hidden" onClick={() => setStatusOpen(true)}>
-              Status
-            </Button>
-          ) : null}
+        {hasStatus ? (
           <Button
             type="button"
             variant="outline"
             size="sm"
-            aria-current={isConfig ? "page" : undefined}
-            className={`min-h-11 md:min-h-9 ${triggerClass}`}
-            onClick={() => choosePage(lastPage.current.settings ?? "instructions")}>
-            <SettingsIcon width={16} height={16} />
-            Settings
+            // Off Chat it keeps its place, hidden from sight and from assistive technology: without it a long state would
+            // wrap differently and the tabs would move between sections.
+            {...(chatPage ? {} : { "aria-hidden": true, tabIndex: -1 })}
+            className={cn("order-2 min-h-11 shrink-0 md:hidden", !chatPage && "invisible")}
+            onClick={() => setStatusOpen(true)}>
+            Status
           </Button>
-        </div>
+        ) : null}
         {/* (access-3) The one action for "Can't answer: no AI key" (give it the Company key, add a key, or ask an admin) on its
             own row under the name and state, so the name is never pushed out at 1256 and nothing runs under Status at 390.
             Empty (no row) unless the agent cannot answer. */}
         {byo || !wsId || emergency ? null : (
-          <div className="order-3 w-full min-w-0 max-w-full basis-full empty:hidden xl:order-4">
+          <div className="order-3 w-full min-w-0 max-w-full basis-full empty:hidden">
             <AnswerFixAction agentId={agent.id} agentName={agent.name} wsId={wsId} base={base} />
           </div>
         )}
-        <div className="order-3 w-full min-w-0 xl:order-2 xl:w-auto xl:shrink-0">
+        {/* This box draws the line and the strip overlaps it by 1 px: the strip clips what leaves it, so a tab's 2 px
+            underline stays whole only inside it. */}
+        <div className="order-4 w-full min-w-0 basis-full border-b border-line">
           <Tabs
-            items={barSections.map((s) => ({ value: s.id, label: s.label }))}
-            value={isConfig ? "" : sectionId}
+            variant="underline"
+            current
+            items={sections.map((s) => ({
+              value: s.id,
+              label:
+                s.id === "settings" ? (
+                  <>
+                    <SettingsIcon width={16} height={16} aria-hidden="true" />
+                    {s.label}
+                  </>
+                ) : (
+                  s.label
+                ),
+            }))}
+            value={sectionId}
             onValueChange={goSection}
             label="Agent sections"
             idBase="agent-section"
-            className="flex w-fit max-md:w-full"
-            tabClassName="max-md:min-h-11 max-md:flex-1 max-md:justify-center max-md:px-1.5"
+            className="-mb-px gap-5 border-b-0 md:gap-6"
+            tabClassName="mb-0 min-h-11 px-0 focus-visible:-outline-offset-2 md:min-h-10"
           />
         </div>
       </header>
@@ -270,36 +280,21 @@ export function AgentPage() {
           onDeleted={() => router.replace(`${base}/agents`)}
         />
       ) : null}
-      <div
-        {...(isConfig ? {} : { role: "tabpanel", id: tabPanelId("agent-section", sectionId), "aria-labelledby": tabId("agent-section", sectionId) })}
-        className="space-y-3">
-        <SettingsFrame
-          shell={
-            isConfig
-              ? {
-                  agentName: agent.name,
-                  page: tab,
-                  pages: section.pages,
-                  onPage: choosePage,
-                  onBack: () => choosePage(backPage),
-                  backLabel: backPage === "chat" ? "Chat" : "Computer",
-                }
-              : null
-          }>
+      <div role="tabpanel" id={tabPanelId("agent-section", sectionId)} aria-labelledby={tabId("agent-section", sectionId)} className="space-y-5">
+        <SettingsFrame shell={isConfig ? { agentName: agent.name, page: tab, pages: section.pages, onPage: choosePage } : null}>
         {section.pages.length > 1 && !isConfig ? (
-          <Tabs
+          <SubTabs
             items={section.pages.map((p) => ({ value: p.id, label: p.label }))}
             value={tab}
             onValueChange={(v) => choosePage(v as AgentPageId)}
             label={`${section.label} pages`}
             idBase="agent"
-            // What does not fit at 390 px goes into a More menu: never a strip that scrolls sideways (docs/14 §Tabs).
-            overflow="menu"
           />
         ) : null}
         <div
           {...(section.pages.length > 1 ? { role: "tabpanel", id: tabPanelId("agent", tab), "aria-labelledby": tabId("agent", tab) } : {})}
-          className="pt-1"
+          // Under the second row the gap is the panel's own; without one the page starts a little below the tab row.
+          className={section.pages.length > 1 && !isConfig ? undefined : "pt-1"}
         >
           {/* (P5-REFINE-15, D-408) One line of state above every Computer sub-page, the one the header shows. */}
           {sectionId === "computer" && !byo ? (

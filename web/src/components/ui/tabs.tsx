@@ -13,8 +13,9 @@ export interface TabItem {
 }
 
 /**
- * Accessible tablist (roving tabindex, arrow/Home/End keys). `segmented` is for
- * page-level views, `underline` for the agent page strip. Panels: give each
+ * Accessible tablist (roving tabindex, arrow/Home/End keys). `segmented` switches a view of the same data,
+ * `underline` moves between pages of one topic (the agent page's tab row), and `pills` is the quiet second row under a
+ * tab (use it through `SubTabs`, `ui/sub-tabs.tsx`). Panels: give each
  * `id={tabPanelId(idBase, value)}`, `role="tabpanel"`, `aria-labelledby={tabId(idBase, value)}`.
  *
  * `overflow="menu"` (docs/14 §Tabs): tabs that do not fit collapse into a trailing **More** menu instead of a
@@ -61,7 +62,20 @@ export function visibleTabs(widths: number[], available: number, moreWidth: numb
   return [...rest, selected];
 }
 
-function tabClass(variant: "segmented" | "underline", selected: boolean, overlapBorder = true) {
+export type TabsVariant = "segmented" | "underline" | "pills";
+
+/** The pill itself; its button is taller than it on a phone (a 44 px target around a 32 px pill). */
+function pillClass(selected: boolean) {
+  return cn(
+    "inline-flex min-h-8 items-center rounded-full border px-2.5",
+    selected ? "border-accent bg-accent-soft font-semibold text-accent-ink" : "border-transparent text-ink-2 group-hover:text-ink",
+  );
+}
+
+function tabClass(variant: TabsVariant, selected: boolean, overlapBorder = true) {
+  if (variant === "pills") {
+    return "group inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-full text-sm font-medium focus-visible:-outline-offset-2 md:min-h-8";
+  }
   return cn(
     "inline-flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap px-3 text-sm font-medium",
     variant === "segmented"
@@ -84,14 +98,14 @@ export function Tabs({
   className,
   overflow = "scroll",
   tabClassName,
-  columnFromMd = false,
+  current = false,
 }: {
-  /** The strip becomes a left column from `md` (the Settings sub-nav): vertical arrows move too. */
-  columnFromMd?: boolean;
+  /** The selected tab is also the page you are on: it carries `aria-current="page"` (the agent page's two rows). */
+  current?: boolean;
   items: TabItem[];
   value: string;
   onValueChange: (v: string) => void;
-  variant?: "segmented" | "underline";
+  variant?: TabsVariant;
   label: string;
   idBase?: string;
   className?: string;
@@ -152,9 +166,8 @@ export function Tabs({
   function onKeyDown(e: KeyboardEvent) {
     const i = items.findIndex((t) => t.value === value);
     let next = -1;
-    // (P5-REFINE-11) ArrowDown/ArrowUp also move when the strip is laid out as a column from `md` (the Settings sub-nav).
-    if (e.key === "ArrowRight" || (e.key === "ArrowDown" && columnFromMd)) next = (i + 1) % items.length;
-    else if (e.key === "ArrowLeft" || (e.key === "ArrowUp" && columnFromMd)) next = (i - 1 + items.length) % items.length;
+    if (e.key === "ArrowRight") next = (i + 1) % items.length;
+    else if (e.key === "ArrowLeft") next = (i - 1 + items.length) % items.length;
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = items.length - 1;
     if (next < 0) return;
@@ -168,7 +181,9 @@ export function Tabs({
   const stripClass = cn(
     variant === "segmented"
       ? "inline-flex max-w-full gap-0.5 rounded-control bg-subtle p-0.5"
-      : cn("flex w-full min-w-0 max-w-full gap-1", !useMenu && "border-b border-line"),
+      : variant === "pills"
+        ? "flex w-full min-w-0 max-w-full gap-1.5"
+        : cn("flex w-full min-w-0 max-w-full gap-1", !useMenu && "border-b border-line"),
     useMenu
       ? "overflow-hidden"
       : // (P5-UX-1) The strip still scrolls sideways when it must, but never draws a scrollbar widget: the underline
@@ -192,11 +207,12 @@ export function Tabs({
             id={tabId(base, t.value)}
             aria-selected={selected}
             aria-controls={tabPanelId(base, t.value)}
+            aria-current={current && selected ? "page" : undefined}
             tabIndex={selected || (selectedIndex < 0 && i === 0) ? 0 : -1}
             onClick={() => onValueChange(t.value)}
             className={cn(tabClass(variant, selected, !useMenu), tabClassName)}
           >
-            {t.label}
+            {variant === "pills" ? <span className={pillClass(selected)}>{t.label}</span> : t.label}
           </button>
         );
       })}

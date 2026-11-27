@@ -2,17 +2,23 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 
-import { ChevronLeftIcon } from "@/components/ui/icons";
 import { ScreenChromeContext, type ScreenChrome } from "@/components/ui/list-detail";
-import { Tabs } from "@/components/ui/tabs";
+import { SubTabs } from "@/components/ui/sub-tabs";
 import { cn } from "@/lib/utils";
 
 import { PAGE_LABEL, SETTINGS_LEAD, type AgentPageId } from "./sections";
 
 /**
- * (P5-REFINE-11, D-408) The Settings page: the page header (back link, the page's name and its one-line lead), a sub-nav
- * (a left column from `md`, the segmented tabs below it) and the page itself. Pause, Export/Import and Delete are the
- * owners' last page, Manage (D-447, `manage-page.tsx`), not part of the frame. The pages' own bodies are other briefs'.
+ * A Settings page's list and item are two screens below this width (D-507). With the Settings column gone the content
+ * is the window less the rail and the page padding, so from 1024 px the list and an item of at least 24 rem fit.
+ */
+export const SETTINGS_NARROW = "(max-width: 1023px)";
+
+/**
+ * (D-507) A page of the agent's Settings tab, under the agent's header and tab row: the second row (the Settings
+ * sections), the page's title row (its name, one-line lead and its main action) and the page itself, at the full content
+ * width. Pause, Export/Import and Delete are the owners' last page, Manage (D-447, `manage-page.tsx`), not part of the
+ * frame. The pages' own bodies are other briefs'.
  */
 export type SettingsShellProps = Omit<Parameters<typeof SettingsShell>[0], "children">;
 
@@ -26,54 +32,41 @@ export function SettingsShell({
   page,
   pages,
   onPage,
-  onBack,
-  backLabel,
   children,
 }: {
   agentName: string;
   page: AgentPageId;
   pages: { id: AgentPageId; label: string }[];
   onPage: (p: AgentPageId) => void;
-  onBack: () => void;
-  backLabel: string;
   children: ReactNode;
 }) {
-  // (P5-MEMORY-2) A page may put its main action beside the heading, and hide the heading and sub-nav while one of its
-  // items has its own screen (`ui/list-detail`).
+  // (P5-MEMORY-2) A page may put its main action beside the title, and hide the second row and the title while one of
+  // its items has its own screen (`ui/list-detail`).
   const [actionSlot, setActionSlot] = useState<HTMLDivElement | null>(null);
   const [subScreen, setSubScreen] = useState(false);
-  const chrome = useMemo<ScreenChrome>(() => ({ actionSlot, setSubScreen }), [actionSlot]);
+  const chrome = useMemo<ScreenChrome>(() => ({ actionSlot, setSubScreen, narrowQuery: SETTINGS_NARROW }), [actionSlot]);
   return (
-    <div className="space-y-3">
-      <div className={cn("flex flex-wrap items-end justify-between gap-x-4 gap-y-2", subScreen && "hidden")}>
-        <div className="min-w-0 space-y-1">
-          <button type="button" onClick={onBack} className="inline-flex min-h-11 items-center gap-1 text-sm text-ink-2 hover:text-ink md:min-h-0">
-            <ChevronLeftIcon className="size-4" aria-hidden="true" />
-            {backLabel}
-          </button>
-          <h2 className="font-display text-xl font-semibold text-ink">{PAGE_LABEL[page]}</h2>
+    <div className="space-y-5">
+      {pages.length > 1 ? (
+        <SubTabs
+          items={pages.map((p) => ({ value: p.id, label: p.label }))}
+          value={page}
+          onValueChange={(v) => onPage(v as AgentPageId)}
+          label="Settings pages"
+          idBase="agent"
+          className={cn(subScreen && "hidden")}
+        />
+      ) : null}
+      <div className={cn("flex items-end justify-between gap-x-4", subScreen && "hidden")}>
+        <div className="min-w-0">
+          <h2 className="font-display text-2xl font-semibold text-ink">{PAGE_LABEL[page]}</h2>
           <p className="text-sm text-ink-2">{page === "manage" ? `${SETTINGS_LEAD.manage} ${agentName}` : SETTINGS_LEAD[page]}</p>
         </div>
         <div ref={setActionSlot} className="shrink-0 empty:hidden" />
       </div>
-      <div className="space-y-4 md:flex md:items-start md:gap-6 md:space-y-0">
-        {pages.length > 1 ? (
-          <Tabs
-            variant="segmented"
-            items={pages.map((p) => ({ value: p.id, label: p.label }))}
-            value={page}
-            onValueChange={(v) => onPage(v as AgentPageId)}
-            label="Settings pages"
-            idBase="agent"
-            columnFromMd
-            className={cn("max-md:max-w-full max-md:flex-wrap md:w-52 md:shrink-0 md:flex-col md:bg-transparent md:p-0", subScreen && "hidden")}
-            tabClassName="md:w-full md:justify-start md:rounded-control md:px-3"
-          />
-        ) : null}
-        {/* The page body brings its own tabpanel wrapper (agent-page.tsx). */}
-        <div className="min-w-0 md:flex-1">
-          <ScreenChromeContext.Provider value={chrome}>{children}</ScreenChromeContext.Provider>
-        </div>
+      {/* The page body brings its own tabpanel wrapper (agent-page.tsx). */}
+      <div className="min-w-0">
+        <ScreenChromeContext.Provider value={chrome}>{children}</ScreenChromeContext.Provider>
       </div>
     </div>
   );

@@ -61,7 +61,7 @@ export function ChatPanel({
       ref={ref}
       onKeyDown={onKeyDown}
       className={cn(
-        "relative flex h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card md:h-[calc(100dvh-7.5rem)]",
+        "relative flex h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card md:h-[calc(100dvh-11rem)]",
         className,
       )}>
       <div {...inert} className={cn("min-h-0 min-w-0 flex-1 flex-col border-line lg:flex lg:flex-none lg:shrink-0 lg:border-r", listWide ? "lg:w-80" : "lg:w-58", threadOpen ? "hidden" : "flex")}>

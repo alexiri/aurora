@@ -157,7 +157,7 @@ test.describe("1280×800", () => {
       await expect(rail(page).getByRole("heading", { name: "Status", level: 2 })).toBeVisible();
       expect(await serious(page), "expanded").toEqual([]);
       await page.screenshot({ path: `${SHOTS}/expanded-1280-${scheme}.png` });
-      await page.getByRole("button", { name: "Settings" }).click();
+      await page.getByRole("tab", { name: "Settings" }).click();
       await expect(page.getByRole("tablist", { name: "Settings pages" })).toBeVisible();
       expect(await serious(page), "behaviour").toEqual([]);
     });
@@ -201,30 +201,23 @@ test.describe("1280×800", () => {
   }
 
   for (const scheme of ["light", "dark"] as const) {
-    test(`header is one ~56 px row, the card fills the height, the expanded rail overlays the thread below 1400 px (${scheme})`, async ({ page }) => {
+    test(`the header is the name row over the tab row, the card fills the height, the expanded rail overlays the thread below 1400 px (${scheme})`, async ({ page }) => {
       await page.addInitScript((k) => window.localStorage.setItem(k, "expanded"), KEY);
       await open(page, scheme);
       const header = pageHeader(page);
       const h = await sizeOf(header);
-      expect(h.height, "header height").toBeLessThanOrEqual(64);
-      // Breadcrumb above the name, beside the avatar; switcher and the Settings button on the same row.
+      // (D-507) Two rows: the 44 px name row, 12 px, the 40 px tab row.
+      expect(h.height, "header height").toBeLessThanOrEqual(100);
+      // Breadcrumb above the name, beside the avatar; the tabs on their own row under them, from the same left edge.
       const crumb = await sizeOf(page.getByRole("navigation", { name: "Breadcrumb" }));
       const name = await sizeOf(header.getByRole("heading", { level: 1 }));
       expect(crumb.y + crumb.height, "breadcrumb sits above the name").toBeLessThanOrEqual(name.y + 2);
-      const switcher = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }));
-      const actions = page.getByRole("button", { name: "Settings" });
-      const a = await sizeOf(actions);
-      // (D-408) A labelled button, not a 36 px icon: 36 px high, as wide as its words.
-      expect(Math.round(a.height)).toBe(36);
-      expect(a.width, "Settings keeps its label").toBeGreaterThan(80);
-      // FIX-186: the track ends where the last tab ends.
-      const lastTab = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab").last());
-      expect(Math.abs(switcher.x + switcher.width - (lastTab.x + lastTab.width)), "no empty track after the last tab").toBeLessThanOrEqual(4);
-      expect(a.x, "actions at the right of the switcher").toBeGreaterThan(switcher.x + switcher.width);
-      const rowMid = (b: { y: number; height: number }) => b.y + b.height / 2;
-      expect(Math.abs(rowMid(a) - rowMid(switcher)), "switcher and actions share a row").toBeLessThanOrEqual(4);
-      expect(switcher.y, "the switcher is inside the header").toBeGreaterThanOrEqual(h.y - 1);
-      expect(switcher.y + switcher.height).toBeLessThanOrEqual(h.y + h.height + 1);
+      const strip = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }));
+      expect(strip.y, "the tabs are under the name").toBeGreaterThanOrEqual(name.y + name.height);
+      expect(Math.abs(strip.x - h.x), "the tabs start at the content's left edge").toBeLessThanOrEqual(1);
+      expect(Math.abs(strip.width - h.width), "the tab row's line spans the content").toBeLessThanOrEqual(1);
+      expect(strip.y + strip.height).toBeLessThanOrEqual(h.y + h.height + 1);
+      await expect(header.getByRole("button", { name: "Settings" })).toHaveCount(0);
       // The card reaches the bottom of the window (a small margin) and the page does not scroll.
       const card = await sizeOf(chatCard(page));
       expect(800 - (card.y + card.height), "gap under the card").toBeLessThanOrEqual(40);
@@ -298,22 +291,27 @@ test.describe("phone, 390 px", () => {
       await open(page, scheme);
       const header = pageHeader(page);
       const h = await sizeOf(header);
-      // One row (back, avatar, name + status, actions) plus the section strip: well under two rows of 56.
+      // One row (back, avatar, name + status, Status on Chat) plus the tab row: well under two rows of 56.
       expect(h.height, "header height").toBeLessThanOrEqual(112);
       const back = await sizeOf(page.getByRole("link", { name: "Back to agents" }));
       const name = await sizeOf(header.getByRole("heading", { level: 1 }));
-      const actions = await sizeOf(page.getByRole("button", { name: "Settings" }));
+      const actions = await sizeOf(header.getByRole("button", { name: "Status" }));
       expect(back.width).toBeGreaterThanOrEqual(44);
-      expect(actions.width, "Settings keeps its label").toBeGreaterThan(80);
       expect(actions.height).toBeGreaterThanOrEqual(44);
       expect(Math.abs(back.y + back.height / 2 - (actions.y + actions.height / 2)), "back and actions share a row").toBeLessThanOrEqual(4);
       expect(name.y).toBeLessThan(back.y + back.height);
-      const tabs = page.getByRole("tablist", { name: "Agent sections" }).getByRole("tab");
-      for (let i = 0; i < (await tabs.count()); i += 1) expect((await sizeOf(tabs.nth(i))).height, `section tab ${i}`).toBeGreaterThanOrEqual(44);
-      // FIX-186: the tabs share the row, no empty track after the last one.
-      const strip = await sizeOf(page.getByRole("tablist", { name: "Agent sections" }));
-      const last = await sizeOf(tabs.last());
-      expect(Math.abs(strip.x + strip.width - (last.x + last.width)), "no empty track after the last tab").toBeLessThanOrEqual(4);
+      const strip = page.getByRole("tablist", { name: "Agent sections" });
+      const tabs = strip.getByRole("tab");
+      await expect(tabs).toHaveCount(4);
+      const tops = new Set<number>();
+      for (let i = 0; i < 4; i += 1) {
+        const box = await sizeOf(tabs.nth(i));
+        expect(box.height, `section tab ${i}`).toBeGreaterThanOrEqual(44);
+        tops.add(Math.round(box.y));
+      }
+      // (D-507) One line, and all four fit without scrolling.
+      expect(tops.size, "the tab row wrapped").toBe(1);
+      expect(await strip.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
       expect(await fits(page), "the page scrolls").toBeLessThanOrEqual(0);
       expect(await overflow(page)).toBeLessThanOrEqual(0);
       await page.screenshot({ path: `${SHOTS}/phone-header-${scheme}.png` });

@@ -61,22 +61,26 @@ for (const scheme of ["light", "dark"] as const) {
         expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);
         // The header's action (its own row under the name and state, at both widths) and the card's are the same one-click
-        // grant. The name stays visible and nothing runs under Status and Settings.
+        // grant. The name stays visible, nothing runs under Status, and the tab row is under the action.
         const header = page.locator("header").filter({ has: page.getByTestId("agent-state") });
         const headerGive = header.getByRole("button", { name: "Give Daneel the Company key" });
         await expect(headerGive).toBeVisible();
         await expect(header.getByRole("heading", { name: "Daneel", level: 1 })).toBeVisible();
         const nameBox = (await header.getByRole("heading", { name: "Daneel", level: 1 }).boundingBox())!;
         const stateBox = (await page.getByTestId("agent-state").boundingBox())!;
-        const settingsBox = (await header.getByRole("button", { name: "Settings" }).boundingBox())!;
-        expect(stateBox.x + stateBox.width, "the state line stays left of Settings").toBeLessThanOrEqual(settingsBox.x + 1);
+        if (width < 768) {
+          const statusBox = (await header.getByRole("button", { name: "Status" }).boundingBox())!;
+          expect(stateBox.x + stateBox.width, "the state line stays left of Status").toBeLessThanOrEqual(statusBox.x + 1);
+        }
         expect(nameBox.width, "the name is not squeezed out").toBeGreaterThan(30);
-        // (access-3, batch 8) The give-key row is its own row under the name and Settings at every width, full width.
+        // (access-3, batch 8) The give-key row is its own row under the name and state at every width, above the tabs.
         const giveBox = (await headerGive.boundingBox())!;
         const headerBox = (await header.boundingBox())!;
-        expect(giveBox.y, "the action sits under the name, the state and Settings").toBeGreaterThanOrEqual(
-          Math.max(nameBox.y + nameBox.height, stateBox.y + stateBox.height, settingsBox.y + settingsBox.height) - 1,
+        const tabsBox = (await header.getByRole("tablist", { name: "Agent sections" }).boundingBox())!;
+        expect(giveBox.y, "the action sits under the name and the state").toBeGreaterThanOrEqual(
+          Math.max(nameBox.y + nameBox.height, stateBox.y + stateBox.height) - 1,
         );
+        expect(giveBox.y + giveBox.height, "the action sits above the tabs").toBeLessThanOrEqual(tabsBox.y + 1);
         expect(giveBox.x + giveBox.width, "the action stays inside the header").toBeLessThanOrEqual(headerBox.x + headerBox.width + 1);
         await headerGive.click();
         // The header leaves "Can't answer" (the shared mock has approvals waiting, so it then reads "Needs you", not Ready).

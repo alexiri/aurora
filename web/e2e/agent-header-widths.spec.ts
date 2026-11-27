@@ -6,7 +6,7 @@ import { overflow } from "./support/open";
 
 // P5-REFINE-20 batch 9 (access-3 at 390, the agent header at tablet widths): at every width from 390 up the agent's name is
 // visible (h1 wider than 0), its state ("Can't answer: no AI key", the longest one) shows whole and is covered by nothing (not
-// Status, not Settings, not the section tabs), the page never scrolls sideways, and the give-key card's button wraps inside
+// Status, not the tab row), the page never scrolls sideways, and the give-key card's button wraps inside
 // its card. Mocked API, both themes.
 
 const GIVE = { action: "give_key", key: { secret_id: id(60), name: "Company key", scope: "organization" } };
@@ -123,7 +123,7 @@ for (const scheme of ["light", "dark"] as const) {
         const text = state.locator("span[aria-live]");
         expect(await text.evaluate((e) => e.scrollWidth - e.clientWidth), "the state text is not clipped").toBeLessThanOrEqual(0);
         const stateBox = await box(text);
-        const covers = [header.getByRole("button", { name: "Settings" }), header.getByRole("tablist")];
+        const covers = [header.getByRole("tablist")];
         if (width < 768) covers.push(header.getByRole("button", { name: "Status" }));
         for (const c of covers) expect(overlaps(stateBox, await box(c)), "the state is covered").toBe(false);
         // The state's own words are what is on top at their corners.

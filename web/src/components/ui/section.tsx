@@ -15,6 +15,7 @@ export function Section({
   description,
   actions,
   card = false,
+  pageTitle = false,
   children,
   className,
 }: {
@@ -23,6 +24,8 @@ export function Section({
   description?: ReactNode;
   actions?: ReactNode;
   card?: boolean;
+  /** The section is the whole page under a tab row: its heading has a page title's size. */
+  pageTitle?: boolean;
   children: ReactNode;
   className?: string;
 }) {
@@ -30,7 +33,7 @@ export function Section({
     <section id={id} aria-labelledby={`${id}-h`} className={cn("space-y-3", className)}>
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
-          <h2 id={`${id}-h`} className="font-display text-base font-semibold text-ink">
+          <h2 id={`${id}-h`} className={cn("font-display font-semibold text-ink", pageTitle ? "text-2xl" : "text-base")}>
             {title}
           </h2>
           {description ? <p className="mt-0.5 text-sm text-ink-2">{description}</p> : null}

@@ -218,7 +218,7 @@ for (const scheme of ["light", "dark"] as const) {
     });
   }
 
-  // 768 px too: the rail and the settings sub-nav leave the list about 300 px there.
+  // 768 px too: beside the rail there is no room for two columns there.
   for (const width of [390, 768]) test.describe(`skills, ${width} px, ${scheme}`, () => {
     test.use({ viewport: { width, height: 800 } });
 

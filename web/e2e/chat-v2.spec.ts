@@ -233,9 +233,9 @@ test.describe("layout, 1280 px", () => {
       await page.screenshot({ path: `${dir}/chat-${scheme}-1280x800.png` });
       expect(await serious(page)).toEqual([]);
       // (D-200, D-408) Every section has the same one-line header; Pause and Delete are on Settings › Manage.
-      await page.getByRole("button", { name: "Settings" }).click();
+      await page.getByRole("tab", { name: "Settings" }).click();
       await expect(page.getByRole("heading", { name: "Instructions", level: 2 })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Settings" })).toBeVisible();
+      await expect(page.getByRole("tab", { name: "Settings", selected: true })).toBeVisible();
       // (P5-POLISH-6) The model field is "Model"; the roles and the subagent default sit under Advanced.
       await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
       // (P5-REFINE-3, P5-REFINE-12) Advanced is Expert: at Use it is one collapsed line whose Show opens it in place.

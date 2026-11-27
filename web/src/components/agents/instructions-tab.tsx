@@ -181,8 +181,8 @@ export function InstructionsTab({
   return (
     <div className="space-y-6">
       {/* (FIX-212) Fields share a line when the form itself is wide enough (`@container` + `@xl:`, 36 rem), not from a
-          viewport breakpoint: beside the sidebar and the Settings sub-nav the form is ~230 px at 768 px, and fixed md:w-80
-          columns made the page scroll 330 px sideways (agent-tabs.spec at 768 px). */}
+          viewport breakpoint: beside the sidebar the form is narrow at 768 px, and fixed md:w-80 columns once made the page
+          scroll 330 px sideways (agent-tabs.spec at 768 px). */}
       <form onSubmit={(e) => void submit(e)} noValidate className="@container space-y-5 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
         {/* (FIX-212) Who it is: the picture and the name share a line from md. */}
         <div className="space-y-5 @xl:flex @xl:items-start @xl:gap-6 @xl:space-y-0">
