@@ -40,7 +40,7 @@ describe("DiffView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show 20 more lines above (lines 1 to 20)" }));
     expect(folds()).toHaveLength(2);
     expect(folds()[0].textContent).toContain("26 unchanged lines");
-    const texts = lineRows().map((r) => r.cells[2].textContent);
+    const texts = lineRows().map((r) => (r as HTMLTableRowElement).cells[2].textContent);
     expect(texts.slice(0, 20)).toEqual(Array.from({ length: 20 }, (_, i) => `  line ${i + 1}`));
     // The revealed lines sit above the context of the change.
     expect(texts[20]).toBe("  line 47");
@@ -50,7 +50,7 @@ describe("DiffView", () => {
     render(<DiffView old={big().old} next={big().next} label="d" />);
     fireEvent.click(screen.getByRole("button", { name: "Show 20 more lines below (lines 27 to 46)" }));
     expect(folds()[0].textContent).toContain("26 unchanged lines");
-    const texts = lineRows().map((r) => r.cells[2].textContent);
+    const texts = lineRows().map((r) => (r as HTMLTableRowElement).cells[2].textContent);
     // The revealed lines are the fold's last 20, then the change's context follows.
     expect(texts.slice(0, 20)).toEqual(Array.from({ length: 20 }, (_, i) => `  line ${i + 27}`));
     expect(texts[20]).toBe("  line 47");

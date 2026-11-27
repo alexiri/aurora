@@ -26,7 +26,7 @@ import {
   type TemplateSkillRefView,
   type TemplateVersionDetail,
 } from "@/lib/api/agent-templates";
-import { diffTemplateContent, type AppNamer, type TemplateChange, type TemplateDiff } from "@/lib/template-diff";
+import { diffTemplateContent, type TemplateChange, type TemplateDiff } from "@/lib/template-diff";
 import { adminRoutes } from "@/lib/routes";
 import { formatCount } from "@/lib/format-date";
 
