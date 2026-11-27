@@ -67,7 +67,7 @@ function useSkillRows(page: SkillPage) {
  */
 export function SkillsList({ page }: { page: SkillPage }) {
   const { query, rows } = useSkillRows(page);
-  const narrowNow = useNarrowScreen();
+  const narrow = useNarrowScreen();
   const leave = useLeaveGate();
   const saved = useSaveBar();
   const params = useSearchParams();
@@ -94,14 +94,6 @@ export function SkillsList({ page }: { page: SkillPage }) {
   }, []);
 
   const [form, setForm] = useState<Form>(null);
-  // The two layouts are different trees: switching while a form is open would mount it again and lose what was typed
-  // (a window dragged across the breakpoint, a phone turned sideways). The layout it was opened in is kept until it closes.
-  const [formNarrow, setFormNarrow] = useState(false);
-  const narrow = form ? formNarrow : narrowNow;
-  const openForm = (next: Exclude<Form, null>) => {
-    setFormNarrow(narrowNow);
-    setForm(next);
-  };
   const [filter, setFilter] = useState<SkillFilter>("all");
   const [q, setQ] = useState("");
   const [comparing, setComparing] = useState<SkillRow | null>(null);
@@ -133,7 +125,7 @@ export function SkillsList({ page }: { page: SkillPage }) {
   const startNew = () =>
     leave.ask(() => {
       saved.clear();
-      openForm({ kind: "new" });
+      setForm({ kind: "new" });
     });
   const show = (id: string) => {
     leaveForm();
@@ -229,7 +221,7 @@ export function SkillsList({ page }: { page: SkillPage }) {
         onToggle={toggle}
         onEdit={() => {
           saved.clear();
-          openForm({ kind: "edit", key: current.key });
+          setForm({ kind: "edit", key: current.key });
         }}
         onBack={back}
         onRemoved={() => select(null)}

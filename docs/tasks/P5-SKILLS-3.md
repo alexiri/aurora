@@ -223,12 +223,28 @@ the compact list now uses master's `row-rail`), and the commit that adds this re
 
 - **The Add file dialog saved the whole skill.** A portal's submit bubbles through React to the editor's form; fixed
   with `stopPropagation`, covered by `skill-form.test.tsx`.
-- **A resize across 1100 px lost what was typed** (a Playwright full-page capture did it): `ListDetail`'s two layouts
-  are different trees. The skills page keeps the layout a form was opened in until it closes. **The Memory page uses
-  the same component and probably has the same loss**; not changed here (not this brief's files).
+- **A resize across 1100 px lost what was typed** (a Playwright full-page capture did it), in the Memory editor too:
+  fixed after review, below (item 2).
 - At 768 px the table's name column had no width; it now follows the table's own width (`@container`).
 - `tailwind-merge` reads `text-label` as a colour and drops it beside `text-*` colours, so **every `Badge` renders at
   14 px** app-wide. The skill chips and tags set `text-xs`; `ui/badge.tsx` is not changed.
+
+### After the review (2026-11-27): two items, one commit each
+
+1. **Outside text fetches nothing** (`ff64230c`): see Security notes. `ui/markdown.tsx`, `ui/markdown-pipeline.ts`
+   and `ui/markdown-editor.tsx` gain the `images` option; the default is unchanged (the conformance cases pass).
+2. **Crossing 1100 px keeps what was typed** (the commit that adds this section). `ListDetail` returned two different
+   trees, so React mounted the item's pane again. It is now one tree with keyed panes (still only one pane on a narrow
+   screen), and the three panes that were a `Card` when wide and bare when narrow (Memory editor, skill editor, skill
+   panel) are one `Card` with `BARE_ON_NARROW`, so open files and a half-filled **Add a file** stay too. The skills
+   page's earlier work-around (keeping the layout a form was opened in) is removed. `tests/narrow-switch.test.tsx`
+   changes the `matchMedia` answer with a form open, from wide and from narrow, for both Memory forms and both skill
+   forms: with the work-around removed and `ListDetail` unchanged, **8 of 8 failed**. The Memory reading and history
+   views still swap elements between layouts; they hold nothing typed.
+
+Item 1's four new cases failed first (seven fetching elements rendered). On the final tree: vitest over the touched
+and related files with the four drift guards and the Markdown conformance files **956/956** (18 files); mocked
+Playwright `skills` and `memory` **42/42**; `pnpm typecheck` and eslint on the touched files clean.
 
 ### Comparison with the mockups
 

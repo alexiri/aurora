@@ -504,6 +504,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     `SubScreenHeader` ("‹ <list>" and the item's actions), and the surrounding
     settings heading and sub-nav are hidden on the item's screen. `HeaderActions`
     puts a page's main action beside the settings heading (inline without one).
+    (P5-SKILLS-3) Crossing 1100 px never mounts the item's pane again, so a form
+    keeps what was typed and what was opened: `ListDetail` is one tree for both
+    layouts (keyed panes), and a pane that is a card on a wide screen and bare on
+    a narrow one is the same `Card` with `BARE_ON_NARROW`, never two elements.
   - **CopyChip** (`ui/copy-value.tsx`) [P5-MEMORY-2]: a short identifier as an
     inline monospace chip with a copy button named "Copy <label>".
   - **Markdown marks** [P5-MEMORY-2]: `Markdown marks={terms}` wraps each

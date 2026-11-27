@@ -6,7 +6,7 @@ import { setLeaveGuard } from "@/components/agents/files/leave-gate";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Field, inputClass } from "@/components/ui/field";
-import { SubScreenHeader } from "@/components/ui/list-detail";
+import { BARE_ON_NARROW, SubScreenHeader } from "@/components/ui/list-detail";
 import { MarkdownEditor } from "@/components/ui/markdown-editor";
 import { ErrorNotice } from "@/components/ui/notice";
 import { SaveBar } from "@/components/ui/save-bar";
@@ -324,7 +324,7 @@ export function SkillEditor({
   return (
     <div className="min-w-0 space-y-3">
       {narrow ? <SubScreenHeader backLabel="Skills" onBack={onBack} /> : null}
-      {narrow ? form : <Card>{form}</Card>}
+      <Card className={narrow ? BARE_ON_NARROW : undefined}>{form}</Card>
       {/* Room for the bar fixed at the bottom of the window, so it never covers the last control. */}
       {barDirty ? <div aria-hidden="true" className="h-16" /> : null}
     </div>

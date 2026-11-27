@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ActivityIcon, LockIcon, MoreIcon } from "@/components/ui/icons";
-import { SubScreenHeader } from "@/components/ui/list-detail";
+import { BARE_ON_NARROW, SubScreenHeader } from "@/components/ui/list-detail";
 import { Markdown } from "@/components/ui/markdown";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
@@ -296,7 +296,7 @@ export function SkillPanel({
   return (
     <div className="min-w-0 space-y-3">
       {narrow ? <SubScreenHeader backLabel="Skills" onBack={onBack} /> : null}
-      {narrow ? content : <Card>{content}</Card>}
+      <Card className={narrow ? BARE_ON_NARROW : undefined}>{content}</Card>
     </div>
   );
 }
