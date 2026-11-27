@@ -1295,6 +1295,223 @@ async fn a_mapping_never_grants_a_role_in_a_personal_workspace() {
     );
 }
 
+// ---- (FIX-261, D-501, SEC-161) the claim sync and a suspended binding ----
+
+/// [`mappings`] plus: `it-members` (the `it` org only) and `it-infra-member` (the org and
+/// `infra` as a plain member).
+fn suspension_provider(p: &mut OidcProvider) {
+    roles_provider(p);
+    p.role_mappings
+        .push(map("it-members", |m| m.org = org("it", "member")));
+    p.role_mappings.push(map("it-infra-member", |m| {
+        m.org = org("it", "member");
+        m.workspaces = vec![OidcWorkspaceRole {
+            slug: "infra".into(),
+            role: "member".into(),
+        }];
+    }));
+}
+
+/// E signed in with `it-ai-team` (claim-managed `owner` of `infra`), a second owner keeping
+/// `it` ownable, and a group holding E bound to `infra`.
+struct Claimed {
+    idp: MockIdp,
+    h: Harness,
+    org: Uuid,
+    infra: Uuid,
+    uid: Uuid,
+    group: Uuid,
+}
+
+impl Claimed {
+    async fn new() -> Self {
+        let idp = MockIdp::start().await;
+        let h = harness(&idp, SignupMode::InviteOnly, suspension_provider, &[]).await;
+        set_roles(&idp, E, "s1", json!(["it-ai-team"]));
+        sign_in(&h).await.unwrap();
+        let uid = user_id(&h, E).await;
+        let org: Uuid = sqlx::query_scalar("SELECT id FROM organizations WHERE slug = 'it'")
+            .fetch_one(h.pool())
+            .await
+            .unwrap();
+        let infra: Uuid =
+            sqlx::query_scalar("SELECT id FROM workspaces WHERE org_id = $1 AND slug = 'infra'")
+                .bind(org)
+                .fetch_one(h.pool())
+                .await
+                .unwrap();
+        let other = h.user("o2@example.com", false).await;
+        h.member(org, other, "owner", "active").await;
+        let group = Uuid::now_v7();
+        sqlx::query("INSERT INTO groups (id, org_id, name) VALUES ($1, $2, 'side-door')")
+            .bind(group)
+            .bind(org)
+            .execute(h.pool())
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO group_workspace_access (group_id, workspace_id, org_id, role) \
+             VALUES ($1, $2, $3, 'member')",
+        )
+        .bind(group)
+        .bind(infra)
+        .bind(org)
+        .execute(h.pool())
+        .await
+        .unwrap();
+        let this = Claimed {
+            idp,
+            h,
+            org,
+            infra,
+            uid,
+            group,
+        };
+        this.join_group().await;
+        this
+    }
+
+    async fn join_group(&self) {
+        sqlx::query("INSERT INTO group_members (group_id, org_id, user_id) VALUES ($1, $2, $3)")
+            .bind(self.group)
+            .bind(self.org)
+            .bind(self.uid)
+            .execute(self.h.pool())
+            .await
+            .unwrap();
+    }
+
+    async fn group_memberships(&self) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM group_members WHERE user_id = $1")
+            .bind(self.uid)
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap()
+    }
+
+    async fn suspend(&self) {
+        sqlx::query(
+            "UPDATE workspace_access SET status = 'suspended' \
+             WHERE workspace_id = $1 AND user_id = $2",
+        )
+        .bind(self.infra)
+        .bind(self.uid)
+        .execute(self.h.pool())
+        .await
+        .unwrap();
+    }
+
+    async fn sign_in_with(&self, roles: Value) {
+        set_roles(&self.idp, E, "s1", roles);
+        sign_in(&self.h).await.unwrap();
+    }
+
+    /// E's `infra` row: `(role, status, claim-managed)`.
+    async fn row(&self) -> Option<(String, String, bool)> {
+        sqlx::query_as(
+            "SELECT role, status, idp_source IS NOT NULL FROM workspace_access \
+             WHERE workspace_id = $1 AND user_id = $2",
+        )
+        .bind(self.infra)
+        .bind(self.uid)
+        .fetch_optional(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    async fn can_use(&self) -> bool {
+        aurora_db::repo::gateway::can_use(self.h.pool(), self.infra, self.uid)
+            .await
+            .unwrap()
+    }
+
+    async fn infra_audits(&self, action: &str) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1 AND workspace_id = $2")
+            .bind(action)
+            .bind(self.infra)
+            .fetch_one(self.h.pool())
+            .await
+            .unwrap()
+    }
+}
+
+fn row(role: &str, status: &str, managed: bool) -> Option<(String, String, bool)> {
+    Some((role.into(), status.into(), managed))
+}
+
+#[tokio::test]
+async fn a_lapsed_claim_never_removes_a_suspended_binding() {
+    let c = Claimed::new().await;
+    c.suspend().await;
+    assert!(!c.can_use().await);
+    let sets = c.infra_audits("workspace_access.set").await;
+    c.sign_in_with(json!(["it-members"])).await;
+    assert_eq!(c.row().await, row("owner", "suspended", true));
+    assert_eq!(c.group_memberships().await, 1, "still in the bound group");
+    assert!(!c.can_use().await, "the group's access must not come back");
+    assert_eq!(c.infra_audits("workspace_access.remove").await, 0);
+    assert_eq!(c.infra_audits("workspace_access.set").await, sets);
+}
+
+/// An active claim-managed binding goes with its claim, as before.
+#[tokio::test]
+async fn a_lapsed_claim_still_removes_an_active_binding() {
+    let c = Claimed::new().await;
+    c.sign_in_with(json!(["it-members"])).await;
+    assert_eq!(c.row().await, None);
+    assert_eq!(c.infra_audits("workspace_access.remove").await, 1);
+}
+
+/// A claim that raised a manual role lapses: the suspended binding is not lowered back.
+#[tokio::test]
+async fn a_lapsed_claim_never_lowers_a_suspended_binding() {
+    let c = Claimed::new().await;
+    sqlx::query(
+        "UPDATE workspace_access SET base_role = 'member' \
+         WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(c.infra)
+    .bind(c.uid)
+    .execute(c.h.pool())
+    .await
+    .unwrap();
+    c.suspend().await;
+    c.sign_in_with(json!(["it-members"])).await;
+    assert_eq!(c.row().await, row("owner", "suspended", true));
+}
+
+/// A claim that now maps a weaker role: the suspended binding keeps its role; an active one is
+/// lowered as before.
+#[tokio::test]
+async fn a_weaker_claim_lowers_only_an_active_binding() {
+    let c = Claimed::new().await;
+    c.suspend().await;
+    c.sign_in_with(json!(["it-infra-member"])).await;
+    assert_eq!(c.row().await, row("owner", "suspended", true));
+
+    let c = Claimed::new().await;
+    c.sign_in_with(json!(["it-infra-member"])).await;
+    assert_eq!(c.row().await, row("member", "active", true));
+}
+
+/// The org claim lapses (the membership and the group memberships go) and comes back: the
+/// suspension is still there, so neither the claim nor the group gives access again.
+#[tokio::test]
+async fn losing_and_regaining_the_org_claim_keeps_the_suspension() {
+    let c = Claimed::new().await;
+    c.suspend().await;
+    c.sign_in_with(json!([])).await;
+    assert_eq!(org_role(&c.h, "it", E).await, None, "left the org");
+    assert_eq!(c.group_memberships().await, 0, "left every group");
+    assert_eq!(c.row().await, row("owner", "suspended", true));
+
+    c.sign_in_with(json!(["it-ai-team"])).await;
+    assert!(org_role(&c.h, "it", E).await.is_some(), "re-joined");
+    c.join_group().await;
+    assert_eq!(c.row().await, row("owner", "suspended", true));
+    assert!(!c.can_use().await, "access must not come back by itself");
+}
+
 /// (FIX-244) A claim-sourced binding in a personal workspace that predated the rule is never
 /// unbound or lowered by the sync — neither the owner's nor anybody else's.
 #[tokio::test]
