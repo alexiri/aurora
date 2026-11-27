@@ -532,6 +532,17 @@ async fn the_idle_reader_records_what_the_child_did_after_the_turn() {
         ),
         "{idle:?}"
     );
+    // (FIX-253 review, medium 5) The idle run's own usage leaves with it, once and in a turn's
+    // shape (the run's `result`), so the API can count it.
+    let usage: Vec<&serde_json::Value> = idle
+        .iter()
+        .filter_map(|e| match e {
+            HarnessEvent::Usage { usage } => Some(usage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(usage.len(), 1, "{idle:?}");
+    assert_eq!(usage[0]["output_tokens"], 30, "{idle:?}");
     // Drained: a second drain is empty (no duplication).
     assert!(s.take_idle_events().is_empty());
 

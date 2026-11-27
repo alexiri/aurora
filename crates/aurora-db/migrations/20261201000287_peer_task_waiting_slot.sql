@@ -10,3 +10,7 @@ CREATE UNIQUE INDEX peer_tasks_one_open_uq ON peer_tasks (from_agent_id, to_agen
 -- FIX-253 (security review, medium 3): how many times the task was woken. A task is woken a
 -- bounded number of times without a report, so an agent cannot chain waits until its expiry.
 ALTER TABLE peer_tasks ADD COLUMN wakes_used integer NOT NULL DEFAULT 0 CHECK (wakes_used >= 0);
+-- FIX-253 (security review, medium 5): what the idle harness child spends after a turn is added
+-- to the usage ledger. This is the number of the last idle usage event counted for the turn, so a
+-- redelivered report counts nothing twice.
+ALTER TABLE turns ADD COLUMN idle_usage_n bigint NOT NULL DEFAULT 0 CHECK (idle_usage_n >= 0);

@@ -165,7 +165,15 @@ pub trait HarnessSession: Send {
   still leaves work); it keeps at most 256 events for the next drain. The
   supervisor drains on the harvest tick and reports what it got as
   `turn.idle.events` anchored on the turn that ended (`16 §W5`). The reader
-  forwards only text and tool calls; a `result` of an idle run ends nothing.
+  forwards text, tool calls and each idle run's usage (the usage of its
+  `result`, in a turn's shape; the per-message reports of the stream are
+  dropped, and usage is never dropped by the buffer bound); a `result` of an
+  idle run ends nothing. The API adds that usage to the usage ledger by the
+  same trust rule as a turn's (tokens only, no turn and no seconds, once per
+  event). In a peer task's conversation whose message budget is used up it
+  records nothing more and says so once. **Only the recording stops: the idle
+  work itself is not stopped by a budget** (stopping it by a token budget
+  needs usage limits, which do not exist yet).
   The API records them only against the conversation's latest finished turn
   run on the current boot, at most 500 entries per such turn and 2,000 per
   conversation; beyond that one notice says more activity was not recorded and

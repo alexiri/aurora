@@ -80,6 +80,62 @@ pub async fn record_turn(conn: &mut PgConnection, turn: Uuid) -> Result<(), DbEr
     Ok(())
 }
 
+/// (FIX-253) Add what the idle harness child spent after `turn` ended to the ledger, once per
+/// numbered usage event: tokens only (no turn, no seconds), on today's day, under the same keys
+/// as [`record_turn`]. `usage` is already reduced by the trust rule. Returns whether it was
+/// counted now (`false`: a redelivery).
+pub async fn record_idle(
+    conn: &mut PgConnection,
+    turn: Uuid,
+    n: i64,
+    usage: &serde_json::Value,
+) -> Result<bool, DbError> {
+    let fresh = sqlx::query(
+        "UPDATE turns SET idle_usage_n = $2 WHERE id = $1 AND role = 'turn' AND idle_usage_n < $2",
+    )
+    .bind(turn)
+    .bind(n)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected()
+        == 1;
+    if !fresh {
+        return Ok(false);
+    }
+    sqlx::query(
+        "INSERT INTO usage_daily (org_id, workspace_id, agent_id, day, provider, endpoint_id, model, turns,
+                                  turn_seconds, input_tokens, output_tokens, cache_read_tokens,
+                                  cache_write_tokens)
+         SELECT a.org_id, c.workspace_id, t.agent_id, (now() AT TIME ZONE 'UTC')::date,
+                NULLIF(COALESCE($2::jsonb ->> 'provider', t.model_basis ->> 'provider'), ''),
+                NULLIF(COALESCE($2::jsonb ->> 'endpoint_id', t.model_basis ->> 'endpoint_id'), ''),
+                NULLIF(COALESCE(e ->> 'model', $2::jsonb ->> 'model', t.model_basis ->> 'model'), ''),
+                0, 0,
+                sum(usage_counter(e -> 'input_tokens')), sum(usage_counter(e -> 'output_tokens')),
+                sum(usage_counter(e -> 'cache_read_tokens')),
+                sum(usage_counter(e -> 'cache_write_tokens'))
+         FROM turns t
+         JOIN conversations c ON c.id = t.conversation_id
+         JOIN agents a ON a.id = t.agent_id
+         CROSS JOIN LATERAL jsonb_array_elements(
+             CASE WHEN usage_has_breakdown($2::jsonb) THEN $2::jsonb -> 'by_model'
+                  ELSE jsonb_build_array($2::jsonb) END) AS e
+         WHERE t.id = $1 AND jsonb_typeof(e) = 'object'
+         GROUP BY 1, 2, 3, 4, 5, 6, 7
+         ON CONFLICT (workspace_id, agent_id, day, provider, endpoint_id, model) DO UPDATE SET
+             input_tokens = usage_daily.input_tokens + EXCLUDED.input_tokens,
+             output_tokens = usage_daily.output_tokens + EXCLUDED.output_tokens,
+             cache_read_tokens = usage_daily.cache_read_tokens + EXCLUDED.cache_read_tokens,
+             cache_write_tokens = usage_daily.cache_write_tokens + EXCLUDED.cache_write_tokens,
+             updated_at = now()",
+    )
+    .bind(turn)
+    .bind(usage)
+    .execute(conn)
+    .await?;
+    Ok(true)
+}
+
 /// (C-1002) One run of the runtime rollup at time `at` (the job passes the database clock): recompute
 /// `runtime_daily.awake_seconds` for every (agent, UTC day) touched by an interval that is open or changed
 /// since the watermark minus five minutes (all intervals when there is no watermark), then move the

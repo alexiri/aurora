@@ -473,7 +473,10 @@ its last tool call is written as durable `text` events before the `error` event 
   `{ turn_id, message_id, text }` and `after_turn.tool`/`after_turn.tool_end`
   `{ turn_id, call_id, name, summary, ok }` events of that conversation — the child's own text
   and tool calls, masked like every displayed text, once per message/call, at most 100 entries
-  per report. They are the idle run's only trace: attributed to the agent, anchored on the turn
+  per report, 500 per anchor turn and 2,000 per conversation, and none in a peer task's
+  conversation whose message budget is used up (one notice says what was not recorded). What
+  the idle runs spent is added to the usage ledger (`§Usage and metering`) in all these cases;
+  the budget stops the recording, not the idle work. They are the idle run's only trace: attributed to the agent, anchored on the turn
   that ended, and folded in the web under **"Worked after the turn"**. Idle platform-tool calls
   are refused `no_active_turn` (`16 §W5`), so nothing here raises or bypasses an approval.
 - **A promise without a wake (FIX-253, D-490).** When an agent turn ends `done` in a delegated

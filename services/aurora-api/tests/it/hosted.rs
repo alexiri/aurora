@@ -908,6 +908,119 @@ async fn idle_events_without_ids_are_deduplicated_by_their_number() {
     assert_eq!(after_turn_entries(&r, lv.conv).await.0, 6, "later events");
 }
 
+/// `(turns, input tokens, output tokens)` of the agent in the usage ledger.
+async fn ledger(r: &Rig, agent: Uuid) -> (i64, i64, i64) {
+    sqlx::query_as(
+        "SELECT COALESCE(sum(turns), 0)::bigint, COALESCE(sum(input_tokens), 0)::bigint,
+                COALESCE(sum(output_tokens), 0)::bigint
+         FROM usage_daily WHERE agent_id = $1",
+    )
+    .bind(agent)
+    .fetch_one(r.h.pool())
+    .await
+    .unwrap()
+}
+
+/// One idle run's usage event, numbered `n`.
+fn idle_usage(n: u64) -> Value {
+    ev(
+        n,
+        "usage",
+        json!({"usage": {"input_tokens": 100, "output_tokens": 10}}),
+    )
+}
+
+/// (FIX-253 review, medium 5) An idle run's tokens are counted like a turn's: added to the usage
+/// ledger (no extra turn), once however often the report is redelivered — also when the anchor
+/// is no longer the latest turn and nothing else of the report is recorded.
+#[tokio::test]
+async fn idle_usage_is_added_to_the_usage_ledger_once() {
+    let r = rig().await;
+    let (lv, first) = idle_after_one_turn(&r, "idleusage").await;
+    let (turns, input, output) = ledger(&r, lv.agent).await;
+    assert_eq!((turns, input, output), (1, 0, 0));
+
+    let report = |turn: &str, n: u64| {
+        json!({"kind": "turn.idle.events", "turn_id": turn,
+        "events": [idle_usage(n)]})
+    };
+    r.report(&lv, report(&first, 1)).await;
+    r.report(&lv, report(&first, 1)).await;
+    assert_eq!(ledger(&r, lv.agent).await, (1, 100, 10), "redelivery");
+    r.report(&lv, report(&first, 2)).await;
+    assert_eq!(ledger(&r, lv.agent).await, (1, 200, 20));
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 0, "no entry");
+
+    r.say(lv.conv, "again").await;
+    let second = r.deliver().await["turn_id"].as_str().unwrap().to_owned();
+    run_turn_to_done(&r, &lv, &second).await;
+    assert_eq!(r.report(&lv, report(&first, 3)).await, "invalid");
+    assert_eq!(ledger(&r, lv.agent).await, (2, 300, 30), "spent is spent");
+}
+
+/// (FIX-253 review, medium 5) In a peer task's conversation whose message budget is used up,
+/// nothing more is recorded and one line says so; the idle run's tokens are still counted.
+#[tokio::test]
+async fn idle_work_of_a_task_over_budget_is_counted_but_not_recorded() {
+    let r = rig().await;
+    let (lv, turn) = idle_after_one_turn(&r, "idlebudget").await;
+    let sender = r.agent("idlesender", false).await;
+    let origin = r.direct(sender).await;
+    let mut conn = r.h.pool().acquire().await.unwrap();
+    let (link, _) =
+        aurora_db::repo::agent_links::get_or_create(&mut conn, sender, lv.agent, "allow")
+            .await
+            .unwrap();
+    let task = aurora_db::repo::peer_tasks::insert(
+        &mut conn,
+        &aurora_db::repo::peer_tasks::NewPeerTask {
+            id: Uuid::now_v7(),
+            link_id: link.id,
+            from_agent_id: sender,
+            to_agent_id: lv.agent,
+            requester_user_id: None,
+            origin_conversation_id: origin,
+            task_conversation_id: lv.conv,
+            status: "open",
+            message_budget: 20,
+            ttl_secs: 3600.0,
+        },
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    // Under budget: recorded as anywhere.
+    r.report(&lv, idle_calls(&turn, 0, 1)).await;
+    assert_eq!(after_turn_entries(&r, lv.conv).await.0, 1);
+
+    sqlx::query("UPDATE peer_tasks SET messages_used = message_budget WHERE id = $1")
+        .bind(task.id)
+        .execute(r.h.pool())
+        .await
+        .unwrap();
+    for n in [10, 20] {
+        r.report(
+            &lv,
+            json!({"kind": "turn.idle.events", "turn_id": turn, "events": [
+                ev(n, "tool.started", json!({"call_id": format!("late{n}"), "name": "Bash",
+                    "summary": "Bash: true"})),
+                idle_usage(n + 1),
+            ]}),
+        )
+        .await;
+    }
+    let (entries, capped) = after_turn_entries(&r, lv.conv).await;
+    assert_eq!(entries, 1, "nothing more is recorded");
+    assert_eq!(capped.len(), 1, "{capped:?}");
+    assert_eq!(
+        capped[0]["text"],
+        "More background activity happened but was not recorded: this task has used its message \
+         budget."
+    );
+    assert_eq!(ledger(&r, lv.agent).await, (1, 200, 20), "still counted");
+}
+
 /// (FIX-253, D-490) The harness child's own background work, reported by the supervisor as a
 /// `background` turn event: one visible **Background activity** notice (deduped while it keeps
 /// running), and Stop on a finished turn records **Stop requested** and dispatches one

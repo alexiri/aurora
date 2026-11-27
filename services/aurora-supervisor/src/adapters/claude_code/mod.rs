@@ -324,9 +324,15 @@ impl ClaudeSession {
                 drop(lines);
                 let mut b = buf.lock().unwrap_or_else(|e| e.into_inner());
                 for e in m.events {
-                    if b.len() < IDLE_BUFFER {
+                    // The per-message usage reports of the stream would count a run twice.
+                    if !matches!(e, HarnessEvent::Usage { .. }) && b.len() < IDLE_BUFFER {
                         b.push(e);
                     }
+                }
+                // (FIX-253 review, medium 5) The run's usage is its `result`'s, in a turn's
+                // shape. It is never dropped by the bound: those tokens were spent.
+                if let Some(HarnessEvent::Done { usage: Some(usage) }) = m.terminal {
+                    b.push(HarnessEvent::Usage { usage });
                 }
             }
             active.store(false, Ordering::SeqCst);
