@@ -917,6 +917,85 @@ async fn a_reminder_press_sets_one_one_time_schedule_for_the_presser() {
     assert_eq!(n, 1);
 }
 
+/// (FIX-253 fixes2 E) The reminder press writes into the conversation and starts agent work, so it
+/// honors the same gates as sending a message: an archived conversation is refused (restore it to
+/// write again), and a frozen agent is refused (423 `frozen`).
+#[tokio::test]
+async fn a_reminder_press_refuses_an_archived_conversation_and_a_frozen_agent() {
+    use crate::common::cookie;
+    use crate::peers_rig::Person;
+    use aurora_api::domains::hosted::lifecycle;
+    let d = duo().await;
+    let task = Rig::id(&d.send("one").await["peer_task_id"]);
+    let pc = d.rig.peer_conversation(task).await;
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    let turn = d.rig.running_turn(pc).await.unwrap();
+    lifecycle::finish(&mut conn, turn, "done", None, None, None)
+        .await
+        .unwrap();
+    drop(conn);
+    let uri = format!("/v1/conversations/{pc}/reminder");
+    let count = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM schedules WHERE origin_conversation_id = $1",
+        )
+        .bind(pc)
+        .fetch_one(d.rig.h.pool())
+        .await
+        .unwrap()
+    };
+
+    // Archived: refused before anything is created, with the restore hint.
+    let (code, _) = d
+        .rig
+        .post(&d.rig.p, &format!("/v1/conversations/{pc}/archive"), None)
+        .await;
+    assert_eq!(code, 200);
+    let (code, body) = d
+        .rig
+        .post(&d.rig.p, &uri, Some(json!({"turn_id": turn})))
+        .await;
+    assert_eq!(code, 409, "{body}");
+    assert_eq!(body["error"]["code"], "conversation_archived", "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        "This conversation is archived. Restore it to write again."
+    );
+    assert_eq!(count().await, 0);
+    assert_eq!(d.rig.notices(pc, "no_wakeup_set").await.len(), 0);
+
+    // Restored but the agent frozen: refused with the frozen error.
+    let (code, _) = d
+        .rig
+        .post(&d.rig.p, &format!("/v1/conversations/{pc}/unarchive"), None)
+        .await;
+    assert_eq!(code, 200);
+    let oid = d.rig.h.user("own-e@x.io", false).await;
+    d.rig.h.member(d.rig.org, oid, "member", "active").await;
+    d.rig.h.bind_ws(d.rig.ws1, oid, "owner").await;
+    let (_, tok) = d.rig.h.good_session(oid).await;
+    let owner = Person {
+        id: oid,
+        cookie: cookie(&tok),
+    };
+    let (code, body) = d
+        .rig
+        .post(
+            &owner,
+            &format!("/v1/agents/{}/freeze", d.b),
+            Some(json!({"reason": "gate"})),
+        )
+        .await;
+    assert_eq!(code, 200, "{body}");
+    let (code, body) = d
+        .rig
+        .post(&d.rig.p, &uri, Some(json!({"turn_id": turn})))
+        .await;
+    assert_eq!(code, 423, "{body}");
+    assert_eq!(body["error"]["code"], "frozen", "{body}");
+    assert_eq!(count().await, 0);
+}
+
 #[tokio::test]
 async fn receiver_turn_ending_without_a_report_closes_the_task_once() {
     use aurora_api::domains::hosted::lifecycle;

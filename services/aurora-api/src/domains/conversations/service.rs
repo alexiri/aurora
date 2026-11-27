@@ -1441,7 +1441,15 @@ pub async fn remind_in_15_minutes(
     id: Uuid,
     turn_id: Uuid,
 ) -> Result<super::dto::ReminderSet, ApiError> {
-    load_conversation_for_write(state, c, id).await?;
+    let conv = load_conversation_for_write(state, c, id).await?;
+    // (FIX-253 fixes2 E) The press writes into the conversation: an archived one is refused, the
+    // same way the web thread blocks writing until it is restored.
+    if conv.archived_at.is_some() {
+        return Err(ApiError::conflict(
+            "conversation_archived",
+            "This conversation is archived. Restore it to write again.",
+        ));
+    }
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     convs::lock(&mut tx, id).await?;
     if let Some(when) = sqlx::query_scalar::<_, String>(
@@ -1484,6 +1492,9 @@ pub async fn remind_in_15_minutes(
     let agent = agents::get(&mut *tx, t.agent_id)
         .await?
         .ok_or_else(|| ApiError::not_found("Agent not found."))?;
+    // (FIX-253 fixes2 E) The reminder wakes the agent: it must not start work while frozen
+    // (the same gate every other agent-work entry point takes).
+    crate::domains::freeze::service::ensure_agent_active(&mut tx, agent.id).await?;
     let tz = users::timezone(&mut *tx, c.user_id)
         .await?
         .unwrap_or_else(|| "UTC".to_owned());
