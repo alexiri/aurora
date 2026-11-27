@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DiffView } from "@/components/ui/diff-view";
 import { Fold } from "@/components/ui/fold";
-import { Lines } from "@/components/ui/lines";
 import { ErrorNotice, Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
@@ -26,16 +26,17 @@ import {
   type TemplateSkillRefView,
   type TemplateVersionDetail,
 } from "@/lib/api/agent-templates";
-import { diffTemplateContent, type AppNamer, type TemplateChange } from "@/lib/template-diff";
+import { diffTemplateContent, type AppNamer, type TemplateChange, type TemplateDiff } from "@/lib/template-diff";
 import { adminRoutes } from "@/lib/routes";
 import { formatCount } from "@/lib/format-date";
 
 import { TemplateReadme } from "./template-readme";
 import { useAppName, versionStatusWords } from "./words";
 
-// The review of one version (C-1114): everything of `TemplateContentView` in full, all of it marked
-// as text from the source at the commit, what changed against the version people use now, and the
-// decision. Every part is data — the review only ever reads.
+// The review of one version (C-1114, FIX-250): everything of `TemplateContentView` in full, all of
+// it marked as text from the source at the commit. Each part's diff sits inside the section it
+// belongs to, folded GitLab-style; a part nothing touched is collapsed to one line "Unchanged".
+// Every part is data — the review only ever reads.
 
 const LEVEL_WORDS: Record<string, string> = { read: "Read", ask: "Ask", act: "Act" };
 const VERIFICATION_WORDS: Record<string, string> = {
@@ -44,16 +45,40 @@ const VERIFICATION_WORDS: Record<string, string> = {
   none: "No verification.",
 };
 
+/** The section each change belongs to, for the **Look at these first** links; null when the change
+ * has no section of its own (the name, the summary, the effort, …) and stays in the top block. */
+function sectionOf(part: string): string | null {
+  for (const [prefix, anchor] of [
+    ["skill_ref:", "skill-refs"],
+    ["skill:", "skills"],
+    ["helper:", "helpers"],
+    ["memory:", "memories"],
+    ["automation:", "automations"],
+    ["app:", "apps"],
+    ["input:", "inputs"],
+  ] as const) {
+    if (part.startsWith(prefix)) return anchor;
+  }
+  return null;
+}
+
+/** A text file's meta line (path, size, executable in words); the text itself is the caller's. */
+function FileHeading({ f }: { f: FileView }) {
+  return (
+    <p className="text-sm font-semibold text-ink">
+      <span className="font-mono">{f.path}</span>{" "}
+      <span className="font-normal text-muted">
+        ({formatCount(f.size)} chars{f.executable ? ", executable" : ""})
+      </span>
+    </p>
+  );
+}
+
 /** A text file in full; executable is said in words. Nothing is ever run. */
 function TextFile({ f, label }: { f: FileView; label: string }) {
   return (
     <div className="space-y-1">
-      <p className="text-sm font-semibold text-ink">
-        <span className="font-mono">{f.path}</span>{" "}
-        <span className="font-normal text-muted">
-          ({formatCount(f.size)} chars{f.executable ? ", executable" : ""})
-        </span>
-      </p>
+      <FileHeading f={f} />
       {f.text == null ? (
         <p className="text-xs text-muted">Not text, so it is not shown.</p>
       ) : (
@@ -78,55 +103,108 @@ function changeWords(c: TemplateChange): string {
   }
 }
 
-/** One changed part: its heading, the change in words, and the whole-line diff (nothing summarized). */
-function ChangeView({ c }: { c: TemplateChange }) {
+const preClass = "max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 text-sm text-ink [overflow-wrap:anywhere]";
+
+/** One text part in place (FIX-250): the folded diff when it changed — with **Show the current
+ * text** for the full text of this version — and one line "Unchanged" that expands when it did not. */
+function PartText({ change, label, current, ariaLabel }: { change: TemplateChange | null; label: string; current: string; ariaLabel?: string }) {
+  const [show, setShow] = useState(false);
+  const named = ariaLabel ?? label;
+  if (!change) {
+    return (
+      <Fold summary="Unchanged" data-testid="diff-unchanged">
+        <div className="pt-2">
+          <pre aria-label={named} className={preClass}>
+            {current}
+          </pre>
+        </div>
+      </Fold>
+    );
+  }
   return (
-    <section aria-label={`Changes to ${c.label}`} className="space-y-1" data-testid="diff-change">
-      <h3 className="text-sm font-semibold text-ink">{c.label}</h3>
-      {c.detail ? <p className="text-sm text-ink-2">{c.detail}</p> : null}
-      {c.old != null || c.new != null ? <Lines old={c.old ?? ""} next={c.new ?? ""} label={`Diff of ${c.label}`} /> : null}
-    </section>
+    <div className="space-y-2" data-testid="part-diff">
+      <DiffView old={change.old ?? ""} next={change.new ?? ""} label={`Diff of ${label}`} fileName={label} status={change.kind === "added" ? "added" : change.kind === "removed" ? "removed" : null} />
+      <div className="space-y-2">
+        <Button type="button" size="sm" variant="outline" aria-expanded={show} onClick={() => setShow(!show)}>
+          {show ? "Hide the current text" : "Show the current text"}
+        </Button>
+        {show ? (
+          <pre aria-label={named} className={preClass}>
+            {current}
+          </pre>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
-/** What changed since the version people use now (FIX-247): first the summary, then the changes that
- * widen what the agent can do or reach, then every other changed part, with the untouched parts
- * collapsed. The full content below stays where it is. */
-function WhatChanged({ base, next, baseVersion, appName }: { base: TemplateContentView; next: TemplateContentView; baseVersion: string; appName: AppNamer }) {
-  const d = diffTemplateContent(base, next, appName);
+/** A section's changes that are words only (apps, automations, inputs, skill references): one
+ * sentence per change, above the list itself; a change that carries text shows its diff. */
+function DetailChanges({ changes }: { changes: TemplateChange[] }) {
+  if (changes.length === 0) return null;
   return (
-    <Section id="what-changed" title={`What changed since ${baseVersion}`} description={d.changes.length === 0 ? undefined : "Every line that differs, old against new."}>
-      {d.changes.length === 0 ? (
+    <ul className="space-y-1 text-sm" data-testid="diff-change">
+      {changes.map((c) => (
+        <li key={c.part} className="space-y-1">
+          <span>
+            <span className="font-medium text-ink">{c.label}</span> — {changeWords(c)}
+          </span>
+          {c.old != null || c.new != null ? (
+            <DiffView old={c.old ?? ""} next={c.new ?? ""} label={`Diff of ${c.label}`} status={c.kind === "added" ? "added" : c.kind === "removed" ? "removed" : null} />
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** What changed since the version people use now (FIX-247), kept short (FIX-250): the one-line
+ * summary and **Look at these first**, each entry linking to the section it belongs to. The diffs
+ * themselves sit inside their sections. */
+function WhatChanged({ diff, baseVersion }: { diff: TemplateDiff; baseVersion: string }) {
+  const others = diff.changes.filter((c) => !sectionOf(c.part) && !c.attention);
+  return (
+    <Section id="what-changed" title={`What changed since ${baseVersion}`}>
+      {diff.changes.length === 0 ? (
         <p data-testid="diff-empty">Nothing changed: this version matches {baseVersion}.</p>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-3">
           <p className="text-sm text-ink-2" data-testid="diff-summary">
-            {d.summary}.
+            {diff.summary}.
           </p>
-          {d.attention.length > 0 ? (
+          {diff.attention.length > 0 ? (
             <section aria-label="Look at these first" data-testid="diff-attention" className="space-y-2 rounded-card border border-line bg-surface p-4">
               <h3 className="font-display text-base font-semibold text-ink">Look at these first</h3>
               <p className="text-sm text-ink-2">These widen what the agent can do or reach.</p>
               <ul className="space-y-1 text-sm">
-                {d.attention.map((c) => (
-                  <li key={c.part}>
-                    <span className="font-medium text-ink">{c.label}</span> — {changeWords(c)}
-                  </li>
-                ))}
+                {diff.attention.map((c) => {
+                  const anchor = sectionOf(c.part);
+                  return (
+                    <li key={c.part}>
+                      <span className="font-medium text-ink">
+                        {anchor ? (
+                          <a href={`#${anchor}`} className="text-link underline">
+                            {c.label}
+                          </a>
+                        ) : (
+                          c.label
+                        )}
+                      </span>{" "}
+                      — {changeWords(c)}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           ) : null}
-          <div className="space-y-6">
-            {d.changes
-              .filter((c) => !c.attention)
-              .map((c) => (
-                <ChangeView key={c.part} c={c} />
+          {others.length > 0 ? (
+            <ul className="space-y-1 text-sm" data-testid="diff-other">
+              {others.map((c) => (
+                <li key={c.part}>
+                  <span className="font-medium text-ink">{c.label}</span> — {changeWords(c)}
+                </li>
               ))}
-          </div>
-          {d.unchanged.length > 0 ? (
-            <Fold summary={`Unchanged: ${d.unchanged.join(", ")}`} data-testid="diff-unchanged">
-              <p className="pt-2 text-sm text-ink-2">These parts are the same as in {baseVersion}.</p>
-            </Fold>
+            </ul>
           ) : null}
         </div>
       )}
@@ -134,146 +212,253 @@ function WhatChanged({ base, next, baseVersion, appName }: { base: TemplateConte
   );
 }
 
-/** Every part of one version, in full (C-1114). `<Agent>` is the agent the template would create. */
-function Content({ d }: { d: TemplateVersionDetail }) {
+/** One skill and its files: the folded diffs of the parts that changed, every part nothing touched
+ * as one line "Unchanged"; a skill nothing touched collapses whole. */
+function SkillCard({ s, changes, comparing }: { s: TemplateContentView["skills"][number]; changes: TemplateChange[] | null; comparing: boolean }) {
+  const body = changes?.find((c) => c.part === `skill:${s.name}:body`) ?? null;
+  const use = changes?.find((c) => c.part === `skill:${s.name}:use_it_when`) ?? null;
+  const header = <p className="font-medium text-ink">{s.name}</p>;
+  if (comparing && changes != null && changes.length === 0) {
+    return (
+      <section aria-label={`Skill ${s.name}`} className="space-y-2 rounded-card border border-line bg-surface p-4">
+        {header}
+        <Fold summary="Unchanged" data-testid="diff-unchanged">
+          <div className="space-y-2 pt-2">
+            <p className="text-sm text-ink-2">Use it when: {s.use_it_when}</p>
+            <pre aria-label={`Skill ${s.name} body`} className="max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 font-mono text-xs text-ink [overflow-wrap:anywhere]">
+              {s.body}
+            </pre>
+            {s.files.map((f) => (
+              <TextFile key={f.path} f={f} label={`File ${f.path} of skill ${s.name}`} />
+            ))}
+          </div>
+        </Fold>
+      </section>
+    );
+  }
+  return (
+    <section aria-label={`Skill ${s.name}`} className="space-y-2 rounded-card border border-line bg-surface p-4">
+      {header}
+      <p className="text-sm text-ink-2">Use it when: {s.use_it_when}</p>
+      {comparing && changes != null ? (
+        <div className="space-y-2">
+          {use ? <DiffView old={use.old ?? ""} next={use.new ?? ""} label={`Diff of Skill ${s.name} · Use it when`} /> : null}
+          <PartText change={body} label={`Skill ${s.name} body`} current={s.body} />
+          {s.files.map((f) =>
+            f.text == null ? (
+              <TextFile key={f.path} f={f} label={`File ${f.path} of skill ${s.name}`} />
+            ) : (
+              <div key={f.path} className="space-y-1">
+                <FileHeading f={f} />
+                <PartText change={changes.find((c) => c.part === `skill:${s.name}:file:${f.path}`) ?? null} label={`File ${f.path} of skill ${s.name}`} current={f.text} />
+              </div>
+            ),
+          )}
+        </div>
+      ) : (
+        <>
+          <pre aria-label={`Skill ${s.name} body`} className="max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 font-mono text-xs text-ink [overflow-wrap:anywhere]">
+            {s.body}
+          </pre>
+          {s.files.map((f) => (
+            <TextFile key={f.path} f={f} label={`File ${f.path} of skill ${s.name}`} />
+          ))}
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Every part of one version (C-1114). `diff` is null for a first version (nothing to compare
+ * with): the sections then show the text as today. `<Agent>` is the agent the template creates. */
+function Content({ d, diff }: { d: TemplateVersionDetail; diff: TemplateDiff | null }) {
   const c = d.content!;
   const agent = c.agent.name;
   const nameOf = useAppName();
+  const group = (g: string) => diff?.changes.filter((x) => x.group === g) ?? [];
+  const byPart = (part: string) => diff?.changes.find((x) => x.part === part) ?? null;
+  /** A section nothing touched collapses to one line "Unchanged" that expands to today's text. */
+  const unchanged = (g: string, children: ReactNode) =>
+    diff != null && group(g).length === 0 ? (
+      <Fold summary="Unchanged" data-testid="diff-unchanged">
+        <div className="pt-2">{children}</div>
+      </Fold>
+    ) : (
+      <>{children}</>
+    );
   return (
     <>
       <p className="text-sm text-ink-2">
         Text from <span className="font-medium text-ink">{d.source.name}</span> at <span className="font-mono">{d.commit_sha.slice(0, 7)}</span>. The package matches the repository at{" "}
         <span className="font-mono">{d.commit_sha.slice(0, 7)}</span>.
       </p>
-      <AboutThisTemplate readme={c.readme} />
+      <AboutThisTemplate readme={c.readme} change={byPart("readme")} comparing={diff != null} />
       <Section id="instructions" title="Instructions">
-        <pre tabIndex={0} aria-label="Instructions" className="max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 text-sm text-ink [overflow-wrap:anywhere]">
-          {c.instructions}
-        </pre>
+        {diff != null ? (
+          <PartText change={byPart("instructions")} label="Instructions" current={c.instructions} />
+        ) : (
+          <pre tabIndex={0} aria-label="Instructions" className={preClass}>
+            {c.instructions}
+          </pre>
+        )}
       </Section>
       <Section id="skills" title="Skills" description={`${c.skills.length} ${c.skills.length === 1 ? "skill" : "skills"} the agent gets.`}>
         <div className="space-y-4">
           {c.skills.map((s) => (
-            <section key={s.name} aria-label={`Skill ${s.name}`} className="space-y-2 rounded-card border border-line bg-surface p-4">
-              <p className="font-medium text-ink">{s.name}</p>
-              <p className="text-sm text-ink-2">Use it when: {s.use_it_when}</p>
-              <pre tabIndex={0} aria-label={`Skill ${s.name} body`} className="max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 font-mono text-xs text-ink [overflow-wrap:anywhere]">
-                {s.body}
-              </pre>
-              {s.files.map((f) => (
-                <TextFile key={f.path} f={f} label={`File ${f.path} of skill ${s.name}`} />
-              ))}
-            </section>
+            <SkillCard
+              key={s.name}
+              s={s}
+              comparing={diff != null}
+              changes={diff ? diff.changes.filter((x) => x.part === `skill:${s.name}` || x.part.startsWith(`${`skill:${s.name}`}:`)) : null}
+            />
           ))}
         </div>
       </Section>
       <Section id="skill-refs" title="Skills from libraries" description="What the agent reads from a skill library instead of carrying its own copy.">
-        <ul className="space-y-2">
-          {(c.skill_refs as TemplateSkillRefView[]).map((r, i) => (
-            <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm" data-testid="template-skill-ref">
-              <p className="font-medium text-ink">
-                {r.kind === "library" ? r.skill : r.name} <Badge tone="neutral">{r.kind === "library" ? "Library" : "Organization"}</Badge>{" "}
-                <Badge tone="neutral">{r.required ? "Required" : "Optional"}</Badge>
-              </p>
-              {r.kind === "library" ? (
-                <p className="break-all font-mono text-xs text-ink-2">
-                  {r.address}
-                  {r.ref ? ` · ${r.ref}` : ""}
-                  {r.path ? ` · ${r.path}` : ""}
-                </p>
-              ) : null}
-              <p className="text-ink-2">{r.why}</p>
-              {r.kind === "library" ? <p className="text-xs text-muted">Comes from that library as it is when an agent is created; its updates are reviewed in the library.</p> : null}
-            </li>
-          ))}
-        </ul>
+        {unchanged("skill_refs",
+          <>
+            <DetailChanges changes={group("skill_refs")} />
+            <ul className="space-y-2">
+              {(c.skill_refs as TemplateSkillRefView[]).map((r, i) => (
+                <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm" data-testid="template-skill-ref">
+                  <p className="font-medium text-ink">
+                    {r.kind === "library" ? r.skill : r.name} <Badge tone="neutral">{r.kind === "library" ? "Library" : "Organization"}</Badge>{" "}
+                    <Badge tone="neutral">{r.required ? "Required" : "Optional"}</Badge>
+                  </p>
+                  {r.kind === "library" ? (
+                    <p className="break-all font-mono text-xs text-ink-2">
+                      {r.address}
+                      {r.ref ? ` · ${r.ref}` : ""}
+                      {r.path ? ` · ${r.path}` : ""}
+                    </p>
+                  ) : null}
+                  <p className="text-ink-2">{r.why}</p>
+                  {r.kind === "library" ? <p className="text-xs text-muted">Comes from that library as it is when an agent is created; its updates are reviewed in the library.</p> : null}
+                </li>
+              ))}
+            </ul>
+          </>,
+        )}
       </Section>
       <Section id="helpers" title="Helper files" description="Files the agent keeps in .aurora/helpers, byte for byte.">
-        <div className="space-y-3">
-          {c.helpers.map((f) => (
-            <TextFile key={f.path} f={f} label={`Helper file ${f.path}`} />
-          ))}
-        </div>
+        {unchanged("helpers",
+          <div className="space-y-3">
+            {c.helpers.map((f) =>
+              diff != null && f.text != null ? (
+                <div key={f.path} className="space-y-1">
+                  <FileHeading f={f} />
+                  <PartText change={byPart(`helper:${f.path}`)} label={`Helper file ${f.path}`} current={f.text} />
+                </div>
+              ) : (
+                <TextFile key={f.path} f={f} label={`Helper file ${f.path}`} />
+              ),
+            )}
+          </div>,
+        )}
       </Section>
       <Section id="memories" title="Memories" description="What the agent starts out knowing.">
-        <ul className="space-y-2">
-          {c.memories.map((m) => (
-            <li key={m.key} className="space-y-1 rounded-card border border-line bg-surface p-4" data-testid="template-memory">
-              {m.locked ? (
-                <p className="text-sm text-ink-2">
-                  <Badge tone="neutral">Locked</Badge> Locked: {agent} can read it but not change it.
-                </p>
-              ) : null}
-              <p className="font-mono text-xs text-muted">{m.key}</p>
-              <pre aria-label={`Memory ${m.key}`} className="whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 text-sm text-ink [overflow-wrap:anywhere]">
-                {m.content}
-              </pre>
-            </li>
-          ))}
-        </ul>
+        {unchanged("memories",
+          <>
+            <DetailChanges changes={group("memories").filter((x) => x.kind === "removed")} />
+            <ul className="space-y-2">
+              {c.memories.map((m) => (
+                <li key={m.key} className="space-y-1 rounded-card border border-line bg-surface p-4" data-testid="template-memory">
+                  {m.locked ? (
+                    <p className="text-sm text-ink-2">
+                      <Badge tone="neutral">Locked</Badge> Locked: {agent} can read it but not change it.
+                    </p>
+                  ) : null}
+                  <p className="font-mono text-xs text-muted">{m.key}</p>
+                  {diff != null ? (
+                    <PartText change={byPart(`memory:${m.key}`)} label={`Memory ${m.key}`} current={m.content} />
+                  ) : (
+                    <pre aria-label={`Memory ${m.key}`} className="whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 text-sm text-ink [overflow-wrap:anywhere]">
+                      {m.content}
+                    </pre>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>,
+        )}
       </Section>
       <Section id="automations" title="Automations" description={`What ${agent} does on its own.`}>
-        <ul className="space-y-2">
-          {(c.automations as TemplateAutomationView[]).map((a, i) => (
-            <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm">
-              <p className="font-medium text-ink">
-                {a.name} <Badge tone="neutral">{a.kind === "schedule" ? "Schedule" : "Webhook"}</Badge>
-              </p>
-              {a.kind === "schedule" ? (
-                <>
-                  <p className="whitespace-pre-wrap text-ink-2 [overflow-wrap:anywhere]">{a.prompt}</p>
-                  <TechnicalDetails title="Schedule">
-                    <span className="font-mono">{a.cron}</span>
-                  </TechnicalDetails>
-                </>
-              ) : (
-                <p className="text-ink-2">
-                  {a.instructions} {a.verification ? VERIFICATION_WORDS[a.verification] ?? "" : null}
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
+        {unchanged("automations",
+          <>
+            <DetailChanges changes={group("automations")} />
+            <ul className="space-y-2">
+              {(c.automations as TemplateAutomationView[]).map((a, i) => (
+                <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm">
+                  <p className="font-medium text-ink">
+                    {a.name} <Badge tone="neutral">{a.kind === "schedule" ? "Schedule" : "Webhook"}</Badge>
+                  </p>
+                  {a.kind === "schedule" ? (
+                    <>
+                      <p className="whitespace-pre-wrap text-ink-2 [overflow-wrap:anywhere]">{a.prompt}</p>
+                      <TechnicalDetails title="Schedule">
+                        <span className="font-mono">{a.cron}</span>
+                      </TechnicalDetails>
+                    </>
+                  ) : (
+                    <p className="text-ink-2">
+                      {a.instructions} {a.verification ? VERIFICATION_WORDS[a.verification] ?? "" : null}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>,
+        )}
       </Section>
       <Section id="apps" title="Apps" description={`What ${agent} may reach, and how much.`}>
-        <ul className="space-y-2">
-          {(c.apps as TemplateAppEntryView[]).map((a, i) => (
-            <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm">
-              <p className="font-medium text-ink">
-                {a.app ? nameOf(a.app) : (a.any_of ?? []).map(nameOf).join(" or ")} <Badge tone="neutral">{a.required ? "Required" : "Optional"}</Badge>
-              </p>
-              <p className="text-ink-2">
-                {a.tools
-                  ? `Custom access: may use ${(a.tools.allow ?? []).join(", ") || "nothing"}${(a.tools.ask ?? []).length ? `; asks before ${(a.tools.ask ?? []).join(", ")}` : ""}.`
-                  : `${LEVEL_WORDS[a.level] ?? a.level} access.`}
-              </p>
-              <p className="text-xs text-muted">{a.why}</p>
-            </li>
-          ))}
-        </ul>
+        {unchanged("apps",
+          <>
+            <DetailChanges changes={group("apps")} />
+            <ul className="space-y-2">
+              {(c.apps as TemplateAppEntryView[]).map((a, i) => (
+                <li key={i} className="space-y-1 rounded-card border border-line bg-surface p-4 text-sm">
+                  <p className="font-medium text-ink">
+                    {a.app ? nameOf(a.app) : (a.any_of ?? []).map(nameOf).join(" or ")} <Badge tone="neutral">{a.required ? "Required" : "Optional"}</Badge>
+                  </p>
+                  <p className="text-ink-2">
+                    {a.tools
+                      ? `Custom access: may use ${(a.tools.allow ?? []).join(", ") || "nothing"}${(a.tools.ask ?? []).length ? `; asks before ${(a.tools.ask ?? []).join(", ")}` : ""}.`
+                      : `${LEVEL_WORDS[a.level] ?? a.level} access.`}
+                  </p>
+                  <p className="text-xs text-muted">{a.why}</p>
+                </li>
+              ))}
+            </ul>
+          </>,
+        )}
       </Section>
       <Section id="inputs" title="Inputs" description="What the person creating an agent from this template is asked.">
-        <ul className="space-y-2">
-          {(c.inputs as TemplateInputView[]).map((i) => (
-            <li key={i.id} className="rounded-card border border-line bg-surface p-4 text-sm">
-              <p className="font-medium text-ink">
-                {i.label} <span className="font-mono text-xs text-muted">{i.id}</span> <Badge tone="neutral">{i.required ? "Required" : "Optional"}</Badge>
-              </p>
-              <p className="text-ink-2">
-                {i.kind === "choice" ? `One of ${(i.options ?? []).join(", ")}.` : "A line of text."}
-                {i.default ? ` Default: ${i.default}.` : ""}
-              </p>
-              {i.help ? <p className="text-xs text-muted">{i.help}</p> : null}
-            </li>
-          ))}
-        </ul>
+        {unchanged("inputs",
+          <>
+            <DetailChanges changes={group("inputs")} />
+            <ul className="space-y-2">
+              {(c.inputs as TemplateInputView[]).map((i) => (
+                <li key={i.id} className="rounded-card border border-line bg-surface p-4 text-sm">
+                  <p className="font-medium text-ink">
+                    {i.label} <span className="font-mono text-xs text-muted">{i.id}</span> <Badge tone="neutral">{i.required ? "Required" : "Optional"}</Badge>
+                  </p>
+                  <p className="text-ink-2">
+                    {i.kind === "choice" ? `One of ${(i.options ?? []).join(", ")}.` : "A line of text."}
+                    {i.default ? ` Default: ${i.default}.` : ""}
+                  </p>
+                  {i.help ? <p className="text-xs text-muted">{i.help}</p> : null}
+                </li>
+              ))}
+            </ul>
+          </>,
+        )}
       </Section>
     </>
   );
 }
 
 /** "About this template": the README as its source text, with **Preview** rendering it as people will see it (C-1116). */
-function AboutThisTemplate({ readme }: { readme: string }) {
+function AboutThisTemplate({ readme, change, comparing }: { readme: string; change: TemplateChange | null; comparing: boolean }) {
   const [preview, setPreview] = useState(false);
   return (
     <Section
@@ -288,8 +473,10 @@ function AboutThisTemplate({ readme }: { readme: string }) {
     >
       {preview ? (
         <TemplateReadme source={readme} />
+      ) : comparing ? (
+        <PartText change={change} label="About this template" current={readme} ariaLabel="README.md source text" />
       ) : (
-        <pre aria-label="README.md source text" className="max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 text-sm text-ink [overflow-wrap:anywhere]">
+        <pre aria-label="README.md source text" className={preClass}>
           {readme}
         </pre>
       )}
@@ -297,8 +484,8 @@ function AboutThisTemplate({ readme }: { readme: string }) {
   );
 }
 
-/** The review page's body (C-1114): what changed against the version people use now, the version in
- * full, and Approve / Reject. */
+/** The review page's body (C-1114): a short what-changed block, the version with each part's diff
+ * inside its own section, and Approve / Reject. */
 export function TemplateVersionReview({ templateId, version }: { templateId: string; version: string }) {
   const q = useTemplateVersion(templateId, version);
   const list = useAdminTemplates();
@@ -310,6 +497,7 @@ export function TemplateVersionReview({ templateId, version }: { templateId: str
   const current = list.data?.items.find((t) => t.template_id === templateId)?.current_version ?? null;
   const firstVersion = list.data != null && current == null;
   const offered = useTemplateVersion(current && current !== version ? templateId : undefined, current ?? undefined);
+  const diff = offered.data?.content && d?.content ? diffTemplateContent(offered.data.content, d.content, appName) : null;
   const stale = approve.error instanceof ApiError && approve.error.status === 409;
   const title = d ? `${d.content?.name ?? templateId} ${version}` : `${templateId} ${version}`;
   return (
@@ -339,8 +527,8 @@ export function TemplateVersionReview({ templateId, version }: { templateId: str
             <Notice role="status">People keep using {current} until you approve this one.</Notice>
           ) : null}
           {firstVersion ? <Notice role="status">This is the first version: nothing to compare with.</Notice> : null}
-          {offered.data?.content ? <WhatChanged base={offered.data.content} next={d.content} baseVersion={current!} appName={appName} /> : null}
-          <Content d={d} />
+          {diff ? <WhatChanged diff={diff} baseVersion={current!} /> : null}
+          <Content d={d} diff={diff} />
           {d.status === "pending_approval" ? (
             <div className="flex flex-wrap items-center justify-end gap-2" data-testid="template-decision">
               <Button type="button" variant="outline" disabled={reject.isPending || approve.isPending} onClick={() => setConfirmReject(true)}>
