@@ -966,7 +966,12 @@ people who may read it; others see the actor or the time without it.
 - **What the agent remembered, in the chat** (C-1172): after `memory_save`
 saves or is refused, the API appends `memory.saved` or `memory.refused` to the
 turn's transcript (§Transcript events), whatever the harness; the refusal
-reason is in plain words and the tool error keeps its code.
+reason is in plain words and the tool error keeps its code. In the chat
+(P5-MEMORY-4, `14` §Chat) the person sees a card: what was remembered, with
+**View** and **Undo**, or why it could not be and what the agent wanted to add,
+with **Save it yourself** and **Dismiss**. Undo and Redo use the ordinary memory
+routes with the person's own rights and never overwrite a newer edit the card
+can see.
 
 ### Memory language (Proposal 03)
 

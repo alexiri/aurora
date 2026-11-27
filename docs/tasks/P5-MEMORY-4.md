@@ -111,3 +111,111 @@ Sonnet `nextjs-developer` (chat rendering, permissions in the UI, one mock fix).
 
 Commits; screenshots beside `after/mem-5*.png`; the cause of the review's failed save and the fix; tests changed;
 commands and results.
+
+Built 2026-11-27 on `alexiri/p5-memory-4` over master `6b56bb21` (one commit, "P5-MEMORY-4: …"). Not pushed.
+
+### What was built
+
+- `lib/chat/layout.ts`: a `memory` block for `memory.saved` / `memory.refused`, under its turn's tool group. A later
+  call of the same turn joins the group above the cards; a card whose event overtook its own `tool.started` gets the
+  group put in front of it (P5-MEMORY-1, decision 5). `toolGroupSummary` has `hasDeny` (a `DENY` decision only) and
+  `hasFailed`; a failed call is no longer read as denied (nor an after-turn one, nor one with an unknown decision word).
+- `lib/chat/transcript.ts`: both types added to the stream's event names (without this they never arrive live).
+- `components/chat/memory-card.tsx` (new), wired in `message-group.tsx`; `tool-call-group.tsx` shows Deny / Failed.
+- `lib/chat/memory-draft.ts` (new): the in-memory hand-over for **Save it yourself**.
+- With the coordinator's go-ahead, in `components/memory` (P5-MEMORY-3's lane; the second to merge resolves it):
+  `memory-tab.tsx` opens the form from a waiting draft and `memory-editor.tsx` takes an optional `draft`. Additive;
+  without a draft nothing changes. A taken key is dropped; an edit draft for a memory that is gone opens the new form.
+- Shared UI: `BookmarkIcon`; `Button` variant `pending`.
+
+### Why the review's save failed, and the fix
+
+The platform tools are on demand by default (`hosted.platform_tools = on_demand`, with `aurora-agent` in the image):
+the MCP bridge lists only the core tools. `scn-memory-tool` called `mcp__aurora__memory_save` directly, so Claude Code
+answered `No such tool available: mcp__aurora__memory_save` (the "Failed" call) and the scenario then said `done`. The
+product is as designed; the **scenario** was wrong. It now looks at the request's tool names: with the MCP tool listed
+(the conformance stub bridge, or `platform_tools = all`) it calls it as before, otherwise it runs
+`aurora-agent call aurora memory_save key=conformance content='…'` through `Bash`.
+
+**How it was proved** (no full stack was started: no kind cluster, no database, so a stored row on a mock-model stack
+was **not** observed):
+
+1. Pinned Claude Code 2.1.319 → pinned VidaiMock serving master's scenario, with a bridge listing only
+   `complete_task`: `tool_result` `No such tool available: mcp__aurora__memory_save`, then `done`. Reproduced.
+2. The same with the new scenario, the real `aurora-agent` (this tree's `aurora-supervisor agent`, under `bwrap` so
+   `/run/aurora/tools.sock` could be a recording fake): the socket got `call` `memory_save`
+   `{"key":"conformance","content":"Saved by the conformance run."}` and the tool result was not an error.
+3. VidaiMock, curl, both tool lists, streaming and not: the expected `tool_use` and joined input.
+4. From there the path is the server's, covered by P5-MEMORY-1's `memory::` tests (not rerun here).
+
+`scripts/e2e/llm-smoke.sh` has a new check for the on-demand branch. Neither it nor `llm.sh` was run (they need
+LiteLLM). `tests/e2e-hosted/tests/llm.rs` needs no change by reading (the Bash summary contains `memory_save`, the
+stored content is the same); CI does not run it, and it was not run.
+
+### Decisions (accepted by the coordinator, 2026-11-27)
+
+- **Redo of a created memory creates it again** (`POST`, same key, title, description, content, lock), because Undo
+  deletes it and a delete removes its revisions: there is nothing to restore. It then reads as added by that person.
+  A key taken meanwhile reads **Changed since**. Changed memories use restore, both ways.
+- **The Memory page edit** above, with the draft never in the address or storage (pinned in `memory-chat-draft`).
+
+### Choices the brief left open (please check)
+
+1. **Dismiss is local state** (back after a reload), as the brief says. I do not think it needs to persist: the card is
+   one line once folded, and persisting it per viewer needs storage or a server field.
+2. **Undone is local state too.** After a reload an undone card reads **Changed since**, disabled, with "This memory was
+   deleted after this was saved." or "…changed…": the page does not guess that it was this viewer's Undo.
+3. **No compare-and-set.** The memory routes take no expected revision. The card reads the memory again at the click and
+   stops if it moved; an edit in the milliseconds between that read and the write is not detected. A restore keeps the
+   overwritten text in History; a delete does not. Closing this needs an API precondition (not in this brief).
+4. A memory remade under the same key restarts at revision 1, so the card also compares `created_at` (with the event's
+   time until it wrote the memory itself).
+5. **Who may:** own access to the workspace (`my_role`) reads and edits; an emergency reader gets View only and the card
+   makes **no** memory request for them (those reads are recorded). The server checks every request. **View** is hidden
+   once the memory is known to be gone. The refused card has no View (not in the mockup).
+6. The preview is the first 200 characters of what the agent sent (C-1172), so for a long text **Save it yourself**
+   starts with only that much; on a locked memory it is appended even if it repeats text already there.
+
+### Comparison with `after/mem-5.png` / `-light.png`
+
+Captured by the mocked spec (`AURORA_E2E_SHOTS=<dir>`; the conversation log in a tall window at 1280 px and 390 px,
+dark and light) and compared before coding and before handing over. Icon, tile, eyebrow, title, line, buttons, amber
+card, preview box, words and the 570 px width match. Differences kept:
+
+- The tool group stays above each card (brief, scope 1); the mockup draws none.
+- Bubbles, avatar, names, times, the pane around them and the "answered and used 1 tool" banner are the app's own.
+- Text is the app's scale (14 px where the mockup has 13 px), so the refusal sentence wraps before "add:".
+- Radii and colours are the app's tokens; the card in dark sits on the canvas colour, like the tool group above it.
+- At 390 px (no mockup) the actions go under the text and the preview wraps (one line from 768 px).
+- States the mockup does not draw: "Undone · Redo", "Changed since" with its reason, and the folded refusal (**Show**).
+
+### Tests
+
+- New: `tests/memory-card.test.tsx` (events → cards, Undo/Redo for created and changed, changed since, a newer edit at
+  the click, failure, permissions, Save it yourself, Dismiss); `tests/memory-chat-draft.test.tsx` (the Memory page);
+  `e2e/chat-memory-cards.spec.ts` (both themes, 1280 and 390 px, axe, no horizontal scroll, View and Save it yourself
+  through to the Memory page).
+- Changed with the behaviour: `tests/chat-layout.test.ts` (Deny / Failed; an after-turn failed call is `TOOL`, it was
+  asserted as `DENY`; memory blocks), `tests/chat-v2.test.tsx` (Failed in the summary; a new policy-deny case).
+- Production specs: none shows the changed words (`rg` over `web/e2e` and `scripts/e2e`); none edited or run.
+
+### Commands and results
+
+- Fail first: `memory-card`, `chat-layout`, `chat-v2` before the code: **8 failed, 54 passed**, and `memory-card` did
+  not load (no module). `memory-chat-draft` before the Memory page edit: **4 failed, 1 passed** (the "no draft" case).
+- `test.sh web vitest`, 16 files (the new ones, memory, every chat file, `status-rail`): **250/250**. Guards
+  `copy-guard`, `design-guards`, `person-name-guard`, `button-link-contrast`: **34/34**.
+- `test.sh web playwright e2e/chat-memory-cards.spec.ts --project=mocked`: **16/16** (last run after the last edit).
+- `pnpm typecheck`; eslint on the touched files: clean. `cargo fmt --all --check` 0; `guards/run-all.sh` passed;
+  `extract-schema.py --check` up to date. `shellcheck -S warning llm-smoke.sh` clean (older info notes remain).
+- The Orchestrator's drift guards (`audit-actions`, `arbitrary-values`, `ui-text`, `labels`): **21 passed, 2 failed,
+  both already on the base commit in files this lane did not touch**: `arbitrary-values` →
+  `components/memory/memory-list.tsx:126` (`border-l-[3px]`, P5-MEMORY-2); `audit-actions` → `skill.agent_off`,
+  `skill.agent_on` have no entry (P5-SKILLS-1).
+- No Rust changed, so no crate clippy or Rust test. Not run: whole vitest, other Playwright specs, `pnpm build`.
+
+### Security notes
+
+No SEC row. The cards render server text as plain text (no Markdown or HTML). They add no permission: every action is an
+existing memory route with the person's own rights. Memory text goes to the Memory page in memory only, never into the
+address, storage or a log.
