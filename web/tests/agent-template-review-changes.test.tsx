@@ -223,7 +223,199 @@ describe("the Review changes dialog (C-1117)", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Review changes" })).not.toBeInTheDocument());
     expect(screen.getByTestId("template-stale")).toHaveTextContent("This template was updated. Check the changes, then apply.");
   });
+
+  it("says that memories are never changed by an update (D-488(c))", () => {
+    serve();
+    mountDialog();
+    expect(screen.getByTestId("memories-note")).toHaveTextContent("Memories are never changed by an update.");
+  });
 });
+
+// (FIX-251, D-488(b)) The merge states: a clean merge is ticked by default and shown as merged
+// with your changes, diffed against the current text; a conflict is resolved hunk by hunk —
+// Keep mine, Take the new one, or a free edit — before its part can apply.
+
+const mergeSha = "d".repeat(64);
+
+const mergedOffer: TemplateUpdateOffer = {
+  version: "1.2.0",
+  content_sha256: sha,
+  readme: "",
+  changelog: null,
+  inputs_needed: [],
+  apps_added: [],
+  parts: [
+    {
+      kind: "instructions",
+      key: "",
+      state: "merged",
+      current: "Line one.\nLine two.",
+      proposed: "Line one.\nLine two changed.\nLine three.",
+      skill_ref: null,
+      merge: { state: "merged", merge_sha256: mergeSha, result: "Line one.\nLine two changed.\nLine three.", conflicts: [] },
+    },
+  ],
+};
+
+const conflictOffer: TemplateUpdateOffer = {
+  version: "1.3.0",
+  content_sha256: sha,
+  readme: "",
+  changelog: null,
+  inputs_needed: [],
+  apps_added: [],
+  parts: [
+    {
+      kind: "skill",
+      key: "tidy",
+      state: "conflict",
+      current: "Keep the place tidy.\nSweep daily.",
+      proposed: "Keep the place spotless.\nSweep hourly.",
+      skill_ref: null,
+      merge: {
+        state: "conflict",
+        merge_sha256: mergeSha,
+        result: null,
+        conflicts: [
+          { unit: "description", ours: "Keep the place tidy.", theirs: "Keep the place spotless." },
+          { unit: "body", ours: "Sweep daily.", theirs: "Sweep hourly." },
+        ],
+      },
+    },
+    {
+      kind: "helpers",
+      key: "",
+      state: "merged",
+      current: "tidy.sh",
+      proposed: "tidy.sh, greet.md",
+      skill_ref: null,
+      merge: { state: "merged", merge_sha256: mergeSha, result: "tidy.sh, greet.md", conflicts: [] },
+    },
+  ],
+};
+
+describe("the merge states of the review (FIX-251)", () => {
+  it("ticks a clean merge by default, says it merged with your changes, and diffs the result against the current text", () => {
+    serve();
+    mountDialogWith(mergedOffer);
+    const p = part(0);
+    expect(within(p).getByTestId("part-state")).toHaveTextContent("Merged with your changes: your edit stays");
+    expect((within(p).getByLabelText("Take this change") as HTMLInputElement).checked).toBe(true);
+    const diff = screen.getByLabelText("Diff of Instructions, current against the merged text");
+    expect(diff).toHaveTextContent("+ Line three.");
+    expect(diff).toHaveTextContent("+ Line two changed.");
+  });
+
+  it("applies a clean merge with the merge's hash echoed, and no resolutions", async () => {
+    const bodies: unknown[] = [];
+    serve({
+      "POST /v1/agents/a1/template/apply": async (req) => {
+        bodies.push(JSON.parse(await req.clone().text()));
+        return json(200, applied);
+      },
+    });
+    mountDialogWith(mergedOffer);
+    await screen.findByRole("dialog", { name: "Review changes" });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toEqual({
+      version: "1.2.0",
+      content_sha256: sha,
+      parts: [{ kind: "instructions", key: "", merge_sha256: mergeSha }],
+      skill_refs: [],
+      inputs: {},
+    });
+  });
+
+  it("unticks a conflict until it is resolved, and disables Apply while a taken part still waits", () => {
+    serve();
+    mountDialogWith(conflictOffer);
+    expect(within(part(0)).getByTestId("part-state")).toHaveTextContent("You both changed it. Choose Keep mine or Take the new one");
+    expect((within(part(0)).getByLabelText("Take this change") as HTMLInputElement).checked).toBe(false);
+    expect((within(part(1)).getByLabelText("Take this change") as HTMLInputElement).checked).toBe(true);
+    // The conflict taken: nothing can apply while its hunks wait for a choice.
+    fireEvent.click(within(part(0)).getByLabelText("Take this change"));
+    expect(screen.getByTestId("merge-unresolved")).toHaveTextContent("Every change still waiting needs a choice");
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows every hunk with both sides, and applies Keep mine and Take the new one as the offer's order", async () => {
+    const bodies: unknown[] = [];
+    serve({
+      "POST /v1/agents/a1/template/apply": async (req) => {
+        bodies.push(JSON.parse(await req.clone().text()));
+        return json(200, applied);
+      },
+    });
+    mountDialogWith(conflictOffer);
+    const dlg = await screen.findByRole("dialog", { name: "Review changes" });
+    fireEvent.click(within(part(0)).getByLabelText("Take this change"));
+    // Each hunk: both sides diffed, then the choice (scoped to the hunk; both hunks are radios
+    // labelled the same inside the part).
+    const hunk = (i: number) => within(within(part(0)).getByTestId(`merge-conflict-${i}`));
+    expect(within(part(0)).getByLabelText("The change in Description: what Skill tidy has now against the new version")).toHaveTextContent("- Keep the place tidy.");
+    expect(within(part(0)).getByLabelText("The change in Body: what Skill tidy has now against the new version")).toHaveTextContent("+ Sweep hourly.");
+    fireEvent.click(hunk(0).getByLabelText("Keep mine"));
+    fireEvent.click(hunk(1).getByLabelText("Take the new one"));
+    expect(screen.queryByTestId("merge-unresolved")).not.toBeInTheDocument();
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toEqual({
+      version: "1.3.0",
+      content_sha256: sha,
+      parts: [
+        { kind: "skill", key: "tidy", merge_sha256: mergeSha, resolutions: [{ unit: "description", choice: "keep_mine" }, { unit: "body", choice: "take_theirs" }] },
+        { kind: "helpers", key: "", merge_sha256: mergeSha },
+      ],
+      skill_refs: [],
+      inputs: {},
+    });
+    expect(dlg).toBeTruthy();
+  });
+
+  it("a free edit applies as the person's own text of the hunk, diffed against what the agent has now", async () => {
+    const bodies: unknown[] = [];
+    serve({
+      "POST /v1/agents/a1/template/apply": async (req) => {
+        bodies.push(JSON.parse(await req.clone().text()));
+        return json(200, applied);
+      },
+    });
+    mountDialogWith(conflictOffer);
+    await screen.findByRole("dialog", { name: "Review changes" });
+    fireEvent.click(within(part(0)).getByLabelText("Take this change"));
+    const hunk0 = within(within(part(0)).getByTestId("merge-conflict-0"));
+    fireEvent.click(hunk0.getByLabelText("Edit your own text"));
+    // The edit starts from what the agent has now; the diff of the edit appears once it differs.
+    const edit = screen.getByLabelText("Your text") as HTMLTextAreaElement;
+    expect(edit.value).toBe("Keep the place tidy.");
+    expect(screen.queryByLabelText("Diff of your edit of Description, what Skill tidy has now against what you wrote")).not.toBeInTheDocument();
+    fireEvent.change(edit, { target: { value: "Keep the place tidy, always." } });
+    expect(screen.getByLabelText("Diff of your edit of Description, what Skill tidy has now against what you wrote")).toHaveTextContent("+ Keep the place tidy, always.");
+    fireEvent.click(within(within(part(0)).getByTestId("merge-conflict-1")).getByLabelText("Take the new one"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect((bodies[0] as { parts: unknown[] }).parts[0]).toEqual({
+      kind: "skill",
+      key: "tidy",
+      merge_sha256: mergeSha,
+      resolutions: [
+        { unit: "description", choice: "text", text: "Keep the place tidy, always." },
+        { unit: "body", choice: "take_theirs" },
+      ],
+    });
+  });
+});
+
+function mountDialogWith(o: TemplateUpdateOffer, onStale: () => void = () => {}, onClose: () => void = () => {}) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <ReviewChangesDialog agentId="a1" agentName="Daneel" templateName="Schedule manager" offer={o} agentBase="/o/o1/w/w1/agents/daneel" onStale={onStale} onClose={onClose} />
+    </QueryClientProvider>,
+  );
+}
 
 /** The section around the dialog, for the stale flow: an agent with an update offer. */
 function AgentSectionWithUpdate() {
