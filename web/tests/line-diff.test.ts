@@ -120,6 +120,23 @@ describe("buildDiff (the folding model)", () => {
   });
 });
 
+describe("a file too large to compare line by line", () => {
+  const old = Array.from({ length: 3_000 }, (_, i) => `line ${i + 1}`).join("\n");
+  const next = old.replace("line 10\n", "line ten\n").replace("line 2990\n", "line late\n");
+
+  it("says so and returns no rows, instead of a silent all-removed, all-added diff", () => {
+    const d = buildDiff(old, next);
+    expect(d.tooLarge).toBe(true);
+    expect(d.rows).toEqual([]);
+  });
+
+  it("a comparable file is not too large", () => {
+    expect(buildDiff("a", "b").tooLarge).toBe(false);
+    // Large but with one change: the shared head and tail are trimmed first.
+    expect(buildDiff(old, old.replace("line 10\n", "line ten\n")).tooLarge).toBe(false);
+  });
+});
+
 describe("expanding a fold", () => {
   const text = Array.from({ length: 80 }, (_, i) => `line ${i + 1}`).join("\n");
   const next = text.replace("line 50", "fifty");

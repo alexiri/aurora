@@ -61,7 +61,7 @@ const waitingVersion = {
 };
 
 /** The review routes for 1.4.0 against 1.3.0, registered last so they win over the shared mocks. */
-async function mockReviewAgainst130(page: Page): Promise<void> {
+async function mockReviewAgainst130(page: Page, base: Record<string, unknown> = content13, next: Record<string, unknown> = content14): Promise<void> {
   const json = (route: Route, b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(b) });
   await page.route(/\/v1\/admin\/agent-templates(\?.*)?$/, (route) =>
     json(route, {
@@ -78,10 +78,10 @@ async function mockReviewAgainst130(page: Page): Promise<void> {
     }),
   );
   await page.route("**/v1/admin/agent-templates/schedule-manager/versions/1.4.0", (route) =>
-    json(route, versionDetail("1.4.0", SHA_B, "pending_approval", SHA_14, content14)),
+    json(route, versionDetail("1.4.0", SHA_B, "pending_approval", SHA_14, next)),
   );
   await page.route("**/v1/admin/agent-templates/schedule-manager/versions/1.3.0", (route) =>
-    json(route, versionDetail("1.3.0", SHA_B, "approved", SHA_13, content13)),
+    json(route, versionDetail("1.3.0", SHA_B, "approved", SHA_13, base)),
   );
   await page.route(/\/v1\/admin\/attention(\?.*)?$/, (route) => json(route, { items: [waitingVersion], count: 1 }));
   await page.route(/\/v1\/attention\/counts(\?.*)?$/, (route) =>
@@ -116,7 +116,7 @@ for (const width of [1280, 390]) {
         await expect(block.getByTestId("diff-view")).toHaveCount(0);
 
         // The Instructions diff is folded inside the Instructions section: two folds around the pair.
-        const instructions = page.getByRole("region", { name: "Instructions" });
+        const instructions = page.getByRole("region", { name: "Instructions", exact: true });
         const diff = instructions.getByRole("region", { name: "Diff of Instructions" });
         const folds = diff.getByTestId("diff-fold");
         await expect(folds).toHaveCount(2);
@@ -131,7 +131,7 @@ for (const width of [1280, 390]) {
         await expect(diff.getByText("Step 24: check the queue.")).toBeVisible();
 
         // The skill's diff sits inside the skill's card, folded the same way.
-        const skill = page.getByRole("region", { name: "Skill code-review" });
+        const skill = page.getByRole("region", { name: "Skill code-review", exact: true });
         const bodyDiff = skill.getByRole("region", { name: "Diff of Skill code-review body" });
         await expect(bodyDiff.getByTestId("diff-fold").first()).toContainText("11 unchanged lines");
         await bodyDiff.getByRole("button", { name: "Show all 11 unchanged lines (lines 1 to 11)" }).click();
@@ -144,13 +144,53 @@ for (const width of [1280, 390]) {
         // The sections nothing touched are collapsed to one line "Unchanged" that expands.
         const unchanged = page.getByTestId("diff-unchanged");
         await expect(unchanged).toHaveCount(7);
-        const about = page.getByRole("region", { name: "About this template" }).getByTestId("diff-unchanged");
+        const about = page.getByRole("region", { name: "About this template", exact: true }).getByTestId("diff-unchanged");
         await about.locator("summary").click();
         await expect(page.getByLabel("README.md source text")).toContainText("# Schedule manager");
 
         if (width === 390) {
           expect(await overflow(page), "the review page overflows horizontally").toBeLessThanOrEqual(0);
         }
+        expect(errors, "the review journey threw").toEqual([]);
+      });
+
+      // FIX-271: what the new version drops is on the page, a new skill reads as new, and an unlock
+      // is said in words and looked at first.
+      test(`removed helper, removed and added skills, an unlocked memory (${scheme})`, async ({ page }) => {
+        const errors: string[] = [];
+        page.on("pageerror", (e) => errors.push(e.message));
+        const helper = (path: string, text: string) => ({ path, size: text.length, executable: false, sha256: "a".repeat(64), text });
+        const base = {
+          ...content13,
+          helpers: [helper("scripts/gone.sh", `echo ${"a-very-long-line-".repeat(12)}\n`)],
+          memories: [{ key: "rules", content: "Be kind.", locked: true }],
+        };
+        const next = {
+          ...content13,
+          skills: [{ name: "release-notes", use_it_when: "When a release is cut", body: "Write the notes.\n", files: [] }],
+          memories: [{ key: "rules", content: "Be kind.", locked: false }],
+        };
+        await mockAgentTemplates(page);
+        await mockReviewAgainst130(page, base, next);
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto("/admin/internet-access/templates/schedule-manager/1.4.0");
+        await expect.poll(() => page.locator("html").getAttribute("data-theme")).toBe(scheme);
+        await expect(page.getByRole("region", { name: "What changed since 1.3.0" })).toBeVisible();
+        await expect(page.getByTestId("diff-attention")).toContainText("Memory rules — No longer locked.");
+        await expect(page.getByTestId("memory-lock-change")).toHaveText("No longer locked.");
+
+        const removedHelper = page.getByRole("region", { name: "Helper files", exact: true }).getByTestId("removed-file-scripts/gone.sh");
+        await expect(removedHelper.getByText("Removed", { exact: true })).toBeVisible();
+        await expect(removedHelper.getByTestId("diff-box")).toContainText("a-very-long-line-");
+        const removedSkill = page.getByRole("region", { name: "Removed skill code-review", exact: true });
+        await expect(removedSkill.locator("p").first().getByText("Removed", { exact: true })).toBeVisible();
+        await expect(removedSkill.getByTestId("removed-file-checklist.md")).toBeVisible();
+        const added = page.getByRole("region", { name: "Skill release-notes", exact: true });
+        await expect(added.getByTestId("diff-unchanged")).toHaveCount(0);
+        await expect(added.getByRole("region", { name: "Diff of Skill release-notes body", exact: true })).toContainText("(added)");
+        await expect(page.getByRole("button", { name: "Approve" })).toBeEnabled();
+        expect(await serious(page)).toEqual([]);
+        expect(await overflow(page), "the review page overflows horizontally").toBeLessThanOrEqual(0);
         expect(errors, "the review journey threw").toEqual([]);
       });
     }

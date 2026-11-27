@@ -212,11 +212,77 @@ function WhatChanged({ diff, baseVersion }: { diff: TemplateDiff; baseVersion: s
   );
 }
 
+/** One file of this version inside a comparison: its diff, or its "Unchanged" fold; with a side that is not text,
+ * the change in words and the file as it is now. */
+function ComparedFile({ f, change, label }: { f: FileView; change: TemplateChange | null; label: string }) {
+  const wordsOnly = change != null && change.old == null && change.new == null;
+  if (wordsOnly || f.text == null) {
+    return (
+      <div className="space-y-1">
+        <TextFile f={f} label={label} />
+        {wordsOnly ? (
+          <p className="text-sm text-ink-2" data-testid="file-change">
+            {changeWords(change)}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <FileHeading f={f} />
+      <PartText change={change} label={label} current={f.text} />
+    </div>
+  );
+}
+
+/** A file only the version people use now has: its path, marked Removed, with the text that goes away. */
+function RemovedFile({ path, change, label }: { path: string; change: TemplateChange; label: string }) {
+  return (
+    <div className="space-y-1" data-testid={`removed-file-${path}`}>
+      <p className="text-sm font-semibold text-ink [overflow-wrap:anywhere]">
+        <span className="font-mono">{path}</span> <Badge tone="neutral">Removed</Badge>
+      </p>
+      {change.old != null ? (
+        <DiffView old={change.old} next="" label={`Diff of ${label}`} fileName={label} status="removed" />
+      ) : (
+        <p className="text-sm text-ink-2">{changeWords(change)}</p>
+      )}
+    </div>
+  );
+}
+
+/** The removed files among `changes` whose part starts with `prefix`; the rest of the part is the path. */
+function RemovedFiles({ changes, prefix, labelOf }: { changes: TemplateChange[]; prefix: string; labelOf: (path: string) => string }) {
+  return changes
+    .filter((x) => x.kind === "removed" && x.part.startsWith(prefix))
+    .map((x) => {
+      const path = x.part.slice(prefix.length);
+      return <RemovedFile key={x.part} path={path} change={x} label={labelOf(path)} />;
+    });
+}
+
+/** A skill this version no longer carries: its Use it when, its body and every file, all marked Removed. */
+function RemovedSkill({ name, change, changes }: { name: string; change: TemplateChange; changes: TemplateChange[] }) {
+  return (
+    <section aria-label={`Removed skill ${name}`} className="space-y-2 rounded-card border border-line bg-surface p-4">
+      <p className="font-medium text-ink">
+        {name} <Badge tone="neutral">Removed</Badge>
+      </p>
+      <p className="text-sm text-ink-2">Use it when: {change.useItWhen}</p>
+      <DiffView old={change.old ?? ""} next="" label={`Diff of Skill ${name} body`} fileName={`Skill ${name} body`} status="removed" />
+      <RemovedFiles changes={changes} prefix={`skill:${name}:file:`} labelOf={(path) => `File ${path} of skill ${name}`} />
+    </section>
+  );
+}
+
 /** One skill and its files: the folded diffs of the parts that changed, every part nothing touched
- * as one line "Unchanged"; a skill nothing touched collapses whole. */
+ * as one line "Unchanged"; a skill nothing touched collapses whole. A new skill reads as added. */
 function SkillCard({ s, changes, comparing }: { s: TemplateContentView["skills"][number]; changes: TemplateChange[] | null; comparing: boolean }) {
-  const body = changes?.find((c) => c.part === `skill:${s.name}:body`) ?? null;
-  const use = changes?.find((c) => c.part === `skill:${s.name}:use_it_when`) ?? null;
+  // A new skill is one change (`skill:<name>`, its body as the new text): the body and the Use it when are both added.
+  const added = changes?.find((c) => c.part === `skill:${s.name}` && c.kind === "added") ?? null;
+  const body = added ?? changes?.find((c) => c.part === `skill:${s.name}:body`) ?? null;
+  const use = added ? { old: "", new: added.useItWhen } : (changes?.find((c) => c.part === `skill:${s.name}:use_it_when`) ?? null);
   const header = <p className="font-medium text-ink">{s.name}</p>;
   if (comparing && changes != null && changes.length === 0) {
     return (
@@ -242,18 +308,12 @@ function SkillCard({ s, changes, comparing }: { s: TemplateContentView["skills"]
       <p className="text-sm text-ink-2">Use it when: {s.use_it_when}</p>
       {comparing && changes != null ? (
         <div className="space-y-2">
-          {use ? <DiffView old={use.old ?? ""} next={use.new ?? ""} label={`Diff of Skill ${s.name} · Use it when`} /> : null}
+          {use ? <DiffView old={use.old ?? ""} next={use.new ?? ""} label={`Diff of Skill ${s.name} · Use it when`} status={added ? "added" : null} /> : null}
           <PartText change={body} label={`Skill ${s.name} body`} current={s.body} />
-          {s.files.map((f) =>
-            f.text == null ? (
-              <TextFile key={f.path} f={f} label={`File ${f.path} of skill ${s.name}`} />
-            ) : (
-              <div key={f.path} className="space-y-1">
-                <FileHeading f={f} />
-                <PartText change={changes.find((c) => c.part === `skill:${s.name}:file:${f.path}`) ?? null} label={`File ${f.path} of skill ${s.name}`} current={f.text} />
-              </div>
-            ),
-          )}
+          {s.files.map((f) => (
+            <ComparedFile key={f.path} f={f} change={changes.find((c) => c.part === `skill:${s.name}:file:${f.path}`) ?? null} label={`File ${f.path} of skill ${s.name}`} />
+          ))}
+          <RemovedFiles changes={changes} prefix={`skill:${s.name}:file:`} labelOf={(path) => `File ${path} of skill ${s.name}`} />
         </div>
       ) : (
         <>
@@ -309,9 +369,15 @@ function Content({ d, diff }: { d: TemplateVersionDetail; diff: TemplateDiff | n
               key={s.name}
               s={s}
               comparing={diff != null}
-              changes={diff ? diff.changes.filter((x) => x.part === `skill:${s.name}` || x.part.startsWith(`${`skill:${s.name}`}:`)) : null}
+              changes={diff ? diff.changes.filter((x) => x.part === `skill:${s.name}` || x.part.startsWith(`skill:${s.name}:`)) : null}
             />
           ))}
+          {group("skills")
+            .filter((x) => x.kind === "removed" && x.part.split(":").length === 2)
+            .map((x) => {
+              const name = x.part.slice("skill:".length);
+              return <RemovedSkill key={x.part} name={name} change={x} changes={group("skills")} />;
+            })}
         </div>
       </Section>
       <Section id="skill-refs" title="Skills from libraries" description="What the agent reads from a skill library instead of carrying its own copy.">
@@ -344,15 +410,13 @@ function Content({ d, diff }: { d: TemplateVersionDetail; diff: TemplateDiff | n
         {unchanged("helpers",
           <div className="space-y-3">
             {c.helpers.map((f) =>
-              diff != null && f.text != null ? (
-                <div key={f.path} className="space-y-1">
-                  <FileHeading f={f} />
-                  <PartText change={byPart(`helper:${f.path}`)} label={`Helper file ${f.path}`} current={f.text} />
-                </div>
+              diff != null ? (
+                <ComparedFile key={f.path} f={f} change={byPart(`helper:${f.path}`)} label={`Helper file ${f.path}`} />
               ) : (
                 <TextFile key={f.path} f={f} label={`Helper file ${f.path}`} />
               ),
             )}
+            <RemovedFiles changes={group("helpers")} prefix="helper:" labelOf={(path) => `Helper file ${path}`} />
           </div>,
         )}
       </Section>
@@ -361,23 +425,33 @@ function Content({ d, diff }: { d: TemplateVersionDetail; diff: TemplateDiff | n
           <>
             <DetailChanges changes={group("memories").filter((x) => x.kind === "removed")} />
             <ul className="space-y-2">
-              {c.memories.map((m) => (
-                <li key={m.key} className="space-y-1 rounded-card border border-line bg-surface p-4" data-testid="template-memory">
-                  {m.locked ? (
-                    <p className="text-sm text-ink-2">
-                      <Badge tone="neutral">Locked</Badge> Locked: {agent} can read it but not change it.
-                    </p>
-                  ) : null}
-                  <p className="font-mono text-xs text-muted">{m.key}</p>
-                  {diff != null ? (
-                    <PartText change={byPart(`memory:${m.key}`)} label={`Memory ${m.key}`} current={m.content} />
-                  ) : (
-                    <pre aria-label={`Memory ${m.key}`} className="whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 text-sm text-ink [overflow-wrap:anywhere]">
-                      {m.content}
-                    </pre>
-                  )}
-                </li>
-              ))}
+              {c.memories.map((m) => {
+                const change = byPart(`memory:${m.key}`);
+                // A change of the lock alone carries no text: it is said in words, and the text is unchanged.
+                const textChanged = change != null && (change.old != null || change.new != null);
+                return (
+                  <li key={m.key} className="space-y-1 rounded-card border border-line bg-surface p-4" data-testid="template-memory">
+                    {m.locked ? (
+                      <p className="text-sm text-ink-2">
+                        <Badge tone="neutral">Locked</Badge> Locked: {agent} can read it but not change it.
+                      </p>
+                    ) : null}
+                    <p className="font-mono text-xs text-muted">{m.key}</p>
+                    {change?.kind === "changed" && change.detail ? (
+                      <p className="text-sm font-medium text-ink" data-testid="memory-lock-change">
+                        {change.detail}
+                      </p>
+                    ) : null}
+                    {diff != null ? (
+                      <PartText change={textChanged ? change : null} label={`Memory ${m.key}`} current={m.content} />
+                    ) : (
+                      <pre aria-label={`Memory ${m.key}`} className="whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 text-sm text-ink [overflow-wrap:anywhere]">
+                        {m.content}
+                      </pre>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </>,
         )}
@@ -498,6 +572,12 @@ export function TemplateVersionReview({ templateId, version }: { templateId: str
   const firstVersion = list.data != null && current == null;
   const offered = useTemplateVersion(current && current !== version ? templateId : undefined, current ?? undefined);
   const diff = offered.data?.content && d?.content ? diffTemplateContent(offered.data.content, d.content, appName) : null;
+  // A comparison is expected unless the list says this is a first version or the offered one. Nobody approves while it
+  // is still loading or after it failed; an offered version without content is a stated reason there is none.
+  const expected = current != null && current !== version;
+  const compareError = list.isError ? list.error : expected && offered.isError ? offered.error : null;
+  const compareLoading = !compareError && (list.isPending || (expected && offered.isPending));
+  const noComparison = expected && offered.data != null && !offered.data.content;
   const stale = approve.error instanceof ApiError && approve.error.status === 409;
   const title = d ? `${d.content?.name ?? templateId} ${version}` : `${templateId} ${version}`;
   return (
@@ -527,6 +607,9 @@ export function TemplateVersionReview({ templateId, version }: { templateId: str
             <Notice role="status">People keep using {current} until you approve this one.</Notice>
           ) : null}
           {firstVersion ? <Notice role="status">This is the first version: nothing to compare with.</Notice> : null}
+          {compareLoading ? <Loading label={expected ? `Loading the comparison with ${current}…` : "Loading the comparison…"} /> : null}
+          {compareError ? <ErrorState error={compareError} onRetry={() => void (list.isError ? list.refetch() : offered.refetch())} /> : null}
+          {noComparison ? <Notice role="status">There is no comparison: {current} has no content to compare with.</Notice> : null}
           {diff ? <WhatChanged diff={diff} baseVersion={current!} /> : null}
           <Content d={d} diff={diff} />
           {d.status === "pending_approval" ? (
@@ -537,7 +620,7 @@ export function TemplateVersionReview({ templateId, version }: { templateId: str
               <Button
                 type="button"
                 variant="approve"
-                disabled={approve.isPending || !d.content_sha256}
+                disabled={approve.isPending || !d.content_sha256 || compareLoading || compareError != null}
                 onClick={() => d.content_sha256 && approve.mutate(d.content_sha256, { onError: () => undefined })}
               >
                 Approve

@@ -123,6 +123,39 @@ describe("DiffView", () => {
     expect(marks).toEqual(["first", "last"]);
   });
 
+  it("a block's removed and added lines are paired in order for the word highlight", () => {
+    render(<DiffView old={"keep\nred apple\nred pear"} next={"keep\ngreen apple\ngreen pear"} label="d" />);
+    const marks = Array.from(document.querySelectorAll("mark")).map((m) => m.textContent);
+    expect(marks.sort()).toEqual(["green", "green", "red", "red"]);
+  });
+
+  it("the scroll box is a region with its own name", () => {
+    render(<DiffView old="a" next="b" label="Diff of Instructions" />);
+    const box = screen.getByRole("region", { name: "Scrollable lines: Instructions" });
+    expect(box).toBe(screen.getByTestId("diff-box"));
+    expect(box.getAttribute("tabindex")).toBe("0");
+  });
+
+  it("a file too large to compare says so, with the whole old and new text in closed folds", () => {
+    const old = lines(3_000);
+    const next = old.replace("line 10\n", "line ten\n").replace("line 2990\n", "line late\n");
+    render(<DiffView old={old} next={next} label="Diff of big" />);
+    expect(screen.getByText("This file is too large to compare line by line; the whole old and new text are below.")).toBeTruthy();
+    expect(screen.queryByTestId("diff-box")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+    const whole = screen.getAllByTestId("diff-whole-text");
+    expect(whole).toHaveLength(2);
+    expect(whole.map((w) => (w as HTMLDetailsElement).open)).toEqual([false, false]);
+    expect(screen.getByLabelText("Old text: big").textContent).toBe(old);
+    expect(screen.getByLabelText("New text: big").textContent).toBe(next);
+  });
+
+  it("an added or removed empty file says it is empty, never Unchanged", () => {
+    render(<DiffView old="" next="" label="d" status="added" />);
+    expect(screen.getByText("The file is empty.")).toBeTruthy();
+    expect(screen.queryByText("Unchanged.")).toBeNull();
+  });
+
   it("long lines scroll inside the box, never the page", () => {
     render(<DiffView old={"x".repeat(400)} next={"y".repeat(400)} label="d" />);
     const box = screen.getByTestId("diff-box");

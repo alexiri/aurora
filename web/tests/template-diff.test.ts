@@ -236,6 +236,37 @@ describe("diffTemplateContent", () => {
     expect(lowered.changes[0].attention).toBe(false);
   });
 
+  it("the minimum version is compared in order: the first differing component decides", () => {
+    const attention = (from: string, to: string) => diffTemplateContent(content({ min_core: from }), content({ min_core: to })).changes[0]!.attention;
+    expect(attention("6.2.0", "5.9.9")).toBe(false);
+    expect(attention("6.0.0", "6.2.0")).toBe(true);
+    expect(attention("5.9.9", "6.0.0")).toBe(true);
+    expect(attention("6.0", "6.0.1")).toBe(true);
+    expect(attention("6.0.1", "6.0")).toBe(false);
+  });
+
+  it("unlocking a memory widens what the agent may change; locking it does not", () => {
+    const m = (locked: boolean) => content({ memories: [{ key: "rules", content: "Be kind.", locked }] });
+    expect(diffTemplateContent(m(true), m(false)).attention.map((c) => c.part)).toEqual(["memory:rules"]);
+    expect(diffTemplateContent(m(false), m(true)).attention).toEqual([]);
+  });
+
+  it("binary files are compared by content: added, removed, changed and no longer text", () => {
+    const bin = (path: string, sha: string) => ({ path, size: 4, executable: false, sha256: sha.repeat(64), text: null });
+    const base = content({ helpers: [bin("gone.bin", "1"), bin("same.bin", "2"), bin("other.bin", "3"), file("was-text.sh", "x\n")] });
+    const next = content({ helpers: [bin("same.bin", "2"), bin("other.bin", "4"), bin("was-text.sh", "5"), bin("new.bin", "6")] });
+    const d = diffTemplateContent(base, next);
+    expect(d.changes.map((c) => [c.part, c.kind])).toEqual([
+      ["helper:gone.bin", "removed"],
+      ["helper:other.bin", "changed"],
+      ["helper:was-text.sh", "changed"],
+      ["helper:new.bin", "added"],
+    ]);
+    expect(d.attention.map((c) => c.part)).toEqual(["helper:new.bin"]);
+    const skills = diffTemplateContent(content({ skills: [skill("a", { files: [bin("x.bin", "1")] })] }), content({ skills: [skill("a")] }));
+    expect(skills.changes.map((c) => [c.part, c.kind])).toEqual([["skill:a:file:x.bin", "removed"]]);
+  });
+
   it("the avatar arriving and leaving is said in words", () => {
     expect(diffTemplateContent(content(), content({ has_avatar: true })).changes[0]).toMatchObject({ label: "Avatar", kind: "added", detail: "The template now carries an avatar." });
     expect(diffTemplateContent(content({ has_avatar: true }), content()).changes[0]).toMatchObject({ label: "Avatar", kind: "removed", detail: "The template no longer carries an avatar." });

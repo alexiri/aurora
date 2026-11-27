@@ -44,10 +44,20 @@ export interface LineDiff {
   lines: number;
   /** The new file has more than `VERY_LARGE_LINES` lines. */
   veryLarge: boolean;
+  /** The texts differ over too long a stretch to compare line by line: there are no rows, and the diff says so. */
+  tooLarge: boolean;
 }
 
-/** The line diff of two texts: every line, marked, with old and new line numbers (1-based). */
+/** The largest table (old lines × new lines, between the shared head and tail) the comparison builds. */
+const MAX_CELLS = 4_000_000;
+
+/** The line diff of two texts: every line, marked, with old and new line numbers (1-based); empty when too large. */
 export function diffLines(oldText: string, newText: string): DiffLine[] {
+  return compareLines(oldText, newText) ?? [];
+}
+
+/** `diffLines`, or null when the part between the shared head and tail is over `MAX_CELLS`. */
+function compareLines(oldText: string, newText: string): DiffLine[] | null {
   const split = (t: string) => (t === "" ? [] : t.split("\n"));
   const a0 = split(oldText);
   const b0 = split(newText);
@@ -64,28 +74,24 @@ export function diffLines(oldText: string, newText: string): DiffLine[] {
   const push = (kind: DiffLineKind, text: string) =>
     out.push({ kind, text, old: kind === "add" ? null : ++oldNo, new: kind === "del" ? null : ++newNo });
   for (let k = 0; k < head; k++) push("same", a0[k]);
-  // Longest common subsequence of the middle; past a quadratic-table size the middle falls back to
-  // "all removed, then all added" (skills are at most 32 000 characters, but a file may not be).
-  if (a.length * b.length > 4_000_000) {
-    for (const text of a) push("del", text);
-    for (const text of b) push("add", text);
-  } else {
-    const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
-    for (let i = a.length - 1; i >= 0; i--)
-      for (let j = b.length - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    let i = 0;
-    let j = 0;
-    while (i < a.length && j < b.length) {
-      if (a[i] === b[j]) {
-        push("same", a[i]);
-        i++;
-        j++;
-      } else if (dp[i + 1][j] >= dp[i][j + 1]) push("del", a[i++]);
-      else push("add", b[j++]);
-    }
-    while (i < a.length) push("del", a[i++]);
-    while (j < b.length) push("add", b[j++]);
+  // Longest common subsequence of the middle. Past a quadratic-table size there is no line comparison (skills are at
+  // most 32 000 characters, but a file may not be).
+  if (a.length * b.length > MAX_CELLS) return null;
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      push("same", a[i]);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) push("del", a[i++]);
+    else push("add", b[j++]);
   }
+  while (i < a.length) push("del", a[i++]);
+  while (j < b.length) push("add", b[j++]);
   for (let k = a0.length - tail; k < a0.length; k++) push("same", a0[k]);
   return out;
 }
@@ -96,7 +102,9 @@ export function diffLines(oldText: string, newText: string): DiffLine[] {
  * longer folds into one `FoldRow` per run, collapsed to the "N unchanged lines" row.
  */
 export function buildDiff(oldText: string, newText: string): LineDiff {
-  const lines = diffLines(oldText, newText);
+  const newCount = newText === "" ? 0 : newText.split("\n").length;
+  const lines = compareLines(oldText, newText);
+  if (lines == null) return { rows: [], lines: newCount, veryLarge: false, tooLarge: true };
   const visible = new Array<boolean>(lines.length).fill(false);
   let i = 0;
   while (i < lines.length) {
@@ -127,8 +135,7 @@ export function buildDiff(oldText: string, newText: string): LineDiff {
     }
   }
   flush();
-  const newCount = newText === "" ? 0 : newText.split("\n").length;
-  return { rows, lines: newCount, veryLarge: newCount > VERY_LARGE_LINES };
+  return { rows, lines: newCount, veryLarge: newCount > VERY_LARGE_LINES, tooLarge: false };
 }
 
 function rowOf(rows: DiffRow[], id: number): FoldRow | null {

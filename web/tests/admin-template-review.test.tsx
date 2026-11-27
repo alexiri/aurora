@@ -80,6 +80,13 @@ function renderReview(routes: Record<string, Handler> = {}, onWrite?: (key: stri
   wrap(<TemplateVersionReview templateId="schedule-manager" version="1.1.0" />);
 }
 
+/** Approve is enabled once the comparison is ready (FIX-271). */
+async function clickApprove() {
+  const button = (await screen.findByRole("button", { name: "Approve" })) as HTMLButtonElement;
+  await waitFor(() => expect(button.disabled).toBe(false));
+  fireEvent.click(button);
+}
+
 describe("Agent template review (C-1114)", () => {
   afterEach(cleanup);
 
@@ -202,7 +209,7 @@ describe("Agent template review (C-1114)", () => {
   it("Approve sends exactly the content_sha256 the page showed", async () => {
     const writes: { key: string; body: unknown }[] = [];
     renderReview({}, (key, body) => writes.push({ key, body }));
-    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    await clickApprove();
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0].key).toBe("POST /v1/admin/agent-templates/schedule-manager/versions/1.1.0/approve");
     expect(writes[0].body).toEqual({ content_sha256: SHA_CONTENT });
@@ -216,7 +223,7 @@ describe("Agent template review (C-1114)", () => {
         return calls === 1 ? err(409, "template_content_changed", "This version's content changed since it was reviewed. Reload the review.") : json(200, detail);
       },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    await clickApprove();
     await screen.findByText(/This version changed while you were reading/);
     // the review was reloaded from the server
     await waitFor(() => expect(calls).toBe(1));
@@ -231,6 +238,140 @@ describe("Agent template review (C-1114)", () => {
     fireEvent.click(within(dlg).getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0].key).toBe("POST /v1/admin/agent-templates/schedule-manager/versions/1.1.0/reject");
+  });
+
+  // FIX-271: every change the summary counts is visible in its section.
+  const bin = (path: string, sha: string) => ({ path, size: 9, executable: false, sha256: sha.repeat(64), text: null });
+  const txt = (path: string, text: string) => ({ path, size: text.length, executable: false, sha256: "a".repeat(64), text });
+  const answer = (v: string, c: Record<string, unknown>) => ({
+    [`GET /v1/admin/agent-templates/schedule-manager/versions/${v}`]: () => json(200, v === "1.0.0" ? { ...offered, content: c } : { ...detail, content: c }),
+  });
+
+  it("shows removed skills, skill files and helper files in their sections, marked Removed", async () => {
+    const kept = (files: unknown[]) => ({ name: "code-review", use_it_when: "A pull request is open", body: "Review carefully.\n", files });
+    renderReview({
+      ...answer("1.0.0", content({
+        skills: [
+          kept([txt("checklist.md", "- tests\n"), txt("old-notes.md", "old notes\n"), bin("logo.bin", "1")]),
+          { name: "triage", use_it_when: "An issue arrives", body: "Sort the issue.\n", files: [txt("labels.md", "bug\n")] },
+        ],
+        helpers: [txt("scripts/run.sh", "#!/bin/sh\n"), txt("scripts/gone.sh", "echo gone\n"), bin("scripts/tool.bin", "2")],
+      })),
+      ...answer("1.1.0", content({ skills: [kept([txt("checklist.md", "- tests\n")])], helpers: [txt("scripts/run.sh", "#!/bin/sh\n")] })),
+    });
+    await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    const skills = screen.getByRole("region", { name: "Skills" });
+    const gone = within(skills).getByRole("region", { name: "Removed skill triage" });
+    expect(gone.textContent).toContain("Removed");
+    expect(gone.textContent).toContain("An issue arrives");
+    expect(within(gone).getByLabelText("Diff of Skill triage body").textContent).toContain("- Sort the issue.");
+    expect(within(gone).getByTestId("removed-file-labels.md").textContent).toContain("Removed");
+    expect(within(gone).getByTestId("removed-file-labels.md").textContent).toContain("- bug");
+    const card = within(skills).getByRole("region", { name: "Skill code-review" });
+    expect(within(card).getByTestId("removed-file-old-notes.md").textContent).toContain("Removed");
+    expect(within(card).getByTestId("removed-file-old-notes.md").textContent).toContain("- old notes");
+    expect(within(card).getByTestId("removed-file-logo.bin").textContent).toContain("Removed");
+    expect(within(card).getByTestId("removed-file-logo.bin").textContent).toContain("It is not text");
+    const helpers = screen.getByRole("region", { name: "Helper files" });
+    expect(within(helpers).getByTestId("removed-file-scripts/gone.sh").textContent).toContain("Removed");
+    expect(within(helpers).getByTestId("removed-file-scripts/gone.sh").textContent).toContain("- echo gone");
+    expect(within(helpers).getByTestId("removed-file-scripts/tool.bin").textContent).toContain("Removed");
+  });
+
+  it("an added skill reads as new, never as Unchanged", async () => {
+    renderReview({
+      ...answer("1.0.0", content({ skills: [], instructions: "Triage carefully." })),
+      ...answer("1.1.0", content({ skills: [{ name: "release-notes", use_it_when: "A release is cut", body: "Write the notes.\n", files: [txt("style.md", "Be short.\n")] }] })),
+    });
+    await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    const card = screen.getByRole("region", { name: "Skill release-notes" });
+    expect(within(card).queryByTestId("diff-unchanged")).toBeNull();
+    for (const name of ["Diff of Skill release-notes body", "Diff of Skill release-notes · Use it when", "Diff of File style.md of skill release-notes"]) {
+      const diff = within(card).getByRole("region", { name });
+      expect(diff.textContent).toContain("(added)");
+    }
+    expect(within(card).getAllByTestId("part-diff")).toHaveLength(2);
+  });
+
+  it("a memory that is only locked or unlocked says so; unlocking is looked at first", async () => {
+    renderReview({
+      ...answer("1.0.0", content({ memories: [{ key: "people", content: "Ada.", locked: false }, { key: "rules", content: "Be kind.", locked: true }] })),
+      ...answer("1.1.0", content({ memories: [{ key: "people", content: "Ada.", locked: true }, { key: "rules", content: "Be kind.", locked: false }] })),
+    });
+    const block = await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    const [people, rules] = screen.getAllByTestId("template-memory");
+    expect(within(people!).getByTestId("memory-lock-change").textContent).toBe("Now locked: the agent can read it but not change it.");
+    expect(within(rules!).getByTestId("memory-lock-change").textContent).toBe("No longer locked.");
+    // The text did not change: no empty diff.
+    expect(within(screen.getByRole("region", { name: "Memories" })).queryByTestId("diff-view")).toBeNull();
+    const attention = within(block).getByTestId("diff-attention");
+    expect(attention.textContent).toContain("Memory rules — No longer locked.");
+    expect(attention.textContent).not.toContain("Memory people");
+  });
+
+  it("a binary file that changed is said in its section, and a file that stops being text is not called removed", async () => {
+    renderReview({
+      ...answer("1.0.0", content({ helpers: [bin("scripts/tool.bin", "1"), txt("scripts/run.sh", "#!/bin/sh\n")] })),
+      ...answer("1.1.0", content({ helpers: [bin("scripts/tool.bin", "2"), bin("scripts/run.sh", "3")] })),
+    });
+    await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    const helpers = screen.getByRole("region", { name: "Helper files" });
+    expect(within(helpers).queryByTestId("diff-unchanged")).toBeNull();
+    expect(within(helpers).getAllByTestId("file-change").map((e) => e.textContent)).toEqual([
+      "It changed. It is not text, so there is no line comparison.",
+      "It changed. It is not text, so there is no line comparison.",
+    ]);
+    expect(within(helpers).queryByText("Removed")).toBeNull();
+  });
+
+  it("Approve waits for the comparison: Loading while the offered version loads, an error with Retry when it fails", async () => {
+    let release: (r: Response) => void = () => undefined;
+    let calls = 0;
+    renderReview({
+      "GET /v1/admin/agent-templates/schedule-manager/versions/1.0.0": () => {
+        calls += 1;
+        return calls === 1 ? new Promise<Response>((resolve) => (release = resolve)) : json(200, offered);
+      },
+    });
+    await screen.findByRole("region", { name: "Instructions" });
+    await screen.findByText("Loading the comparison with 1.0.0…");
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
+    release(err(500, "internal", "boom"));
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    expect(screen.queryByText("Loading the comparison with 1.0.0…")).toBeNull();
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
+    // Rejecting needs no comparison.
+    expect((screen.getByRole("button", { name: "Reject" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(retry);
+    await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("Approve waits for the list too: disabled while it loads, an error with Retry when it fails", async () => {
+    let release: (r: Response) => void = () => undefined;
+    let calls = 0;
+    const ok = listRoute()["GET /v1/admin/agent-templates"];
+    renderReview({
+      "GET /v1/admin/agent-templates": () => {
+        calls += 1;
+        return calls === 1 ? new Promise<Response>((resolve) => (release = resolve)) : ok();
+      },
+    });
+    await screen.findByRole("region", { name: "Instructions" });
+    expect(screen.getByText("Loading the comparison…")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
+    release(err(500, "internal", "boom"));
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(retry);
+    await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it("an offered version with no content states why there is no comparison", async () => {
+    renderReview({ "GET /v1/admin/agent-templates/schedule-manager/versions/1.0.0": () => json(200, { ...offered, content: null }) });
+    await screen.findByText("There is no comparison: 1.0.0 has no content to compare with.");
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("a version that is not waiting for review shows its state in words and no decision", async () => {
