@@ -264,7 +264,7 @@ impl HarnessSession for FakeSession {
         Ok(())
     }
 
-    async fn release(self: Box<Self>) -> Result<(), HarnessError> {
+    async fn release(&mut self) -> Result<(), HarnessError> {
         if let Some(t) = &self.turn {
             let _ = t.cancel.send(true);
         }

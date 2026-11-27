@@ -49,6 +49,21 @@ impl Mock {
     }
 }
 
+/// A scripted child starts no processes: it has ended once it was killed.
+struct MockProcs(Arc<AtomicBool>);
+
+#[async_trait]
+impl launcher::ChildProcs for MockProcs {
+    fn ended(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    async fn end(&self) -> Result<(), HarnessError> {
+        self.0.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl Launcher for Mock {
     async fn launch(&self, spec: LaunchSpec) -> Result<ChildIo, HarnessError> {
@@ -96,6 +111,7 @@ impl Launcher for Mock {
         Ok(ChildIo {
             stdin: in_tx,
             lines: out_rx,
+            procs: Arc::new(MockProcs(killed.clone())),
             kill: Box::new(move || {
                 killed.store(true, Ordering::SeqCst);
                 drop(out_tx); // the scripted child's own clone ends with its task
@@ -233,6 +249,7 @@ impl Launcher for SteerMock {
         Ok(ChildIo {
             stdin: in_tx,
             lines: out_rx,
+            procs: Arc::new(MockProcs(killed.clone())),
             kill: Box::new(move || {
                 killed.store(true, Ordering::SeqCst);
                 drop(out_tx);
@@ -383,7 +400,7 @@ async fn resume_ref_is_passed_and_release_keeps_it() {
     let mock = Mock::new(None, REPLY);
     let (specs, killed) = (mock.specs.clone(), mock.killed.clone());
     let a = ClaudeCodeAdapter::with_launcher(Arc::new(mock));
-    let s = a.start_session(opts(Some("prev-1"))).await.unwrap();
+    let mut s = a.start_session(opts(Some("prev-1"))).await.unwrap();
     assert_eq!(s.session_ref().as_deref(), Some("prev-1"));
     s.release().await.unwrap();
     assert!(killed.load(Ordering::SeqCst));

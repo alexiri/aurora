@@ -268,8 +268,10 @@ pub trait HarnessSession: Send {
     /// `Moved` only when confirmed.
     async fn background_running_tool(&mut self) -> Result<SendNowOutcome, HarnessError>;
     async fn abort(&mut self) -> Result<(), HarnessError>;
-    /// Let go without ending; a later start with the same ref resumes.
-    async fn release(self: Box<Self>) -> Result<(), HarnessError>;
+    /// Let go without ending; a later start with the same ref resumes. `Ok` only when nothing
+    /// the session started is left running; after an error the caller keeps the session and may
+    /// release it again.
+    async fn release(&mut self) -> Result<(), HarnessError>;
     /// (FIX-253, D-490) The harness child's own background work that outlives the turn: commands
     /// it started in the background and whose end nobody observed. Empty when the adapter cannot
     /// know or the child is gone (its background work dies with it). A plain method: it reads
@@ -289,6 +291,17 @@ pub trait HarnessSession: Send {
     /// Empty while a turn runs (the watch yields the stream to it).
     fn take_idle_events(&mut self) -> Vec<HarnessEvent> {
         Vec::new()
+    }
+
+    /// (FIX-265) `true` while the watch reads the idle child: more events may follow.
+    fn idle_watching(&self) -> bool {
+        false
+    }
+
+    /// (FIX-265) `true` when the child may still say something after the turn although its
+    /// list is empty (a background command ended just before), so the turn's end watches it.
+    fn wants_idle_watch(&self) -> bool {
+        false
     }
 }
 

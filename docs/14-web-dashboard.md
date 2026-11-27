@@ -646,7 +646,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     notice shows as **"You stopped this answer"**, muted between two rules, under the partial text.
     (FIX-253, D-490) The **Background activity** notice (`background_activity`) shows what the harness child keeps doing after the
     turn ended ("Background activity, still running: `…`") with a **Stop** button (the same abort right, `10 §Abort`); the durable
-    `background_stopped` notice mutes the entry row away and stays as **"Background activity stopped."** The reminder notice
+    `background_stopped` notice mutes the entry row away and stays as **"Background activity stopped."** (or **"…
+    finished."** when the work ended by itself); a newer `background_activity` notice mutes the older row too (FIX-265), so only
+    what still runs is shown. The reminder notice
     (`no_wakeup`, "<Agent> said it would continue, but nothing is set to wake it.") shows as a muted system line with a
     **Remind it in 15 minutes** button (FIX-253, D-490): one press sets one one-time reminder for the agent in this
     conversation, 15 minutes ahead, attributed to the person who pressed (the same right as sending a message there); the

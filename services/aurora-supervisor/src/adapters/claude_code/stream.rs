@@ -9,6 +9,8 @@
 //!   message was not already streamed through `stream_event`s.
 //! - `user` messages: `tool_result` blocks -> `ToolFinished`; a replayed text message (`isReplay`,
 //!   `--replay-user-messages`) carrying the text of a steer handed to the CLI -> `MessageJoined`.
+//! - `system/task_started`, `task_notification`, `task_updated` -> no event; they keep the record
+//!   of background commands ([`Backgrounds`]).
 //! - `result` -> terminal `Done{usage}` or `Error{code,message}` (see [`classify_failure`]).
 //! - Events with a non-null `parent_tool_use_id` (sub-agents) and unknown types are ignored.
 
@@ -70,8 +72,66 @@ pub struct StreamMapper {
     backgrounds: Option<BackgroundSink>,
 }
 
-/// (FIX-253, D-490) Shared record of the child's background commands: (command, started unix secs).
-pub type BackgroundSink = Arc<StdMutex<Vec<(String, u64)>>>;
+/// (FIX-253, D-490) One of the child's background commands that has not ended.
+#[derive(Debug, Clone)]
+pub struct BackgroundCommand {
+    /// The `Bash` call that started it.
+    pub tool_use_id: String,
+    /// The CLI's own id of the task, once it said it.
+    pub task_id: Option<String>,
+    pub command: String,
+    /// Unix seconds.
+    pub started_at: u64,
+}
+
+/// The most background commands one child's record keeps (the oldest goes first).
+const BACKGROUND_MAX: usize = 100;
+
+/// (FIX-253, D-490; FIX-265) The child's background commands that still run.
+#[derive(Debug, Default)]
+pub struct Backgrounds {
+    pub running: Vec<BackgroundCommand>,
+    /// This child started one at some time.
+    pub any: bool,
+    /// How many have ended.
+    pub ended: u64,
+}
+
+impl Backgrounds {
+    fn started(&mut self, tool_use_id: &str, command: &str) {
+        if self.running.iter().any(|c| c.tool_use_id == tool_use_id) {
+            return;
+        }
+        if self.running.len() >= BACKGROUND_MAX {
+            self.running.remove(0);
+        }
+        self.any = true;
+        self.running.push(BackgroundCommand {
+            tool_use_id: tool_use_id.to_owned(),
+            task_id: None,
+            command: command.to_owned(),
+            started_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        });
+    }
+
+    /// Drops the command named by its call or, when the event says only that, by its task id.
+    fn finished(&mut self, tool_use_id: Option<&str>, task_id: Option<&str>) {
+        let before = self.running.len();
+        self.running.retain(|c| {
+            !(tool_use_id.is_some_and(|id| c.tool_use_id == id)
+                || task_id.is_some_and(|id| c.task_id.as_deref() == Some(id)))
+        });
+        self.ended += (before - self.running.len()) as u64;
+    }
+}
+
+pub type BackgroundSink = Arc<StdMutex<Backgrounds>>;
+
+/// The statuses of `task_notification` and `task_updated` that end a task.
+const TASK_ENDED: [&str; 4] = ["completed", "failed", "killed", "stopped"];
 
 fn trunc(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(max).collect();
@@ -151,6 +211,7 @@ impl StreamMapper {
             Some("system") if v.get("subtype").and_then(Value::as_str) == Some("init") => {
                 self.init(&v, &mut out);
             }
+            Some("system") => self.task(&v),
             Some("stream_event") => {
                 if let Some(e) = v.get("event") {
                     self.stream_event(e, &mut out);
@@ -192,6 +253,38 @@ impl StreamMapper {
             session_id,
             mcp_ready: connected && listed,
         });
+    }
+
+    /// (FIX-265) The CLI's events about its tasks (read from the pinned CLI's code):
+    /// `task_started` ties the task's id to the call, and `task_notification` (or a
+    /// `task_updated` whose patch ends the task) says that a background command is over. The
+    /// call's own tool result does not: it only acknowledges the launch.
+    fn task(&mut self, v: &Value) {
+        let Some(sink) = &self.backgrounds else {
+            return;
+        };
+        let Ok(mut bg) = sink.lock() else {
+            return;
+        };
+        let text = |k: &str| v.get(k).and_then(Value::as_str).filter(|s| !s.is_empty());
+        let (call, task) = (text("tool_use_id"), text("task_id"));
+        let ends = |status: Option<&str>| status.is_some_and(|s| TASK_ENDED.contains(&s));
+        match text("subtype") {
+            Some("task_started") => {
+                if let Some(c) = bg
+                    .running
+                    .iter_mut()
+                    .find(|c| call == Some(c.tool_use_id.as_str()))
+                {
+                    c.task_id = task.map(str::to_owned);
+                }
+            }
+            Some("task_notification") if ends(text("status")) => bg.finished(call, task),
+            Some("task_updated") if ends(v.pointer("/patch/status").and_then(Value::as_str)) => {
+                bg.finished(call, task);
+            }
+            _ => {}
+        }
     }
 
     fn stream_event(&mut self, e: &Value, out: &mut Mapped) {
@@ -291,15 +384,8 @@ impl StreamMapper {
                         && let Some(command) = input.get("command").and_then(Value::as_str)
                         && let Some(sink) = &self.backgrounds
                         && let Ok(mut bg) = sink.lock()
-                        && !bg.iter().any(|(c, _)| c == command)
                     {
-                        bg.push((
-                            command.to_owned(),
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs(),
-                        ));
+                        bg.started(call_id, command);
                     }
                     out.events.push(HarnessEvent::ToolStarted {
                         call_id: call_id.to_owned(),
@@ -343,9 +429,17 @@ impl StreamMapper {
                 .unwrap_or_default();
             self.tool_names.remove(call_id);
             let text = b.get("content").map(result_text).unwrap_or_default();
+            let failed = b.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+            // (FIX-265) A background call that failed started nothing.
+            if failed
+                && let Some(sink) = &self.backgrounds
+                && let Ok(mut bg) = sink.lock()
+            {
+                bg.finished(Some(call_id).filter(|c| !c.is_empty()), None);
+            }
             out.events.push(HarnessEvent::ToolFinished {
                 call_id: call_id.to_owned(),
-                ok: !b.get("is_error").and_then(Value::as_bool).unwrap_or(false),
+                ok: !failed,
                 summary: (!text.is_empty()).then(|| trunc(&text, SUMMARY_MAX)),
             });
         }
