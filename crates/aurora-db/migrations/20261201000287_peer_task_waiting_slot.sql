@@ -12,5 +12,7 @@ CREATE UNIQUE INDEX peer_tasks_one_open_uq ON peer_tasks (from_agent_id, to_agen
 ALTER TABLE peer_tasks ADD COLUMN wakes_used integer NOT NULL DEFAULT 0 CHECK (wakes_used >= 0);
 -- FIX-253 (security review, medium 5): what the idle harness child spends after a turn is added
 -- to the usage ledger. This is the number of the last idle usage event counted for the turn, so a
--- redelivered report counts nothing twice.
-ALTER TABLE turns ADD COLUMN idle_usage_n bigint NOT NULL DEFAULT 0 CHECK (idle_usage_n >= 0);
+-- redelivered report counts nothing twice. No CHECK: `turns` is large, and adding one scans it
+-- under an exclusive lock (migrations run in a transaction, so NOT VALID would not avoid that).
+-- The only writer moves the number forward from 0.
+ALTER TABLE turns ADD COLUMN idle_usage_n bigint NOT NULL DEFAULT 0;
