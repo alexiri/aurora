@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SkillsList } from "@/components/skills/skills-list";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
 import { AgentSkills, applied, effective, librarySource, me, menuItems, notApplied, openMenu, routes, skill } from "./support/skills";
@@ -131,6 +132,67 @@ describe("one list (skill-1)", () => {
     expect(screen.getByTestId("skill-row-meeting-minutes")).toBeTruthy();
   });
 
+  describe("the update notice and its chips (FIX-279)", () => {
+    const mineWaiting = skill({ name: "pdf", source: librarySource({ update_pending: true }) });
+    const orgWaiting = skill({ name: "internal-comms", tier: "org", source: librarySource({ label: "Acme team recipes", update_pending: true }) });
+    const two = { "GET /v1/agents/a1/skills/effective": effective([applied(mineWaiting), applied(orgWaiting)]) };
+    const chip = (name: string) => within(row(name)).queryByText("Update available");
+
+    it("counts only the rows this person can review, and marks only those", async () => {
+      // a member who owns the workspace may decide the agent's update, not the organization's
+      routes(base(two));
+      wrap(<AgentSkills />);
+      await list();
+      expect(await screen.findByText(/1 update from a skill library is waiting for review\./)).toBeTruthy();
+      expect(chip("pdf")).toBeTruthy();
+      expect(chip("internal-comms")).toBeNull();
+    });
+
+    it("an organization admin counts and sees both", async () => {
+      routes(base({ ...two, "GET /v1/me": () => json(200, me("admin")) }));
+      wrap(<AgentSkills />);
+      await list();
+      expect(await screen.findByText(/2 updates from skill libraries are waiting for review\./)).toBeTruthy();
+      expect(chip("pdf")).toBeTruthy();
+      expect(chip("internal-comms")).toBeTruthy();
+    });
+
+    it("says nothing when none of the waiting updates is theirs to review", async () => {
+      routes(base({ "GET /v1/agents/a1/skills/effective": effective([applied(orgWaiting)]) }));
+      wrap(<AgentSkills />);
+      await list();
+      await waitFor(() => expect(row("internal-comms")).toBeTruthy());
+      expect(screen.queryByText(/waiting for review/)).toBeNull();
+      expect(chip("internal-comms")).toBeNull();
+    });
+
+    it("the organization's page counts its own rows, whatever the server holds for other levels", async () => {
+      const calls = routes({
+        "GET /v1/me": () => json(200, me("admin")),
+        "GET /v1/orgs/o1/skills": () => json(200, { items: [orgWaiting], next_cursor: null }),
+        "GET /v1/orgs/o1/skill-libraries": () => json(200, { items: [] }),
+        // the organization route also lists an agent's proposal, which has no row here
+        "GET /v1/orgs/o1/skill-library-updates": () => json(200, { items: [{ id: "u1" }, { id: "u2" }] }),
+      });
+      wrap(<SkillsList page={{ kind: "organization", orgId: "o1", label: "Acme" }} />);
+      await list();
+      expect(await screen.findByText(/1 update from a skill library is waiting for review\./)).toBeTruthy();
+      expect(chip("internal-comms")).toBeTruthy();
+      expect(calls.some((c) => c.path.endsWith("/skill-library-updates"))).toBe(false);
+    });
+  });
+
+  it("clamps a row's description to two lines; the panel keeps the whole text (FIX-279)", async () => {
+    const long = `${"A very long description of what this skill does. ".repeat(12)}`.trim();
+    routes(base({ "GET /v1/agents/a1/skills/effective": effective([applied(skill({ name: "internal-comms", description: long, source: librarySource() }))]) }));
+    wrap(<AgentSkills />);
+    await list();
+    expect(within(row("internal-comms")).getByText(long)).toHaveClass("line-clamp-2");
+    await open("internal-comms");
+    const p = await panel("Internal comms");
+    expect(within(p).getByText(long).className).not.toMatch(/line-clamp/);
+  });
+
   it("searches the name and the description", async () => {
     routes(base());
     wrap(<AgentSkills />);
@@ -182,6 +244,10 @@ describe("one list (skill-1)", () => {
     expect(screen.getByText(/One skill per name\. Daneel’s own skill replaces a workspace skill/)).toBeVisible();
     fireEvent.click(within(row("release-notes")).getByRole("button", { name: "Compare Release notes" }));
     const dlg = await screen.findByRole("dialog", { name: "Compare Release notes" });
+    // (FIX-279) on a phone the two texts wrap inside their boxes
+    for (const name of ["Diff of when to use it", "Diff of the instructions"]) {
+      expect(within(dlg).getByRole("region", { name }).querySelector(".whitespace-pre-wrap")).not.toBeNull();
+    }
     const diff = within(dlg).getByRole("region", { name: "Diff of the instructions" }).textContent;
     expect(diff).toContain("- Keep ticket numbers.");
     expect(diff).toContain("+ No ticket numbers.");

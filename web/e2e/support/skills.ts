@@ -119,7 +119,7 @@ const libraryCatalogue = (pdfId: string) => ({
     offered("release-notes", "Write release notes.", 1, 1, { blocked: { reason: "name_taken", message: "This agent already has a skill named release-notes." } }),
     offered("canvas-design", "Posters and static art.", 80, 2048, { blocked: { reason: "budget", message: "Too large for the room left for library skills here (6144 of 1048576 characters used)." } }),
     ...["docx", "pptx", "xlsx", "mcp-builder", "slack-gif-creator", "web-artifacts-builder"].map((name) =>
-      offered(name, "", 1, 0, { valid: false, reason: "the skill has more than 50 files", blocked: { reason: "invalid", message: "the skill has more than 50 files" } }),
+      offered(name, "", 1, 0, { valid: false, reason: "the skill has more than 50 files", reason_code: "too_many_files", blocked: { reason: "invalid", message: "the skill has more than 50 files" } }),
     ),
   ],
 });

@@ -28,6 +28,7 @@ import {
   pageSubject,
   pageTier,
   replaceWords,
+  updateToReview,
   type SkillFilter,
   type SkillPage,
   type SkillRow,
@@ -232,7 +233,8 @@ export function SkillsList({ page }: { page: SkillPage }) {
   return (
     <div className="min-w-0 space-y-3">
       {addMenu && !(narrow && detailOpen) ? <HeaderActions>{addMenu}</HeaderActions> : null}
-      <PendingUpdatesNotice scope={scope} enabled={canWrite} />
+      {/* Counted from this page's own rows, so it agrees with the ones marked "Update available". */}
+      <PendingUpdatesNotice count={rows.filter((r) => updateToReview(page, r)).length} />
       <ErrorNotice error={setEnabled.error ?? setOff.error} />
       {empty ? (
         <>
@@ -275,8 +277,8 @@ export function SkillsList({ page }: { page: SkillPage }) {
         >
           {comparing?.replaces ? (
             <div className="space-y-4">
-              <DiffView old={comparing.replaces.skill.description} next={comparing.skill.description} label="Diff of when to use it" fileName="When to use it" />
-              <DiffView old={comparing.replaces.skill.body} next={comparing.skill.body} label="Diff of the instructions" fileName="SKILL.md" />
+              <DiffView old={comparing.replaces.skill.description} next={comparing.skill.description} label="Diff of when to use it" fileName="When to use it" wrap />
+              <DiffView old={comparing.replaces.skill.body} next={comparing.skill.body} label="Diff of the instructions" fileName="SKILL.md" wrap />
             </div>
           ) : null}
         </DialogContent>

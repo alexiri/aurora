@@ -290,6 +290,7 @@ describe("Agent template review (C-1114)", () => {
     const gone = within(skills).getByRole("region", { name: "Removed skill triage" });
     expect(gone.textContent).toContain("Removed");
     expect(gone.textContent).toContain("An issue arrives");
+    expect(document.body.textContent).not.toMatch(/Use it when/);
     expect(within(gone).getByLabelText("Diff of Skill triage body").textContent).toContain("- Sort the issue.");
     expect(within(gone).getByTestId("removed-file-labels.md").textContent).toContain("Removed");
     expect(within(gone).getByTestId("removed-file-labels.md").textContent).toContain("- bug");
@@ -312,7 +313,7 @@ describe("Agent template review (C-1114)", () => {
     await screen.findByRole("region", { name: /What changed since 1.0.0/ });
     const card = screen.getByRole("region", { name: "Skill release-notes" });
     expect(within(card).queryByTestId("diff-unchanged")).toBeNull();
-    for (const name of ["Diff of Skill release-notes body", "Diff of Skill release-notes · Use it when", "Diff of File style.md of skill release-notes"]) {
+    for (const name of ["Diff of Skill release-notes body", "Diff of Skill release-notes · When to use it","Diff of File style.md of skill release-notes"]) {
       const diff = within(card).getByRole("region", { name });
       expect(diff.textContent).toContain("(added)");
     }

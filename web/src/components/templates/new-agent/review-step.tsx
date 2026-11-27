@@ -2,6 +2,8 @@
 
 import type { FileView, SkillRefPlan, TemplatePlan } from "@/lib/api/agent-templates";
 import { cn } from "@/lib/utils";
+// Not a hook, whatever its name says.
+import { descriptionSentence, useItToLine as itToLine } from "@/lib/skill-name";
 
 import { Fold } from "@/components/ui/fold";
 import { Notice } from "@/components/ui/notice";
@@ -79,7 +81,7 @@ export function ReviewStep({
             {content.skills.map((s) => (
               <div key={s.name} className="space-y-2 border-t border-line pt-2 first:border-t-0 first:pt-0">
                 <p className="text-sm font-semibold text-ink">{s.name}</p>
-                {s.use_it_when ? <Text>{`Use it when: ${s.use_it_when}`}</Text> : null}
+                {s.use_it_when ? <Text>{itToLine(s.use_it_when)}</Text> : null}
                 <Text>{s.body}</Text>
                 <Files files={s.files} />
               </div>
@@ -163,7 +165,8 @@ function LibraryRef({ skillRef, added, onAdd }: { skillRef: SkillRefPlan; added:
       ) : null}
       {added ? (
         <div className="space-y-2">
-          {skillRef.content?.use_it_when ? <Text>{`Use it when: ${skillRef.content.use_it_when}`}</Text> : null}
+          {/* Repository text stays as its author wrote it. */}
+          {skillRef.content?.use_it_when ? <Text>{descriptionSentence(skillRef.content.use_it_when)}</Text> : null}
           {skillRef.content?.body ? <Text>{skillRef.content.body}</Text> : null}
           {skillRef.content ? <Files files={skillRef.content.files} /> : null}
         </div>

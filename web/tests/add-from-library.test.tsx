@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { NARROW_BROWSER } from "@/components/skills/add-from-library";
+import { NARROW_BROWSER, splitCatalogue } from "@/components/skills/add-from-library";
 import { SkillsList } from "@/components/skills/skills-list";
 import { err, json } from "./support/api";
 import { wrap } from "./support/render";
@@ -44,7 +44,7 @@ const catalogue = (over: Record<string, unknown> = {}) => ({
     item("triage-alerts", { blocked: { reason: "name_taken", message: "This agent already has a skill named triage-alerts." } }),
     item("huge-one", { size: 9000, blocked: { reason: "budget", message: "Too large for the room left for library skills here (30000 of 32768 characters used)." } }),
     item("one-too-many", { size: 10, blocked: { reason: "budget", message: "No more library skills fit here (25 of 25 used)." } }),
-    item("Bad_Name", { valid: false, size: 0, description: null, reason: "the directory name is not a valid skill name", blocked: { reason: "invalid", message: "the directory name is not a valid skill name" } }),
+    item("Bad_Name", { valid: false, size: 0, description: null, reason: "the directory name is not a valid skill name", reason_code: "bad_name", blocked: { reason: "invalid", message: "the directory name is not a valid skill name" } }),
   ],
   ...over,
 });
@@ -125,9 +125,74 @@ describe("the dialog (skill-5)", () => {
       "Triage alertsA skill named triage-alerts is already on Daneel.",
       "Huge oneIt would exceed Daneel’s 32 KB of library skills.",
       "One too manyNo more library skills fit here (25 of 25 used).",
-      "Bad_Namethe directory name is not a valid skill name",
+      "Bad_NameIts folder name can’t be used as a skill name.",
     ]);
     expect(document.body.textContent).not.toMatch(/about 0 characters|Cannot be added/);
+  });
+
+  it("opens on the first skill that can be added (FIX-279)", async () => {
+    routes(
+      base({
+        "GET /v1/skill-libraries/l1/skills": () =>
+          json(200, catalogue({ items: [item("pdf", { added: [{ tier: "agent", id: "own-pdf" }] }), item("brand-guidelines")] })),
+      }),
+    );
+    wrap(<AgentSkills />);
+    const dlg = await openDialog();
+    expect(await within(dlg).findByRole("heading", { name: "Brand guidelines" })).toBeTruthy();
+  });
+
+  it("…and on nothing when none can be added (FIX-279)", async () => {
+    routes(
+      base({
+        "GET /v1/skill-libraries/l1/skills": () =>
+          json(200, catalogue({ items: [item("pdf", { added: [{ tier: "agent", id: "own-pdf" }] })] })),
+      }),
+    );
+    wrap(<AgentSkills />);
+    const dlg = await openDialog();
+    await within(dlg).findByRole("list", { name: "Library skills" });
+    expect(within(dlg).queryByRole("heading", { level: 3 })).toBeNull();
+    expect(within(dlg).queryByRole("group", { name: "Preview of what will be stored" })).toBeNull();
+    expect(within(dlg).getByRole("button", { name: "Add to Daneel" })).toBeDisabled();
+    // what is already here can still be pressed and read
+    fireEvent.click(within(dlg).getByRole("button", { name: /^pdf/ }));
+    expect(await within(dlg).findByRole("heading", { name: "pdf" })).toBeTruthy();
+  });
+
+  it("a skill the server could not judge (size null) is folded with its sentence, shows no size and stays out of the budget (FIX-279)", async () => {
+    routes(
+      base({
+        "GET /v1/skill-libraries/l1/skills": () =>
+          json(
+            200,
+            catalogue({
+              items: [
+                item("big-one", { valid: false, size: null, description: null, reason: "raw server text", reason_code: "unknown_size", blocked: { reason: "invalid", message: "raw server text" } }),
+                item("brand-guidelines"),
+              ],
+            }),
+          ),
+      }),
+    );
+    wrap(<AgentSkills />);
+    const dlg = await openDialog();
+    expect(await within(dlg).findByRole("heading", { name: "Brand guidelines" })).toBeTruthy();
+    fireEvent.click(within(dlg).getByRole("button", { name: /1 can’t be added/ }));
+    const why = within(dlg).getByRole("list", { name: "Skills that can’t be added" });
+    expect(why.textContent).toBe("Big oneAurora couldn’t read all of it to check its size, so it can’t be added.");
+    expect(dlg.textContent).not.toMatch(/0 KB|NaN|raw server text/);
+  });
+
+  it("an unjudged skill of a library being looked at shows its files without a size (FIX-279)", () => {
+    // Without a target there is no `blocked`: the code alone folds it.
+    const { listed, folded } = splitCatalogue(
+      [item("big-one", { valid: true, size: null, reason_code: "unknown_size" }) as never],
+      undefined,
+      null,
+    );
+    expect(listed).toEqual([]);
+    expect(folded.map((f) => f.why)).toEqual(["Aurora couldn’t read all of it to check its size, so it can’t be added."]);
   });
 
   it("previews the chosen skill in full, fetching nothing for its text", async () => {
@@ -189,7 +254,8 @@ describe("the dialog (skill-5)", () => {
 
   it.each([
     ["the files are larger than the listing's estimate", { size: 5000 }, "It would exceed Daneel’s 32 KB of library skills."],
-    ["the read finds it broken", { valid: false, reason: "a symlink is not allowed (link)", size: 0 }, "a symlink is not allowed (link)"],
+    ["the read finds it broken", { valid: false, reason: "a symlink is not allowed (link)", reason_code: "unsupported_entry", size: 0 }, "It holds a link, a submodule or another kind of file a skill can’t hold."],
+    ["the read finds it broken and gives a code this page does not know", { valid: false, reason: "something new (x)", reason_code: "made_up", size: 0 }, "This skill can’t be added."],
   ])("Add is off with the reason when %s", async (_when, over, why) => {
     routes(base({ "GET /v1/skill-libraries/l1/skills/brand-guidelines": () => json(200, content(over)) }));
     wrap(<AgentSkills />);

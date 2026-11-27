@@ -29,6 +29,7 @@ import {
 } from "@/lib/api/skill-libraries";
 import { useCreateSkill, type SkillScope } from "@/lib/api/skills";
 import { formatCount } from "@/lib/format-date";
+import { skillInvalidWords } from "@/lib/labels";
 import { descriptionSentence, skillDisplayName } from "@/lib/skill-name";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { cn } from "@/lib/utils";
@@ -78,14 +79,18 @@ export function addedHere(item: LibrarySkillItem, target: AddTarget | undefined)
   return target ? item.added.some((a) => target.skillIds.has(a.id)) : false;
 }
 
+/** Whether the library's copy is broken, or too big to be judged: nothing about it can be added. */
+const unusable = (item: LibrarySkillItem) => !item.valid || !!item.reason_code;
+
 /** Why a listed skill can't be added, in plain words; null when it can (or is the one already added). */
 export function blockedWords(item: LibrarySkillItem, subject: string, budget: LibraryBudget | null | undefined): string | null {
-  if (!item.valid) return item.reason ?? item.blocked?.message ?? "This skill can't be added.";
   const blocked = item.blocked;
+  // The words come from the code; the server's text about a broken skill is never shown.
+  if (unusable(item) || blocked?.reason === "invalid") return skillInvalidWords(item.reason_code);
   if (!blocked) return null;
   if (blocked.reason === "name_taken") return `A skill named ${item.name} is already on ${subject}.`;
   // The budget has a size and a number of skills; the server's own sentence says which when it is not the size.
-  if (blocked.reason === "budget" && budget && budget.used + item.size > budget.bytes) return tooLarge(subject, budget);
+  if (blocked.reason === "budget" && budget && item.size !== null && budget.used + item.size > budget.bytes) return tooLarge(subject, budget);
   return blocked.message;
 }
 
@@ -96,7 +101,7 @@ export function splitCatalogue(items: LibrarySkillItem[], target: AddTarget | un
   for (const item of items) {
     // Without a target (looking at a library) "Added" means added anywhere the viewer can see.
     const added = target ? addedHere(item, target) : item.added.length > 0;
-    const why = added && item.valid ? null : blockedWords(item, target?.subject ?? "", budget);
+    const why = added && !unusable(item) ? null : blockedWords(item, target?.subject ?? "", budget);
     if (why) folded.push({ item, why });
     else listed.push({ item, added });
   }
@@ -220,8 +225,10 @@ function BrowserFlow({
   const items = (catalogue.data?.pages ?? []).flatMap((p) => p.items);
   const budget = head?.budget;
   const { listed, folded } = splitCatalogue(items, target, budget);
-  // Beside the list there is always a skill to read; on a narrow screen only the one that was pressed.
-  const shown = items.find((i) => i.path === picked) ?? (narrow ? null : (listed.find((r) => !r.added)?.item ?? listed[0]?.item ?? null));
+  // Beside the list stands the first skill that can be added, or nothing when none can; only looking at a library,
+  // there is always one to read. On a narrow screen only the one that was pressed.
+  const first = listed.find((r) => !r.added)?.item ?? (target ? undefined : listed[0]?.item);
+  const shown = items.find((i) => i.path === picked) ?? (narrow ? null : (first ?? null));
   const content = useLibrarySkill(current, shown?.path, head?.commit_sha, orgId);
 
   const me = useMe().data;
@@ -249,7 +256,7 @@ function BrowserFlow({
     if (addedHere(shown, target)) return `Already added to ${target.subject}.`;
     const listedWhy = blockedWords(shown, target.subject, budget);
     if (listedWhy) return listedWhy;
-    if (content.data && !content.data.valid) return content.data.reason ?? "This skill can't be added.";
+    if (content.data && !content.data.valid) return skillInvalidWords(content.data.reason_code);
     if (content.data && budget && budget.used + content.data.size > budget.bytes) return tooLarge(target.subject, budget);
     return null;
   })();
@@ -340,7 +347,8 @@ function BrowserFlow({
                       <span className={cn("block text-sm font-semibold", added ? "text-muted" : "text-ink")}>{skillDisplayName(item.name)}</span>
                       <span className={cn("line-clamp-1 text-xs", added ? "text-muted" : "text-ink-2")}>{descriptionSentence(item.description ?? "")}</span>
                       <span className="block text-xs text-muted">
-                        {filesWords(item.files)} · {kilobytes(item.size)}
+                        {filesWords(item.files)}
+                        {item.size === null ? null : ` · ${kilobytes(item.size)}`}
                       </span>
                     </span>
                     {added ? (
