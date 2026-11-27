@@ -803,6 +803,9 @@ async fn watch_fired(
     )
     .await?;
     let (Created::Turn(t) | Created::Followup(t)) = created;
+    // (FIX-253, D-490(b)) The firing is a `waiting` task's wake: its task is back to `open`
+    // (same grants and policy it had — a wake never extends rights).
+    crate::domains::peer_tasks::service::resume_on_wake(tx, cid).await?;
     hosted::set_watch_turn(tx, wid, t.id).await?;
     Ok(res(r, ReportStatus::Applied, None))
 }

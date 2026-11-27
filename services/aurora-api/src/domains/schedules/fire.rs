@@ -139,6 +139,9 @@ async fn start_run(
     let turn = match created {
         Created::Turn(t) | Created::Followup(t) => t,
     };
+    // (FIX-253, D-490(b)) A one-time wake-up firing into a delegated task's conversation is a
+    // `waiting` task's wake: the task is back to `open` (same grants and policy it had).
+    crate::domains::peer_tasks::service::resume_on_wake(conn, c.id).await?;
     let run = repo::insert_run_with_id(conn, run_id, s.id, Some(turn.id), "fired").await?;
     Ok(Some(Started {
         conversation: c.id,
@@ -302,13 +305,14 @@ async fn fire_once(
     agent: &agents::AgentRow,
 ) -> Result<(), ApiError> {
     // (FIX-253 fixes2 G) A peer-created wake-up does not outlive its delegated task: when the
-    // task behind the origin conversation is no longer open, or the task's `ends_at` has passed,
-    // the fire skips and the schedule is disabled — it never moves to its own run thread.
+    // task behind the origin conversation has ended (closed — a `waiting` task is still alive
+    // and its wake must fire, FIX-253), or the task's `ends_at` has passed, the fire skips and
+    // the schedule is disabled — it never moves to its own run thread.
     if row.origin_conversation_id.is_some() || row.ends_at.is_some() {
         let task_ended = match row.origin_conversation_id {
             Some(origin) => peer_tasks::by_task_conversation(&mut *conn, origin)
                 .await?
-                .is_some_and(|task| task.status != "open"),
+                .is_some_and(|task| !matches!(task.status.as_str(), "open" | "waiting")),
             None => false,
         } || row.ends_at.is_some_and(|ends| ends <= Utc::now());
         if task_ended {

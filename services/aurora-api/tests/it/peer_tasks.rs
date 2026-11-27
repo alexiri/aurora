@@ -1215,7 +1215,8 @@ async fn a_pending_approval_keeps_the_task_open_when_the_receiving_turn_ends() {
     lifecycle::finish(&mut conn, turn, "done", None, None, None)
         .await
         .unwrap();
-    assert_eq!(d.rig.task_status(task).await, "open");
+    // (FIX-253) The task is `waiting`, not open: the approval is its wake.
+    assert_eq!(d.rig.task_status(task).await, "waiting");
     assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
     // The requester cancels: the task closes, the approval is abandoned, no decided notice.
     peers::cancel(&mut conn, d.a, task).await.unwrap().unwrap();
@@ -1232,6 +1233,488 @@ async fn a_pending_approval_keeps_the_task_open_when_the_receiving_turn_ends() {
     assert_eq!(
         d.rig.notices(d.conv, "peer_approval_decided").await.len(),
         0
+    );
+}
+
+// ------------------------------------------------- FIX-253 lane 2: the waiting state
+
+/// An armed `process_watch` and what the wake test needs to report its firing.
+struct WatchReg {
+    watch: Uuid,
+    sandbox: Uuid,
+    boot: Uuid,
+    replica: Uuid,
+}
+
+impl Duo {
+    /// The receiving agent's own registration: a sandbox of `b`, its running process and an
+    /// armed `process_watch` in the task's peer conversation.
+    async fn arm_watch(&self, task: Uuid) -> WatchReg {
+        let pc = self.rig.peer_conversation(task).await;
+        // The sandbox is unique per agent: start this test's registration clean.
+        sqlx::query("DELETE FROM sandboxes WHERE agent_id = $1")
+            .bind(self.b)
+            .execute(self.rig.h.pool())
+            .await
+            .unwrap();
+        // A runner with a live replica (the rig itself registers none).
+        let runner = Uuid::now_v7();
+        let hash = {
+            let mut h = runner.as_bytes().to_vec();
+            h.extend_from_slice(runner.as_bytes());
+            h
+        };
+        sqlx::query(
+            "INSERT INTO runners (id, name, token_hash, installation_fingerprint)
+             VALUES ($1, $2, $3, 'fix-253b')",
+        )
+        .bind(runner)
+        .bind(format!("fix-253b-{runner}"))
+        .bind(hash)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+        let replica = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO runner_replicas (id, runner_id, advertised_host, version, started_at,
+                last_seen_at)
+             VALUES ($1,$2,'runner-a','0',now(),now())",
+        )
+        .bind(replica)
+        .bind(runner)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+        let sb = Uuid::now_v7();
+        let boot = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO sandboxes (id, agent_id, runner_id, channel_replica_id, state, boot_id)
+             VALUES ($1,$2,$3,$4,'running',$5)",
+        )
+        .bind(sb)
+        .bind(self.b)
+        .bind(runner)
+        .bind(replica)
+        .bind(boot)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+        let p = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO processes (id, agent_id, sandbox_id, boot_id, name, command, status,
+                busy, started_at)
+             VALUES ($1,$2,$3,$4,'dev','sleep 1000','running',true,now())",
+        )
+        .bind(p)
+        .bind(self.b)
+        .bind(sb)
+        .bind(boot)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+        let w = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO watches (id, process_id, agent_id, conversation_id, kind, status,
+                expires_at)
+             VALUES ($1,$2,$3,$4,'exit','armed', now() + interval '1 hour')",
+        )
+        .bind(w)
+        .bind(p)
+        .bind(self.b)
+        .bind(pc)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+        WatchReg {
+            watch: w,
+            sandbox: sb,
+            boot,
+            replica,
+        }
+    }
+
+    /// A one-time schedule created from the task conversation: the receiving agent's own
+    /// wake-up. Returns the schedule id.
+    async fn arm_schedule(&self, task: Uuid) -> Uuid {
+        let pc = self.rig.peer_conversation(task).await;
+        let id = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO schedules (id, agent_id, name, prompt, cron, timezone, enabled,
+                anchor, origin_conversation_id, next_fire_at, run_at, ends_at)
+             VALUES ($1,$2,'Check','look again',NULL,'UTC',true,'creator',$3,
+                now() + interval '15 minutes', now() + interval '15 minutes', NULL)",
+        )
+        .bind(id)
+        .bind(self.b)
+        .bind(pc)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+        id
+    }
+
+    /// The receiving agent's turn ends while the task is open.
+    async fn finish_receiving_turn(&self, task: Uuid) {
+        use aurora_api::domains::hosted::lifecycle;
+        let pc = self.rig.peer_conversation(task).await;
+        let turn = self.rig.running_turn(pc).await.unwrap();
+        let mut conn = self.rig.h.pool().acquire().await.unwrap();
+        lifecycle::finish(&mut conn, turn, "done", None, None, None)
+            .await
+            .unwrap();
+    }
+}
+
+/// (FIX-253, D-490(b)) An armed watch keeps the task alive: the end of the receiving turn moves
+/// it to `waiting` with one visible notice in the origin conversation, and it is not cancelled.
+#[tokio::test]
+async fn an_armed_watch_moves_the_task_to_waiting_with_one_notice() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
+    let waiting = d.rig.notices(d.conv, "peer_task_waiting").await;
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0]["peer_task_id"], json!(task));
+    let text = waiting[0]["text"].as_str().unwrap().to_owned();
+    assert!(text.contains("is waiting"), "{text}");
+    assert!(text.contains("bravo"), "{text}");
+    // The second turn ending within the same wait repeats nothing: one notice per wait.
+    let pc = d.rig.peer_conversation(task).await;
+    assert!(
+        d.rig.running_turn(pc).await.is_none(),
+        "a waiting task holds no turn"
+    );
+    use aurora_api::domains::hosted::lifecycle;
+    let turn2 = d.rig.turn(pc, d.b, "agent", None).await;
+    sqlx::query("UPDATE turns SET door = '{\"kind\":\"peer\"}'::jsonb WHERE id = $1")
+        .bind(turn2)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    lifecycle::finish(&mut conn, turn2, "done", None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 1);
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+}
+
+/// (FIX-253, D-490(b)) A one-time schedule created from the task conversation keeps the task
+/// alive the same way, and the notice names the check's time.
+#[tokio::test]
+async fn a_one_time_schedule_moves_the_task_to_waiting() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("check back").await["peer_task_id"]);
+    d.arm_schedule(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 0);
+    let waiting = d.rig.notices(d.conv, "peer_task_waiting").await;
+    assert_eq!(waiting.len(), 1);
+    assert!(
+        waiting[0]["text"].as_str().unwrap().contains("is set for"),
+        "{}",
+        waiting[0]
+    );
+}
+
+/// (FIX-253, D-490(b)) Only the receiving agent's own registrations count: an armed watch of
+/// another conversation never keeps this task alive — it is cancelled as today.
+#[tokio::test]
+async fn a_watch_of_another_conversation_does_not_keep_the_task_alive() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    // The watch exists, but it watches in the requester's conversation, not the task's.
+    // (A registration of the receiving agent in its own other conversation — never this task's.)
+    let other = d.conv;
+    let runner = Uuid::now_v7();
+    let hash = {
+        let mut h = runner.as_bytes().to_vec();
+        h.extend_from_slice(runner.as_bytes());
+        h
+    };
+    sqlx::query(
+        "INSERT INTO runners (id, name, token_hash, installation_fingerprint)
+         VALUES ($1, $2, $3, 'fix-253b')",
+    )
+    .bind(runner)
+    .bind(format!("fix-253b-{runner}"))
+    .bind(hash)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    let replica = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO runner_replicas (id, runner_id, advertised_host, version, started_at,
+            last_seen_at)
+         VALUES ($1,$2,'runner-a','0',now(),now())",
+    )
+    .bind(replica)
+    .bind(runner)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    let sb = Uuid::now_v7();
+    let boot = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO sandboxes (id, agent_id, runner_id, channel_replica_id, state, boot_id)
+         VALUES ($1,$2,$3,$4,'running',$5)",
+    )
+    .bind(sb)
+    .bind(d.b)
+    .bind(runner)
+    .bind(replica)
+    .bind(boot)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    let p = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO processes (id, agent_id, sandbox_id, boot_id, name, command, status, busy,
+            started_at)
+         VALUES ($1,$2,$3,$4,'dev','sleep 1000','running',true,now())",
+    )
+    .bind(p)
+    .bind(d.b)
+    .bind(sb)
+    .bind(boot)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO watches (id, process_id, agent_id, conversation_id, kind, status, expires_at)
+         VALUES ($1,$2,$3,$4,'exit','armed', now() + interval '1 hour')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(p)
+    .bind(d.b)
+    .bind(other)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 0);
+}
+
+/// (FIX-253, D-490(b)) A registration removed before the turn ends (the schedule was deleted)
+/// keeps today's outcome: the task is cancelled as finished without a report.
+#[tokio::test]
+async fn a_registration_removed_before_the_turn_ends_cancels_the_task() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("check back").await["peer_task_id"]);
+    let s = d.arm_schedule(task).await;
+    sqlx::query("DELETE FROM schedules WHERE id = $1")
+        .bind(s)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
+    assert_eq!(closed.len(), 1);
+    assert!(
+        closed[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("without sending a report")
+    );
+}
+
+/// (FIX-253, D-490(b)) Cancel while waiting works (the requester's way out is unchanged), and a
+/// waiting task still ends by its overall expiry with the existing expiry report.
+#[tokio::test]
+async fn a_waiting_task_still_ends_by_cancel_or_expiry() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    // The requester cancels.
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    peers::cancel(&mut conn, d.a, task).await.unwrap().unwrap();
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_closed").await.len(), 1);
+    drop(conn);
+
+    // Expiry while waiting: the sweep closes it with the existing expiry report.
+    let task2 = Rig::id(&d.send("again").await["peer_task_id"]);
+    d.arm_watch(task2).await;
+    d.finish_receiving_turn(task2).await;
+    assert_eq!(d.rig.task_status(task2).await, "waiting");
+    sqlx::query("UPDATE peer_tasks SET expires_at = now() - interval '1 minute' WHERE id = $1")
+        .bind(task2)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    let closed = peers::sweep(d.rig.h.pool()).await.unwrap();
+    assert_eq!(closed, 1);
+    assert_eq!(d.rig.task_status(task2).await, "expired");
+    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
+    assert_eq!(closed.len(), 2);
+    assert!(
+        closed[1]["text"].as_str().unwrap().contains("expired"),
+        "{}",
+        closed[1]
+    );
+}
+
+/// (FIX-253, D-490(b)) The wake (the watch firing) resumes the task conversation as the task's
+/// own turn and returns the task to `open`, with the same grants and policy it had.
+#[tokio::test]
+async fn the_watch_firing_resumes_the_task_and_returns_it_to_open() {
+    use aurora_api::domains::hosted::reports;
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    let w = d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    // The supervisor reports the watch fired: its facts are the receiving agent's sandbox.
+    let pc = d.rig.peer_conversation(task).await;
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    let facts = aurora_db::repo::hosted::SandboxFacts {
+        sandbox_id: w.sandbox,
+        agent_id: d.b,
+        runner_id: None,
+        state: "running".into(),
+        boot_id: Some(w.boot),
+        channel_replica_id: Some(w.replica),
+        harness_steer: false,
+    };
+    let r = aurora_protocol::runner::Report {
+        report_id: Uuid::now_v7(),
+        sandbox_id: w.sandbox,
+        boot_id: w.boot,
+        body: aurora_protocol::runner::ReportBody::WatchFired(
+            aurora_protocol::runner::WatchFired {
+                watch_id: w.watch.to_string(),
+                detail: "the pipeline exited".into(),
+            },
+        ),
+    };
+    let mut tx = d.rig.h.pool().begin().await.unwrap();
+    reports::apply(&d.rig.h.state, &mut tx, w.replica, &facts, &r)
+        .await
+        .unwrap()
+        .expect("the watch report is handled");
+    tx.commit().await.unwrap();
+    // The task is back to `open` and the task conversation got its own wake turn.
+    assert_eq!(d.rig.task_status(task).await, "open");
+    assert!(
+        d.rig.running_turn(pc).await.is_some(),
+        "the wake turn exists"
+    );
+    // The wake is the task's own turn: same conversation, same agent, no new rights.
+    let agent_id: Uuid = sqlx::query_scalar("SELECT agent_id FROM conversations WHERE id = $1")
+        .bind(pc)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(agent_id, d.b);
+}
+
+/// (FIX-253, D-490(b)) The approval decision also wakes the task: the task conversation gets a
+/// turn and the task is back to `open` (the requester's origin notice is FIX-252's).
+#[tokio::test]
+async fn the_approval_decision_resumes_the_task_to_open() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    let id = d.approval(task).await;
+    d.report_approval(id).await;
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    sqlx::query(
+        "UPDATE approvals SET status='approved', decided_by_user_id=$2, decided_via='dashboard',
+            decided_at=now() WHERE id=$1",
+    )
+    .bind(id)
+    .bind(d.rig.p.id)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    d.report_approval(id).await;
+    assert_eq!(d.rig.task_status(task).await, "open");
+    let pc = d.rig.peer_conversation(task).await;
+    assert!(
+        d.rig.running_turn(pc).await.is_some(),
+        "the wake turn exists in the task"
+    );
+    // FIX-252's origin notice stands; the waiting state added none.
+    assert_eq!(
+        d.rig
+            .notices(d.conv, "peer_waiting_for_approval")
+            .await
+            .len(),
+        1
+    );
+    assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 0);
+}
+
+/// (FIX-253, D-490(b)) A wake never extends rights: the resumed task keeps its own agent and
+/// pair, and the resume of another conversation's task does nothing.
+#[tokio::test]
+async fn the_wake_never_widens_rights() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("run the pipeline").await["peer_task_id"]);
+    d.arm_watch(task).await;
+    d.finish_receiving_turn(task).await;
+    let mut conn = d.rig.h.pool().acquire().await.unwrap();
+    // Resuming the requester's conversation (a wake of another conversation) touches nothing.
+    peers::resume_on_wake(&mut conn, d.conv).await.unwrap();
+    assert_eq!(d.rig.task_status(task).await, "waiting");
+    let (from, to, status): (Uuid, Uuid, String) =
+        sqlx::query_as("SELECT from_agent_id, to_agent_id, status FROM peer_tasks WHERE id = $1")
+            .bind(task)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!((from, to), (d.a, d.b));
+    assert_eq!(status, "waiting");
+    peers::resume_on_wake(&mut conn, d.rig.peer_conversation(task).await)
+        .await
+        .unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM peer_tasks WHERE id = $1")
+        .bind(task)
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(status, "open");
+}
+
+/// (FIX-253, D-490(b)) With no registration the task is cancelled as today, and the FIX-252
+/// pending approval is the third waiting cause (no extra notice beyond FIX-252's own).
+#[tokio::test]
+async fn no_registration_cancels_and_the_approval_cause_adds_no_notice() {
+    let d = duo().await;
+    let task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    d.finish_receiving_turn(task).await;
+    assert_eq!(d.rig.task_status(task).await, "cancelled");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 0);
+
+    // The pending approval cause: waiting, and FIX-252's notice is the only waiting notice.
+    let task2 = Rig::id(&d.send("do it again").await["peer_task_id"]);
+    let id = d.approval(task2).await;
+    d.report_approval(id).await;
+    d.finish_receiving_turn(task2).await;
+    assert_eq!(d.rig.task_status(task2).await, "waiting");
+    assert_eq!(d.rig.notices(d.conv, "peer_task_waiting").await.len(), 0);
+    assert_eq!(
+        d.rig
+            .notices(d.conv, "peer_waiting_for_approval")
+            .await
+            .len(),
+        1
+    );
+    // The only close notice is the first task's (cancelled with no registration).
+    let closed = d.rig.notices(d.conv, "peer_task_closed").await;
+    assert_eq!(closed.len(), 1);
+    assert!(
+        closed[0]["text"].as_str().unwrap().contains("bravo"),
+        "{}",
+        closed[0]
     );
 }
 

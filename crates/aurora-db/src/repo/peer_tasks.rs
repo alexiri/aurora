@@ -198,8 +198,8 @@ pub async fn open_queued(
     get_hinted(conn, id).await
 }
 
-/// Close a `queued`/`open` task (`completed` | `cancelled` | `expired`). Fenced: `None` when the
-/// task was already closed, so the caller posts the report only when this returns `Some`.
+/// Close a `queued`/`open`/`waiting` task (`completed` | `cancelled` | `expired`). Fenced: `None`
+/// when the task was already closed, so the caller posts the report only when this returns `Some`.
 pub async fn close(
     conn: &mut PgConnection,
     id: Uuid,
@@ -208,7 +208,7 @@ pub async fn close(
 ) -> Result<Option<PeerTaskRow>, DbError> {
     let done = sqlx::query(
         "UPDATE peer_tasks SET status = $2, report = COALESCE($3, report), updated_at = now()
-         WHERE id = $1 AND status IN ('queued', 'open')",
+         WHERE id = $1 AND status IN ('queued', 'open', 'waiting')",
     )
     .bind(id)
     .bind(status)
@@ -264,13 +264,48 @@ pub async fn list_for_agent<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// Ids of `queued`/`open` tasks past `expires_at` (oldest first).
+/// Ids of `queued`/`open`/`waiting` tasks past `expires_at` (oldest first). A `waiting` task
+/// still ends by its overall expiry (FIX-253): the requester gets the existing expiry report.
 pub async fn overdue_ids<'e, E: PgExecutor<'e>>(exec: E, limit: i64) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT id FROM peer_tasks WHERE status IN ('queued', 'open') AND expires_at <= now()
+        "SELECT id FROM peer_tasks WHERE status IN ('queued', 'open', 'waiting')
+           AND expires_at <= now()
          ORDER BY expires_at LIMIT $1",
     )
     .bind(limit)
     .fetch_all(exec)
+    .await?)
+}
+
+/// (FIX-253, D-490(b)) Move an `open` task to `waiting` (the end of the receiving turn while one
+/// of the wake registrations stands). Fenced: `None` when the task is not `open` any more, so
+/// the caller posts the waiting notice only when this returns `Some`.
+pub async fn set_waiting(
+    conn: &mut PgConnection,
+    id: Uuid,
+) -> Result<Option<PeerTaskRow>, DbError> {
+    let done = sqlx::query(
+        "UPDATE peer_tasks SET status = 'waiting', updated_at = now()
+         WHERE id = $1 AND status = 'open'",
+    )
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    if done.rows_affected() == 0 {
+        return Ok(None);
+    }
+    get_hinted(conn, id).await
+}
+
+/// (FIX-253, D-490(b)) The wake (the watch firing, the schedule firing, the approval decision)
+/// resumes a `waiting` task of this conversation back to `open` — the task keeps the grants and
+/// policy it had: a wake never extends rights. Returns the task id, if one was resumed.
+pub async fn resume(conn: &mut PgConnection, conversation: Uuid) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "UPDATE peer_tasks SET status = 'open', updated_at = now()
+         WHERE task_conversation_id = $1 AND status = 'waiting' RETURNING id",
+    )
+    .bind(conversation)
+    .fetch_optional(&mut *conn)
     .await?)
 }

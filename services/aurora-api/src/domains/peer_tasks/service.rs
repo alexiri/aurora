@@ -948,6 +948,40 @@ pub async fn approval_notice(
         // The person is already in the thread or gets the card: no follow-up turn.
         post_notice(conn, &task, code, &line, Some(extra)).await
     } else {
+        // (FIX-253, D-490(b)) The decision (or the deadline) is a `waiting` task's wake: the
+        // task is back to `open` and its conversation gets its own turn, so the receiving agent
+        // can continue — same grants and policy it had: a wake never extends rights. A task that
+        // was not waiting (the decision landed mid-turn) gets no wake turn: the gateway unblocks
+        // the tool call the agent is already running.
+        let resumed = repo::resume(conn, task.task_conversation_id).await?;
+        if resumed.is_some()
+            && let Some(pc) = convs::get(&mut *conn, task.task_conversation_id).await?
+        {
+            let outcome = match row.status.as_str() {
+                "approved" => "was approved.",
+                "denied" => "was denied.",
+                _ => "expired without a decision.",
+            };
+            let text = format!(
+                "The approval to {action} {outcome} Continue the task and call complete_task \
+                 with your report when you are done."
+            );
+            conv::create_turn_tx(
+                conn,
+                &pc,
+                &NewMessage {
+                    door: peer_door(task.id),
+                    speaker_kind: "system",
+                    speaker_user_id: None,
+                    speaker_label: "Peer task",
+                    text: &text,
+                    source_event_id: None,
+                    attachment_ids: &[],
+                    reply_to_seq: None,
+                },
+            )
+            .await?;
+        }
         post_report(conn, &task, code, &line, None, Some(extra)).await
     }
 }
@@ -955,11 +989,22 @@ pub async fn approval_notice(
 // ---------------------------------------------------------------- turn hook
 
 /// Hook from `lifecycle::finish`: the receiving agent's turn in a task conversation ended while
-/// the task is still `open` (no `complete_task`, or the turn failed/was aborted). Nothing else
-/// will wake that agent for the task, so the platform closes it with its own close line (the
-/// task's one report) and promotes the next queued task.
+/// the task is still `open` (no `complete_task`, or the turn failed/was aborted). (FIX-253,
+/// D-490(b)) When one of the wake registrations stands — an armed `process_watch` of this
+/// conversation, a one-time schedule created from this conversation, or a pending approval (the
+/// FIX-252 minimum) — the task goes to `waiting` with one visible notice to the requester, and
+/// the wake later resumes it. Only the receiving agent's own registrations count: a watch or a
+/// schedule of another conversation never keeps this task alive. With nothing registered the
+/// task is cancelled as today ("finished without a report").
 pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<(), ApiError> {
-    if t.door.get("kind").and_then(Value::as_str) != Some("peer") || t.speaker_kind != "agent" {
+    // (FIX-253) The wake turns count too: a watch or schedule fire, or an approval decision,
+    // resumes the task conversation as the task's own turn (door `watch` / `schedule`, spoken by
+    // the platform), so its end drives the task's state like the receiving agent's turn does.
+    if !matches!(
+        t.door.get("kind").and_then(Value::as_str),
+        Some("peer" | "watch" | "schedule")
+    ) || !matches!(t.speaker_kind.as_str(), "agent" | "system")
+    {
         return Ok(());
     }
     let Some(task) = repo::by_task_conversation(&mut *conn, t.conversation_id).await? else {
@@ -968,20 +1013,111 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
     if task.status != "open" {
         return Ok(());
     }
-    // (FIX-252) A task waiting for an approval is not cancelled by the end of the receiving
-    // turn: the approval's own decision or deadline ends the wait (FIX-253 generalizes the
-    // waiting state).
-    if aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, t.conversation_id)
-        .await?
-    {
-        return Ok(());
-    }
-    let why = match t.status.as_str() {
-        "done" => "the receiving agent finished without sending a report",
-        "failed" => "the receiving agent's turn failed",
-        _ => "the receiving agent's turn was aborted",
+    let has_pending_approval =
+        aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, t.conversation_id)
+            .await?;
+    let wake_registered = has_pending_approval || wake_registered(conn, t.conversation_id).await?;
+    let waiting = if wake_registered {
+        repo::set_waiting(&mut *conn, task.id).await?
+    } else {
+        None
     };
-    close_with_promotion(conn, &task, &Close::Cancelled(Some(why))).await?;
+    let Some(waiting) = waiting else {
+        if !wake_registered {
+            let why = match t.status.as_str() {
+                "done" => "the receiving agent finished without sending a report",
+                "failed" => "the receiving agent's turn failed",
+                _ => "the receiving agent's turn was aborted",
+            };
+            close_with_promotion(conn, &task, &Close::Cancelled(Some(why))).await?;
+        }
+        // Either closed just above, or the task was not `open` any more (already waiting): the
+        // notice is posted only when the flip `open` → `waiting` happened, so the requester sees
+        // it once per wait, not per turn.
+        return Ok(());
+    };
+    // One visible notice when it goes waiting. A pending approval already carries FIX-252's own
+    // `peer_waiting_for_approval` notice (posted when the approval was raised): no second one.
+    if !has_pending_approval {
+        let to = agent(conn, waiting.to_agent_id).await?;
+        let who = agent_label(&to);
+        let what = if watch_registered(conn, t.conversation_id).await? {
+            format!("{who} is waiting for what it is watching to finish.")
+        } else {
+            let when = next_wake(conn, t.conversation_id).await?;
+            match when {
+                Some(w) => format!("{who} is waiting: a check is set for {w}."),
+                None => format!("{who} is waiting for its wake-up."),
+            }
+        };
+        post_notice(conn, &waiting, "peer_task_waiting", &what, None).await?;
+    }
+    Ok(())
+}
+
+/// (FIX-253, D-490(b)) Whether a wake is registered for this conversation: an armed watch of it
+/// or an open one-time schedule created from it (the receiving agent's own registrations).
+async fn wake_registered(conn: &mut PgConnection, conversation: Uuid) -> Result<bool, ApiError> {
+    if watch_registered(conn, conversation).await? {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM schedules s
+            WHERE s.origin_conversation_id = $1 AND s.run_at IS NOT NULL AND s.cron IS NULL
+              AND s.completed_at IS NULL AND s.enabled
+         )",
+    )
+    .bind(conversation)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(DbError::from)?)
+}
+
+/// (FIX-253, D-490(b)) Whether an armed watch of this conversation exists.
+async fn watch_registered(conn: &mut PgConnection, conversation: Uuid) -> Result<bool, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM watches w
+            WHERE w.conversation_id = $1 AND w.status = 'armed'
+         )",
+    )
+    .bind(conversation)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(DbError::from)?)
+}
+
+/// (FIX-253, D-490(b)) The time of the earliest open one-time wake-up of this conversation, in
+/// the schedule's timezone ("14:30"), for the waiting notice.
+async fn next_wake(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+) -> Result<Option<String>, ApiError> {
+    let row: Option<(Option<chrono::DateTime<chrono::Utc>>, String)> = sqlx::query_as(
+        "SELECT s.next_fire_at, s.timezone FROM schedules s
+          WHERE s.origin_conversation_id = $1 AND s.run_at IS NOT NULL AND s.cron IS NULL
+            AND s.completed_at IS NULL AND s.enabled
+          ORDER BY s.next_fire_at LIMIT 1",
+    )
+    .bind(conversation)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(DbError::from)?;
+    Ok(row
+        .and_then(|(at, tz)| Some((at?, tz)))
+        .and_then(|(at, tz)| {
+            crate::domains::schedules::once::local_of(at, &tz)
+                .get(11..16)
+                .map(str::to_owned)
+        }))
+}
+
+/// (FIX-253, D-490(b)) The wake of a `waiting` task of this conversation (the watch firing, the
+/// schedule firing, the approval decision): the task is back to `open` and the conversation gets
+/// its turn as the task's own. Same grants and policy it had: a wake never extends rights.
+pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Result<(), ApiError> {
+    repo::resume(conn, conversation).await?;
     Ok(())
 }
 
