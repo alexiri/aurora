@@ -985,7 +985,7 @@ async fn patch_access(
     service::set_access_status(&s, &c, &a, user, req.status, ev).await?;
     let row = workspaces::get_access(&s.pool, ws, user)
         .await?
-        .ok_or_else(|| ApiError::not_found("Binding not found."))?;
+        .ok_or_else(service::binding_not_found)?;
     Ok(Json(row.into()))
 }
 
@@ -1019,11 +1019,14 @@ async fn delete_access(
     // (FIX-261, D-501) Removing a suspended binding lifts the suspension, so group access
     // applies again: the rules of restoring it. Lock the row first, as `set_access_status` does.
     let mut self_grant_of = None;
-    if let Some((role, status, _)) = workspaces::lock_binding(&mut tx, ws, user).await?
-        && status == AccessStatus::Suspended.as_str()
-        && service::lifting_suspension(&s, &mut tx, &c, &a, user).await?
-    {
-        self_grant_of = Some(role);
+    if let Some((role, status, _)) = workspaces::lock_binding(&mut tx, ws, user).await? {
+        // (FIX-256) A departed member's kept row is not addressable.
+        service::require_addressable(&mut tx, a.org_id, user).await?;
+        if status == AccessStatus::Suspended.as_str()
+            && service::lifting_suspension(&s, &mut tx, &c, &a, user).await?
+        {
+            self_grant_of = Some(role);
+        }
     }
     if aurora_db::repo::idp_roles::ws_is_managed(&mut *tx, ws, user).await? {
         return Err(crate::domains::admin::service::managed_by_idp());
@@ -1048,7 +1051,7 @@ async fn delete_access(
         reassign_all(&mut tx, &acting, user, to, true, true, None).await?;
     }
     if !workspaces::unbind_user(&mut *tx, ws, user).await? {
-        return Err(ApiError::not_found("Binding not found."));
+        return Err(service::binding_not_found());
     }
     // RFE-005: a speaker who loses `can_use` stops binding to `user` rules immediately.
     aurora_db::repo::notify_auth_revoked(&mut *tx, "user", user).await?;

@@ -671,6 +671,24 @@ pub async fn lifting_suspension(
     Ok(self_grant)
 }
 
+pub fn binding_not_found() -> ApiError {
+    ApiError::not_found("Binding not found.")
+}
+
+/// (FIX-256, D-492) A binding is addressable only while its person is an active member of the
+/// organization: the row kept for somebody who left (or is suspended in the organization)
+/// answers like an unknown one, before any change. Call it with the binding row locked.
+pub async fn require_addressable(
+    conn: &mut sqlx::PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<(), ApiError> {
+    if !members::lock_if_active(conn, org, user).await? {
+        return Err(binding_not_found());
+    }
+    Ok(())
+}
+
 /// The turn end of a workspace suspension (P5-APIGAP-4, C-1051).
 const SUSPENDED_IN_WORKSPACE: crate::domains::scim::deprovision::TurnEnd =
     crate::domains::scim::deprovision::TurnEnd {
@@ -701,8 +719,9 @@ pub async fn set_access_status(
     let (org, ws, personal_of, caller) = (a.org_id, a.workspace_id, a.personal_of, c.user_id);
     let mut tx = state.pool.begin().await.map_err(aurora_db::DbError::from)?;
     let Some((role, cur, idp_role)) = workspaces::lock_binding(&mut tx, ws, target).await? else {
-        return Err(ApiError::not_found("Binding not found."));
+        return Err(binding_not_found());
     };
+    require_addressable(&mut tx, org, target).await?;
     if cur == status.as_str() {
         return Ok(());
     }

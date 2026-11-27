@@ -983,6 +983,89 @@ async fn leaving_and_rejoining_the_org_keeps_a_suspension() {
     assert!(f.can_use(ws, carol).await);
 }
 
+impl OwnerCase {
+    /// The whole binding row, to show that a refused change wrote nothing.
+    async fn binding_row(&self, ws: Uuid, user: Uuid) -> Option<(String, String, String)> {
+        sqlx::query_as(
+            "SELECT role, status, updated_at::text FROM workspace_access \
+             WHERE workspace_id = $1 AND user_id = $2",
+        )
+        .bind(ws)
+        .bind(user)
+        .fetch_optional(self.h.pool())
+        .await
+        .unwrap()
+    }
+
+    /// PATCH (both directions) and DELETE of `user`'s binding in `ws` answer exactly like an
+    /// unknown binding, and leave the row, and its audit trail, as they were.
+    async fn assert_not_addressable(&self, ws: Uuid, user: Uuid) {
+        let nobody = self.h.user("never-bound@x.io", false).await;
+        let (s, unknown) = self.restore(&self.bob_cookie, ws, nobody).await;
+        assert_eq!(s, 404, "{unknown}");
+        let before = self.binding_row(ws, user).await;
+        assert!(before.is_some(), "the row is kept");
+        let restores = self.audit_rows(ws, "workspace_access.restore").await.len();
+        let uri = format!("/v1/workspaces/{ws}/access/{user}");
+        for (method, body) in [
+            (Method::PATCH, Some(json!({"status": "active"}))),
+            (Method::PATCH, Some(json!({"status": "suspended"}))),
+            (Method::DELETE, None),
+        ] {
+            let what = format!("{method} {body:?}");
+            let (s, v) = self.call(&self.bob_cookie, method, &uri, body).await;
+            assert_eq!(s, 404, "{what}: {v}");
+            assert_eq!(v["error"]["code"], unknown["error"]["code"], "{what}");
+            assert_eq!(v["error"]["message"], unknown["error"]["message"], "{what}");
+            assert_eq!(self.binding_row(ws, user).await, before, "{what}");
+        }
+        assert_eq!(
+            self.audit_rows(ws, "workspace_access.restore").await.len(),
+            restores
+        );
+        assert!(
+            self.audit_rows(ws, "workspace_access.remove")
+                .await
+                .is_empty()
+        );
+    }
+}
+
+/// (FIX-256) The suspended binding kept for a person who left the organization is not
+/// addressable: 404 before any change.
+#[tokio::test]
+async fn a_departed_persons_kept_binding_is_not_addressable() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    f.h.bind_ws(ws, carol, "member").await;
+    f.suspend(&f.bob_cookie, ws, carol).await;
+    let (s, v) = f
+        .call(
+            &f.admin_cookie,
+            Method::DELETE,
+            &format!("/v1/orgs/{}/members/{carol}", f.org),
+            None,
+        )
+        .await;
+    assert_eq!(s, 204, "{v}");
+    f.assert_not_addressable(ws, carol).await;
+}
+
+/// (FIX-256) A person suspended in the organization is not an active member either.
+#[tokio::test]
+async fn an_org_suspended_persons_binding_is_not_addressable() {
+    let f = owner_case().await;
+    let ws = f.h.workspace_owned_by(f.org, f.bob).await;
+    let carol = f.h.user("carol@x.io", false).await;
+    f.h.member(f.org, carol, "member", "active").await;
+    f.h.bind_ws(ws, carol, "member").await;
+    f.suspend(&f.bob_cookie, ws, carol).await;
+    f.h.set_member_status(f.org, carol, "suspended").await;
+    f.assert_not_addressable(ws, carol).await;
+}
+
 struct FailMailer;
 
 #[async_trait::async_trait]

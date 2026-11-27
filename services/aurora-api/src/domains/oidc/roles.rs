@@ -290,6 +290,13 @@ async fn promote_to_owner_floor(
     Ok(())
 }
 
+/// The manual role a claim-managed row is left with when its claim lapses; `None` removes the
+/// row. A suspended row is never removed (D-492): without a base role (the claim created it)
+/// it stays as `member`, so a restore never gives the lapsed claim's role.
+fn manual_role(base_role: Option<String>, suspended: bool) -> Option<String> {
+    base_role.or_else(|| suspended.then(|| "member".to_owned()))
+}
+
 /// Run the sync for `user` in the sign-in transaction. `values` are the validated claim values.
 pub async fn sync(
     tx: &mut sqlx::PgConnection,
@@ -398,20 +405,19 @@ pub async fn sync(
         let Some(row) = db::ws_row(&mut *tx, r.workspace_id, user.id).await? else {
             continue;
         };
-        // (FIX-261, D-501) Removing a suspended binding would lift the suspension and
-        // lowering it is not the sync's to do: it stays as it is, claim-managed, until a
-        // person restores it through the API (once active, the next sign-in applies this).
-        if row.status == "suspended" {
+        // (FIX-261, FIX-256, D-492) Removing a suspended binding would lift the suspension,
+        // which only a person does: it stays, suspended, and becomes an ordinary manual row.
+        let suspended = row.status == "suspended";
+        if suspended {
             tracing::info!(
                 org = %r.org_id,
                 ws = %r.workspace_id,
                 provider = %p.id,
-                "a claim lapsed on a suspended binding; left as it is"
+                "a claim lapsed on a suspended binding; kept suspended as a manual binding"
             );
-            continue;
         }
         let value = r.idp_source[prefix.len()..].to_owned();
-        match row.base_role.clone() {
+        match manual_role(row.base_role.clone(), suspended) {
             None => {
                 workspaces::unbind_user(&mut *tx, r.workspace_id, user.id).await?;
                 log(
@@ -454,7 +460,18 @@ pub async fn sync(
             continue;
         };
         let value = r.idp_source[prefix.len()..].to_owned();
-        let new_role = row.base_role.clone();
+        // (FIX-256, D-492) The same at the organization level: a suspended membership is
+        // never removed by the sync. It stays suspended and becomes a manual one.
+        let suspended = row.status == "suspended";
+        if suspended {
+            tracing::info!(
+                org = %r.org_id,
+                user = %user.id,
+                provider = %p.id,
+                "a claim lapsed on a suspended membership; kept suspended as a manual one"
+            );
+        }
+        let new_role = manual_role(row.base_role.clone(), suspended);
         let loses_owner =
             row.role == "owner" && row.status == "active" && new_role.as_deref() != Some("owner");
         if loses_owner && is_last_owner(tx, r.org_id, user.id).await? {

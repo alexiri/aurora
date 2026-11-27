@@ -688,6 +688,144 @@ async fn adopted_suspended_member_stays_human_owned() {
     assert_eq!(st, "suspended", "still suspended");
 }
 
+/// `(membership status, group memberships, bindings as (workspace, status))` of `user`.
+async fn standing(fx: &ScimFx, user: Uuid) -> (Option<String>, i64, Vec<(Uuid, String)>) {
+    let status =
+        sqlx::query_scalar("SELECT status FROM org_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_optional(fx.h.pool())
+            .await
+            .unwrap();
+    let groups =
+        sqlx::query_scalar("SELECT count(*) FROM group_members WHERE org_id = $1 AND user_id = $2")
+            .bind(fx.org)
+            .bind(user)
+            .fetch_one(fx.h.pool())
+            .await
+            .unwrap();
+    let bindings = sqlx::query_as(
+        "SELECT workspace_id, status FROM workspace_access WHERE user_id = $1 ORDER BY 1",
+    )
+    .bind(user)
+    .fetch_all(fx.h.pool())
+    .await
+    .unwrap();
+    (status, groups, bindings)
+}
+
+/// (FIX-256, D-492) The directory deleting and re-creating a person does not lift a suspension
+/// an administrator made. Everything else of a removal happens; the kept bindings are not
+/// addressable while the membership is not active.
+#[tokio::test]
+async fn scim_delete_keeps_a_suspension_an_admin_made() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("kept@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let user = fx.aurora_user(&sid).await;
+    let plain = fx.h.workspace(fx.org).await;
+    let cut_off = fx.h.workspace(fx.org).await;
+    fx.h.bind_ws(plain, user, "member").await;
+    fx.h.bind_ws(cut_off, user, "member").await;
+    sqlx::query(
+        "UPDATE workspace_access SET status = 'suspended' \
+         WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(cut_off)
+    .bind(user)
+    .execute(fx.h.pool())
+    .await
+    .unwrap();
+    let (s, _, v) = fx
+        .scim(
+            Method::POST,
+            "/scim/v2/Groups",
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+                "displayName": "kept-g",
+                "members": [{"value": sid}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (s, v) = fx
+        .mgmt(
+            Method::PATCH,
+            &format!("/v1/orgs/{}/members/{user}", fx.org),
+            Some(json!({"status": "suspended"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+
+    let (s, _, _) = fx
+        .scim(Method::DELETE, &format!("{USERS}/{sid}"), None)
+        .await;
+    assert_eq!(s, 204);
+    assert_eq!(
+        standing(&fx, user).await,
+        (
+            Some("suspended".to_owned()),
+            0,
+            vec![(cut_off, "suspended".to_owned())]
+        )
+    );
+    // The kept binding is a departed person's: 404 before any change.
+    for method in [Method::PATCH, Method::DELETE] {
+        let body = (method == Method::PATCH).then(|| json!({"status": "active"}));
+        let (s, v) = fx
+            .mgmt(
+                method,
+                &format!("/v1/workspaces/{cut_off}/access/{user}"),
+                body,
+            )
+            .await;
+        assert_eq!(s, 404, "{v}");
+    }
+    assert_eq!(
+        standing(&fx, user).await.2,
+        vec![(cut_off, "suspended".to_owned())]
+    );
+
+    // The directory creates the person again: still suspended, and it stays the person's
+    // suspension, which the directory cannot lift.
+    let again = fx.provision("kept@x.io", json!({"active": true})).await;
+    assert_eq!(again["id"], u["id"]);
+    assert_eq!(standing(&fx, user).await.0.as_deref(), Some("suspended"));
+    let (s, v) = deactivate(&fx, &sid).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _, v) = fx
+        .scim(
+            Method::PATCH,
+            &format!("{USERS}/{sid}"),
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{"op": "replace", "path": "active", "value": true}],
+            })),
+        )
+        .await;
+    assert_eq!(s, 403, "{v}");
+    assert_eq!(standing(&fx, user).await.0.as_deref(), Some("suspended"));
+}
+
+/// A suspension the directory made itself goes with its removal, as before, and a `POST`
+/// provisions the person again.
+#[tokio::test]
+async fn scim_delete_removes_a_suspension_scim_made() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("theirs@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let user = fx.aurora_user(&sid).await;
+    let (s, v) = deactivate(&fx, &sid).await;
+    assert_eq!(s, 200, "{v}");
+    let (s, _, _) = fx
+        .scim(Method::DELETE, &format!("{USERS}/{sid}"), None)
+        .await;
+    assert_eq!(s, 204);
+    assert_eq!(standing(&fx, user).await.0, None);
+    fx.provision_ok("theirs@x.io").await;
+    assert_eq!(standing(&fx, user).await.0.as_deref(), Some("active"));
+}
+
 #[tokio::test]
 async fn jit_and_invitation_gates() {
     // The dev provider JITs into the fixture org, so sign-ins hit the SCIM admission gate.
@@ -1202,6 +1340,52 @@ async fn fix080_sign_in_and_scim_delete_serialize_on_the_org_lock() {
         None,
         "no member beside a tombstone"
     );
+}
+
+/// (FIX-256) An administrator's suspension that commits while the directory's `DELETE` is in
+/// flight is seen by it: the membership is kept, suspended.
+#[tokio::test]
+async fn scim_delete_sees_a_suspension_committing_under_it() {
+    let fx = ScimFx::new().await;
+    let u = fx.provision_ok("sus-race@x.io").await;
+    let sid = u["id"].as_str().unwrap().to_owned();
+    let user = fx.aurora_user(&sid).await;
+    // The two writes of an administrator's suspension (membership, then link), not committed.
+    let mut held = fx.h.pool().begin().await.unwrap();
+    sqlx::query("UPDATE org_members SET status = 'suspended' WHERE org_id = $1 AND user_id = $2")
+        .bind(fx.org)
+        .bind(user)
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE scim_users SET state = 'suspended', suspended_by_scim = false \
+         WHERE org_id = $1 AND user_id = $2",
+    )
+    .bind(fx.org)
+    .bind(user)
+    .execute(&mut *held)
+    .await
+    .unwrap();
+    let delete = async {
+        let (s, _, v) = fx
+            .scim(Method::DELETE, &format!("{USERS}/{sid}"), None)
+            .await;
+        assert_eq!(s, 204, "{v}");
+    };
+    let release = async {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while lock_waiters(&fx).await < 1 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the DELETE did not wait for the suspension"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        held.commit().await.unwrap();
+    };
+    tokio::join!(delete, release);
+    assert_eq!(membership(&fx, user).await.as_deref(), Some("suspended"));
 }
 
 #[tokio::test]

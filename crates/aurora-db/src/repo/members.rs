@@ -253,6 +253,37 @@ pub async fn update<'e, E: PgExecutor<'e>>(
 /// nothing without a membership, and deleting it would lift the suspension, so that group or
 /// claim access came back by itself after a re-join. Only a person lifts it, through the API.
 pub async fn remove(conn: &mut PgConnection, org: Uuid, user: Uuid) -> Result<(), DbError> {
+    unbind_all_unsuspended(&mut *conn, org, user).await?;
+    sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
+        .bind(org)
+        .bind(user)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// (FIX-256, D-492) What [`remove`] deletes, without the membership row itself: for a
+/// suspended membership that the directory removes and only a person may lift. The bindings
+/// (except suspended ones) and every group membership of the org go.
+pub async fn strip_keeping_membership(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<(), DbError> {
+    unbind_all_unsuspended(&mut *conn, org, user).await?;
+    sqlx::query("DELETE FROM group_members WHERE org_id = $1 AND user_id = $2")
+        .bind(org)
+        .bind(user)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+async fn unbind_all_unsuspended(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<(), DbError> {
     sqlx::query(
         "DELETE FROM workspace_access WHERE user_id = $2 AND status <> 'suspended'
          AND workspace_id IN (SELECT id FROM workspaces WHERE org_id = $1)",
@@ -261,10 +292,22 @@ pub async fn remove(conn: &mut PgConnection, org: Uuid, user: Uuid) -> Result<()
     .bind(user)
     .execute(&mut *conn)
     .await?;
-    sqlx::query("DELETE FROM org_members WHERE org_id = $1 AND user_id = $2")
-        .bind(org)
-        .bind(user)
-        .execute(&mut *conn)
-        .await?;
     Ok(())
+}
+
+/// (FIX-256) Whether `user` is an active member of `org`, the membership row held `FOR SHARE`
+/// so that it cannot leave `active` before the caller's transaction ends.
+pub async fn lock_if_active(
+    conn: &mut PgConnection,
+    org: Uuid,
+    user: Uuid,
+) -> Result<bool, DbError> {
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM org_members WHERE org_id = $1 AND user_id = $2 FOR SHARE",
+    )
+    .bind(org)
+    .bind(user)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(status.as_deref() == Some("active"))
 }

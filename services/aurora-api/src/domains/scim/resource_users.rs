@@ -1530,6 +1530,16 @@ pub async fn delete_user(
         // Idempotent: 204 again.
         return Ok(StatusCode::NO_CONTENT);
     }
+    // (FIX-256, D-492) The membership row is held, and the link read again, before deciding
+    // whose suspension this is: an administrator's (who does not take the org lock) has either
+    // committed and is read here, or waits for this transaction.
+    aurora_db::repo::idp_roles::org_row(&mut *tx, org.org_id, row.user_id)
+        .await
+        .map_err(db)?;
+    let row = repo::user_by_id(&mut *tx, org.org_id, id)
+        .await
+        .map_err(db)?
+        .ok_or_else(ScimError::not_found)?;
     let member = members::get(&mut *tx, org.org_id, row.user_id)
         .await
         .map_err(db)?;
@@ -1549,10 +1559,18 @@ pub async fn delete_user(
         pending::remove(&mut tx, org.org_id, row.user_id, &row.user_name, &actor)
             .await
             .map_err(scim_of_api)?;
-    } else if member.is_some() {
-        deprovision::remove_membership(&mut tx, org.org_id, row.user_id, &actor)
-            .await
-            .map_err(scim_of_api)?;
+    } else if let Some(m) = &member {
+        // (FIX-256, D-492) A suspension the directory did not make is not its to lift: its
+        // membership stays, suspended. (`row` was read before the tombstone was written.)
+        if m.status == "suspended" && !row.suspended_by_scim {
+            deprovision::remove_keeping_suspension(&mut tx, org.org_id, row.user_id, &actor)
+                .await
+                .map_err(scim_of_api)?;
+        } else {
+            deprovision::remove_membership(&mut tx, org.org_id, row.user_id, &actor)
+                .await
+                .map_err(scim_of_api)?;
+        }
         flush = deprovision::abort_turns(&mut tx, org.org_id, row.user_id)
             .await
             .map_err(scim_of_api)?;
