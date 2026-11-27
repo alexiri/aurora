@@ -6141,6 +6141,12 @@ fn d_files(dir: &str, version: &str) -> Vec<(String, Vec<u8>)> {
 
 /// [`world`] over a memory-secret-store vault (the handle comes back for the seal assertions).
 async fn d_world() -> (W, std::sync::Arc<aurora_secrets::MemoryStore>) {
+    let mem = std::sync::Arc::new(aurora_secrets::MemoryStore::new("memory"));
+    (store_world(mem.clone()).await, mem)
+}
+
+/// [`world`] over a vault whose default store is `store` (its id is `memory`).
+async fn store_world(store: std::sync::Arc<dyn aurora_secrets::SecretStore>) -> W {
     let mut h = Harness::new().await;
     let git = GitServer::start().await;
     let state = h
@@ -6148,7 +6154,6 @@ async fn d_world() -> (W, std::sync::Arc<aurora_secrets::MemoryStore>) {
         .clone()
         .with_connect_override(&git.base())
         .with_library_fetch_timeout(std::time::Duration::from_secs(5));
-    let mem = std::sync::Arc::new(aurora_secrets::MemoryStore::new("memory"));
     let keyring = std::sync::Arc::new(
         aurora_crypto::Keyring::parse(
             &format!(
@@ -6161,21 +6166,514 @@ async fn d_world() -> (W, std::sync::Arc<aurora_secrets::MemoryStore>) {
     );
     let mut sr =
         aurora_secrets::StoreRegistry::from_config(&state.config.secrets, keyring).unwrap();
-    sr.register(mem.clone());
+    sr.register(store);
     sr.set_default("memory").unwrap();
     let state = state.with_vault(std::sync::Arc::new(aurora_secrets::SecretVault::new(sr)));
     h.state = state.clone();
     h.app = test_router(state);
     let root = h.user("root@x.io", true).await;
     let root_cookie = cookie(&h.good_session(root).await.1);
-    (
-        W {
-            h,
-            git,
-            root: root_cookie,
-        },
-        mem,
+    W {
+        h,
+        git,
+        root: root_cookie,
+    }
+}
+
+/// A [`aurora_secrets::MemoryStore`] whose `put` number `fail_at` (from 1) fails.
+struct FailingPut {
+    inner: std::sync::Arc<aurora_secrets::MemoryStore>,
+    puts: std::sync::atomic::AtomicUsize,
+    fail_at: usize,
+}
+
+#[async_trait::async_trait]
+impl aurora_secrets::SecretStore for FailingPut {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+    fn capabilities(&self) -> aurora_secrets::StoreCapabilities {
+        self.inner.capabilities()
+    }
+    async fn put(
+        &self,
+        ctx: &aurora_secrets::SealContext,
+        plaintext: &aurora_core::Secret<Vec<u8>>,
+    ) -> aurora_secrets::Result<aurora_secrets::SecretRef> {
+        if self.puts.fetch_add(1, Ordering::SeqCst) + 1 == self.fail_at {
+            return Err(aurora_secrets::SecretError::StoreUnavailable);
+        }
+        self.inner.put(ctx, plaintext).await
+    }
+    async fn get(
+        &self,
+        ctx: &aurora_secrets::SealContext,
+        r: &aurora_secrets::SecretRef,
+    ) -> aurora_secrets::Result<aurora_core::Secret<Vec<u8>>> {
+        self.inner.get(ctx, r).await
+    }
+    async fn delete(
+        &self,
+        ctx: &aurora_secrets::SealContext,
+        r: &aurora_secrets::SecretRef,
+    ) -> aurora_secrets::Result<()> {
+        self.inner.delete(ctx, r).await
+    }
+    async fn resolve_reference(
+        &self,
+        ctx: &aurora_secrets::SealContext,
+        path: &str,
+        field: Option<&str>,
+    ) -> aurora_secrets::Result<aurora_secrets::SecretRef> {
+        self.inner.resolve_reference(ctx, path, field).await
+    }
+    async fn health(&self) -> aurora_secrets::StoreHealth {
+        self.inner.health().await
+    }
+}
+
+// ---- FIX-267: every rule of a normal create, and a cleanup on every failure ----------------------
+
+/// [`files`] plus an avatar and two password webhooks (each seals a secret).
+fn hooked_files(dir: &str, version: &str) -> Vec<(String, Vec<u8>)> {
+    let mut fs = files(dir, version);
+    fs.push((format!("{dir}/avatar.png"), avatar_png()));
+    for name in ["first", "second"] {
+        fs.push((
+            format!("{dir}/automations/{name}.yaml"),
+            format!(
+                "kind: webhook\nname: Hook {name}\ninstructions: Page.\nverification: password\n"
+            )
+            .into_bytes(),
+        ));
+    }
+    fs
+}
+
+fn create_json(plan: &Value) -> Value {
+    json!({
+        "template_id": plan["template_id"],
+        "version": plan["version"],
+        "content_sha256": plan["content_sha256"],
+        "name": "Monitor",
+        "inputs": {"zone": "eu"},
+    })
+}
+
+/// No agent, no avatar blob, no sealed webhook secret.
+async fn nothing_left(w: &W, mem: &aurora_secrets::MemoryStore) {
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0, "agents");
+    assert_eq!(w.count("SELECT count(*) FROM blobs").await, 0, "blobs");
+    assert_eq!(mem.managed_count(), 0, "sealed secrets");
+}
+
+#[tokio::test]
+async fn a_create_is_refused_while_hosted_agents_are_off() {
+    let w = world_with(|c| c.hosted.enabled = false).await;
+    let (_, ws, owner) = w.ws_owner().await;
+    seed_fs(&w, "acme/tpl", "t", "1.0.0", &files("t", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "t").await;
+    let (s, v) = w.create_body(ws, &owner, create_json(&plan)).await;
+    assert_eq!((s, code(&v)), (422, "hosted_disabled"), "{v}");
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+}
+
+#[tokio::test]
+async fn a_create_is_refused_when_the_default_harness_is_not_enabled() {
+    let w = world_with(|c| {
+        c.hosted.default_harness = "fake".into();
+        c.hosted.allow_fake_harness = false;
+    })
+    .await;
+    let (_, ws, owner) = w.ws_owner().await;
+    seed_fs(&w, "acme/tpl", "t", "1.0.0", &files("t", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "t").await;
+    let (s, v) = w.create_body(ws, &owner, create_json(&plan)).await;
+    assert_eq!((s, code(&v)), (422, "harness_not_enabled"), "{v}");
+    assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+}
+
+#[tokio::test]
+async fn a_failed_second_seal_discards_the_first_one() {
+    let mem = std::sync::Arc::new(aurora_secrets::MemoryStore::new("memory"));
+    let w = store_world(std::sync::Arc::new(FailingPut {
+        inner: mem.clone(),
+        puts: Default::default(),
+        fail_at: 2,
+    }))
+    .await;
+    let (_, ws, owner) = w.ws_owner().await;
+    seed_fs(&w, "acme/tpl", "t", "1.0.0", &hooked_files("t", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "t").await;
+    let (s, v) = w.create_body(ws, &owner, create_json(&plan)).await;
+    assert!(s >= 500, "{s} {v}");
+    nothing_left(&w, &mem).await;
+}
+
+#[tokio::test]
+async fn a_failed_avatar_put_discards_the_seals() {
+    let (w, mem) = d_world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    seed_fs(&w, "acme/tpl", "t", "1.0.0", &hooked_files("t", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "t").await;
+    refuse_writes(&w, "blobs", "INSERT").await;
+    let (s, v) = w.create_body(ws, &owner, create_json(&plan)).await;
+    allow_writes(&w, "blobs").await;
+    assert!(s >= 500, "{s} {v}");
+    nothing_left(&w, &mem).await;
+}
+
+#[tokio::test]
+async fn a_create_stores_and_renders_the_cleaned_name() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    let mut fs = files("t", "1.0.0");
+    fs[2] = (
+        "t/instructions.md".into(),
+        b"Watch {input.zone} as {agent.name}.\n".to_vec(),
+    );
+    seed_fs(&w, "acme/tpl", "t", "1.0.0", &fs).await;
+    let created = w
+        .create_agent(ws, &owner, "t", "1.0.0", json!({"name": "  Monitor "}))
+        .await;
+    assert_eq!(created["agent"]["name"], "Monitor", "{created}");
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(brief_of(&w, agent).await, "Watch eu as Monitor.\n");
+}
+
+#[tokio::test]
+async fn a_create_refuses_automation_choices_the_template_does_not_have() {
+    let (w, mem) = d_world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    let mut fs = hooked_files("t", "1.0.0");
+    fs.push((
+        "t/automations/daily.yaml".into(),
+        b"kind: schedule\nname: daily\nprompt: Check.\ncadence:\n  cron: \"0 8 * * *\"\n".to_vec(),
+    ));
+    seed_fs(&w, "acme/tpl", "t", "1.0.0", &fs).await;
+    let plan = w.plan(ws, &owner, "t").await;
+    let good = json!({"kind": "schedule", "name": "daily", "enabled": false});
+    for (bad, path) in [
+        (
+            json!({"kind": "schedule", "name": "dialy", "enabled": false}),
+            "/automations/1/name",
+        ),
+        // A webhook is not a choice: it is always created paused.
+        (
+            json!({"kind": "schedule", "name": "Hook first"}),
+            "/automations/1/name",
+        ),
+        (
+            json!({"kind": "webhook", "name": "daily"}),
+            "/automations/1/kind",
+        ),
+    ] {
+        let (s, v) = w
+            .create_body(
+                ws,
+                &owner,
+                create_json(&plan).merge(json!({"automations": [good.clone(), bad]})),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (422, "invalid_request"), "{v}");
+        assert_eq!(v["error"]["details"]["fields"][0]["path"], path, "{v}");
+        nothing_left(&w, &mem).await;
+        assert_eq!(w.count("SELECT count(*) FROM schedules").await, 0);
+    }
+}
+
+/// Starts a create and holds it at its in-transaction re-read: the returned transaction has the
+/// template row locked, so the create waits there until it ends.
+async fn create_held_at_the_recheck(
+    w: &W,
+    owner: &str,
+    ws: Uuid,
+    body: Value,
+) -> (
+    sqlx::Transaction<'static, sqlx::Postgres>,
+    tokio::task::JoinHandle<(u16, Value)>,
+) {
+    let mut lock = w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM agent_templates WHERE template_id = 't' FOR UPDATE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let task = tokio::spawn(app_call(
+        w.h.app.clone(),
+        owner.to_owned(),
+        Method::POST,
+        format!("/v1/workspaces/{ws}/agents/from-template"),
+        Some(body),
+    ));
+    wait_blocked(w.h.pool()).await;
+    (lock, task)
+}
+
+#[tokio::test]
+async fn a_create_sees_the_organization_turning_the_template_off() {
+    let (w, mem) = d_world().await;
+    let (org, ws, owner) = w.ws_owner().await;
+    seed_fs(&w, "acme/tpl", "t", "1.0.0", &hooked_files("t", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "t").await;
+    let (lock, task) = create_held_at_the_recheck(&w, &owner, ws, create_json(&plan)).await;
+
+    sqlx::query(
+        "INSERT INTO org_disabled_agent_templates (org_id, template_id, disabled_by)
+         SELECT $1, 't', id FROM users WHERE email = 'owner@x.io'",
     )
+    .bind(org)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    lock.rollback().await.unwrap();
+
+    let (s, v) = task.await.unwrap();
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    // There is no current plan of a template that is off here.
+    assert_eq!(v["error"]["details"]["plan"], json!(null), "{v}");
+    nothing_left(&w, &mem).await;
+}
+
+#[tokio::test]
+async fn a_create_sees_the_template_being_withdrawn() {
+    let (w, mem) = d_world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    seed_fs(&w, "acme/tpl", "t", "1.0.0", &hooked_files("t", "1.0.0")).await;
+    let plan = w.plan(ws, &owner, "t").await;
+    let (mut lock, task) = create_held_at_the_recheck(&w, &owner, ws, create_json(&plan)).await;
+
+    sqlx::query("UPDATE agent_templates SET offered = false WHERE template_id = 't'")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    lock.commit().await.unwrap();
+
+    let (s, v) = task.await.unwrap();
+    assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
+    nothing_left(&w, &mem).await;
+}
+
+/// A template whose own skill names three inputs in its `use-it-when` and one in its body.
+fn long_skill_files(dir: &str, version: &str, body_pad: usize) -> Vec<(String, Vec<u8>)> {
+    let mut fs = vec![
+        (
+            format!("{dir}/template.yaml"),
+            format!(
+                "format: 1\nid: {dir}\nversion: {version}\nname: L\nsummary: Long.\ninputs:\n  \
+                 - id: zone\n    label: Zone\n    required: false\n    max_length: 200\n  \
+                 - id: team\n    label: Team\n    required: false\n    max_length: 200\n  \
+                 - id: service\n    label: Service\n    required: false\n    max_length: 200\n"
+            )
+            .into_bytes(),
+        ),
+        (format!("{dir}/agent.yaml"), AGENT_YAML.as_bytes().to_vec()),
+        (
+            format!("{dir}/instructions.md"),
+            INSTRUCTIONS.as_bytes().to_vec(),
+        ),
+        (
+            format!("{dir}/README.md"),
+            format!("# {dir}\nL.\n").into_bytes(),
+        ),
+    ];
+    fs.push((
+        format!("{dir}/skills/watch/SKILL.md"),
+        tpl_skill_md(
+            "watch",
+            "For {input.team} on {input.service} in {input.zone}",
+            &format!("{} {{input.team}}", "b".repeat(body_pad)),
+        ),
+    ));
+    fs
+}
+
+#[tokio::test]
+async fn a_create_refuses_a_skill_that_rendering_pushes_over_a_limit() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    seed_fs(
+        &w,
+        "acme/tpl",
+        "t",
+        "1.0.0",
+        &long_skill_files("t", "1.0.0", 23_900),
+    )
+    .await;
+    let plan = w.plan(ws, &owner, "t").await;
+    let long = "x".repeat(200);
+    for (inputs, limit) in [
+        // The description passes 500 characters.
+        (json!({"zone": long, "team": long, "service": long}), "500"),
+        // Only the body passes 24 000.
+        (json!({"team": long}), "24000"),
+    ] {
+        let (s, v) = w
+            .create_body(
+                ws,
+                &owner,
+                create_json(&plan).merge(json!({"inputs": inputs})),
+            )
+            .await;
+        assert_eq!((s, code(&v)), (422, "template_too_large"), "{v}");
+        let message = v["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("watch") && message.contains(limit),
+            "{message}"
+        );
+        assert_eq!(w.count("SELECT count(*) FROM agents").await, 0);
+    }
+}
+
+#[tokio::test]
+async fn an_apply_refuses_a_new_skill_that_rendering_pushes_over_a_limit() {
+    let w = world().await;
+    let (_, ws, owner) = w.ws_owner().await;
+    let mut first = long_skill_files("t", "1.0.0", 10);
+    first.pop();
+    let id = seed_fs(&w, "acme/tpl", "t", "1.0.0", &first).await;
+    let long = "x".repeat(200);
+    let inputs = json!({"zone": long, "team": long, "service": long});
+    let created = w
+        .create_agent(ws, &owner, "t", "1.0.0", json!({"inputs": inputs}))
+        .await;
+    let agent: Uuid = created["agent"]["id"].as_str().unwrap().parse().unwrap();
+    advance_fs(
+        &w,
+        id,
+        "acme/tpl",
+        "t",
+        "2.0.0",
+        &long_skill_files("t", "2.0.0", 10),
+        &[],
+    )
+    .await;
+    let (_, v) = w.tpl_status(&owner, agent).await;
+    let sha = v["update"]["content_sha256"].as_str().unwrap().to_owned();
+    let (s, v) = w
+        .apply(
+            &owner,
+            agent,
+            json!({"version": "2.0.0", "content_sha256": sha,
+                   "parts": [{"kind": "skill", "key": "watch"}]}),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "template_too_large"), "{v}");
+    assert_eq!(
+        skills_of(&w, agent).await,
+        Vec::<(String, Option<Uuid>)>::new()
+    );
+}
+
+/// The source's stored token ref.
+async fn token_ref_of(w: &W, id: Uuid) -> Option<String> {
+    sqlx::query_scalar("SELECT token_ref FROM agent_template_sources WHERE id = $1")
+        .bind(id)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+}
+
+/// Runs two requests on one source so that both have read it before either writes: the source
+/// row is locked, each request is started once the one before it waits, then the lock goes.
+async fn race_on_source(
+    w: &W,
+    id: Uuid,
+    requests: [(Method, Option<Value>); 2],
+) -> Vec<(u16, Value)> {
+    let mut lock = w.h.pool().begin().await.unwrap();
+    sqlx::query("SELECT id FROM agent_template_sources WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let never = AtomicBool::new(false);
+    let mut tasks = Vec::new();
+    for (i, (m, body)) in requests.into_iter().enumerate() {
+        tasks.push(tokio::spawn(app_call(
+            w.h.app.clone(),
+            w.root.clone(),
+            m,
+            format!("/v1/admin/agent-template-sources/{id}"),
+            body,
+        )));
+        wait_for_lock_waiters(w, i as i64 + 1, &never).await;
+    }
+    lock.rollback().await.unwrap();
+    let mut out = Vec::new();
+    for t in tasks {
+        out.push(t.await.unwrap());
+    }
+    out
+}
+
+async fn token_source(w: &W) -> Uuid {
+    w.seed("acme/tpl", "t", "1.0.0");
+    let src = w
+        .add_source("acme/tpl", json!({"token": "one", "token_username": "bot"}))
+        .await;
+    src["id"].as_str().unwrap().parse().unwrap()
+}
+
+fn set_token(t: &str) -> Option<Value> {
+    Some(json!({"token": t, "token_username": "bot"}))
+}
+
+#[tokio::test]
+async fn two_concurrent_token_patches_leave_one_sealed_token() {
+    let (w, mem) = d_world().await;
+    let id = token_source(&w).await;
+    assert_eq!(mem.managed_count(), 1);
+    let out = race_on_source(
+        &w,
+        id,
+        [
+            (Method::PATCH, set_token("two")),
+            (Method::PATCH, set_token("three")),
+        ],
+    )
+    .await;
+    assert!(out.iter().all(|(s, _)| *s == 200), "{out:?}");
+    assert_eq!(
+        mem.managed_count(),
+        1,
+        "one token is left, the others are gone"
+    );
+}
+
+#[tokio::test]
+async fn a_patch_that_keeps_the_token_does_not_write_back_a_discarded_one() {
+    let (w, mem) = d_world().await;
+    let id = token_source(&w).await;
+    let first = token_ref_of(&w, id).await;
+    let out = race_on_source(
+        &w,
+        id,
+        [
+            (Method::PATCH, set_token("two")),
+            (Method::PATCH, Some(json!({"ref": "main"}))),
+        ],
+    )
+    .await;
+    assert!(out.iter().all(|(s, _)| *s == 200), "{out:?}");
+    assert_ne!(token_ref_of(&w, id).await, first, "the old token is gone");
+    assert_eq!(mem.managed_count(), 1);
+}
+
+#[tokio::test]
+async fn a_delete_racing_a_token_patch_leaves_no_sealed_token() {
+    let (w, mem) = d_world().await;
+    let id = token_source(&w).await;
+    let out = race_on_source(
+        &w,
+        id,
+        [(Method::PATCH, set_token("two")), (Method::DELETE, None)],
+    )
+    .await;
+    assert_eq!(out[1].0, 204, "{out:?}");
+    assert_eq!(mem.managed_count(), 0);
 }
 
 #[tokio::test]
@@ -6869,11 +7367,21 @@ async fn a_stale_plan_is_a_409_with_the_fresh_plan() {
 
 #[tokio::test]
 async fn a_create_rechecks_the_offered_version_under_the_row_lock() {
-    let w = world().await;
+    let (w, mem) = d_world().await;
     let (_, ws, owner) = w.ws_owner().await;
-    let id = seed_fs(&w, "acme/tpl", "t", "1.0.0", &files("t", "1.0.0")).await;
+    let id = seed_fs(&w, "acme/tpl", "t", "1.0.0", &hooked_files("t", "1.0.0")).await;
     // 2.0.0 is approved but held back, so the offer (and the plan) is 1.0.0.
-    advance_fs(&w, id, "acme/tpl", "t", "2.0.0", &files("t", "2.0.0"), &[]).await;
+    advance_fs(
+        &w,
+        id,
+        "acme/tpl",
+        "t",
+        "2.0.0",
+        &hooked_files("t", "2.0.0"),
+        &[],
+    )
+    .await;
+    let blobs = w.count("SELECT count(*) FROM blobs").await;
     let tid: Uuid = sqlx::query_scalar("SELECT id FROM agent_templates WHERE template_id = 't'")
         .fetch_one(w.h.pool())
         .await
@@ -6929,14 +7437,18 @@ async fn a_create_rechecks_the_offered_version_under_the_row_lock() {
 
     let (s, v) = task.await.unwrap();
     assert_eq!((s, code(&v)), (409, "template_version_changed"), "{v}");
-    assert_eq!(v["error"]["details"]["plan"]["version"], "1.0.0", "{v}");
-    // No agent was created, and none is stamped with the stale version.
+    // The details carry the plan as it is now, not the one the request answered to.
+    assert_eq!(v["error"]["details"]["plan"]["version"], "2.0.0", "{v}");
+    // No agent was created, and none is stamped with the stale version; the avatar blob and
+    // the webhook seals made before the transaction are gone.
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM agents WHERE workspace_id = $1")
         .bind(ws)
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(n, 0);
+    assert_eq!(w.count("SELECT count(*) FROM blobs").await, blobs);
+    assert_eq!(mem.managed_count(), 0);
 }
 
 #[tokio::test]

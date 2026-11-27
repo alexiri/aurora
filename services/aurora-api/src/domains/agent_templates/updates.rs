@@ -2207,6 +2207,8 @@ async fn apply_in_tx(
                         let Some(s) = diff.rendered.skills.iter().find(|s| &s.name == key) else {
                             continue; // cannot happen: every other state has proposed content
                         };
+                        // Filling in the inputs can push a text over a skill's limits.
+                        create::rendered_skill_ok(s)?;
                         (s.use_it_when.clone(), s.body.clone(), s.files.clone())
                     }
                 };
