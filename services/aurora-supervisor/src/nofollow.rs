@@ -171,14 +171,18 @@ pub(crate) fn remove_file_beneath(home: &Path, rel: &Path) -> io::Result<()> {
     }
 }
 
+/// The mode a regular file is to get (`None`: keep it), from the open file's metadata and its
+/// name.
+pub(crate) type FileMode<'a> = &'a dyn Fn(&fs::Metadata, &OsStr) -> Option<u32>;
+
 /// Sets `dir_mode` on `dir` and on every directory below it and, with `file_mode`, the mode it
-/// gives for each regular file's mode. Everything is opened from its parent's descriptor and
-/// changed through its own: a link, or anything else, is left alone. Best effort.
-pub(crate) fn set_tree_modes(dir: OwnedFd, dir_mode: u32, file_mode: Option<fn(u32) -> u32>) {
+/// gives for each regular file. Everything is opened from its parent's descriptor and changed
+/// through its own: a link, or anything else, is left alone. Best effort.
+pub(crate) fn set_tree_modes(dir: OwnedFd, dir_mode: u32, file_mode: Option<FileMode<'_>>) {
     walk_modes(dir, dir_mode, file_mode, 0);
 }
 
-fn walk_modes(dir: OwnedFd, dir_mode: u32, file_mode: Option<fn(u32) -> u32>, depth: usize) {
+fn walk_modes(dir: OwnedFd, dir_mode: u32, file_mode: Option<FileMode<'_>>, depth: usize) {
     // First the mode: it may be what makes the folder listable.
     let _ = rustix::fs::fchmod(&dir, Mode::from_raw_mode(dir_mode));
     if depth >= WALK_MAX_DEPTH {
@@ -215,8 +219,9 @@ fn walk_modes(dir: OwnedFd, dir_mode: u32, file_mode: Option<fn(u32) -> u32>, de
             let file = fs::File::from(fd);
             if let Ok(meta) = file.metadata()
                 && meta.is_file()
+                && let Some(mode) = wanted(&meta, &name)
             {
-                let _ = set_mode(&file, wanted(meta.permissions().mode()));
+                let _ = set_mode(&file, mode);
             }
         }
     }

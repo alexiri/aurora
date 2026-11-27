@@ -21,10 +21,11 @@
 //! - `manifest`: `{path}`; every managed path that should exist.
 
 use std::collections::{BTreeSet, HashMap};
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read as _;
 use std::os::fd::AsFd as _;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -120,6 +121,8 @@ pub struct HomeProjector {
     /// (P6-MEMLOCK, C-1149) The sealed bytes of every installed locked memory, key → file bytes;
     /// held in memory only. The harvest restores them instead of uploading an agent's edit.
     locked_bytes: Arc<HashMap<String, Vec<u8>>>,
+    /// (FIX-258) The uid the agent runs as: the only files whose mode a lock changes.
+    agent_uid: u32,
 }
 
 /// Relative, normal components only.
@@ -305,7 +308,13 @@ impl HomeProjector {
             locked_keys: BTreeSet::new(),
             skipped: BTreeSet::new(),
             locked_bytes: Arc::new(HashMap::new()),
+            agent_uid: rustix::process::getuid().as_raw(),
         }
+    }
+
+    /// The agent runs as another uid than the supervisor (the root supervisor mode).
+    pub fn set_agent_uid(&mut self, uid: u32) {
+        self.agent_uid = uid;
     }
 
     fn sync_dir(&self) -> PathBuf {
@@ -668,7 +677,7 @@ impl HomeProjector {
             }
         }
         if let Some(rel) = self.skills_prefix() {
-            lock_tree(&root, &rel);
+            lock_tree(&root, &rel, self.agent_uid);
         }
         // The app folders: pruned to the manifest like skills (a revoked grant removes its folder).
         {
@@ -684,11 +693,11 @@ impl HomeProjector {
             for d in dirs {
                 let _ = fs::remove_dir(&d);
             }
-            lock_tree(&root, Path::new(APPS_DIR));
+            lock_tree(&root, Path::new(APPS_DIR), self.agent_uid);
         }
         // (P6-TPL-6, C-1143) The helper files (pruned to the manifest before the install, so a
         // removed helper is gone): locked read-only (0555/0444 files, 0555 dirs).
-        lock_tree(&root, Path::new(HELPERS_DIR));
+        lock_tree(&root, Path::new(HELPERS_DIR), self.agent_uid);
 
         // .aurora cache + instruction files.
         let aurora = root.join(AURORA_DIR);
@@ -854,12 +863,34 @@ fn set_dirs(home: &Path, rel: &Path, mode: u32) {
     }
 }
 
+/// Whether the lock may change a file's mode: it has this one name and is the agent's. A hard
+/// link may be another user's file (`fs.protected_hardlinks=0`).
+fn may_lock(links: u64, owner: u32, agent: u32) -> bool {
+    links <= 1 && owner == agent
+}
+
 /// [`set_dirs`] at 0555 that locks the files too: executable ones stay 0555, everything else
-/// is 0444.
-fn lock_tree(home: &Path, rel: &Path) {
+/// is 0444. A file that is not [the agent's own](may_lock) keeps its mode.
+fn lock_tree(home: &Path, rel: &Path, agent_uid: u32) {
     if let Ok(dir) = nofollow::open_dir_beneath(home, rel) {
-        let file_mode = |mode: u32| if mode & 0o100 != 0 { 0o555 } else { 0o444 };
-        nofollow::set_tree_modes(dir, 0o555, Some(file_mode));
+        let file_mode = |meta: &fs::Metadata, name: &OsStr| {
+            let mode = meta.permissions().mode();
+            let wanted = if mode & 0o100 != 0 { 0o555 } else { 0o444 };
+            // Nothing to say about a file that already has it (in the root mode Aurora's own
+            // files are root's, installed with their final mode).
+            if mode & 0o7777 == wanted {
+                return None;
+            }
+            if !may_lock(meta.nlink(), meta.uid(), agent_uid) {
+                tracing::warn!(
+                    name = %name.to_string_lossy().escape_debug(),
+                    "mode not changed: a hard link or another user's file"
+                );
+                return None;
+            }
+            Some(wanted)
+        };
+        nofollow::set_tree_modes(dir, 0o555, Some(&file_mode));
     }
 }
 
@@ -876,6 +907,10 @@ mod tests {
         fs::write(&victim, "outside").unwrap();
         fs::set_permissions(&victim, fs::Permissions::from_mode(0o600)).unwrap();
         (dir, home, victim)
+    }
+
+    fn me() -> u32 {
+        rustix::process::getuid().as_raw()
     }
 
     fn mode_of(p: &Path) -> u32 {
@@ -921,7 +956,7 @@ mod tests {
         }
         std::os::unix::fs::symlink(&victim, tree.join("sub/link")).unwrap();
 
-        lock_tree(&home, Path::new("helpers"));
+        lock_tree(&home, Path::new("helpers"), me());
 
         assert_eq!(mode_of(&victim), 0o600, "outside file chmodded");
         assert_eq!(mode_of(&tree.join("run.sh")), 0o555);
@@ -929,6 +964,49 @@ mod tests {
         assert_eq!(mode_of(&tree.join("sub")), 0o555);
         set_dirs(&home, Path::new("helpers"), 0o755);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-258) A hard link in a managed tree is another name of a file that may be anyone's
+    /// (`fs.protected_hardlinks=0`): locking the tree leaves its mode alone.
+    #[test]
+    fn locking_a_tree_leaves_a_hard_linked_file_alone() {
+        let (dir, home, victim) = scratch();
+        fs::create_dir_all(home.join("helpers")).unwrap();
+        fs::hard_link(&victim, home.join("helpers/link")).unwrap();
+
+        lock_tree(&home, Path::new("helpers"), me());
+
+        assert_eq!(mode_of(&victim), 0o600, "hard-linked file chmodded");
+        assert_eq!(mode_of(&home.join("helpers")), 0o555);
+        set_dirs(&home, Path::new("helpers"), 0o755);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-258) Nor is the mode of a file the agent does not own changed (the test's files
+    /// are not those of another uid it names as the agent).
+    #[test]
+    fn locking_a_tree_leaves_another_users_file_alone() {
+        let (dir, home, _) = scratch();
+        let file = home.join("helpers/file");
+        fs::create_dir_all(home.join("helpers")).unwrap();
+        fs::write(&file, "x").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+
+        lock_tree(&home, Path::new("helpers"), me() + 1);
+        assert_eq!(mode_of(&file), 0o600);
+        set_dirs(&home, Path::new("helpers"), 0o755);
+
+        lock_tree(&home, Path::new("helpers"), me());
+        assert_eq!(mode_of(&file), 0o444);
+        set_dirs(&home, Path::new("helpers"), 0o755);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_a_single_named_file_of_the_agent_is_locked() {
+        assert!(may_lock(1, 1000, 1000));
+        assert!(!may_lock(2, 1000, 1000), "a hard link");
+        assert!(!may_lock(1, 0, 1000), "root's file");
     }
 
     /// `outside/tree/sub/file`, all at private modes, beside the home.
@@ -1006,7 +1084,7 @@ mod tests {
         let (dir, home, _) = scratch();
         let outside = outside_tree(&dir);
         std::os::unix::fs::symlink(&outside, home.join("above")).unwrap();
-        lock_tree(&home, Path::new("above/tree"));
+        lock_tree(&home, Path::new("above/tree"), me());
         assert_outside_modes(&outside);
         fs::remove_dir_all(dir).unwrap();
     }

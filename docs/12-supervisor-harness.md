@@ -1059,7 +1059,9 @@ The home (`/workspace`) holds:
   Any other error on a skill file (a full disk) still fails the generation.
 - (FIX-258) Folder modes under the managed roots, and the file modes of a
   locked tree, are set on descriptors opened from the parent's descriptor
-  without following links, from the home down. An installed file's folders are
+  without following links, from the home down. The lock changes the mode of a
+  file only when it has one name and the agent's uid owns it; any other keeps
+  its mode, with a warning if it differs. An installed file's folders are
   made and opened the same way, and its temp file and rename are relative to
   them.
 - Paths outside managed roots are refused (warning), although traversal is

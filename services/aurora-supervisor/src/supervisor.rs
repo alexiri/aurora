@@ -243,17 +243,24 @@ impl Supervisor {
         ptys: crate::pty::PtyHandle,
     ) -> Self {
         let caps = adapter.capabilities();
+        let mut projector = HomeProjector::new(HomeConfig {
+            root: cfg.working_dir.clone(),
+            skills_dir: Some(caps.skills_dir.clone()),
+            instruction_files: caps.instruction_files.clone(),
+            pg: cfg.pg,
+            // (C-653) A supervisor-local fact, computed once at start: the wrapper is there.
+            agent_cli: crate::agent_cli::agent_cli_available(std::path::Path::new(
+                crate::agent_cli::WRAPPER,
+            )),
+        });
+        // (FIX-258) The same rule as for its processes: a root supervisor runs them as this uid.
+        if rustix::process::getuid().is_root()
+            && let Some(uid) = cfg.process.uid
+        {
+            projector.set_agent_uid(uid);
+        }
         let home = Arc::new(StdMutex::new(HomeCtl {
-            projector: HomeProjector::new(HomeConfig {
-                root: cfg.working_dir.clone(),
-                skills_dir: Some(caps.skills_dir.clone()),
-                instruction_files: caps.instruction_files.clone(),
-                pg: cfg.pg,
-                // (C-653) A supervisor-local fact, computed once at start: the wrapper is there.
-                agent_cli: crate::agent_cli::agent_cli_available(std::path::Path::new(
-                    crate::agent_cli::WRAPPER,
-                )),
-            }),
+            projector,
             harvester: Harvester::new(&cfg.working_dir),
         }));
         let mut process = cfg.process.clone();
