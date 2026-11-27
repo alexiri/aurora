@@ -29,8 +29,7 @@ const skillsWord = (n: number) => `${n} ${n === 1 ? "skill" : "skills"}`;
 
 /** How many skills the library offered at its last check (C-1176), when the server says. */
 function offered(l: SkillLibrary): number | null {
-  // TODO(P5-SKILLS-1): drop the cast once `skills_offered` is in the generated schema.
-  return (l as { skills_offered?: number | null }).skills_offered ?? null;
+  return l.skills_offered ?? null;
 }
 
 /** "17 skills · 1 used by Acme", "5 skills · none used yet"; the instance counts organizations instead. */

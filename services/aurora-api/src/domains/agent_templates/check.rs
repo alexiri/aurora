@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use aurora_core::limits;
 use aurora_core::{ApiError, ids, sanitize};
 use aurora_db::repo::agent_templates::{self as repo, SourceRow};
-use aurora_registry::manifest::parse_semver;
+use aurora_registry::manifest::{SemVer, parse_semver};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -396,6 +396,39 @@ async fn store_head(
 
 // ---- the check ---------------------------------------------------------------------------------
 
+/// Step 4's rule for one healthy head: `Ok(true)` takes it as a candidate (newer than every
+/// stored version, or nothing is stored), `Ok(false)` ignores it (equal). A lower version, or
+/// one the comparison cannot read, is the template's problem.
+fn candidate_of(
+    template_id: &str,
+    head_version: &str,
+    newest: Option<&SemVer>,
+) -> Result<bool, Problem> {
+    let problem = |code: &str, message: String| Problem {
+        template_id: Some(template_id.to_owned()),
+        dir: String::new(),
+        code: code.to_owned(),
+        message: sanitize::one_line(&message, 200),
+    };
+    let Some(candidate) = parse_semver(head_version) else {
+        return Err(problem(
+            "template_version",
+            format!(
+                "the head version {head_version} cannot be compared with other versions; use \
+                 semver like 1.0.0, without leading zeros"
+            ),
+        ));
+    };
+    match newest {
+        Some(n) if candidate < *n => Err(problem(
+            "version_not_newer",
+            format!("the head version {head_version} is lower than the stored version"),
+        )),
+        Some(n) => Ok(candidate > *n),
+        None => Ok(true),
+    }
+}
+
 /// Extends the source's lease between the per-template steps (a source with many templates
 /// downloading packages can outlive the 5-minute lease): only the current owner succeeds.
 /// A lost lease means another replica claimed the source while this check ran — it aborts
@@ -625,24 +658,13 @@ pub async fn check_source(
             .filter(|v| v.version.agent_template_id == *row_id)
             .filter_map(|v| parse_semver(&v.version.version))
             .max();
-        let Some(candidate) = parse_semver(&meta.version) else {
-            continue;
-        };
-        match newest {
-            Some(n) if candidate < n => {
-                problems.push(Problem {
-                    template_id: Some(template_id.clone()),
-                    dir: String::new(),
-                    code: "version_not_newer".to_owned(),
-                    message: format!(
-                        "the head version {} is lower than the stored version",
-                        meta.version
-                    ),
-                });
+        match candidate_of(template_id, &meta.version, newest.as_ref()) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(p) => {
+                problems.push(p);
                 continue;
             }
-            Some(n) if candidate == n => continue, // equal: ignored
-            _ => {}                                // newer, or nothing stored yet: take it
         }
         let package_url = match aurora_template::render_package_url(&m, template_id, &meta.version)
         {
@@ -1001,6 +1023,25 @@ async fn process_awaiting(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A head whose version the comparison cannot read is a problem the admin sees, never a
+    /// silent skip.
+    #[test]
+    fn a_head_version_that_cannot_be_read_is_a_problem() {
+        let stored = parse_semver("1.0.0");
+        for newest in [None, stored.as_ref()] {
+            let Err(p) = candidate_of("desk", "1.02.0", newest) else {
+                panic!("1.02.0 was not reported (newest: {newest:?})");
+            };
+            assert_eq!(p.code, "template_version");
+            assert_eq!(p.template_id.as_deref(), Some("desk"));
+            assert!(p.message.contains("1.02.0"), "{}", p.message);
+        }
+        let take = |v| candidate_of("desk", v, stored.as_ref()).map_err(|p| p.code);
+        assert_eq!(take("1.0.1"), Ok(true));
+        assert_eq!(take("1.0.0"), Ok(false));
+        assert_eq!(take("0.9.0"), Err("version_not_newer".to_owned()));
+    }
 
     #[test]
     fn the_github_skip_tests_the_path_relative_to_the_template_folder() {

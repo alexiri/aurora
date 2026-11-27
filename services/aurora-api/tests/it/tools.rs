@@ -406,6 +406,14 @@ async fn a_frozen_agent_cannot_use_platform_tools() {
     assert_eq!(s, 200, "{v}");
 }
 
+/// A one-time `run_at` `days` from now: always in the future, so the tools never refuse it
+/// for being in the past.
+fn run_at_in(days: i64) -> String {
+    (chrono::Utc::now() + chrono::Duration::days(days))
+        .format("%Y-%m-%dT%H:%M")
+        .to_string()
+}
+
 /// (FIX-253, D-490) `schedule_create` from a delegated task's conversation (a peer turn, no
 /// speaker): the schedule belongs to the task's requester and its origin is the task
 /// conversation, and the wake runs there while the task is not closed. Without a requester, or
@@ -433,7 +441,7 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
             conv,
             turn,
             "schedule_create",
-            json!({"name": "check", "prompt": "Look again.", "run_at": "2026-12-01T09:00"}),
+            json!({"name": "check", "prompt": "Look again.", "run_at": run_at_in(30)}),
         ))
         .await;
     assert_eq!(s, 200, "{v}");
@@ -484,7 +492,7 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
             conv,
             turn,
             "schedule_create",
-            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+            json!({"name": "n", "prompt": "p", "run_at": run_at_in(30)}),
         ))
         .await;
     assert_eq!(s, 200, "{v}");
@@ -506,7 +514,7 @@ async fn schedule_create_from_a_peer_turn_belongs_to_the_requester() {
             conv,
             turn,
             "schedule_create",
-            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+            json!({"name": "n", "prompt": "p", "run_at": run_at_in(30)}),
         ))
         .await;
     assert_eq!(s, 200, "{v}");
@@ -537,7 +545,7 @@ async fn only_a_peer_turn_of_an_open_task_schedules_for_the_requester() {
                 conv,
                 turn,
                 "schedule_create",
-                json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+                json!({"name": "n", "prompt": "p", "run_at": run_at_in(30)}),
             ))
             .await;
         assert_eq!(s, 200, "{status}: {v}");
@@ -574,7 +582,7 @@ async fn only_a_peer_turn_of_an_open_task_schedules_for_the_requester() {
             conv,
             fired,
             "schedule_create",
-            json!({"name": "n", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+            json!({"name": "n", "prompt": "p", "run_at": run_at_in(30)}),
         ))
         .await;
     assert_eq!(s, 200, "{v}");
@@ -659,7 +667,7 @@ async fn a_peer_turn_sets_only_one_time_wakeups_and_at_most_three_open_ones() {
     for args in [
         json!({"name": "n", "prompt": "p", "cron": "0 10 27 11 *"}),
         // A request for both is recurring too.
-        json!({"name": "n", "prompt": "p", "cron": "0 10 27 11 *", "run_at": "2026-12-01T09:00"}),
+        json!({"name": "n", "prompt": "p", "cron": "0 10 27 11 *", "run_at": run_at_in(30)}),
     ] {
         let v = call(args).await;
         assert_eq!(v["ok"], false, "{v}");
@@ -678,12 +686,12 @@ async fn a_peer_turn_sets_only_one_time_wakeups_and_at_most_three_open_ones() {
     // The cap: three open one-time schedules, then the fourth refuses.
     for i in 0..3 {
         let v = call(json!({
-            "name": format!("w{i}"), "prompt": "p", "run_at": "2026-12-01T09:00"
+            "name": format!("w{i}"), "prompt": "p", "run_at": run_at_in(30)
         }))
         .await;
         assert_eq!(v["ok"], true, "{v}");
     }
-    let v = call(json!({"name": "w3", "prompt": "p", "run_at": "2026-12-01T09:00"})).await;
+    let v = call(json!({"name": "w3", "prompt": "p", "run_at": run_at_in(30)})).await;
     assert_eq!(v["ok"], false, "{v}");
     assert!(v.to_string().contains("three open wake-ups"), "{v}");
 
@@ -693,7 +701,7 @@ async fn a_peer_turn_sets_only_one_time_wakeups_and_at_most_three_open_ones() {
         .execute(r.h.pool())
         .await
         .unwrap();
-    let v = call(json!({"name": "w4", "prompt": "p", "run_at": "2026-12-01T09:00"})).await;
+    let v = call(json!({"name": "w4", "prompt": "p", "run_at": run_at_in(30)})).await;
     assert_eq!(v["ok"], true, "{v}");
 }
 
@@ -725,7 +733,7 @@ async fn a_peer_turn_updates_and_deletes_only_its_own_task_schedules_and_rearmin
     // One wake-up from the peer turn and one from the person's own chat (no origin).
     let v = call(
         "schedule_create",
-        json!({"name": "task_wake", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+        json!({"name": "task_wake", "prompt": "p", "run_at": run_at_in(30)}),
     )
     .await;
     assert_eq!(v["ok"], true, "{v}");
@@ -792,14 +800,14 @@ async fn a_peer_turn_updates_and_deletes_only_its_own_task_schedules_and_rearmin
     // its time is fine; with three *other* open ones a finished schedule cannot be re-armed.
     let v = call(
         "schedule_update",
-        json!({"id": task_schedule.to_string(), "run_at": "2026-12-02T09:00"}),
+        json!({"id": task_schedule.to_string(), "run_at": run_at_in(31)}),
     )
     .await;
     assert_eq!(v["ok"], true, "{v}");
     for i in 0..2 {
         let v = call(
             "schedule_create",
-            json!({"name": format!("extra{i}"), "prompt": "p", "run_at": "2026-12-01T09:00"}),
+            json!({"name": format!("extra{i}"), "prompt": "p", "run_at": run_at_in(30)}),
         )
         .await;
         assert_eq!(v["ok"], true, "{v}");
@@ -822,7 +830,7 @@ async fn a_peer_turn_updates_and_deletes_only_its_own_task_schedules_and_rearmin
     .unwrap();
     let v = call(
         "schedule_update",
-        json!({"id": task_schedule.to_string(), "run_at": "2026-12-03T09:00"}),
+        json!({"id": task_schedule.to_string(), "run_at": run_at_in(32)}),
     )
     .await;
     assert_eq!(v["ok"], false, "{v}");
@@ -853,7 +861,7 @@ async fn a_peer_turn_updates_and_deletes_only_its_own_task_schedules_and_rearmin
                     name: format!("race{i}"),
                     prompt: "p".into(),
                     cron: None,
-                    run_at: Some("2026-12-01T09:00".into()),
+                    run_at: Some(run_at_in(30)),
                     timezone: None,
                     gate_command: None,
                     gate_description: None,
@@ -897,7 +905,7 @@ async fn a_peer_created_wakeup_skips_and_disables_when_the_task_has_ended() {
             conv,
             turn,
             "schedule_create",
-            json!({"name": "wake", "prompt": "p", "run_at": "2026-12-01T09:00"}),
+            json!({"name": "wake", "prompt": "p", "run_at": run_at_in(30)}),
         ))
         .await;
     assert_eq!(s, 200, "{v}");

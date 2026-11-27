@@ -1,6 +1,6 @@
 #!/bin/sh
-# Publish every template in a repository folder (docs/25 §Publishing a version,
-# C-1144). POSIX sh + jq + gh + the aurora CLI.
+# Publish every template in a repository folder. POSIX sh + jq + gh + the
+# aurora CLI.
 #
 #   .github/aurora-publish.sh [repository folder]     (default: .)
 #
@@ -18,7 +18,14 @@ folder=${1:-.}
 dist=dist
 mkdir -p "$dist"
 
-aurora template list "$folder" --json | jq -c '.[]' | while IFS= read -r item; do
+# The list goes to a file first: piped straight into the loop, a failing `list`
+# would publish nothing and still end in success (sh has no pipefail).
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+aurora template list "$folder" --json >"$work/list.json"
+jq -c '.[]' "$work/list.json" >"$work/items"
+
+while IFS= read -r item; do
     id=$(printf '%s' "$item" | jq -r '.id')
     version=$(printf '%s' "$item" | jq -r '.version')
     dir=$(printf '%s' "$item" | jq -r '.dir')
@@ -48,4 +55,4 @@ aurora template list "$folder" --json | jq -c '.[]' | while IFS= read -r item; d
         gh release create "$tag" "$zip" "$@"
         printf '%s %s: published %s at %s.\n' "$id" "$version" "$asset" "$tag"
     fi
-done
+done <"$work/items"

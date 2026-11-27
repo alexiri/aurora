@@ -270,6 +270,8 @@ overridden by the named configuration key (`15`).
 | `SKILL_NAME_MAX` / `SKILL_DESCRIPTION_MAX` | 64 / 500 chars | — | 10 |
 | `SKILL_BODY_MAX` / `SKILL_TOTAL_MAX` | 24 000 / 32 000 chars | — | 10 |
 | `SKILL_PER_AGENT_MAX` / `SKILL_FILES_MAX` | 50 own skills per agent / 50 files per skill (409 `skill_limit_reached`, `skill_files_limit_reached`; checked under the agent / skill row lock; FIX-110). The other per-agent caps: 50 schedules, 20 webhooks, 100 memories | — | 10 |
+| `SKILL_TITLE_MAX` | 80 chars: a skill's display name, one line of plain text (400 on `/title`; P5-SKILLS-1, C-1173) | — | 10 |
+| `SKILL_USE_RETENTION_DAYS` / `SKILL_USE_WEEK_DAYS` / `SKILL_USED_BY_DAYS` | 90 / 7 / 30 days: how long a skill use is kept (pruned by the daily retention pass), the window of an agent's weekly count, and of a skill's "used by N agents" (P5-SKILLS-1, C-1175) | — | 10 |
 | `PEER_TASK_QUEUE_MAX` | 10 queued tasks per ordered (sender, target) pair; the 11th `message_agent` is refused (FIX-110) | — | 10 |
 | `ATTACH_IN_FILE_MAX` / `ATTACH_IN_COUNT` | 10 MiB / 10 per message | — | 10 |
 | `ATTACH_OUT_FILE_MAX` / `ATTACH_OUT_COUNT` | 25 MiB / 10 per turn | — | 10 |

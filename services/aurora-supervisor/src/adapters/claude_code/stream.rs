@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::adapters::provider_error;
+use crate::adapters::{provider_error, skill_use};
 use crate::harness::HarnessEvent;
 
 /// Name of the MCP server the adapter configures.
@@ -139,6 +139,18 @@ fn trunc(s: &str, max: usize) -> String {
         out.push('…');
     }
     out
+}
+
+/// (C-1175) The skill a call loads: Claude Code's own `Skill` tool, or a read of a skill's
+/// `SKILL.md` (`Read`, or a read command in `Bash`).
+fn loaded_skill(name: &str, input: &Value) -> Option<String> {
+    let dir = super::SKILLS_DIR;
+    match name {
+        "Skill" => skill_use::of_skill_tool(Some(input), &["skill", "command"]),
+        "Read" => skill_use::of_read(Some(input), dir),
+        "Bash" => skill_use::of_shell(Some(input), dir),
+        _ => None,
+    }
 }
 
 /// Short, secret-free description of a tool call.
@@ -391,6 +403,7 @@ impl StreamMapper {
                         call_id: call_id.to_owned(),
                         name: name.to_owned(),
                         summary: summarize(name, input),
+                        skill: loaded_skill(name, input),
                     });
                 }
                 _ => {}
@@ -633,6 +646,63 @@ mod tests {
         (ev, term, init)
     }
 
+    /// (C-1175) The `skill` field: Claude Code's `Skill` tool and a read of a skill's
+    /// `SKILL.md`; nothing on any other call, and the wire carries it only when set.
+    #[test]
+    fn a_loaded_skill_is_named_on_tool_started() {
+        let call = |id: &str, name: &str, input: &str| {
+            format!(
+                r#"{{"type":"assistant","message":{{"id":"m{id}","content":[{{"type":"tool_use","id":"{id}","name":"{name}","input":{input}}}]}},"parent_tool_use_id":null}}"#
+            )
+        };
+        let lines = [
+            call("t1", "Skill", r#"{"skill":"pdf"}"#),
+            call(
+                "t2",
+                "Read",
+                r#"{"file_path":"/workspace/.claude/skills/release-notes/SKILL.md"}"#,
+            ),
+            call(
+                "t3",
+                "Read",
+                r#"{"file_path":"/workspace/.claude/skills/pdf/forms.md"}"#,
+            ),
+            call(
+                "t4",
+                "Bash",
+                r#"{"command":"cat $SKILLS_DIR/triage/SKILL.md"}"#,
+            ),
+            call("t5", "Bash", r#"{"command":"echo hi"}"#),
+        ]
+        .join("\n");
+        let (ev, _, _) = run(&lines);
+        let got: Vec<Option<String>> = ev
+            .iter()
+            .filter_map(|e| match e {
+                HarnessEvent::ToolStarted { skill, .. } => Some(skill.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            got,
+            [
+                Some("pdf".into()),
+                Some("release-notes".into()),
+                None,
+                Some("triage".into()),
+                None
+            ]
+        );
+        let wire: Vec<Value> = ev
+            .iter()
+            .filter_map(HarnessEvent::to_wire)
+            .filter(|w| w.kind.as_str() == "tool.started")
+            .map(|w| Value::Object(w.data))
+            .collect();
+        assert_eq!(wire[0]["skill"], "pdf");
+        assert!(wire[2].get("skill").is_none(), "{}", wire[2]);
+    }
+
     #[test]
     fn text_turn_maps_deltas_thinking_usage_session_done() {
         let (ev, term, init) = run(TEXT);
@@ -684,6 +754,7 @@ mod tests {
                     call_id,
                     name,
                     summary,
+                    ..
                 } => Some((call_id.as_str(), name.as_str(), summary.as_str())),
                 _ => None,
             })

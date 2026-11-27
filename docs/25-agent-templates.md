@@ -170,7 +170,7 @@ service-monitor/
     on-call-notes.md   # optional starting memory; front matter key + optional locked
   skills/
     triage-alert/
-      SKILL.md         # front matter name + use-it-when; then the body
+      SKILL.md         # front matter name + use-it-when (+ optional title); then the body
       severity.py      # the skill's own files
   helpers/
     alert-summary.sh   # copied byte for byte; projected read-only at .aurora/helpers/
@@ -182,8 +182,10 @@ service-monitor/
 
 Size caps: a packed template is at most 5 MiB; unpacked at most 8 MiB and 200
 files; per-file and per-kind caps are in `02 §Limits`. Names are relative and
-`/`-separated, `[A-Za-z0-9._/-]`, at most 6 segments below the root; `..`,
-hidden segments, symlinks and submodules are refused. Files outside the
+`/`-separated, `[A-Za-z0-9._/-]`, at most 6 segments and 255 characters below
+the root (the template's own directory counts toward neither, in a zip as in
+the repository); `..`, hidden segments, symlinks and submodules are refused
+(a `.github` folder is skipped, as above). Files outside the
 expected names are refused (`template_file_unexpected`), except
 `CHANGELOG.md`, which is allowed but not part of the content.
 
@@ -214,7 +216,7 @@ Strict YAML: unknown keys are refused. Field by field:
 ```yaml
 format: 1                     # integer; any other value: template_format_unsupported
 id: service-monitor           # [a-z0-9]+(-[a-z0-9]+)*, ≤ 64; equals the directory name
-version: 1.0.0                # semver, no build metadata
+version: 1.0.0                # semver, no build metadata, no leading zeros (not 1.02.0 or rc.01)
 name: Service monitor         # 1..80 characters
 summary: Watches dashboards and opens tickets.   # 1..280 characters
 min_core: 6.0.0               # optional: the oldest Aurora release this version needs
@@ -290,12 +292,18 @@ once across all of them:
 - **Its own skills**, `skills/<name>/SKILL.md` plus that skill's other files
   (at most 25 skills): front matter `name` (equal to the directory name, the
   skill-name rules of `10 §Skills`, never `aurora-*`) and `use-it-when` (one
-  line — this becomes the skill's description, so make it a clear sentence);
-  then the body. The library's file rules apply: 64 KiB per file, at most 50
+  line — this becomes the skill's description, so make it a clear sentence),
+  and optionally `title` (the name people see, one line of at most 80
+  characters; without it the folder name is shown). An update keeps a name the
+  person gave the skill and takes the template's only when the skill has none.
+  Then the body. The library's file rules apply: 64 KiB per file, at most 50
   files per skill, depth ≤ 4.
 - **Library references** (`library:` in `template.yaml`): a git address (the
   same rules as the skill library's — a page URL is accepted and normalized),
-  a skill name, optional `ref` and `path`. The skill is added through the
+  a skill name, optional `ref` and `path`. A `ref` (typed, or taken from a page
+  URL) follows the skill library's grammar: `[A-Za-z0-9._/-]`, at most 200
+  characters, no leading `-` or `/`, no trailing `/`, no `..`, no empty or `.`
+  segment. The skill is added through the
   library's ordinary add path: pinned to a commit, read-only, updated by its
   library, removable. **A template never creates or edits a library.**
 - **Organization references** (`organization: <name>`): a skill expected to
@@ -355,12 +363,15 @@ Two jobs:
 
 - **`check`** — runs on every pull request and every push, with
   `permissions: contents: read` and no secret: checkout; install the `aurora`
-  CLI at a pinned version; `aurora template check .`.
+  CLI at a pinned version, running it only when its sha256 is the one pinned in
+  the workflow (`AURORA_CLI_SHA256`, from the release's `.sha256`);
+  `aurora template check .`.
 - **`publish`** — runs only on push to the default branch, `needs: check`,
   with `permissions: contents: write` and
   `concurrency: { group: aurora-templates-publish, cancel-in-progress: false }`
-  (two merges racing must not race in the publish job). For each
-  `{ id, version, dir }` of `aurora template list . --json`:
+  (two merges racing must not race in the publish job). A failing
+  `aurora template list . --json` fails the job. For each
+  `{ id, version, dir }` it prints:
   1. Pack: `aurora template pack <dir> -o dist/<id>-<version>.zip`.
   2. If the release `<id>-v<version>` already exists, download that release's
      `<id>-<version>.zip` and compare with `cmp`. When they differ the job

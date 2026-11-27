@@ -1260,6 +1260,231 @@ async fn budgets_apply_at_add_and_approve() {
     assert!(p["update"]["id"].is_string(), "still pending");
 }
 
+// ---- what a library offers and what cannot be added (P5-SKILLS-1, C-1176) --------------------
+
+fn offered(v: &Value) -> (Option<i64>, Option<i64>) {
+    (
+        v["skills_offered"].as_i64(),
+        v["skills_unavailable"].as_i64(),
+    )
+}
+
+#[tokio::test]
+async fn a_library_says_how_many_skills_it_offers_after_every_read() {
+    let w = world().await;
+    w.git.add_repo("acme/skills");
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("alpha/SKILL.md", md("Alpha", "a")),
+            put("beta/SKILL.md", md("Beta", "b")),
+            put("nofm/SKILL.md", b"no frontmatter\n".to_vec()),
+        ],
+    );
+    // Create reads the catalogue.
+    let lib = w.library().await;
+    assert_eq!(offered(&w.library_row(lib).await), (Some(2), Some(1)));
+    // A member's picker says it too.
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::GET,
+            &format!("/v1/orgs/{}/skill-libraries", w.org),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(offered(&v["items"][0]), (Some(2), Some(1)), "{v}");
+    assert_eq!(v["items"][0]["url"], Value::Null, "{v}");
+    // A refresh of a new head stores the new numbers.
+    let sha = w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("gamma/SKILL.md", md("Gamma", "g"))],
+    );
+    w.add_org(lib, "alpha", &sha).await;
+    w.refresh(lib).await;
+    assert_eq!(offered(&w.library_row(lib).await), (Some(3), Some(1)));
+    // So does a browse (a library nobody added from is never refreshed).
+    sqlx::query("UPDATE skill_libraries SET skills_offered = NULL, skills_unavailable = NULL")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(offered(&w.library_row(lib).await), (None, None));
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::GET,
+            &format!("/v1/skill-libraries/{lib}/skills"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(offered(&w.library_row(lib).await), (Some(3), Some(1)));
+    // A library from before the counts existed is read once by its next refresh, although its
+    // head did not move.
+    sqlx::query("UPDATE skill_libraries SET skills_offered = NULL, skills_unavailable = NULL")
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    w.refresh(lib).await;
+    assert_eq!(offered(&w.library_row(lib).await), (Some(3), Some(1)));
+    // A change of folder re-reads and replaces them.
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("sub/delta/SKILL.md", md("Delta", "d"))],
+    );
+    let (s, v) = w
+        .call(
+            &w.admin,
+            Method::PATCH,
+            &format!("/v1/skill-libraries/{lib}"),
+            Some(json!({"path": "sub"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(offered(&v), (Some(1), Some(0)), "{v}");
+}
+
+#[tokio::test]
+async fn browse_says_what_cannot_be_added_to_the_tier_and_its_budget() {
+    let w = world_with(|c| c.skills_library.bytes_per_agent = 3_000).await;
+    w.git.add_repo("acme/skills");
+    let sha = w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("added/SKILL.md", md("d", &"a".repeat(2_000))),
+            put("big/SKILL.md", md("d", &"b".repeat(1_500))),
+            put("small/SKILL.md", md("d", "c")),
+            put("taken/SKILL.md", md("d", "t")),
+            put("nofm/SKILL.md", b"no frontmatter\n".to_vec()),
+        ],
+    );
+    let lib = w.library().await;
+    let (s, v) = w.add_agent(lib, "added", &sha).await;
+    assert_eq!(s, 201, "{v}");
+    // The agent writes a skill of its own under one of the library's names.
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::POST,
+            &format!("/v1/agents/{}/skills", w.agent),
+            Some(json!({"name": "taken", "description": "d", "body": "b"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let browse = |query: String| format!("/v1/skill-libraries/{lib}/skills{query}");
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::GET,
+            &browse(format!("?tier=agent&agent={}", w.agent)),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let blocked = |v: &Value, p: &str| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["path"] == p)
+            .unwrap()["blocked"]
+            .clone()
+    };
+    for (path, reason) in [
+        ("added", "name_taken"),
+        ("taken", "name_taken"),
+        ("big", "budget"),
+        ("nofm", "invalid"),
+    ] {
+        let b = blocked(&v, path);
+        assert_eq!(b["reason"], reason, "{path}: {v}");
+        assert!(
+            b["message"].as_str().is_some_and(|m| !m.is_empty()),
+            "{path}"
+        );
+    }
+    assert_eq!(
+        blocked(&v, "taken")["message"],
+        "This agent already has a skill named taken."
+    );
+    assert_eq!(blocked(&v, "small"), Value::Null);
+    assert_eq!(v["budget"]["bytes"], 3_000, "the server's real limit: {v}");
+    let used = v["budget"]["used"].as_u64().unwrap();
+    assert!((2_000..2_100).contains(&used), "{used}");
+    // Other tiers have their own names and room.
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::GET,
+            &browse(format!("?tier=workspace&workspace={}", w.ws)),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(blocked(&v, "taken"), Value::Null);
+    assert_eq!(v["budget"]["used"], 0, "{v}");
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::GET,
+            &browse("?tier=organization".into()),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(blocked(&v, "added"), Value::Null);
+    // Without a tier nothing is judged.
+    let (_, v) = w
+        .call(&w.member, Method::GET, &browse(String::new()), None)
+        .await;
+    assert_eq!(v["budget"], Value::Null);
+    assert_eq!(blocked(&v, "taken"), Value::Null);
+    // The tier's parameters must match it.
+    for bad in [
+        "?tier=agent".to_owned(),
+        format!("?agent={}", w.agent),
+        format!("?tier=organization&agent={}", w.agent),
+        format!("?tier=workspace&agent={}", w.agent),
+        format!("?tier=agent&agent={}&workspace={}", w.agent, w.ws),
+        "?tier=everything".to_owned(),
+    ] {
+        let (s, v) = w
+            .call(&w.member, Method::GET, &browse(bad.clone()), None)
+            .await;
+        assert_eq!(s, 400, "{bad}: {v}");
+    }
+    // Another organization's agent or workspace is unknown here, and so are random ids.
+    let org2 = w.h.org().await;
+    let ws2 = w.h.workspace(org2).await;
+    let theirs = w.h.hosted_agent(org2, ws2, "theirs").await;
+    for q in [
+        format!("?tier=agent&agent={theirs}"),
+        format!("?tier=agent&agent={}", Uuid::now_v7()),
+        format!("?tier=workspace&workspace={ws2}"),
+    ] {
+        let (s, v) = w
+            .call(&w.member, Method::GET, &browse(q.clone()), None)
+            .await;
+        assert_eq!((s, code(&v)), (404, "not_found"), "{q}: {v}");
+    }
+    // A workspace the caller cannot use says nothing about its skills.
+    let other_ws = w.h.workspace(w.org).await;
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::GET,
+            &browse(format!("?tier=workspace&workspace={other_ws}")),
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+}
+
 // ---- read-only, detach, deletion ------------------------------------------------------------
 
 #[tokio::test]
@@ -1270,9 +1495,12 @@ async fn library_skills_are_read_only_through_every_route() {
     let (_, v) = w.add_org(lib, "alpha", &sha).await;
     let id = v["id"].as_str().unwrap();
     let one = format!("/v1/skills/{id}");
+    assert_eq!(v["title"], Value::Null, "a library skill has no title: {v}");
     for body in [
         json!({"body": "x"}),
         json!({"description": "x"}),
+        json!({"title": "x"}),
+        json!({"title": ""}),
         json!({"body": "x", "enabled": false}),
     ] {
         let (s, v) = w.call(&w.admin, Method::PATCH, &one, Some(body)).await;

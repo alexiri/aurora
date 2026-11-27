@@ -42,7 +42,7 @@ pub struct UsableWorkspaceRow {
 }
 
 /// Workspaces the user can use through an *active* membership, with the effective role
-/// (org owner/admin are implicit workspace owners).
+/// (in their own right only: D-477, an org role confers no workspace right).
 pub async fn usable_workspaces<'e, E: PgExecutor<'e>>(
     exec: E,
     user: Uuid,

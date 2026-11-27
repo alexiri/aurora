@@ -1,4 +1,4 @@
-# The repository manifest (docs/25, C-1103). Strict: unknown keys are refused.
+# The repository manifest. Strict: unknown keys are refused.
 api: 1
 
 # The repository, shown to the reviewing admin.
@@ -14,6 +14,6 @@ repo:
 # Where CI publishes the packages. Replace `example/agent-templates` with your
 # repository. For GitHub releases the file name must be `<id>-<version>.zip`
 # and the tag `<id>-v<version>` — that is what .github/aurora-publish.sh
-# creates (docs/25 §Publishing a version).
+# creates.
 packages:
   url: https://github.com/example/agent-templates/releases/download/{id}-v{version}/{id}-{version}.zip

@@ -8,6 +8,7 @@ pub mod audit;
 pub mod cidr;
 pub mod dash_paths;
 pub mod error;
+pub mod git_ref;
 pub mod git_url;
 pub mod ids;
 pub mod limits;
@@ -25,6 +26,7 @@ pub mod service;
 #[cfg(feature = "service")]
 pub mod telemetry;
 pub mod token;
+pub mod yaml_guard;
 
 pub use error::{ApiError, FieldError};
 pub use secret::Secret;

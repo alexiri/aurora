@@ -6,6 +6,7 @@ pub mod bus;
 pub mod dto;
 pub mod followups;
 pub mod lifecycle;
+pub mod reference;
 pub mod reply;
 mod routes;
 pub mod search;

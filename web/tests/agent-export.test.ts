@@ -101,6 +101,24 @@ describe("the tree", () => {
     expect(back.skills[0]!.files.map((f) => [f.path, [...f.content]])).toEqual(e.skills[0]!.files.map((f) => [f.path, [...f.content]]));
   });
 
+  it("writes a skill's title only when it has one, and reads it back", async () => {
+    const data: AgentExport = {
+      ...sample,
+      skills: [
+        { name: "release-notes", title: "Release notes: the short ones", useItWhen: "x", body: "b", files: [] },
+        { name: "pdf", useItWhen: "y", body: "b", files: [] },
+      ],
+    };
+    const files = new Map(exportFiles(data, "daneel").map((f) => [f.name, new TextDecoder().decode(f.data)]));
+    expect(parseYaml(files.get("daneel/skills/release-notes/SKILL.md")!.split("---\n")[1]!)).toMatchObject({ title: "Release notes: the short ones" });
+    expect(files.get("daneel/skills/pdf/SKILL.md")).not.toContain("title");
+    const back = parseExport(await readZip(exportZip(data, "daneel", NOW).bytes));
+    expect(back.skills.map((s) => [s.name, s.title])).toEqual([
+      ["pdf", undefined],
+      ["release-notes", "Release notes: the short ones"],
+    ]);
+  });
+
   it("refuses a one-time schedule whose run_at is not a local time", () => {
     const enc = (s: string) => new TextEncoder().encode(s);
     const yaml = (runAt: string) => `kind: schedule\nname: x\nprompt: p\ncadence:\n  preset: once\n  run_at: "${runAt}"\ntime_zone: UTC\nenabled: false\n`;
@@ -200,7 +218,7 @@ describe("what never leaves", () => {
       anchor: "workspace", created_by: { id: "u-777", display_name: "Ada Lovelace", email: "ada@example.test" }, last_delivery_at: null,
     };
     mockFetch({
-      "GET /v1/agents/a1/memories": () => json(200, { items: [{ key: "likes-tea", content: "Ada likes tea.", index_line: "x", revision: 3, updated_at: "2026-11-01T09:00:00Z", created_at: "2026-10-01T09:00:00Z" }], next_cursor: null }),
+      "GET /v1/agents/a1/memories": () => json(200, { items: [{ key: "likes-tea", content: "Ada likes tea.", index_line: "x", revision: 3, updated_at: "2026-11-01T09:00:00Z", created_at: "2026-10-01T09:00:00Z", added_by: { kind: "unknown" }, changed_by: { kind: "unknown" }, last_used: null }], next_cursor: null }),
       "GET /v1/agents/a1/skills": () =>
         json(200, { items: [{ id: "sk-123456", name: "release-notes", description: "When asked what shipped", body: "# Notes", files: [{ path: "bin/run.sh", size: 9, executable: true }, { path: "blob.bin", size: 4, executable: false }], org_id: "org-999" }], next_cursor: null }),
       // The skill's other files, as stored (C-1099).

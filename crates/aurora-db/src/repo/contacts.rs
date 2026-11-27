@@ -32,9 +32,8 @@ pub async fn org_contacts<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// People whose **effective** workspace role is `owner` (organization owners and admins are
-/// implicit owners), or `owner` and `approver` with `or_approver`. Owners with an explicit
-/// binding come first.
+/// People whose **effective** workspace role is `owner` (in their own right: D-477, an org role
+/// confers no workspace right), or `owner` and `approver` with `or_approver`. Owners come first.
 pub async fn workspace_contacts<'e, E: PgExecutor<'e>>(
     exec: E,
     workspace: Uuid,

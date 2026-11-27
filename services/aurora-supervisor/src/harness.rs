@@ -132,6 +132,9 @@ pub enum HarnessEvent {
         call_id: String,
         name: String,
         summary: String,
+        /// (C-1175) The folder name of the skill this call loads, when the harness shows it
+        /// ([`crate::adapters::skill_use`]).
+        skill: Option<String>,
     },
     ToolFinished {
         call_id: String,
@@ -188,10 +191,15 @@ impl HarnessEvent {
                 call_id,
                 name,
                 summary,
-            } => (
-                "tool.started",
-                json!({ "call_id": call_id, "name": name, "summary": summary }),
-            ),
+                skill,
+            } => ("tool.started", {
+                let mut d = json!({ "call_id": call_id, "name": name, "summary": summary });
+                // Only on a call that loads a skill.
+                if let Some(s) = skill {
+                    d["skill"] = json!(s);
+                }
+                d
+            }),
             Self::ToolFinished {
                 call_id,
                 ok,

@@ -6,6 +6,7 @@
 //! or removes an org membership, never touches manual/SCIM rows or another provider's rows, and
 //! stores nothing for values that link no group. An absent claim removes every membership.
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
+use crate::domains::scim::service::personal_add_refusal;
 use aurora_config::OidcProvider;
 use aurora_db::DbError;
 use aurora_db::repo::groups as repo;
@@ -102,7 +103,23 @@ pub async fn sync_signin(
     user: Uuid,
     values: &[String],
 ) -> Result<(), DbError> {
-    let outcome = repo::sync_idp_memberships_report(&mut *tx, user, &p.id, values).await?;
+    // (FIX-263, D-503) A group bound to a personal workspace takes only that workspace's person,
+    // by SCIM's own predicate. The org locks come first, as for the sync itself.
+    repo::lock_idp_sync_orgs(&mut *tx, user, &p.id).await?;
+    let mut skip = Vec::new();
+    for (group_id, org_id) in repo::idp_sync_new_groups(&mut *tx, user, &p.id, values).await? {
+        if personal_add_refusal(&mut *tx, group_id, &[user])
+            .await?
+            .is_some()
+        {
+            tracing::warn!(
+                org_id = %org_id, group_id = %group_id,
+                "IdP group sync skipped a group bound to someone else's personal workspace"
+            );
+            skip.push(group_id);
+        }
+    }
+    let outcome = repo::sync_idp_memberships_report(&mut *tx, user, &p.id, values, &skip).await?;
     // `GROUPS_PER_USER` (docs/04 §Groups limits): the excess is skipped, never half-applied.
     // No new audit kind: a warn log naming the org and counts, not the group names.
     for (org_id, skipped) in &outcome.cap_skipped {

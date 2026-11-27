@@ -50,6 +50,8 @@ use launcher::{Launcher, ProcessLauncher, StderrTail};
 use stream::StreamMapper;
 
 pub const PINNED_VERSION: &str = "1.59.2";
+/// (C-1140) Where goose reads skills, relative to the home folder.
+pub const SKILLS_DIR: &str = ".agents/skills";
 /// The harness id (`KNOWN_HARNESSES`).
 pub const ID: &str = "goose";
 
@@ -103,7 +105,7 @@ impl HarnessAdapter for GooseAdapter {
             platform_tools: true,
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
             // goose reads `$HOME/.agents/skills` and a project's, with `AGENTS.md` (verified).
-            skills_dir: ".agents/skills".into(),
+            skills_dir: SKILLS_DIR.into(),
             instruction_files: vec!["AGENTS.md".into()],
             // `subagent_role` -> `GOOSE_SUBAGENT_PROVIDER` / `GOOSE_SUBAGENT_MODEL`: any role can be it.
             model_roles: aurora_protocol::runner::harness_model_roles(ID)

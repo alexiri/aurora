@@ -60,7 +60,8 @@ const SELECT: &str = "SELECT a.id, a.org_id, a.workspace_id, a.agent_id, ag.name
     LEFT JOIN users u ON u.id = a.decided_by_user_id";
 
 /// `$1` = user: the access law for `can_approve` on the approval's workspace (phase 2, RFE-012:
-/// workspace owner/approver or org owner/admin; a plain member is excluded).
+/// workspace owner/approver in their own right, D-477: no org role; a plain member is
+/// excluded).
 const MAY_DECIDE_BASE: &str = "EXISTS (SELECT 1 FROM effective_workspace_access ea \
     WHERE ea.workspace_id = a.workspace_id AND ea.org_id = a.org_id AND ea.user_id = $1 \
       AND ea.role IN ('owner', 'approver'))";

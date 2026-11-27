@@ -441,6 +441,7 @@ generically.
 | `turn.send_now_failed`                                       | yes     | `{ turn_id, outcome: "nothing_running"\|"unsupported" }` (FIX-225, C-1156)          |
 | `approval.pending` / `approval.decided` / `approval.expired` | yes     | `{ approval_id, summary, decision?, decided_by_label?, via? }`; (phase 5 (D-138, moved from phase 4), RFE-011b) `approval.pending` also `{ expires_at, parked }`, `approval.decided` for a parked approval `{ resume_expires_at }`, `approval.expired` `{ reason: "deadline" \| "resume_window" }` |
 | `action_approval.pending` / `.decided`                       | yes     | `{ id, summary, decision? }`                                                        |
+| `memory.saved` / `memory.refused`                            | yes     | (phase 5, P5-MEMORY-1, C-1172) platform-authored, after a `memory_save`: `.saved` `{ turn_id, key, title, preview, revision, created, previous_revision }`; `.refused` `{ turn_id, key, title, preview, code: "memory_locked"\|"memory_limit_reached"\|"invalid"\|"not_allowed", message }` (§Memory) |
 | `attachment`                                                 | yes     | `{ turn_id, attachment_id, filename, size, caption? }` (agent `send_file`)          |
 | `notice`                                                     | yes     | `{ code, text }` — platform-authored only                                           |
 | `error`                                                      | yes     | `{ turn_id, code, message, detail? }` ((phase 5, P5-REFINE-7, C-1076) `detail`: the technical line, ≤ 2 000 characters) |
@@ -952,6 +953,21 @@ file does **not** delete the memory (use the tool). A locked memory is never
 uploaded: the supervisor restores the exact bytes it installed and tells the
 agent once per changed digest that the change was undone.
 
+- **Where a memory came from and when it was used** (P5-MEMORY-1, D-497,
+C-1169, C-1170, SEC-157): each memory records who **added** it and who **last
+changed** it (a person, an API key and its person, the agent with its
+conversation, a template, or `unknown` for older data) as ids; names are looked
+up when shown, a person by display name and never by e-mail. **Used** means the
+agent read it with `memory_get` (a search hit counts once it is opened) or the
+turn-start recall of a delivered turn included it; reading the projected file
+is not seen, and dashboard or API reads never count. The last use is written at
+most once per memory, conversation and hour. A conversation is named only to
+people who may read it; others see the actor or the time without it.
+- **What the agent remembered, in the chat** (C-1172): after `memory_save`
+saves or is refused, the API appends `memory.saved` or `memory.refused` to the
+turn's transcript (§Transcript events), whatever the harness; the refusal
+reason is in plain words and the tool error keeps its code.
+
 ### Memory language (Proposal 03)
 
 - `workspaces.memory_language` (default `english`) is one of the Postgres
@@ -989,6 +1005,10 @@ score = greatest(rank(<memory_language>), rank('simple'),
                  case when key ILIKE %q% or title ILIKE %q% then 0.5 else 0 end)
 ```
 
+- (P5-MEMORY-1, C-1171) Snippets are **plain text**: matches are marked with two
+control characters (removed from the stored text first, so content cannot forge
+them) which become UTF-16 highlight ranges for the API; the agent's tool and the
+recall get the text alone. Markdown marks are reduced as for message search.
 - `memory_search`: top `MEMORY_SEARCH_HITS` by score &gt; 0, with a snippet.
   (P6-MEMLOCK, C-1149) Each hit carries `locked`, and in the index line of a
 locked memory the key is followed by ` (locked)`.
@@ -1020,6 +1040,23 @@ from searching the incoming message with score ≥ 0.1.
   agent skill that shadows a higher-tier one with `shadows`). Deleting a workspace
   deletes its skills (cascade).
   The dashboard shows, per agent, each skill's tier and what it shadows.
+- (P5-SKILLS-1, D-498, C-1173) A skill may have a **display name** (`title`, ≤ 80
+  characters of plain text on one line) beside its folder name; people write it in the
+  dashboard or API and agents with `skill_create`/`skill_update` (their own skills).
+  Library and app skills have none. It is not part of the projected `SKILL.md`.
+- (P5-SKILLS-1, D-499, C-1174, SEC-158) **Off for one agent.** Whoever may edit an agent
+  may turn a workspace or organization skill (library-added included) off for that agent
+  only, and back on; never its own skill (switch the skill itself) and never an app skill.
+  For that agent the skill is treated as not enabled — a lower tier's or an app's skill of
+  the same name may then apply — in the effective set, the projected files, the skill
+  tools and the configuration fingerprint (one rule, `repo::skills::resolve`). Off only:
+  nothing turns on what the skill's owners switched off. Audited; the agent's home syncs.
+- (P5-SKILLS-1, D-505, C-1175) **Use.** A use is the agent loading a skill: `skill_get`
+  of its instructions, or the harness's own skill loading as the supervisor reports it
+  (`12 §Skill use`). One per turn and skill, kept 90 days, for the skill that reaches the
+  agent at that moment. The agent's view says how often it was used this week and when it
+  was last used, naming that conversation only to its readers; workspace and organization
+  skills say how many agents used them in the last 30 days.
 - Name = directory name (immutable; `aurora-*` reserved). Single-line
 description (frontmatter the harness uses to decide when to load). Body ≤
 `SKILL_BODY_MAX`; body + files ≤ `SKILL_TOTAL_MAX` chars (binary counted as
@@ -1123,7 +1160,12 @@ org 4 MiB / 100; a skill that would exceed a budget is refused 422 `library_budg
 pending update larger than the headroom stays pending, flagged "over budget", until the person frees
 space or rejects it). Library skills count in the ordinary skill projection limits too.
 
-**Library skills are read-only.** `PATCH`/`PUT` of body, description or files → 409
+(P5-SKILLS-1, C-1176) A library says how many skills it offers and how many cannot be added
+(`skills_offered`, `skills_unavailable`, stored at each read). Browsing it for a tier says, per
+skill, why it cannot be added there (broken, name taken, over the tier's budget) and the tier's real
+budget and use.
+
+**Library skills are read-only.** `PATCH`/`PUT` of body, title, description or files → 409
 `library_skill_readonly`; **agent tools cannot update or delete them** (`skill_update`,
 `skill_delete` refuse with the same code; `skill_list`/`skill_get` show `source`). Allowed: enable or
 disable (as any skill), **remove** (delete), and **detach** (convert to an ordinary editable skill of

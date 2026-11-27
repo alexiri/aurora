@@ -165,6 +165,8 @@ const lockedMemory = {
   index_line: "bobs-tea: Bob's tea", revision: 1,
   created_at: "2026-11-20T10:00:00Z", updated_at: "2026-11-20T10:00:00Z",
   locked: false, locked_at: null, locked_by: null,
+  added_by: { kind: "person", person: { id: "u1", display_name: "Ada" } },
+  changed_by: { kind: "person", person: { id: "u1", display_name: "Ada" } }, last_used: null,
 };
 
 /** The shared mock plus the memories list and the idempotent `PUT …/locked`, which remembers its state. */

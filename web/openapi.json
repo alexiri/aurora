@@ -13921,6 +13921,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -14448,6 +14458,16 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -16304,6 +16324,208 @@
           },
           "429": {
             "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      }
+    },
+    "/v1/agents/{agent}/skills/{skill_id}/off": {
+      "put": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Turn an inherited (workspace or organization) skill off for this agent only; idempotent.",
+        "operationId": "turnAgentSkillOff",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "skill_id",
+            "in": "path",
+            "description": "Skill id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Off for this agent"
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "skill_not_inherited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "api_key": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Undo turning an inherited skill off for this agent; idempotent.",
+        "operationId": "turnAgentSkillOn",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "path",
+            "description": "Agent id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "skill_id",
+            "in": "path",
+            "description": "Skill id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No longer off for this agent"
+          },
+          "401": {
+            "description": "Unauthenticated: no credential, or an invalid or expired one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "skill_not_inherited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests: the per-principal rate limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "audit_unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -37357,6 +37579,38 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "description": "(C-1176) Say what cannot be added to this tier: `agent` (with `agent`), `workspace`\n(with `workspace`) or `organization`. The tier must be of the organization browsed as.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "agent",
+                "workspace",
+                "organization"
+              ]
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "responses": {
@@ -46380,6 +46634,70 @@
           }
         }
       },
+      "ActorAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ActorApiKey": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ActorPerson": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "description": "Never an e-mail address."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ActorTemplate": {
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "AddByEmailRequest": {
         "type": "object",
         "required": [
@@ -50643,6 +50961,30 @@
           }
         }
       },
+      "BlockedReason": {
+        "type": "string",
+        "enum": [
+          "name_taken",
+          "budget",
+          "invalid"
+        ]
+      },
+      "BlockedSkill": {
+        "type": "object",
+        "required": [
+          "reason",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "A plain sentence saying why."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/BlockedReason"
+          }
+        }
+      },
       "BulkConnectionGrantItem": {
         "type": "object",
         "required": [
@@ -53127,6 +53469,26 @@
           }
         }
       },
+      "ConversationRef": {
+        "type": "object",
+        "description": "A conversation the caller may read.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null for a conversation nobody has titled."
+          }
+        }
+      },
       "CountersInfo": {
         "type": "object",
         "description": "`counters` of `GET /v1/admin/overview` (C-402).",
@@ -54058,7 +54420,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/FromLibrary",
-                "description": "(phase 4, P4-GSL, D-148) Add a skill from a git skill library instead of a body: the\nserver reads exactly that commit and stores the skill pinned and read-only. Excludes\n`name`, `description` and `body`."
+                "description": "(phase 4, P4-GSL, D-148) Add a skill from a git skill library instead of a body: the\nserver reads exactly that commit and stores the skill pinned and read-only. Excludes\n`name`, `title`, `description` and `body`."
               },
               {
                 "type": "null"
@@ -54071,6 +54433,13 @@
               "null"
             ],
             "description": "Immutable kebab-case directory name, at most 64 characters; `aurora-*` is reserved.\nRequired unless `from_library` is given."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The display name: one line of plain text, at most 80 characters; blank or absent means\nnone."
           }
         }
       },
@@ -55012,6 +55381,12 @@
             "type": "string",
             "description": "`agent` | `workspace` | `org` | `app`."
           },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "total_size": {
             "type": "integer",
             "minimum": 0
@@ -55022,6 +55397,13 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "used_by_agents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           },
           "workspace_id": {
             "type": [
@@ -55255,7 +55637,8 @@
           "skill",
           "tier",
           "enabled",
-          "shadows"
+          "shadows",
+          "off_for_agent"
         ],
         "properties": {
           "app": {
@@ -55273,6 +55656,10 @@
             "type": "boolean",
             "description": "Always true: a disabled skill never wins."
           },
+          "off_for_agent": {
+            "type": "boolean",
+            "description": "(C-1174) Always false: a skill turned off for the agent is never in effect (it is in\n`shadowed`)."
+          },
           "shadows": {
             "type": "array",
             "items": {
@@ -55285,6 +55672,17 @@
           },
           "tier": {
             "type": "string"
+          },
+          "usage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillUsage",
+                "description": "(C-1175) This agent's use of the skill; null for an app skill."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -59179,6 +59577,24 @@
           }
         }
       },
+      "LibraryBudget": {
+        "type": "object",
+        "description": "(C-1176) The tier's budget for library skills, in characters of body and files.",
+        "required": [
+          "bytes",
+          "used"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "used": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "LibraryCatalogue": {
         "type": "object",
         "required": [
@@ -59187,6 +59603,17 @@
           "truncated"
         ],
         "properties": {
+          "budget": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LibraryBudget",
+                "description": "The tier's budget; null without `?tier=`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "commit_sha": {
             "type": "string",
             "description": "The commit the listing was read at: quote it when adding."
@@ -59465,6 +59892,17 @@
               "$ref": "#/components/schemas/LibrarySkillPlacement"
             },
             "description": "Where this library's version of the skill is already added."
+          },
+          "blocked": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BlockedSkill",
+                "description": "(C-1176) Why it cannot be added to the tier the browse is for (`?tier=`); null when it\ncan, and without `?tier=`."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "description": {
             "type": [
@@ -60497,9 +60935,19 @@
           "revision",
           "updated_at",
           "created_at",
-          "locked"
+          "locked",
+          "added_by",
+          "changed_by"
         ],
         "properties": {
+          "added_by": {
+            "$ref": "#/components/schemas/MemoryActor",
+            "description": "(P5-MEMORY-1, C-1169) Who created the memory."
+          },
+          "changed_by": {
+            "$ref": "#/components/schemas/MemoryActor",
+            "description": "Who wrote its current content."
+          },
           "content": {
             "type": "string"
           },
@@ -60519,6 +60967,17 @@
           },
           "key": {
             "type": "string"
+          },
+          "last_used": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MemoryLastUsed",
+                "description": "When the agent last used it; null while it never has (dashboard and API reads do not\ncount)."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "locked": {
             "type": "boolean",
@@ -60559,6 +61018,105 @@
           }
         }
       },
+      "MemoryActor": {
+        "type": "object",
+        "description": "(P5-MEMORY-1, C-1169, D-497) Who added, changed or wrote a memory. The fields that do not\napply to `kind` are null: `person` for `person`, `api_key` (the key's person) and `template`\n(who created or applied it); `api_key` for `api_key`, null when an older record did not keep\nwhich key; `agent` for `agent`.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "agent": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActorAgent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "api_key": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActorApiKey"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "conversation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConversationRef",
+                "description": "The agent's conversation, only for a caller who may read it (SEC-157)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MemoryActorKind"
+          },
+          "person": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActorPerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "template": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ActorTemplate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "MemoryActorKind": {
+        "type": "string",
+        "description": "(P5-MEMORY-1, C-1169) What kind of writer a [`MemoryActor`] is.",
+        "enum": [
+          "person",
+          "api_key",
+          "agent",
+          "template",
+          "import",
+          "unknown"
+        ]
+      },
+      "MemoryLastUsed": {
+        "type": "object",
+        "description": "(P5-MEMORY-1, C-1169, D-497(b)) The agent's latest recorded use of a memory.",
+        "required": [
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "conversation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConversationRef",
+                "description": "Only for a caller who may read it (SEC-157)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "MemoryLockedBy": {
         "type": "object",
         "required": [
@@ -60582,16 +61140,23 @@
           "author_kind",
           "author_label",
           "provenance",
+          "author",
+          "via",
           "redacted",
           "created_at"
         ],
         "properties": {
+          "author": {
+            "$ref": "#/components/schemas/MemoryActor",
+            "description": "(P5-MEMORY-1, C-1170) Who wrote this revision."
+          },
           "author_kind": {
             "type": "string",
             "description": "`user` | `agent` | `system`."
           },
           "author_label": {
-            "type": "string"
+            "type": "string",
+            "description": "Deprecated: use `author`. The author's display name (an agent's name), never an e-mail\naddress."
           },
           "content": {
             "type": [
@@ -60606,14 +61171,26 @@
           },
           "provenance": {
             "type": "string",
-            "description": "`dashboard` | `api` | `tool` | `harvest` | `restore`."
+            "description": "`dashboard` | `api` | `tool` | `harvest` | `template` | `restore`."
           },
           "redacted": {
             "type": "boolean"
           },
+          "restored_from": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "(C-1170) For a restore: the revision whose content was brought back."
+          },
           "revision": {
             "type": "integer",
             "format": "int32"
+          },
+          "via": {
+            "$ref": "#/components/schemas/MemoryVia",
+            "description": "(C-1170) How it was written."
           }
         }
       },
@@ -60623,9 +61200,23 @@
           "key",
           "score",
           "snippet",
+          "highlights",
+          "title_highlights",
           "locked"
         ],
         "properties": {
+          "highlights": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            },
+            "description": "`[start, end)` offsets into `snippet`, in UTF-16 code units."
+          },
           "key": {
             "type": "string"
           },
@@ -60638,13 +61229,26 @@
             "format": "float"
           },
           "snippet": {
-            "type": "string"
+            "type": "string",
+            "description": "(P5-MEMORY-1, C-1171) Plain text on one line (at most 800 characters), never markup."
           },
           "title": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "title_highlights": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            },
+            "description": "The same offsets into `title`, or into `key` when the memory has no title."
           }
         }
       },
@@ -60661,6 +61265,19 @@
             }
           }
         }
+      },
+      "MemoryVia": {
+        "type": "string",
+        "description": "(P5-MEMORY-1, C-1170) How a revision was written.",
+        "enum": [
+          "dashboard",
+          "api",
+          "conversation",
+          "harvest",
+          "template",
+          "restore",
+          "import"
+        ]
       },
       "MergeConflict": {
         "type": "object",
@@ -61233,6 +61850,15 @@
             "format": "uuid"
           }
         }
+      },
+      "NotAppliedReason": {
+        "type": "string",
+        "description": "Why a skill of the agent's tiers is not in effect.",
+        "enum": [
+          "replaced",
+          "disabled",
+          "off_for_agent"
+        ]
       },
       "OAuthClient": {
         "type": "object",
@@ -64922,9 +65548,19 @@
                 "revision",
                 "updated_at",
                 "created_at",
-                "locked"
+                "locked",
+                "added_by",
+                "changed_by"
               ],
               "properties": {
+                "added_by": {
+                  "$ref": "#/components/schemas/MemoryActor",
+                  "description": "(P5-MEMORY-1, C-1169) Who created the memory."
+                },
+                "changed_by": {
+                  "$ref": "#/components/schemas/MemoryActor",
+                  "description": "Who wrote its current content."
+                },
                 "content": {
                   "type": "string"
                 },
@@ -64944,6 +65580,17 @@
                 },
                 "key": {
                   "type": "string"
+                },
+                "last_used": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MemoryLastUsed",
+                      "description": "When the agent last used it; null while it never has (dashboard and API reads do not\ncount)."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "locked": {
                   "type": "boolean",
@@ -65008,16 +65655,23 @@
                 "author_kind",
                 "author_label",
                 "provenance",
+                "author",
+                "via",
                 "redacted",
                 "created_at"
               ],
               "properties": {
+                "author": {
+                  "$ref": "#/components/schemas/MemoryActor",
+                  "description": "(P5-MEMORY-1, C-1170) Who wrote this revision."
+                },
                 "author_kind": {
                   "type": "string",
                   "description": "`user` | `agent` | `system`."
                 },
                 "author_label": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Deprecated: use `author`. The author's display name (an agent's name), never an e-mail\naddress."
                 },
                 "content": {
                   "type": [
@@ -65032,14 +65686,26 @@
                 },
                 "provenance": {
                   "type": "string",
-                  "description": "`dashboard` | `api` | `tool` | `harvest` | `restore`."
+                  "description": "`dashboard` | `api` | `tool` | `harvest` | `template` | `restore`."
                 },
                 "redacted": {
                   "type": "boolean"
                 },
+                "restored_from": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32",
+                  "description": "(C-1170) For a restore: the revision whose content was brought back."
+                },
                 "revision": {
                   "type": "integer",
                   "format": "int32"
+                },
+                "via": {
+                  "$ref": "#/components/schemas/MemoryVia",
+                  "description": "(C-1170) How it was written."
                 }
               }
             }
@@ -66582,7 +67248,8 @@
                   "format": "uuid"
                 },
                 "name": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "The folder name (immutable)."
                 },
                 "org_id": {
                   "type": "string",
@@ -66617,6 +67284,13 @@
                   "type": "string",
                   "description": "`agent` | `workspace` | `org`."
                 },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "(C-1173) The display name, at most 80 characters of plain text; null for a skill\nwithout one (library and app skills have none)."
+                },
                 "total_size": {
                   "type": "integer",
                   "description": "Body plus files, in characters (binary counted as base64 length).",
@@ -66625,6 +67299,14 @@
                 "updated_at": {
                   "type": "string",
                   "format": "date-time"
+                },
+                "used_by_agents": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int64",
+                  "description": "(C-1175) Workspace and organization skills: how many distinct agents used it in the last\n30 days; null for an agent's own skill."
                 },
                 "workspace_id": {
                   "type": [
@@ -66751,6 +67433,22 @@
                       "type": "null"
                     }
                   ]
+                },
+                "skills_offered": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32",
+                  "description": "(C-1176) Skill folders that can be added, at the last read of the repository (create,\naddress change, browse or refresh); null before the first. Members see it too."
+                },
+                "skills_unavailable": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32",
+                  "description": "(C-1176) Skill folders that cannot be added (broken), at the same read."
                 },
                 "status": {
                   "type": "string",
@@ -74543,7 +75241,9 @@
         "required": [
           "skill",
           "tier",
-          "enabled"
+          "enabled",
+          "off_for_agent",
+          "reason"
         ],
         "properties": {
           "app": {
@@ -74560,11 +75260,19 @@
           "enabled": {
             "type": "boolean"
           },
+          "off_for_agent": {
+            "type": "boolean",
+            "description": "(C-1174) Turned off for this agent (it may also be switched off by its owners: `enabled`)."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/NotAppliedReason",
+            "description": "`disabled` when its owners switched it off, else `off_for_agent`, else `replaced`."
+          },
           "shadowed_by": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/TierRef",
-                "description": "The winner of this name; null for a disabled skill whose name has no enabled skill."
+                "description": "The skill that is in effect under this name; null when none is (every skill of the name\nis switched off or turned off for the agent)."
               },
               {
                 "type": "null"
@@ -74576,6 +75284,17 @@
           },
           "tier": {
             "type": "string"
+          },
+          "usage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillUsage",
+                "description": "(C-1175) This agent's use of the skill; null for an app skill."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -74957,7 +75676,8 @@
             "format": "uuid"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "The folder name (immutable)."
           },
           "org_id": {
             "type": "string",
@@ -74992,6 +75712,13 @@
             "type": "string",
             "description": "`agent` | `workspace` | `org`."
           },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "(C-1173) The display name, at most 80 characters of plain text; null for a skill\nwithout one (library and app skills have none)."
+          },
           "total_size": {
             "type": "integer",
             "description": "Body plus files, in characters (binary counted as base64 length).",
@@ -75000,6 +75727,14 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "used_by_agents": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "(C-1175) Workspace and organization skills: how many distinct agents used it in the last\n30 days; null for an agent's own skill."
           },
           "workspace_id": {
             "type": [
@@ -75073,6 +75808,29 @@
             "type": "integer",
             "description": "Characters for text, base64 length for binary content.",
             "minimum": 0
+          }
+        }
+      },
+      "SkillLastUse": {
+        "type": "object",
+        "required": [
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "conversation": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ConversationRef",
+                "description": "Null when the caller may not read that conversation, or it no longer exists."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -75175,6 +75933,22 @@
                 "type": "null"
               }
             ]
+          },
+          "skills_offered": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "(C-1176) Skill folders that can be added, at the last read of the repository (create,\naddress change, browse or refresh); null before the first. Members see it too."
+          },
+          "skills_unavailable": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "(C-1176) Skill folders that cannot be added (broken), at the same read."
           },
           "status": {
             "type": "string",
@@ -75405,6 +76179,31 @@
           },
           "update_pending": {
             "type": "boolean"
+          }
+        }
+      },
+      "SkillUsage": {
+        "type": "object",
+        "description": "(C-1175) An agent's use of one skill.",
+        "required": [
+          "week"
+        ],
+        "properties": {
+          "last": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SkillLastUse",
+                "description": "The latest use within the 90 days uses are kept; null: not used."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "week": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many turns used it in the last 7 days."
           }
         }
       },
@@ -78416,6 +79215,13 @@
               "boolean",
               "null"
             ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The display name; `\"\"` clears it, absent keeps it."
           }
         }
       },

@@ -10,8 +10,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 /// `U` = SQL expression of the user, `a`/`w` = approval and its workspace aliases: the access law
-/// for `can_approve` (workspace owner/approver or org owner/admin) intersected with conversation
-/// visibility (RFE-009). Mirrors `approvals::may_decide`.
+/// for `can_approve` (workspace owner/approver in their own right; D-477: no org role)
+/// intersected with conversation visibility (RFE-009). Mirrors `approvals::may_decide`.
 pub(crate) fn may_decide(user: &str) -> String {
     format!(
         "(EXISTS (SELECT 1 FROM effective_workspace_access ea \

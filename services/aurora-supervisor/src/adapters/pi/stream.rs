@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::adapters::skill_use;
 use crate::harness::HarnessEvent;
 
 const SUMMARY_MAX: usize = 120;
@@ -257,10 +258,17 @@ impl StreamMapper {
             return;
         }
         self.open_tools.push(id.to_owned());
+        // (C-1175) Pi reads a skill with its `read` tool, or with a command in `bash`.
+        let skill = match name {
+            "read" => skill_use::of_read(v.get("args"), super::SKILLS_DIR),
+            "bash" => skill_use::of_shell(v.get("args"), super::SKILLS_DIR),
+            _ => None,
+        };
         out.events.push(HarnessEvent::ToolStarted {
             call_id: id.to_owned(),
             name: name.to_owned(),
             summary: tool_summary(name, v.get("args")),
+            skill,
         });
     }
 
@@ -359,6 +367,24 @@ mod tests {
         (ev, term)
     }
 
+    /// (C-1175) Pi reads a skill with its `read` tool or a command in `bash`.
+    #[test]
+    fn reading_a_skill_md_names_the_skill() {
+        let (ev, _) = run(&[
+            r#"{"type":"tool_execution_start","toolCallId":"s1","toolName":"read","args":{"path":"/workspace/.agents/skills/pdf/SKILL.md"}}"#,
+            r#"{"type":"tool_execution_start","toolCallId":"s2","toolName":"bash","args":{"command":"cat ~/.agents/skills/triage/SKILL.md"}}"#,
+            r#"{"type":"tool_execution_start","toolCallId":"s3","toolName":"write","args":{"path":"/workspace/.agents/skills/pdf/SKILL.md"}}"#,
+        ]);
+        let got: Vec<Option<String>> = ev
+            .iter()
+            .filter_map(|e| match e {
+                HarnessEvent::ToolStarted { skill, .. } => Some(skill.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(got, [Some("pdf".into()), Some("triage".into()), None]);
+    }
+
     // Lines recorded from Pi 1.5.2 (trimmed: the system message and cost objects are dropped).
     const USER: &str = r#"{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"go"}]}}"#;
     const A_START: &str = r#"{"type":"message_start","message":{"role":"assistant","content":[],"model":"m1","stopReason":"pending"}}"#;
@@ -445,7 +471,8 @@ mod tests {
                 HarnessEvent::ToolStarted {
                     call_id: "t1".into(),
                     name: "bash".into(),
-                    summary: "bash: echo hi".into()
+                    summary: "bash: echo hi".into(),
+                    skill: None
                 },
                 HarnessEvent::ToolFinished {
                     call_id: "t1".into(),
@@ -455,7 +482,8 @@ mod tests {
                 HarnessEvent::ToolStarted {
                     call_id: "t2".into(),
                     name: "mcp__aurora__ping".into(),
-                    summary: "mcp__aurora__ping (2 args)".into()
+                    summary: "mcp__aurora__ping (2 args)".into(),
+                    skill: None
                 },
                 HarnessEvent::ToolFinished {
                     call_id: "t2".into(),

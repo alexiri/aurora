@@ -52,6 +52,8 @@ use launcher::{ChildIo, Launcher, ProcessLauncher};
 use stream::{PendingSteers, StreamMapper};
 
 pub const PINNED_VERSION: &str = "1.5.2";
+/// (C-1140) Where Pi reads skills, relative to the home folder.
+pub const SKILLS_DIR: &str = ".agents/skills";
 /// The harness id (`KNOWN_HARNESSES`).
 pub const ID: &str = "pi";
 
@@ -107,7 +109,7 @@ impl HarnessAdapter for PiAdapter {
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
             // Pi loads `$HOME/.agents/skills` without project trust (verified); a project's own
             // `.agents/skills` needs `--approve`, which is never passed.
-            skills_dir: ".agents/skills".into(),
+            skills_dir: SKILLS_DIR.into(),
             instruction_files: vec!["AGENTS.md".into()],
             // Pi has no subagents: a role has no slot to go to.
             model_roles: vec![],

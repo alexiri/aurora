@@ -414,29 +414,32 @@ pub struct SkillRow {
     pub tier: String,
 }
 
-/// Effective skills of an agent (RFE-020): the highest *enabled* tier per name wins,
-/// agent > workspace > organization. A disabled skill never vetoes a lower tier.
+/// Effective skills of an agent, as projected into its computer: the winners of
+/// [`crate::repo::skills::resolve`] (the same rule as the API's effective set), ordered by name.
 pub async fn skills(
     conn: &mut PgConnection,
     org: Uuid,
     workspace: Uuid,
     agent: Uuid,
 ) -> Result<Vec<SkillRow>, DbError> {
-    Ok(sqlx::query_as(
-        "SELECT DISTINCT ON (name) id, name, description, body,
-                (CASE WHEN agent_id IS NOT NULL THEN 'agent'
-                      WHEN workspace_id IS NOT NULL THEN 'workspace' ELSE 'org' END) AS tier
-         FROM skills
-         WHERE enabled AND org_id = $1
-           AND (agent_id = $3 OR workspace_id = $2 OR (agent_id IS NULL AND workspace_id IS NULL))
-         ORDER BY name, (CASE WHEN agent_id IS NOT NULL THEN 0
-                              WHEN workspace_id IS NOT NULL THEN 1 ELSE 2 END)",
-    )
-    .bind(org)
-    .bind(workspace)
-    .bind(agent)
-    .fetch_all(conn)
-    .await?)
+    use crate::repo::skills as repo;
+    let rows = repo::list_reaching(conn, org, workspace, agent, None).await?;
+    Ok(repo::resolve(rows)
+        .into_iter()
+        .filter_map(|g| g.winner)
+        .map(|w| SkillRow {
+            tier: match repo::rank(&w.row) {
+                0 => "agent",
+                1 => "workspace",
+                _ => "org",
+            }
+            .to_owned(),
+            id: w.row.id,
+            name: w.row.name,
+            description: w.row.description,
+            body: w.row.body,
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

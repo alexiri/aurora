@@ -1207,6 +1207,19 @@ const ROWS: &[Row] = &[
         G::WsUse,
         false,
     ),
+    // (P5-SKILLS-1, C-1174) turning an inherited skill off for one agent: whoever may edit it
+    r(
+        "PUT",
+        "/v1/agents/{agent}/skills/{skill_id}/off",
+        G::WsUse,
+        false,
+    ),
+    r(
+        "DELETE",
+        "/v1/agents/{agent}/skills/{skill_id}/off",
+        G::WsUse,
+        false,
+    ),
     r("GET", "/v1/workspaces/{ws}/skills", G::WsUse, false),
     r("POST", "/v1/workspaces/{ws}/skills", G::WsOwn, false),
     r("GET", "/v1/orgs/{org}/skills", G::Member, false),

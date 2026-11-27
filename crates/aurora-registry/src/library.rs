@@ -4,6 +4,7 @@
 //! The block is **data**: three `GET` templates, a repository pattern and JSON-path extractors.
 //! The gateway uses [`build`] to turn validated parameters into a request target (nothing else
 //! can reach the request line); the API uses the extractors on what the gateway returned.
+use aurora_core::git_ref;
 use base64::Engine;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use regex::Regex;
@@ -13,7 +14,7 @@ use crate::manifest::Library;
 
 /// Longest repository or ref accepted.
 pub const REPO_MAX: usize = 200;
-pub const REF_MAX: usize = 200;
+pub const REF_MAX: usize = git_ref::REF_MAX;
 /// Largest page number the fetch route accepts.
 pub const PAGE_MAX: u32 = 200;
 
@@ -55,31 +56,10 @@ fn bad(param: &'static str, reason: &'static str) -> ParamError {
     ParamError { param, reason }
 }
 
-fn safe_segments(s: &str, max: usize, param: &'static str) -> Result<(), ParamError> {
-    if s.is_empty() || s.len() > max {
-        return Err(bad(param, "length"));
-    }
-    if !s
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b'-'))
-    {
-        return Err(bad(param, "characters"));
-    }
-    if s.starts_with('-') || s.starts_with('/') || s.ends_with('/') {
-        return Err(bad(param, "shape"));
-    }
-    if s.split('/')
-        .any(|seg| seg.is_empty() || seg == "." || seg == "..")
-    {
-        return Err(bad(param, "segments"));
-    }
-    Ok(())
-}
-
 /// A repository: matches the package's `repo_pattern` and the hard grammar (no empty, `.` or
 /// `..` segment, only `[A-Za-z0-9._/-]`), whatever the pattern allows.
 pub fn check_repo(lib: &Library, repo: &str) -> Result<(), ParamError> {
-    safe_segments(repo, REPO_MAX, "repo")?;
+    git_ref::safe_segments(repo, REPO_MAX).map_err(|reason| bad("repo", reason))?;
     let re = Regex::new(&lib.repo_pattern).map_err(|_| bad("repo", "pattern"))?;
     if re.is_match(repo) {
         Ok(())
@@ -89,12 +69,9 @@ pub fn check_repo(lib: &Library, repo: &str) -> Result<(), ParamError> {
 }
 
 /// A ref (branch, tag or sha): `[A-Za-z0-9._/-]{1,200}`, no `..`, no leading `-`, no `//`.
+/// The shared grammar ([`git_ref::check_ref`]).
 pub fn check_ref(r: &str) -> Result<(), ParamError> {
-    safe_segments(r, REF_MAX, "ref")?;
-    if r.contains("..") {
-        return Err(bad("ref", "segments"));
-    }
-    Ok(())
+    git_ref::check_ref(r).map_err(|reason| bad("ref", reason))
 }
 
 /// A commit or blob id: lowercase hex, 40 to 64 characters.

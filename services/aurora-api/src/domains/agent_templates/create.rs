@@ -194,29 +194,31 @@ async fn current_version_changed(
 /// text over them after the version was validated (422 `template_too_large`).
 pub(crate) fn rendered_skill_ok(s: &aurora_template::RenderedSkill) -> Result<(), ApiError> {
     let files: Vec<&[u8]> = s.files.iter().map(|f| f.bytes.as_slice()).collect();
-    skills_domain::service::check_composed(&s.use_it_when, &s.body, &files).map_err(|e| {
-        // An empty description is not a size problem: it keeps the edit's own error.
-        if s.use_it_when.trim().is_empty() {
-            return e;
-        }
-        let field = e.details().and_then(|d| d.get("fields")?.get(0));
-        let limit = match field {
-            Some(f) => format!(
-                "{}: {}",
-                f["path"].as_str().unwrap_or("").trim_start_matches('/'),
-                f["message"].as_str().unwrap_or("")
-            ),
-            None => e.message().to_owned(),
-        };
-        ApiError::unprocessable(
-            "template_too_large",
-            format!(
-                "The skill {} is too large once the template is filled in ({}).",
-                s.name,
-                limit.trim_end_matches('.')
-            ),
-        )
-    })
+    skills_domain::service::check_composed(&s.use_it_when, &s.body, &files)
+        .and_then(|()| skills_domain::service::clean_title(s.title.as_deref()).map(|_| ()))
+        .map_err(|e| {
+            // An empty description is not a size problem: it keeps the edit's own error.
+            if s.use_it_when.trim().is_empty() {
+                return e;
+            }
+            let field = e.details().and_then(|d| d.get("fields")?.get(0));
+            let limit = match field {
+                Some(f) => format!(
+                    "{}: {}",
+                    f["path"].as_str().unwrap_or("").trim_start_matches('/'),
+                    f["message"].as_str().unwrap_or("")
+                ),
+                None => e.message().to_owned(),
+            };
+            ApiError::unprocessable(
+                "template_too_large",
+                format!(
+                    "The skill {} is too large once the template is filled in ({}).",
+                    s.name,
+                    limit.trim_end_matches('.')
+                ),
+            )
+        })
 }
 
 /// Every automation choice names one of the template's schedules (C-1111): a choice that
@@ -885,6 +887,7 @@ async fn create_in_tx(
             },
             &NewSkill {
                 name: &s.name,
+                title: s.title.as_deref(),
                 description: &s.use_it_when,
                 body: &s.body,
                 enabled: true,
@@ -965,7 +968,11 @@ async fn create_in_tx(
     let author = memory::Author {
         kind: "user",
         user_id: Some(caller.user_id),
-        label: caller.email.clone(),
+        api_key_id: match caller.principal {
+            crate::http::auth::Principal::ApiKey { id, .. } => Some(id),
+            _ => None,
+        },
+        label: String::new(),
     };
     let source = memory::Source::Template {
         name: p.plan.name.clone(),

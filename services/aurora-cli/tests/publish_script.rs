@@ -228,6 +228,110 @@ fn changed_release_fails_with_the_c1144_sentence() {
     );
 }
 
+/// A failing `aurora template list` fails the job: it never reads as "nothing to publish".
+#[test]
+fn an_invalid_template_yaml_fails_the_job_and_publishes_nothing() {
+    let f = fixture(
+        "invalid",
+        &[("good-agent", "Good", false), ("bad-agent", "Bad", false)],
+    );
+    fs::write(f.dir.join("bad-agent/template.yaml"), "format: [\n").unwrap();
+    let (ok, stdout, stderr) = run_publish(&f);
+    assert!(!ok, "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(
+        !log_of(&f).contains(" release create"),
+        "nothing is published from a repository that does not list:\n{:?}",
+        log_of(&f)
+    );
+}
+
+/// The reference workflow's two "install the CLI" steps run only a binary whose sha256 is the
+/// pinned one. Each step's script runs here as GitHub runs it (`bash -e`), with a fake `curl`
+/// and `install`.
+#[test]
+fn the_workflow_installs_only_the_pinned_cli() {
+    let workflow = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../templates/examples/.github/workflows/aurora-templates.yml");
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(workflow).unwrap()).unwrap();
+    assert!(
+        yaml["env"]["AURORA_CLI_SHA256"].is_string(),
+        "the expected sha256 is a workflow variable"
+    );
+    let installs: Vec<String> = ["check", "publish"]
+        .iter()
+        .map(|job| {
+            yaml["jobs"][*job]["steps"]
+                .as_sequence()
+                .expect("steps")
+                .iter()
+                .find(|s| s["name"].as_str() == Some("Install the aurora CLI"))
+                .and_then(|s| s["run"].as_str())
+                .expect("the install step")
+                .to_owned()
+        })
+        .collect();
+    for script in &installs {
+        assert!(script.contains("sha256sum -c"), "unverified:\n{script}");
+    }
+
+    let f = fixture("install", &[]);
+    let bin = f.dir.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    // `curl … -o <file>` writes the fixed "binary"; `install` and `aurora` only log.
+    for (name, body) in [
+        (
+            "curl",
+            "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = -o ]; then printf 'binary\\n' > \
+             \"$2\"; fi\n  shift\ndone\n",
+        ),
+        ("install", "#!/bin/sh\necho installed >> \"$FAKE_GH_LOG\"\n"),
+        ("aurora", "#!/bin/sh\necho ran >> \"$FAKE_GH_LOG\"\n"),
+    ] {
+        let path = bin.join(name);
+        fs::write(&path, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    // `printf 'binary\n' | sha256sum`
+    let pinned = "58eaf5a78d580f5dbd49d31a5b733094169b31bfdf49055b74bcac2877d8f58c";
+    let other = "0".repeat(64);
+    for script in &installs {
+        for (sha, want) in [(pinned, true), (other.as_str(), false)] {
+            let _ = fs::remove_file(&f.log);
+            let out = Command::new("bash")
+                .args(["-e", "-c", script])
+                .current_dir(&f.dir)
+                .env("AURORA_CLI_SHA256", sha)
+                .env("FAKE_GH_LOG", &f.log)
+                .env("TMPDIR", &f.dir)
+                .env("PATH", &path)
+                .output()
+                .expect("runs the install step");
+            assert_eq!(
+                out.status.success(),
+                want,
+                "sha {sha}:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert_eq!(
+                !log_of(&f).is_empty(),
+                want,
+                "an unverified binary is neither installed nor run:\n{}",
+                log_of(&f)
+            );
+        }
+    }
+}
+
 #[test]
 fn new_template_creates_the_release_with_tag_asset_and_notes() {
     let f = fixture("new", &[("fresh-agent", "Fresh", true)]);

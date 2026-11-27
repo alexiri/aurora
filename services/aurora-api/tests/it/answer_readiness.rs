@@ -523,6 +523,73 @@ async fn ai_keys_another_organizations_key_never_appears() {
     assert!(!v.to_string().contains("Other org key"), "{v}");
 }
 
+/// `n` ungranted organization keys, all older than any key added afterwards.
+async fn many_org_keys(r: &Rig, n: i32) {
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id,
+            host_pattern, injection, value_source, value_ref, status, created_at)
+         SELECT gen_random_uuid(), $1, 'Bulk key ' || i, 'llm','anthropic','api_key','anthropic',
+                'api.anthropic.com','{}','managed','x','active', now() - interval '1 hour'
+         FROM generate_series(1, $2) i",
+    )
+    .bind(r.org)
+    .bind(n)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+}
+
+// More candidates than the lookup reads: the starter, created last, is still offered first.
+#[tokio::test]
+async fn ai_keys_the_starter_is_offered_when_it_is_newer_than_all_the_others() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    many_org_keys(&r, 204).await;
+    let starter = org_key(&r, "Starter key", "active", None).await;
+    make_starter(&r, starter).await;
+    let owner = owner_ck(&r).await;
+
+    let (s, v) = get_ai_keys(&r, &owner, a).await;
+    assert_eq!(s, 200, "{v}");
+    let items = items_of(&v);
+    assert_eq!(items.len(), 50, "{v}");
+    assert_eq!(items[0]["secret_id"], starter.to_string(), "{v}");
+    assert_eq!(items[0]["starter"], true, "{v}");
+
+    // The readiness answer offers the same key to give.
+    let (s, v) = get(&r, &owner, a).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["fix"]["action"], "give_key", "{v}");
+    assert_eq!(v["fix"]["key"]["secret_id"], starter.to_string(), "{v}");
+}
+
+#[tokio::test]
+async fn ai_keys_a_sibling_workspaces_key_never_appears() {
+    let r = rig().await;
+    let a = r.agent("rex", false).await;
+    org_key(&r, "Org key", "active", None).await;
+    // Another workspace of the same organization.
+    let sibling = r.h.workspace(r.org).await;
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, workspace_id, name, kind, llm_provider, llm_auth_mode, llm_endpoint_id,
+            host_pattern, injection, value_source, value_ref, status)
+         VALUES ($1,$2,$3,'Sibling key','llm','anthropic','api_key','anthropic','api.anthropic.com','{}','managed','x','active')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(r.org)
+    .bind(sibling)
+    .execute(r.h.pool())
+    .await
+    .unwrap();
+
+    let (s, v) = get_ai_keys(&r, &owner_ck(&r).await, a).await;
+    assert_eq!(s, 200, "{v}");
+    let items = items_of(&v);
+    assert_eq!(items.len(), 1, "{v}");
+    assert_eq!(items[0]["name"], "Org key", "{v}");
+    assert!(!v.to_string().contains("Sibling key"), "{v}");
+}
+
 #[tokio::test]
 async fn ai_keys_metadata_only_never_a_value() {
     let r = rig().await;

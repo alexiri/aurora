@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { judgeTestMessage } from "@/components/agents/evals/copy";
 import { describeCron,firesMoreThanHourly } from "@/components/agents/evals/cron-words";
@@ -328,6 +328,11 @@ describe("Tests wording, live run and Re-run (P5-REFINE-12)", () => {
   });
 
   it("names a run by its date, says who started it, uses the new tiles and hides the hash and refused writes", async () => {
+    // A date outside the current year is shown with its year, so "today" is fixed to the year of the run's dates.
+    // Only `Date` is faked: the timers findByText waits on stay real.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => void vi.useRealTimers());
+    vi.setSystemTime(new Date("2026-11-17T12:00:00Z"));
     mockFetch({
       "GET /v1/eval-runs/r1": () => json(200, detail({ counts: { total: 2, passed: 0, failed: 1, errored: 1, not_scored: 0, refused_writes: 3 }, pass_rate: 0 })),
       "GET /v1/agents/a1/eval-runs": () => json(200, { items: [run("r1")], next_cursor: null }),

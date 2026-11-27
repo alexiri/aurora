@@ -1,5 +1,4 @@
-# The reference CI for a template repository (docs/25 §Publishing a version,
-# C-1144). Two jobs:
+# The reference CI for a template repository. Two jobs:
 #
 #   check   — every pull request and every push: `aurora template check .`
 #   publish — push to the default branch only, after check: pack each template
@@ -21,21 +20,29 @@ on:
 permissions:
   contents: read
 
+env:
+  # The sha256 of the aurora-linux-x86_64 binary of the version you pin below:
+  # the CLI release publishes it beside the binary as
+  # aurora-linux-x86_64.sha256. Copy its first field here, and change it only
+  # together with the version. The jobs run no other binary.
+  AURORA_CLI_SHA256: "AURORA_CLI_SHA256"
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
       # Install the aurora CLI at a pinned version. Either download the release
-      # binary (below) or build it:
+      # binary and check it (below) or build it:
       #   cargo install --locked aurora-cli --version AURORA_CLI_VERSION
       - name: Install the aurora CLI
         run: |
-          cd /usr/local/bin
+          download="$(mktemp -d)/aurora"
           curl -fsSL \
             "https://github.com/alexiri/aurora/releases/download/cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
-            -o aurora
-          chmod +x aurora
+            -o "$download"
+          printf '%s  %s\n' "$AURORA_CLI_SHA256" "$download" | sha256sum -c -
+          install -m 755 "$download" /usr/local/bin/aurora
           aurora --version
       - name: Check the templates
         run: aurora template check .
@@ -57,11 +64,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
       - name: Install the aurora CLI
         run: |
-          cd /usr/local/bin
+          download="$(mktemp -d)/aurora"
           curl -fsSL \
             "https://github.com/alexiri/aurora/releases/download/cli-vAURORA_CLI_VERSION/aurora-linux-x86_64" \
-            -o aurora
-          chmod +x aurora
+            -o "$download"
+          printf '%s  %s\n' "$AURORA_CLI_SHA256" "$download" | sha256sum -c -
+          install -m 755 "$download" /usr/local/bin/aurora
           aurora --version
       - name: Pack and publish every template
         env:

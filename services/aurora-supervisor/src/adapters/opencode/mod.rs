@@ -51,6 +51,8 @@ use launcher::{Launcher, ProcessLauncher, StderrTail};
 use stream::StreamMapper;
 
 pub const PINNED_VERSION: &str = "1.19.6";
+/// (C-1140) Where OpenCode reads skills, relative to the home folder.
+pub const SKILLS_DIR: &str = ".agents/skills";
 /// The harness id (`KNOWN_HARNESSES`).
 pub const ID: &str = "opencode";
 
@@ -116,7 +118,7 @@ impl HarnessAdapter for OpenCodeAdapter {
             platform_tools: true,
             dialects: config::DIALECTS.iter().map(|d| (*d).to_owned()).collect(),
             // The project's and the home's `.agents/skills`, with `AGENTS.md` as the instructions.
-            skills_dir: ".agents/skills".into(),
+            skills_dir: SKILLS_DIR.into(),
             instruction_files: vec!["AGENTS.md".into()],
             // `roles.small` -> `small_model`, `subagent_role` -> `agent.general.model`.
             model_roles: aurora_protocol::runner::harness_model_roles(ID)

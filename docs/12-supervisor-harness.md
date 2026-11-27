@@ -821,6 +821,30 @@ adapter changes. Harness-level tool-failure counters
 (`TOOL_CONSECUTIVE_FAILURES`) apply to platform tools only and do not see it. Resuming is a new
 turn, so no harness needs a "suspend" capability and none is added to the adapter contract.
 
+## Skill use
+
+(P5-SKILLS-1, D-505, C-1175.) Each adapter names the skill a tool call loads in
+`HarnessEvent::ToolStarted.skill` (`tool.started.skill`, `16`); only the folder name leaves the
+supervisor. `adapters::skill_use` is the one rule: the harness's own skill tool (its argument), a
+file-read tool whose path is `<name>/SKILL.md` directly under the harness's skills folder
+(`/workspace/…`, `~/…`, `$HOME/…`, `$SKILLS_DIR/…` or relative to the home folder; a skills folder
+inside another directory, such as a cloned repository, is not the agent's), or a shell command one of
+whose simple commands only reads files (`cat`, `head`, `tail`, `sed` without `-i`, `less`, `bat`,
+`nl`) and reads such a path.
+
+| Adapter | Own skill tool | Read tool | Shell read |
+|---|---|---|---|
+| `claude-code` | `Skill` (`skill`) | `Read` | `Bash` |
+| `codex` | none | none | `command_execution` (how Codex reads a skill) |
+| `pi` | none | `read` | `bash` |
+| `goose` | not recognised | `developer__text_editor` `view` | `shell` / `developer__shell` |
+| `opencode` | `skill` (`name`) | `read` | `bash` |
+
+Not visible, so not counted: a load the harness does inside itself without a tool call in its stream
+(a harness that puts a skill's text into the prompt by itself), goose's skill extension tools if a
+version has them (none in the recorded fixtures), a script or other program that reads the file, and
+a read through a pipeline or variable the rule cannot see. `skill_get` is counted by the API itself.
+
 ## Platform tools
 
 ### Path

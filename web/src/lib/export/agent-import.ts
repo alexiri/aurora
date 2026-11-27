@@ -58,6 +58,7 @@ export async function loadAgentExport(agent: Pick<Agent, "id" | "name" | "brief"
   const skillList: ExportSkill[] = await Promise.all(
     skills.items.map(async (s) => ({
       name: s.name,
+      ...(s.title ? { title: s.title } : {}),
       useItWhen: s.description,
       body: s.body,
       files: await Promise.all(s.files.map(async (f) => ({ path: f.path, content: await readSkillFile(s.id, f.path) }))),
@@ -276,7 +277,7 @@ export function liveImportApi(agentId: string): ImportApi {
       await unwrap(api.POST("/v1/agents/{agent}/memories", { ...path, body: { key: m.key, content: m.content, ...(m.locked ? { locked: true } : {}) } }));
     },
     async createSkill(s) {
-      const made = await unwrap(api.POST("/v1/agents/{agent}/skills", { ...path, body: { name: s.name, description: s.useItWhen, body: s.body } }));
+      const made = await unwrap(api.POST("/v1/agents/{agent}/skills", { ...path, body: { name: s.name, ...(s.title ? { title: s.title } : {}), description: s.useItWhen, body: s.body } }));
       return { id: made.id };
     },
     async putSkillFile(id, filePath, content) {

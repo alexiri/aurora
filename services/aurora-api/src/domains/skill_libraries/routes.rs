@@ -2,6 +2,7 @@ use super::access::{self, ReadAs};
 use super::dto::*;
 use super::service::{self, View};
 use crate::app::AppState;
+use crate::domains::skills::service::Owner;
 use crate::http::auth::{Caller, InstanceAdmin};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -302,6 +303,72 @@ pub struct BrowseParams {
     /// The organization to browse as: required for an instance library (`added` then lists only
     /// that organization's skills the caller can see), optional for an organization library.
     pub org: Option<Uuid>,
+    /// (C-1176) Say what cannot be added to this tier: `agent` (with `agent`), `workspace`
+    /// (with `workspace`) or `organization`. The tier must be of the organization browsed as.
+    #[param(inline)]
+    pub tier: Option<BrowseTier>,
+    pub agent: Option<Uuid>,
+    pub workspace: Option<Uuid>,
+}
+
+#[derive(Deserialize, utoipa::ToSchema, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowseTier {
+    Agent,
+    Workspace,
+    Organization,
+}
+
+/// The tier a browse asks about, once the caller may see its skills; the same 404 for a tier of
+/// another organization as for an unknown one.
+async fn browse_tier(
+    c: &Caller,
+    s: &AppState,
+    org: Uuid,
+    q: &BrowseParams,
+) -> Result<Option<Owner>, ApiError> {
+    let bad = |m: &str| ApiError::invalid_field("Invalid request.", "/tier", m);
+    let agent_given = q.agent.is_some();
+    let ws_given = q.workspace.is_some();
+    match q.tier {
+        None if !agent_given && !ws_given => Ok(None),
+        None => Err(bad("required with agent or workspace")),
+        Some(BrowseTier::Agent) => {
+            let (Some(id), false) = (q.agent, ws_given) else {
+                return Err(bad("agent needs the agent parameter only"));
+            };
+            let missing = || ApiError::not_found("Agent not found.");
+            let a = aurora_db::repo::agents::get(&s.pool, id)
+                .await?
+                .filter(|a| a.org_id == org)
+                .ok_or_else(missing)?;
+            c.workspace(s, a.workspace_id).await?;
+            Ok(Some(Owner {
+                agent: Some(a.id),
+                workspace: None,
+            }))
+        }
+        Some(BrowseTier::Workspace) => {
+            let (Some(id), false) = (q.workspace, agent_given) else {
+                return Err(bad("workspace needs the workspace parameter only"));
+            };
+            let a = c.workspace(s, id).await?;
+            if a.org_id != org {
+                return Err(ApiError::not_found("Workspace not found."));
+            }
+            Ok(Some(Owner {
+                agent: None,
+                workspace: Some(id),
+            }))
+        }
+        Some(BrowseTier::Organization) => {
+            if agent_given || ws_given {
+                return Err(bad("organization takes neither agent nor workspace"));
+            }
+            c.org(s, org).await?;
+            Ok(Some(Owner::default()))
+        }
+    }
 }
 
 const BROWSE_PAGE: usize = 50;
@@ -321,7 +388,13 @@ async fn browse_library(
     Query(q): Query<BrowseParams>,
 ) -> Result<Response, ApiError> {
     let (row, who) = browse_of(&c, &s, id, q.org).await?;
+    let tier = browse_tier(&c, &s, who.org, &q).await?;
     let l = service::listing(&s, &row).await?;
+    // Never cached with the listing: what the tier holds changes with every add.
+    let room = match tier {
+        Some(owner) => Some(crate::domains::skills::library::tier_room(&s, who.org, owner).await?),
+        None => None,
+    };
     // Never cached with the listing: the chips are this organization's skills the caller can see.
     let added =
         crate::domains::skills::library::added_by_path(&s, &c, row.id, who.org, who.admin).await?;
@@ -359,6 +432,9 @@ async fn browse_library(
             size: i.size,
             files: i.files,
             added: added.get(&i.path).cloned().unwrap_or_default(),
+            blocked: room
+                .as_ref()
+                .and_then(|r| r.blocked(&i.name, i.valid, i.reason.as_deref(), i.size)),
         })
         .collect();
     let next = (start + BROWSE_PAGE < matching.len()).then(|| (start + BROWSE_PAGE).to_string());
@@ -367,6 +443,7 @@ async fn browse_library(
         items: page,
         truncated: l.truncated,
         next_cursor: next,
+        budget: room.as_ref().map(|r| r.budget()),
     };
     let mut resp = Json(body).into_response();
     resp.headers_mut()

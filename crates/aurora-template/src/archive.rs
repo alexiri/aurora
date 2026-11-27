@@ -16,7 +16,7 @@ use aurora_core::limits;
 
 use crate::model::TreeFile;
 use crate::problem::{ProblemCode, TemplateProblem};
-use crate::validate::{mode_problem, read_files, rel_path_problem};
+use crate::validate::{mode_problem, path_below_root, read_files, rel_path_problem};
 
 const LOCAL_SIG: u32 = 0x0403_4b50;
 const CENTRAL_SIG: u32 = 0x0201_4b50;
@@ -134,21 +134,25 @@ pub fn read_archive(bytes: &[u8]) -> Result<crate::model::TemplateContent, Vec<T
                 ));
             }
         }
-        // Names and modes before anything is inflated (SEC-146); the `.github` skip runs after
-        // these checks (as the package reader's does, `package.rs`), so a `.github` name that is
-        // also a bad path (`../x`, another root) is refused instead of silently dropped.
-        if let Some(p) = rel_path_problem(name) {
-            problems.push(p);
-            continue;
-        }
-        if let Some(p) = root_problem(name, &mut root) {
-            problems.push(p);
-            continue;
-        }
-        // A `.github` folder is never content, at any depth: not inflated, not listed, not
-        // counted toward the unpacked or file caps (aurora_core::meta_paths).
-        if aurora_core::meta_paths::has_github_segment(name) {
-            continue;
+        // Names and modes before anything is inflated (SEC-146): the one root directory first,
+        // then the same rule for the path below it as the tree form's. A `.github` folder below
+        // the root is never content, at any depth: not inflated, not listed, not counted toward
+        // the unpacked or file caps. A `.github` name that climbs out or sits under another root
+        // is refused instead of silently dropped.
+        let top = match root_problem(name, &mut root) {
+            Ok(top) => top,
+            Err(p) => {
+                problems.push(p);
+                continue;
+            }
+        };
+        match path_below_root(top, name, true) {
+            Ok(Some(_)) => {}
+            Ok(None) => continue,
+            Err(p) => {
+                problems.push(p);
+                continue;
+            }
         }
         // The declared sizes are checked before inflation: a 100× ratio is refused (no floor),
         // and a size that exceeds the unpacked cap is refused without allocating it.
@@ -237,16 +241,21 @@ pub fn read_archive(bytes: &[u8]) -> Result<crate::model::TemplateContent, Vec<T
 }
 
 /// The one top-level directory: every entry must live under the same `<root>/`, which is the
-/// template directory (C-1141). Returns a `template_dir_name` problem for anything else.
-fn root_problem(name: &str, root: &mut Option<String>) -> Option<TemplateProblem> {
+/// template directory (C-1141). Returns it, or a `template_dir_name` problem for an entry
+/// under another one. The directory's own name passes the path grammar (so `..`, a hidden name
+/// and an absolute entry's empty one are refused) and then, with the whole template, the id rule.
+fn root_problem<'a>(name: &'a str, root: &mut Option<String>) -> Result<&'a str, TemplateProblem> {
     let top = name.split('/').next().unwrap_or(name);
     match root {
         None => {
+            if let Some(p) = rel_path_problem(top) {
+                return Err(p);
+            }
             *root = Some(top.to_owned());
-            None
+            Ok(top)
         }
-        Some(r) if r == top => None,
-        Some(_) => Some(TemplateProblem::new(
+        Some(r) if r == top => Ok(top),
+        Some(_) => Err(TemplateProblem::new(
             ProblemCode::TemplateDirName,
             name,
             "every file must live under the one template directory at the top of the zip",
@@ -294,18 +303,8 @@ pub fn pack(root_name: &str, files: &[TreeFile]) -> Vec<u8> {
     // (crc, size, external attributes, local offset) per file, in pack order.
     let mut central: Vec<(u32, u32, u32, u32)> = Vec::new();
     for f in &files {
-        let Some(rel) = f
-            .path
-            .strip_prefix(root_name)
-            .and_then(|r| r.strip_prefix('/'))
-        else {
-            refuse_pack(&format!("{}: not under the root directory", f.path));
-        };
-        if let Some(p) = rel_path_problem(rel) {
-            refuse_pack(&format!("{}: {}", p.path, p.message));
-        }
-        if f.path.len() <= root_name.len() + 1 {
-            refuse_pack(&format!("{}: not under the root directory", f.path));
+        if let Err(p) = path_below_root(root_name, &f.path, false) {
+            refuse_pack(&format!("{}: {}", f.path, p.message));
         }
         if mode_problem(&f.path, f.mode).is_some() {
             refuse_pack(&format!("{}: bad mode {:#o}", f.path, f.mode));
@@ -557,8 +556,9 @@ mod tests {
         assert!(read_archive(&bytes).is_err());
     }
 
-    /// A plain `.github` entry is not silently dropped either: the path grammar refuses the
-    /// hidden segment it is, so the packer is told instead of the entry vanishing.
+    /// The tree form takes content only: its callers (the git reader, the CLI walk) leave
+    /// `.github` out, and one handed to it anyway is a hidden segment, so a packer is told
+    /// instead of the entry vanishing.
     #[test]
     fn a_github_folder_is_refused_as_a_hidden_segment() {
         let files = vec![tree_file(
@@ -588,6 +588,112 @@ mod tests {
         assert_eq!(from_tree.memories, from_zip.memories);
         assert_eq!(from_tree.automations, from_zip.automations);
         assert_eq!(from_tree.agent_name, from_zip.agent_name);
+    }
+
+    /// The sample template moved under another root (its id), with extra files below it.
+    fn renamed_sample(id: &str, extra: &[(&str, &str)]) -> Vec<TreeFile> {
+        let mut files: Vec<TreeFile> = sample_files()
+            .into_iter()
+            .map(|mut f| {
+                if f.path == "service-monitor/template.yaml" {
+                    let yaml = String::from_utf8(f.bytes).unwrap();
+                    f.bytes = yaml
+                        .replace("id: service-monitor", &format!("id: {id}"))
+                        .into_bytes();
+                }
+                f.path = f.path.replacen("service-monitor", id, 1);
+                f
+            })
+            .collect();
+        for (rel, text) in extra {
+            files.push(tree_file(&format!("{id}/{rel}"), text.as_bytes(), 0o100644));
+        }
+        files
+    }
+
+    /// The path rule is about the path below the root in both forms: neither the root's segment
+    /// nor its length counts (C-1104: both forms give the same content).
+    #[test]
+    fn the_zip_and_the_tree_apply_one_path_rule() {
+        let deep = "skills/what-is-on/a/b/c/f.txt";
+        // 64 characters of id plus a path that is allowed below it, over 255 together.
+        let long_id = "a".repeat(64);
+        let long = format!("skills/what-is-on/{}", "f".repeat(180));
+        assert!(long.len() <= 200 + 18 && long_id.len() + 1 + long.len() > 255);
+        for (id, rel) in [("service-monitor", deep), (long_id.as_str(), long.as_str())] {
+            let files = renamed_sample(id, &[(rel, "data\n")]);
+            let from_tree = crate::read_tree(id, &files)
+                .unwrap_or_else(|e| panic!("the tree refuses {rel}: {e:?}"));
+            let from_zip = crate::read_archive(&pack(id, &files))
+                .unwrap_or_else(|e| panic!("the zip refuses {rel}: {e:?}"));
+            assert_eq!(content_sha256(&from_tree), content_sha256(&from_zip));
+        }
+        // Over the limit below the root, both refuse.
+        let files = renamed_sample("service-monitor", &[("skills/what-is-on/a/b/c/d/f", "x")]);
+        assert!(crate::read_tree("service-monitor", &files).is_err());
+        let entries: Vec<(&str, &[u8], u32)> = files
+            .iter()
+            .map(|f| (f.path.as_str(), f.bytes.as_slice(), f.mode))
+            .collect();
+        assert!(read_archive(&stored_zip(&entries, None)).is_err());
+    }
+
+    /// A `.github` folder inside the template's directory of a zip is skipped, as the git reader
+    /// and the CLI skip it: not content, whatever its names look like.
+    #[test]
+    fn a_zip_skips_the_github_folder_inside_the_template() {
+        let files = sample_files();
+        let from_tree = crate::read_tree("service-monitor", &files).unwrap();
+        let long = format!("service-monitor/.github/{}", "w".repeat(300));
+        let mut entries: Vec<(&str, &[u8], u32)> = vec![
+            (
+                "service-monitor/.github/x.yml",
+                b"on: push".as_slice(),
+                0o100644,
+            ),
+            (
+                "service-monitor/skills/what-is-on/.github/workflows/ci yml",
+                b"x".as_slice(),
+                0o100644,
+            ),
+            (long.as_str(), b"x".as_slice(), 0o100644),
+        ];
+        entries.extend(
+            files
+                .iter()
+                .map(|f| (f.path.as_str(), f.bytes.as_slice(), f.mode)),
+        );
+        let from_zip = read_archive(&stored_zip(&entries, None)).unwrap();
+        assert_eq!(content_sha256(&from_tree), content_sha256(&from_zip));
+    }
+
+    /// The skip does not cover a name that climbs out, is absolute or sits under another root.
+    #[test]
+    fn a_github_name_that_climbs_out_is_refused_in_a_zip() {
+        for bad in [
+            "t/.github/../x",
+            "t/../.github/x",
+            "t//.github/x",
+            "/t/.github/x",
+            "../.github/x",
+            ".github/x",
+        ] {
+            let yaml = TEMPLATE_YAML.replace("service-monitor", "t");
+            let ok: [(&str, &[u8], u32); 4] = [
+                ("t/README.md", b"# T\n".as_slice(), 0o100644),
+                ("t/template.yaml", yaml.as_bytes(), 0o100644),
+                ("t/agent.yaml", b"format: 1\nname: T\n".as_slice(), 0o100644),
+                ("t/instructions.md", b"Do the thing.\n".as_slice(), 0o100644),
+            ];
+            assert!(read_archive(&stored_zip(&ok, None)).is_ok());
+            // Alone, each time, after the valid entries and before them.
+            let mut after = ok.to_vec();
+            after.push((bad, b"x".as_slice(), 0o100644));
+            assert!(read_archive(&stored_zip(&after, None)).is_err(), "{bad}");
+            let mut before = vec![(bad, b"x".as_slice(), 0o100644)];
+            before.extend(ok);
+            assert!(read_archive(&stored_zip(&before, None)).is_err(), "{bad}");
+        }
     }
 
     #[test]

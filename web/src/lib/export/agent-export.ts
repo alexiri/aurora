@@ -38,6 +38,8 @@ export interface ExportSkillFile {
 
 export interface ExportSkill {
   name: string;
+  /** (C-1173) The display name, written as `title` only when the skill has one. */
+  title?: string;
   useItWhen: string;
   body: string;
   /** The skill's files other than SKILL.md, as stored (read with `GET /v1/skills/{id}/files/{path}`, C-1099). */
@@ -127,7 +129,7 @@ export function exportFiles(e: AgentExport, handle: string, now: Date = new Date
   // (P6-MEMLOCK, C-1150) `locked: true` only on a locked memory: no line for an unlocked one.
   for (const m of e.memories) add(`memory/${m.key}.md`, frontMatter({ key: m.key, updated: m.updated, ...(m.locked ? { locked: true } : {}) }, m.content));
   for (const s of e.skills) {
-    add(`skills/${s.name}/SKILL.md`, frontMatter({ name: s.name, "use-it-when": s.useItWhen }, s.body));
+    add(`skills/${s.name}/SKILL.md`, frontMatter({ name: s.name, ...(s.title ? { title: s.title } : {}), "use-it-when": s.useItWhen }, s.body));
     for (const f of s.files) add(`skills/${s.name}/${f.path}`, f.content);
   }
   const used = new Set<string>();
@@ -272,7 +274,10 @@ export function parseExport(entries: ZipEntry[]): AgentExport {
       const { front, rest } = split(text(entry), entry.name);
       const skillName = str(front.name, "a name", entry.name);
       if (!KEY_RE.test(skillName) || skillName.length > 64) throw new ExportError(`“${entry.name}”: the skill name “${skillName.slice(0, 40)}” is not a kebab-case name of at most 64 characters.`);
-      skills.set(skillName, { name: skillName, useItWhen: str(front["use-it-when"], "use-it-when", entry.name), body: rest, files: skills.get(skillName)?.files ?? [] });
+      // (C-1173) An optional display name; the server checks its length and form.
+      if (front.title !== undefined && typeof front.title !== "string") throw new ExportError(`“${entry.name}”: title is a line of text.`);
+      const title = typeof front.title === "string" && front.title !== "" ? { title: front.title } : {};
+      skills.set(skillName, { name: skillName, ...title, useItWhen: str(front["use-it-when"], "use-it-when", entry.name), body: rest, files: skills.get(skillName)?.files ?? [] });
     } else if (/^automations\/[^/]+\.yaml$/.test(path)) {
       automations.push(automation(yamlFile(entry), entry.name));
     }

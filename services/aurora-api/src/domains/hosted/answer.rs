@@ -203,8 +203,13 @@ pub async fn compute(s: &AppState, c: &Caller, a: &AgentRow) -> Result<AnswerRea
     };
     drop(r);
     // Keys the agent could be given: usable by the dispatcher's own rules, the starter key first.
+    let starters = placement_repo::get(&mut *conn)
+        .await?
+        .map(|row| placement::starter_ids(&row).0)
+        .unwrap_or_default();
     let cands =
-        placement_repo::ungranted_llm_keys(&mut *conn, a.id, a.org_id, a.workspace_id).await?;
+        placement_repo::ungranted_llm_keys(&mut *conn, a.id, a.org_id, a.workspace_id, &starters)
+            .await?;
     let any_key = granted > 0 || !cands.is_empty();
     let eff = gov::effective_for(s, a.org_id).await?;
     let mut ok: Vec<aurora_db::repo::hosted::LlmCandidate> =
@@ -212,10 +217,6 @@ pub async fn compute(s: &AppState, c: &Caller, a: &AgentRow) -> Result<AnswerRea
             .into_iter()
             .map(|u| u.secret)
             .collect();
-    let starters = placement_repo::get(&mut *conn)
-        .await?
-        .map(|row| placement::starter_ids(&row).0)
-        .unwrap_or_default();
     drop(conn);
     ok.sort_by_key(|k| !starters.contains(&k.id)); // stable: starter first, else the dispatcher's order
     let can_own = auth.can_own();
@@ -322,12 +323,13 @@ pub(super) async fn agent_ai_keys(
         .unwrap_or_else(|| s.ops().hosted.default_harness.clone());
     let llm = s.llm();
     let mut conn = s.pool.acquire().await.map_err(DbError::from)?;
-    let cands =
-        placement_repo::ungranted_llm_keys(&mut *conn, a.id, a.org_id, a.workspace_id).await?;
     let starters = placement_repo::get(&mut *conn)
         .await?
         .map(|row| placement::starter_ids(&row).0)
         .unwrap_or_default();
+    let cands =
+        placement_repo::ungranted_llm_keys(&mut *conn, a.id, a.org_id, a.workspace_id, &starters)
+            .await?;
     let eff = gov::effective_for(&s, a.org_id).await?;
     let mut keys = model::key_states(&s, &llm, &eff, &harness, cands);
     drop(conn);

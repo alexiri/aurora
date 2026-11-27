@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 use aurora_core::limits::{
     self, AVATAR_MAX, LIBRARY_FILE_MAX, MEMORY_CONTENT_MAX, SKILL_BODY_MAX, SKILL_DESCRIPTION_MAX,
+    SKILL_TITLE_MAX,
 };
 
 use crate::meta::{self, parse_meta_str};
@@ -91,6 +92,38 @@ pub(crate) fn rel_path_problem(rel: &str) -> Option<TemplateProblem> {
     None
 }
 
+/// The one path rule of both forms (C-1104): `path` is `<root>/<below>`, and the grammar
+/// ([`rel_path_problem`]) is about the part below the root, never the root's own segment or
+/// length. `Ok(Some(below))` is a content file.
+///
+/// With `skip_github` (the zip form), a name with a `.github` segment below the root is
+/// `Ok(None)`: not content, whatever else its names look like, as the git reader and the CLI
+/// skip it. A name that climbs or has an empty segment is never skipped: the grammar refuses
+/// it.
+pub(crate) fn path_below_root<'a>(
+    root: &str,
+    path: &'a str,
+    skip_github: bool,
+) -> Result<Option<&'a str>, TemplateProblem> {
+    let Some(below) = path.strip_prefix(root).and_then(|r| r.strip_prefix('/')) else {
+        return Err(TemplateProblem::new(
+            ProblemCode::TemplateDirName,
+            path,
+            "every file must be under the template's own directory",
+        ));
+    };
+    if skip_github
+        && aurora_core::meta_paths::has_github_segment(below)
+        && !below.split('/').any(|s| matches!(s, "" | "." | ".."))
+    {
+        return Ok(None);
+    }
+    match rel_path_problem(below) {
+        Some(p) => Err(p),
+        None => Ok(Some(below)),
+    }
+}
+
 /// The only git/zip modes accepted: a regular file, executable or not (C-1141).
 pub(crate) fn mode_problem(path: &str, mode: u32) -> Option<TemplateProblem> {
     match mode {
@@ -121,30 +154,18 @@ pub(crate) fn read_files(
     let mut total = 0usize;
     let mut structural = Vec::new();
     for f in files {
-        let rest = f
-            .path
-            .strip_prefix(root_name)
-            .and_then(|r| r.strip_prefix('/'));
-        let Some(rel) = rest else {
-            structural.push(TemplateProblem::new(
-                ProblemCode::TemplateDirName,
-                &f.path,
-                "every file must be under the template's own directory",
-            ));
+        // No `.github` skip here: the callers (the zip reader, the git reader, the CLI walk)
+        // leave those folders out before this, so one that arrives is a hidden segment like any
+        // other. A template folder that sits under the repository's own `.github` carries that
+        // prefix in the root name, never below it — its files are checked as any other.
+        if let Err(p) = path_below_root(root_name, &f.path, false) {
+            structural.push(p);
             continue;
-        };
+        }
         if let Some(p) = mode_problem(&f.path, f.mode) {
             structural.push(p);
             continue;
         }
-        if let Some(p) = rel_path_problem(rel) {
-            structural.push(p);
-            continue;
-        }
-        // No `.github` skip here: a `.github` segment in `rel` is a hidden segment, refused just
-        // above (a `.github` folder inside the template is refused, not silently dropped), and a
-        // template folder that sits under the repository's own `.github` carries that prefix in
-        // the root name, never in `rel` — the files of such a folder are checked as any other.
         if !seen.insert(f.path.clone()) {
             structural.push(name_problem(&f.path, "the same path appears twice"));
             continue;
@@ -657,6 +678,7 @@ fn parse_skills(
         }
         let mut skill = TemplateSkill {
             name: name.clone(),
+            title: None,
             use_it_when: String::new(),
             body: String::new(),
             files: Vec::new(),
@@ -752,6 +774,25 @@ fn parse_skill_md(
             format!("{}#/name", f.path),
             "the front-matter name must equal the directory name",
         )),
+    }
+    // The optional display name: one line of plain text; absent or blank is none.
+    if let Some(t) = value.get("title") {
+        let title = t.as_str().map(clean_text);
+        match title.as_deref().map(str::trim) {
+            Some(t) if t.chars().any(char::is_control) || t.chars().count() > SKILL_TITLE_MAX => {
+                problems.push(TemplateProblem::new(
+                    ProblemCode::TemplateSkillInvalid,
+                    format!("{}#/title", f.path),
+                    format!("title is one line of at most {SKILL_TITLE_MAX} characters"),
+                ));
+            }
+            Some(t) => skill.title = (!t.is_empty()).then(|| t.to_owned()),
+            None => problems.push(TemplateProblem::new(
+                ProblemCode::TemplateSkillInvalid,
+                format!("{}#/title", f.path),
+                format!("title is one line of at most {SKILL_TITLE_MAX} characters"),
+            )),
+        }
     }
     match value.get("use-it-when").and_then(serde_yaml::Value::as_str) {
         Some(w) => {
@@ -1395,6 +1436,44 @@ pub(crate) mod tests {
             mode: 0o100644,
         });
         assert!(read_tree("service-monitor", &files).is_ok());
+    }
+
+    /// (C-1173) `title` is optional: read when set, refused when it is no short single line,
+    /// and a template without one hashes as it did before titles existed.
+    #[test]
+    fn a_skill_title_is_optional_and_one_short_line() {
+        let with = |front: &str| {
+            let mut files = sample_files();
+            files[5] = file(
+                "service-monitor/skills/what-is-on/SKILL.md",
+                &format!("---\nname: what-is-on\n{front}use-it-when: x\n---\nbody\n"),
+            );
+            read_tree("service-monitor", &files)
+        };
+        let title = |front: &str| with(front).unwrap().skills[0].title.clone();
+        assert_eq!(title(""), None);
+        assert_eq!(title("title: \"  \"\n"), None);
+        assert_eq!(
+            title("title: \"  What is on  \"\n").as_deref(),
+            Some("What is on")
+        );
+        let plain = crate::hash::content_sha256(&with("").unwrap());
+        assert_eq!(
+            plain,
+            crate::hash::content_sha256(&with("title: \"\"\n").unwrap())
+        );
+        assert_ne!(
+            plain,
+            crate::hash::content_sha256(&with("title: What is on\n").unwrap())
+        );
+        let long = format!("title: {}\n", "x".repeat(81));
+        for bad in [long.as_str(), "title: \"one\\ntwo\"\n", "title: [a]\n"] {
+            let err = with(bad).unwrap_err();
+            assert!(
+                err.iter().any(|p| p.path.ends_with("SKILL.md#/title")),
+                "{bad}: {err:?}"
+            );
+        }
     }
 
     /// The skill service stores a description only as a single line (it rejects `\r` and
