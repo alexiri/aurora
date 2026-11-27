@@ -49,9 +49,31 @@
   projects it works in.
 - `credentials.validate`: `GET /rest/api/2/myself` gives `name` (the handle and `platform_user_ref`),
   `key` and `displayName`.
+- **Stored once** (D-494). The token is the credential of the Jira Data Center app connection the
+  presence points at: the atlassian package's Jira DC personal-token connect, on the same instance.
 - **Expiry.** A token may have an expiry, set when it is created or required by the admin. Its expiry
   can be read with `GET /rest/pat/latest/tokens` *(verify)*. When none can be read, the presence has no
   expiry warning and relies on `credential_dead`.
+
+## Rotation (D-494)
+
+Jira Data Center manages personal access tokens through `/rest/pat/latest/tokens`: create, list and
+delete. **Whether a token may create its own successor is the open point** *(verify: some versions
+accept only a password or session for these calls)*. When it may, rotation has no lost-token window,
+because the old token stays valid until the new one is stored:
+
+1. **Create.** When the expiry is fewer than `rotate_days_before` days away, the connector calls
+   `POST /rest/pat/latest/tokens { "name": "aurora-<presence id>-<date>", "expirationDuration":
+   <token_lifetime_days> }` with the current token. The answer carries the new token and its id.
+2. **Write back.** `POST /v1/connector/credentials`, target `{ connection_id }`, compare-and-set on
+   `credentials_version`.
+3. **Delete the old token**, only after the write-back was stored: `DELETE /rest/pat/latest/tokens/<old
+   id>`, called with the new token. On a compare-and-set conflict, the connector deletes the **new**
+   token instead.
+
+A token that never expires (allowed when the Jira admin sets no maximum) is not rotated. When the server
+refuses token-authenticated creation, nothing is rotated. The expiry warning (`P6-PINGS.md`) is the
+fallback, and the presence's row says that a person renews the token.
 
 ## Receiving
 

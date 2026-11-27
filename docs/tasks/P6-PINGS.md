@@ -5,6 +5,8 @@
 >
 > **Owner answers, 2026-11-27 (D-493):** Q-P6-PING-1..5 are answered (table at the end). Q-P6-PING-6..11
 > came up while writing this down. Each has a recommendation, and none blocks the spec batch.
+> **Q-P6-PING-7 answered the same day (D-494):** the token is stored only once and is rotated in the
+> first version (§One token, rotated).
 >
 > This file covers what the two connectors share: the core and dashboard changes. The platform
 > details are in `P6-PINGS-GITLAB.md` and `P6-PINGS-JIRA.md`.
@@ -169,20 +171,75 @@ without it never sends `item.addressed`.
     needs `can_own`. Detach keeps `can_use`.
   - `presence.provision` is not supported: a person creates the platform account. Deprovision does
     nothing on the platform: the person revokes the token there.
-- **One token, two uses (Q-P6-PING-7).** The attach dialog offers "Also use this account for the agent's
-  GitLab (Jira) app". It creates or updates the app connection with the same token through the app's
-  existing token connect method, and grants it to the agent. The credential is sealed twice: as the
-  presence credential and as the connection. That keeps the connector's custody and the gateway's custody
-  apart.
-  - In the first version the connector does not rotate the token itself.
-  - Where the platform tells it the token's expiry, the connector reports it, and the core stores
-    it on the presence.
-  - The dashboard warns 14 days before the expiry (attention item, e-mail).
-  - On expiry the presence goes `disabled` (`credential_dead`), and Re-attach with a new token updates both
-    copies.
+- **One token, stored once** (owner, Q7, D-494). See §One token, rotated, below.
 - **The agent never sees the token, and can't attach itself.** It holds no credentials (gateway custody),
   and attaching widens who can give it work: a person's decision. When asked, the agent can say what is
   missing. The dashboard link to its "where it talks" section is in its fragment.
+
+### One token, rotated (owner, Q7, D-494)
+
+Owner, 2026-11-27: "Store the token only once and rotate it in the first version."
+
+**The presence has no credential of its own. It points at an app connection.**
+- The token is the credential of one app connection: the GitLab app's or the Jira Data Center app's
+  *Personal access token* connect method, on the integration's server. The presence stores that
+  connection's id (`connection_id`), not a token.
+- The attach dialog accepts two things:
+  - a pasted token. This creates the connection in the agent's workspace (scope `workspace`) through the
+    app's existing token connect, in the same transaction as the presence;
+  - an existing token-kind connection to the same server that the person may grant.
+
+  Either way, the account it reads must be the account the presence is for. `credentials.validate` and
+  the app's account check must read the same user.
+- **The agent's app access is a separate choice, in the same dialog.** The dialog offers the usual grant
+  levels (`read` / `ask` / `act`, or none), through the existing connect-and-grant path. The presence
+  receives tags and posts answers whatever the agent's grant is. The grant governs only what the agent
+  does through the app itself.
+- **One credential, two readers.**
+  - The gateway injects it for the agent's app calls, as today.
+  - The connector host receives it decrypted in its assignment, like a presence credential today
+    (`13 §3.1`).
+  - The host receives a connection's token only while an **active presence** on an integration of a type
+    its token is bound to points at it, and only when the connection's server equals the integration's
+    server.
+  - Only token-kind connections (a personal access token) can back a presence. An OAuth connection
+    can't: the gateway refreshes OAuth tokens, and a credential has one writer.
+- **Deleting the connection** while a presence points at it is refused (409 `connection_in_use`, naming
+  the agent and the server); the person detaches first. Detaching leaves the connection and its grants as
+  they are.
+
+**Rotation (the connector is the one writer of the token).**
+- The connector rotates its own platform credentials, as `13 §1` already says. Once a day per presence,
+  it reads the token's expiry. When the expiry is fewer than `rotate_days_before` days away (integration
+  setting, default 30), the connector:
+  1. makes a new token valid for `token_lifetime_days` (integration setting, default 365, capped by what
+     the server allows);
+  2. writes it back through `POST /v1/connector/credentials`. That route gains the target
+     `{ connection_id }`, with a compare-and-set on the connection's `credentials_version`.
+- **The write-back** (API):
+  - takes the connection's credential lock (the one OAuth refresh uses, `08`);
+  - stores the new value and raises `credentials_version`;
+  - sends `aurora_gateway_invalidate { scope: "connection", id }`, so every gateway drops the old value;
+  - records `connection.credential_rotate` (actor: the connector; ids only), in the security-critical
+    set;
+  - and the next host assignment carries the new value.
+- **A compare-and-set conflict** means a person pasted a new token meanwhile. Theirs wins: the connector
+  revokes the token it just made and uses the stored one.
+- **The gateway after a rotation.** Requests already in flight when the platform revoked the old token
+  get `401`. The gateway re-reads a connection whose `credentials_version` moved since it was cached and
+  retries that request once. A `401` means the platform did not act on it, so the retry is safe.
+- **Each platform's own way** is in its file:
+  - GitLab's rotate call revokes the old token at once, so the connector keeps the new token in memory
+    and retries the write-back until it is stored;
+  - Jira, if its API allows, creates the new token first and deletes the old one only after the
+    write-back.
+
+  If the host dies between GitLab's rotate and the write-back, the new token is lost. The presence and
+  the connection both go `credential_dead`, the owners are told, and a person pastes a new token. The
+  window is one request long and happens at most once a year per account.
+- **When rotation isn't possible or fails**, the expiry warning remains: an attention item and an e-mail
+  14 days before the expiry, and `credential_dead` after it. The connection's row says "Renewed
+  automatically, next on <date>" or "Expires on <date>; renew by pasting a new token".
 
 ### Receiving: poll first, webhooks as a doorbell
 
@@ -217,9 +274,14 @@ issue must not be able to merge, close, reassign or ping a whole group.
    fixtures for each rule. An answer reaches only the item it answers (`reply_to` must belong to the thread
    link).
 4. **Webhooks are a doorbell.** Their bodies never become events.
-5. **Credential custody.** The presence token is held by the connector host (sealed, `13 §3.1`) and the app
-   connection's copy by the gateway. Neither is shown to the agent, logged or put in an op payload beyond
-   the existing sealed-reference rules.
+5. **Credential custody** (D-494).
+   - The token is stored once, as the app connection's credential.
+   - The connector host receives it only for a token-kind connection an active presence points at, on the
+     same server, for a type its host token is bound to.
+   - The connector is the token's only writer. Each write-back is a compare-and-set, under the
+     connection's credential lock, audited in the critical set, and followed by a gateway invalidation.
+   - The token is never shown to the agent, logged, or put in an operation payload beyond the existing
+     sealed-reference rules.
 6. **Attach needs `can_own`** for `open_spaces` connectors, and the opt-in for username links needs an org
    owner or admin. Both are audited, with the link in the critical set.
 7. **No loops, bounded cost.** Echo guard and strangers' silence. Per-presence poll budgets, the existing
@@ -238,17 +300,22 @@ issue must not be able to merge, close, reassign or ping a whole group.
   platform account.
 - **Trusting webhook bodies.** That would need per-platform signature schemes the platforms don't all
   have (Jira Data Center), for no gain over reading the event back.
-- **One credential shared by the connector host and the gateway.** That would cross two custody
-  boundaries. It is possible later, if self-rotation proves worth it.
+- **Two sealed copies of the token, one for the presence and one for the app connection, with no
+  rotation** (the first recommendation for Q7). The owner chose one stored token, rotated (D-494). Two
+  copies can't both survive a rotation that revokes the old token.
+- **An OAuth connection behind a presence.** The gateway refreshes OAuth tokens, so a rotating connector
+  would be a second writer.
 
 ## Deliverables of the spec batch (when phase 6 starts)
 
-- D-numbers for Q-P6-PING-6..11. SEC invariants (§Security). C-numbers for:
+- D-numbers for Q-P6-PING-6 and 8..11 (Q7 is D-494). SEC invariants (§Security). C-numbers for:
   - `item.addressed` and the `addressed` capability;
   - `history.read` `after` and `message.post` `reply_to`;
   - the `open_spaces` capability and the `can_own` attach rule;
   - `sso_username_autolink` and the identity `username`;
-  - the presence's token expiry;
+  - the presence's `connection_id`, the host's access to that connection's token, the write-back target
+    `{ connection_id }`, `connection.credential_rotate`, 409 `connection_in_use`, the gateway's re-read
+    and one retry, and the rotation and expiry settings;
   - the 🙊 refusal reaction;
   - the two connector manifests.
 - `13` (the additions above, §5.1 steps 4–5 and 7–8, §5.7, §5.9, §4.5), `04` (the link method, attach
@@ -276,7 +343,7 @@ issue must not be able to merge, close, reassign or ping a whole group.
 | Q-P6-PING-4 | What wakes the agent? | **Answered (D-493(d)):** anything that tags the agent directly: mentions, assignments, review requests, approver requests, reviews of its merge requests. |
 | Q-P6-PING-5 | Who may attach such a presence? | **Answered (D-493(e)):** `can_own`. |
 | Q-P6-PING-6 | To-dos with no person behind them (a failed pipeline or a conflict on the agent's own merge request): do they wake it? | **Recommended: not in the first version.** No speaker means no access check. The agent can watch its own pipelines with a schedule or a watch. Revisit with a "creator" rule like schedules have. |
-| Q-P6-PING-7 | One token for the presence and the app connection? | **Recommended: paste once, stored twice** (connector host and gateway, each sealed). No self-rotation in the first version. Expiry warning 14 days before. Re-attach updates both. |
+| Q-P6-PING-7 | One token for the presence and the app connection? | **Answered (D-494):** "Store the token only once and rotate it in the first version." The presence points at a token-kind app connection, and the connector rotates the token and writes it back (§One token, rotated). |
 | Q-P6-PING-8 | Jira Cloud too? | **Recommended: Jira Data Center first** (what CERN runs). Cloud has other auth, account ids instead of usernames, hidden e-mails and ADF text. It would be the same connector type with a variant, in a follow-up. |
 | Q-P6-PING-9 | A linked organization member without access: silent, but still a reach request to the owners? | **Recommended: yes.** Nothing on the platform, a `pending` reach grant and the owners told, as on Mattermost. Unlinked authors create nothing. |
 | Q-P6-PING-10 | Narration cards in these spaces? | **Recommended: no.** The answer only; the steps are on the dashboard. |
