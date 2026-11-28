@@ -98,8 +98,10 @@ alerts works with Viewer.
 A rule watches **one query** of one of two kinds:
 
 - **Prometheus** (or Mimir): one PromQL expression of at most 200 characters, the length the
-  approval card shows in full. A rule an agent made earlier with a longer one can still be listed
-  and deleted, but the agent can't change or renew it: it deletes it and creates a shorter one.
+  approval card shows in full, on one line with single spaces and no invisible characters (the
+  same holds for a log query), so the card shows exactly what runs. A rule with a longer or
+  multi-line expression (an agent's earlier one, or one a person edited) can still be listed and
+  deleted, but the agent can't change or renew it: it deletes it and creates a shorter one.
 - **OpenSearch logs** (the *OpenSearch* data source plugin; Elasticsearch is not supported): one
   Lucene query with one count, or the sum, average, maximum or minimum of one field, over a window
   of 5 to 60 minutes that ends up to 15 minutes ago, to allow for late log lines. The approval card

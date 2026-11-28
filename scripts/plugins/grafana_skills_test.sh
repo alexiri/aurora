@@ -719,6 +719,22 @@ refuse "create needs --expr or --logs" create --managed-by night --folder night-
 refuse "go with --logs" create --managed-by night --folder night-folder --group agent-night \
   --title t --ds prom-main --expr 'x[5m]' --window 10m --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
 
+# text an approval would show differently is refused, in a log query and in an expression:
+# invisible and control characters, line and paragraph separators, any space but a plain one,
+# and spaces at an end or two together
+for odd in $'​' $' ' $'　' $' ' $' ' $'‮' $'﻿' $'\u0085' $'\t' '  '; do
+  logs_refused "one line of plain text" --logs "level:err${odd}or" --window 10m
+  reset
+  refuse "one line of plain text" create --managed-by night --folder night-folder --group agent-night --title t \
+    --ds prom-main --expr "rate(x[5m]) >${odd}1" --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
+  if grep -q create_alert_rule "$STUB_LOG"; then bad "an expression with odd characters was sent"; fi
+done
+logs_refused "one line of plain text" --logs ' status:500' --window 10m
+logs_refused "one line of plain text" --logs 'status:500 ' --window 10m
+reset
+refuse "one line of plain text" create --managed-by night --folder night-folder --group agent-night --title t \
+  --ds prom-main --expr 'rate(x[5m]) ' --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
+
 # each kind needs its own data source type, and the refusal names both
 for pair in "--expr x[5m] os-logs" "--logs status:500 prom-main" "--logs status:500 loki-main"; do
   read -r flag query ds <<<"$pair"
@@ -755,6 +771,7 @@ changed_rule '"alias": "x"' '.data[0].model.alias = "x"'
 changed_rule '"min_doc_count": "1"' '.data[0].model.bucketAggs[0].settings.min_doc_count = "1"'
 changed_rule '"id": "7"' '.data[0].model.metrics[0].id = "7"'
 changed_rule "texts up to 200 characters" '.data[0].model.query = ("a" * 201)'
+changed_rule "texts up to 200 characters" '.data[0].model.query = "level:err​or"'
 
 # a PromQL expression is held to what the approval shows, like a log query: create refuses a
 # longer one, and a stored rule with a longer one (or no text) is not resent, though it can
@@ -767,7 +784,7 @@ if grep -q create_alert_rule "$STUB_LOG"; then bad "a rule with a long expressio
 prom_rule() {  # prom_rule JQ_FILTER: the stored Prometheus rule, changed
   jq --arg long "$LONG_EXPR" "$1" "$FIX/get_alert_rule.json" > "$WORK/changed.json"
 }
-for filter in '.data[0].model.expr = $long' '.data[0].model.expr = ["up"]'; do
+for filter in '.data[0].model.expr = $long' '.data[0].model.expr = ["up"]' '.data[0].model.expr = "up == 0"'; do
   prom_rule "$filter"
   reset
   STUB_RULE_FILE="$WORK/changed.json" refuse "delete it and create it again with a shorter one" \
