@@ -400,8 +400,10 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   every box down to it a flex column. The pane sets its own smallest height with a
   `min-h-*` class (Terminal and the file list 18 rem, the file editor 16 rem, Chat
   560 px) and scrolls inside itself; on a window too short for that the page scrolls.
-  Every box between `main` and a pane must work as a column. Below 768 px each pane
-  has its own height and the page may scroll to it. `e2e/agent-fill-pane.spec.ts`
+  Every box between `main` and a pane must work as a column. Those rules are in
+  `@layer components`, so any utility beats them: none of these boxes may set another
+  `display`, direction or `flex` from 768 px. Below 768 px each pane has its own height
+  (`max-md:h-*`, never an unprefixed `h-*`) and the page may scroll to it. `e2e/agent-fill-pane.spec.ts`
   checks it with "Show more controls" on and off.
 - **Lists follow their cursors** (`docs/05` list convention, FIX-117): the API pages
   at 50 by default and 200 at most, so a dashboard list that must be complete
