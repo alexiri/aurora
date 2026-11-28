@@ -1276,9 +1276,11 @@ file is logged and does not fail the sync. The sandbox image ships the `psql` cl
   sweep has no exception, which is why the name has no prefix) — the shell has
   exactly the privilege a `process_start` command already has, in a PTY.
 - **`PATH` and interactive defaults (FIX-138).** One `PATH` for both shells, a turn and the
-  terminal: `/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin` (the image's
-  `ENV PATH`, `/etc/profile.d/aurora.sh` for bash login shells, `/etc/zsh/zshenv` for zsh, the PTY
-  spawn's environment and the supervisor's spawn default `spawn::IMAGE_PATH`). `/opt/aurora/bin`
+  terminal: `/workspace/.local/bin:/workspace/.local/share/gem/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin`
+  (the image's `ENV PATH`, `/etc/profile.d/aurora.sh` for bash login shells, `/etc/zshenv` for zsh,
+  the PTY spawn's environment and the supervisor's spawn default `spawn::IMAGE_PATH`; the second
+  entry holds the executables of installed gems, under the image's `GEM_HOME`, which every child
+  inherits, `11 §Sandbox image`). `/opt/aurora/bin`
   is the directory of the `claude` and `codex` wrappers (below). System-wide **interactive** defaults (aliases `ls`,
   `ll`, `la`, `l`, `grep`, colours, a prompt `user@<agent handle>:cwd`, history size and
   de-duplication, zsh `compinit`) live only in the image's system files — `/etc/profile.d/aurora.sh`

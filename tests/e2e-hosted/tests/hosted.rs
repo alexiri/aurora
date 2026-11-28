@@ -2652,7 +2652,161 @@ async fn terminal_steps(
     out.split("=== step ").skip(1).map(str::to_owned).collect()
 }
 
-const IMAGE_PATH: &str = "/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin";
+const IMAGE_PATH: &str = "/workspace/.local/bin:/workspace/.local/share/gem/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin";
+
+/// Builds, in `/tmp`, a gem with an executable and a one-function C extension. No network.
+const PROBE_GEM_BUILD: &str = r##"set -eu
+mkdir -p /tmp/gemprobe/bin /tmp/gemprobe/lib /tmp/gemprobe/ext/aurora_probe
+cd /tmp/gemprobe
+cat > ext/aurora_probe/aurora_probe.c <<'EOF'
+#include <ruby.h>
+static VALUE answer(VALUE self) { return INT2NUM(42); }
+void Init_aurora_probe(void) {
+    rb_define_singleton_method(rb_define_module("AuroraProbe"), "answer", answer, 0);
+}
+EOF
+cat > ext/aurora_probe/extconf.rb <<'EOF'
+require "mkmf"
+create_makefile("aurora_probe/aurora_probe")
+EOF
+cat > lib/aurora_probe.rb <<'EOF'
+require "aurora_probe/aurora_probe"
+EOF
+cat > bin/aurora-probe <<'EOF'
+#!/usr/bin/env ruby
+require "aurora_probe"
+# The system's gems stay visible beside the home's.
+require "bigdecimal"
+require "json"
+require "openssl"
+require "psych"
+puts "aurora-probe #{AuroraProbe.answer}"
+EOF
+cat > aurora-probe.gemspec <<'EOF'
+Gem::Specification.new do |s|
+  s.name = "aurora-probe"
+  s.version = "1.0.0"
+  s.summary = "e2e probe"
+  s.authors = ["e2e"]
+  s.files = Dir["bin/*", "lib/**/*.rb", "ext/**/*.{c,rb}"]
+  s.executables = ["aurora-probe"]
+  s.extensions = ["ext/aurora_probe/extconf.rb"]
+end
+EOF
+touch /tmp/gemprobe-started
+gem build aurora-probe.gemspec
+gem install --local ./aurora-probe-1.0.0.gem
+"##;
+
+/// Removes the gem, then installs it again with Bundler (no path configured) from `vendor/cache`.
+const PROBE_BUNDLE: &str = r##"set -eu
+gem uninstall --executables --all aurora-probe
+test ! -e "$GEM_HOME/bin/aurora-probe"
+mkdir -p /tmp/gemprobe/app/vendor/cache
+cd /tmp/gemprobe/app
+cp ../aurora-probe-1.0.0.gem vendor/cache/
+echo 'gem "aurora-probe"' > Gemfile
+bundle install --local < /dev/null
+bundle exec aurora-probe
+test -x "$GEM_HOME/bin/aurora-probe"
+echo "--- bundle path: $(bundle show aurora-probe)"
+echo "--- written outside /workspace and /tmp:"
+find / \( -path /proc -o -path /sys -o -path /dev -o -path /run -o -path /workspace -o -path /tmp \) -prune \
+    -o -newer /tmp/gemprobe-started -print 2>/dev/null || true
+echo "--- end"
+"##;
+
+/// FIX-298 (e2e, hosted, **full image**): the agent's uid on the read-only root builds and installs
+/// a gem with a C extension into its home (`gem install --local`, then `bundle install --local`),
+/// runs its executable by bare name from a login bash and from a turn's `process_start`, and
+/// nothing is written outside `/workspace` and `/tmp`. Needs no internet. Needs
+/// `AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh` (otherwise SKIPPED).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn s13c_gems_install_into_the_home_on_the_full_image() {
+    if !enabled() {
+        return;
+    }
+    let Ok(image) = std::env::var("AURORA_E2EH_FULL_IMAGE_TAG") else {
+        eprintln!(
+            "SKIPPED: AURORA_E2EH_FULL_IMAGE_TAG is not set; run AURORA_E2EH_FULL_IMAGE=1 scripts/e2e/hosted.sh"
+        );
+        return;
+    };
+    let (st, api) = fx(Opts {
+        image: Some(image),
+        ..Opts::default()
+    })
+    .await;
+    let conv = api.direct().await;
+    run_turn(&st, &api, &conv, "[[say: warm]]").await;
+    let cs = containers();
+    assert_eq!(cs.len(), 1, "{cs:?}");
+    let c = cs[0].as_str();
+
+    // As the agent (`exec_in` runs as uid 1000), with the image's own environment.
+    let (rc, out) = exec_in(c, &format!("( {PROBE_GEM_BUILD}\n) 2>&1"));
+    assert_eq!(rc, 0, "gem build/install failed: {out}");
+
+    // By bare name from a login bash…
+    let (rc, out) = exec_in(
+        c,
+        "env -u PATH /bin/bash -lc 'command -v aurora-probe; aurora-probe' 2>&1",
+    );
+    assert_eq!(rc, 0, "{out}");
+    assert!(
+        out.contains("/workspace/.local/share/gem/bin/aurora-probe\n"),
+        "{out}"
+    );
+    assert!(out.contains("aurora-probe 42"), "{out}");
+
+    // …and from a process the turn's tools start.
+    let out = process_output(
+        &st,
+        &api,
+        c,
+        &conv,
+        "gemprobe",
+        "echo \"gemhome=$GEM_HOME gempath=${GEM_PATH-unset}\"; echo \"path=$PATH\"; aurora-probe",
+        60,
+    )
+    .await;
+    assert!(
+        out.contains("gemhome=/workspace/.local/share/gem gempath=unset\n"),
+        "{out}"
+    );
+    assert!(out.contains(&format!("path={IMAGE_PATH}\n")), "{out}");
+    assert!(out.contains("aurora-probe 42"), "{out}");
+
+    // The files, the compiled extension among them, are in the home.
+    let (rc, out) = exec_in(
+        c,
+        "find /workspace/.local/share/gem -name 'aurora_probe.so' -o -name 'aurora-probe*'",
+    );
+    assert_eq!(rc, 0, "{out}");
+    for want in [
+        "/workspace/.local/share/gem/gems/aurora-probe-1.0.0",
+        "/workspace/.local/share/gem/specifications/aurora-probe-1.0.0.gemspec",
+        "/workspace/.local/share/gem/bin/aurora-probe",
+        "aurora_probe.so",
+    ] {
+        assert!(out.contains(want), "{want} is missing: {out}");
+    }
+
+    // Bundler installs the same gem, native build included, with no path configured.
+    let (rc, out) = exec_in(c, &format!("( {PROBE_BUNDLE}\n) 2>&1"));
+    assert_eq!(rc, 0, "bundle install failed: {out}");
+    assert!(out.contains("Installing aurora-probe 1.0.0"), "{out}");
+    assert!(out.contains("aurora-probe 42"), "{out}");
+    assert!(
+        out.contains("--- bundle path: /workspace/.local/share/gem/gems/aurora-probe-1.0.0\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("--- written outside /workspace and /tmp:\n--- end\n"),
+        "{out}"
+    );
+    st.finish().await;
+}
 
 /// FIX-138 (e2e, hosted, both shells): Tab completes, history (Up) works, `ll`/`ls` are aliased,
 /// `ls` emits colour without `--color`, `PATH` is the image's one, `claude`/`codex` resolve to the

@@ -15,11 +15,16 @@ use std::ffi::{OsStr, OsString};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-/// (FIX-138) The one `PATH` of the image: the agent's own tools (`npm -g`, `/workspace/.local`),
-/// the harness wrappers (`/opt/aurora/bin`), then the system. Same in the image's `ENV PATH`,
-/// `/etc/profile.d/aurora.sh` (bash), `/etc/zsh/zshenv` (zsh), a turn and the terminal.
-pub const IMAGE_PATH: &str = "/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin";
+/// (FIX-138) The one `PATH` of the image: the agent's own tools (`npm -g`, `/workspace/.local`;
+/// then the executables of its gems), the harness wrappers (`/opt/aurora/bin`), then the system.
+/// Keep identical to the image's `ENV PATH`, `/etc/profile.d/aurora.sh` (bash) and `/etc/zshenv`
+/// (zsh); a turn and the terminal use it too.
+pub const IMAGE_PATH: &str = "/workspace/.local/bin:/workspace/.local/share/gem/bin:\
+                              /opt/aurora/bin:/usr/local/bin:/usr/bin:/bin";
 const DEFAULT_PATH: &str = IMAGE_PATH;
+/// (FIX-298) Where `gem install` and `bundle install` write: the home, so gems need no root and
+/// persist with it. The image's `ENV GEM_HOME`; its `bin` is on [`IMAGE_PATH`].
+const DEFAULT_GEM_HOME: &str = "/workspace/.local/share/gem";
 /// Credential stand-in that is safe to pass (`adapters::claude_code::config::PLACEHOLDER`).
 const PLACEHOLDER: &str = "aurora-placeholder";
 
@@ -83,8 +88,10 @@ where
             _ => false,
         })
         .collect();
-    if !env.iter().any(|(k, _)| k == "PATH") {
-        env.push(("PATH".into(), DEFAULT_PATH.into()));
+    for (name, default) in [("PATH", DEFAULT_PATH), ("GEM_HOME", DEFAULT_GEM_HOME)] {
+        if !env.iter().any(|(k, _)| k == name) {
+            env.push((name.into(), default.into()));
+        }
     }
     for (k, v) in extra {
         let (Some(ks), Some(vs)) = (k.as_ref().to_str(), v.as_ref().to_str()) else {
@@ -270,6 +277,32 @@ mod tests {
             env.iter()
                 .any(|(k, v)| k == "CLAUDE_CODE_SKIP_BEDROCK_AUTH" && v == "1")
         );
+    }
+
+    /// (FIX-298) A child gets a gem home inside the agent's home, and the one `PATH` finds the
+    /// gems' executables right after the agent's own `~/.local/bin`.
+    #[test]
+    fn a_child_gets_the_gem_home_and_the_path_that_finds_gem_executables() {
+        let env = child_env([("PATH", IMAGE_PATH)]);
+        let get = |name: &str| {
+            env.iter()
+                .find(|(k, _)| k == name)
+                .and_then(|(_, v)| v.to_str())
+                .map(str::to_owned)
+        };
+        // The supervisor's own value (the image's `ENV`) wins; without one, the image's.
+        let want =
+            std::env::var("GEM_HOME").unwrap_or_else(|_| "/workspace/.local/share/gem".to_owned());
+        assert_eq!(get("GEM_HOME"), Some(want));
+        assert_eq!(
+            get("PATH").as_deref(),
+            Some(
+                "/workspace/.local/bin:/workspace/.local/share/gem/bin:/opt/aurora/bin:\
+                 /usr/local/bin:/usr/bin:/bin"
+            )
+        );
+        // `GEM_PATH` stays unset, so RubyGems still finds the system's default gems.
+        assert_eq!(get("GEM_PATH"), std::env::var("GEM_PATH").ok());
     }
 
     /// (FIX-114) Every added name suffix and every platform token prefix is refused.

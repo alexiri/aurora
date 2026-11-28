@@ -65,7 +65,10 @@ RUN dnf -y install --setopt=install_weak_deps=False shadow-utils glibc-common po
 # (FIX-138) One PATH for both shells, a turn and the terminal (`12 §Terminal`): the image ENV,
 # /etc/profile.d/aurora.sh (bash login + interactive defaults) and /etc/zshenv + /etc/zshrc (zsh).
 # System files, never the agent's home: a person's own ~/.bashrc / ~/.zshrc still wins.
-ENV PATH=/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin
+# (FIX-298, D-516) Gems install into the home: `gem install` and `bundle install` write to GEM_HOME,
+# whose bin is on PATH. GEM_PATH stays unset, so RubyGems still finds the system's default gems.
+ENV PATH=/workspace/.local/bin:/workspace/.local/share/gem/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin \
+    GEM_HOME=/workspace/.local/share/gem
 COPY images/sandbox/etc/profile.d/aurora.sh /etc/profile.d/aurora.sh
 COPY images/sandbox/etc/zshenv /etc/zshenv
 COPY images/sandbox/etc/zshrc /etc/zshrc
@@ -82,6 +85,12 @@ RUN dnf -y install --setopt=install_weak_deps=False epel-release \
     && dnf -y install --setopt=install_weak_deps=False \
          git curl jq ripgrep fd-find less openssh-clients python3 python3-pip \
          nodejs nodejs-full-i18n npm gcc gcc-c++ make unzip zip procps-ng chromium \
+         ruby ruby-devel rubygems rubygem-bundler redhat-rpm-config \
+         rubygem-bigdecimal rubygem-json rubygem-psych \
+    # (FIX-298, D-516) Ruby, its headers and (`redhat-rpm-config`) the compiler spec files its
+    # `rbconfig` names, so gems with C extensions build. AlmaLinux splits bigdecimal, json and psych
+    # out of Ruby. The build fails if Ruby is broken.
+    && ruby -ropenssl -rpsych -rjson -rbigdecimal -e 'exit 0' && gem --version && bundle --version \
     # (FIX-103) Chromium is required, not best-effort: the `sandbox` target declares the `browser`
     # capability below, and the runner schedules browser boots from that label. A build where the
     # package is unavailable fails here instead of shipping an image that advertises a browser it lacks.
@@ -93,8 +102,9 @@ RUN dnf -y install --setopt=install_weak_deps=False epel-release \
     && dnf clean all && rm -rf /var/cache/dnf \
     && pip3 install --no-cache-dir uv==0.13.8 \
     && npm config set prefix /workspace/.local --global \
-    # No privilege escalation or package management for the agent.
-    && rm -f /usr/bin/sudo /usr/bin/su /usr/bin/dnf* /usr/bin/yum /usr/bin/rpm* 2>/dev/null; true
+    # No privilege escalation or package management for the agent. Last, and part of the `&&` chain:
+    # nothing after it may turn a failed check above into a successful build.
+    && rm -f /usr/bin/sudo /usr/bin/su /usr/bin/dnf* /usr/bin/yum /usr/bin/rpm*
 # Chromium wrapper: browsers go through the open proxy 127.0.0.1:3129, which exists only when the
 # sandbox booted with the `browser` capability (RFE-003).
 COPY images/sandbox/chromium-wrapper.sh /usr/local/bin/chromium-browser
