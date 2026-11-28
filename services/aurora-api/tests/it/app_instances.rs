@@ -693,6 +693,13 @@ async fn the_admin_list_shows_every_registration_and_promote_makes_one_instance_
     .await
     .unwrap();
     assert_eq!((org_id, critical), (Some(w.org), true));
+    // (FIX-290, SEC-170) The event says what else the promotion opened.
+    let metadata: Value =
+        sqlx::query_scalar("SELECT metadata FROM audit_log WHERE action = 'app_instance.promote'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(metadata["allowance"], "self_hosted_private", "{metadata}");
 }
 
 // ---- D-231 / C-731: a base path ------------------------------------------------------------

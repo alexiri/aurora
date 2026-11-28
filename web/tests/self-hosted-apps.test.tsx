@@ -150,6 +150,8 @@ describe("Admin › Self-hosted apps (FIX-132)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Make https://desk.acme.example instance-wide" }));
     const dlg = await screen.findByRole("dialog");
     expect(dlg.textContent).toMatch(/Every organization will see this self-hosted app/);
+    // (FIX-290) Promoting also opens the host on a private address, and says so before it happens.
+    expect(dlg.textContent).toContain("Its host also becomes reachable on a private address, for this app's connected accounts only.");
     expect(calls.some((c) => c.method === "POST")).toBe(false);
     fireEvent.click(within(dlg).getByRole("button", { name: "Make instance-wide" }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.path === "/v1/admin/app-instances/i1/promote")).toBe(true));
@@ -182,6 +184,8 @@ describe("Admin › Self-hosted apps (FIX-132)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
     const alert = (await screen.findAllByRole("alert")).find((a) => /host|claimed|registered/.test(a.textContent ?? "") && a.querySelector("p, button, a"))!;
     expect(alert.textContent).toMatch(/registered as a self-hosted Desk by the organization Acme/);
+    // (FIX-290) This button promotes without a dialog, so the same sentence stands beside it.
+    expect(alert.textContent).toContain("Its host also becomes reachable on a private address, for this app's connected accounts only.");
     expect(n).toBe(1);
     fireEvent.click(within(alert).getByRole("button", { name: "Make instance-wide" }));
     await waitFor(() => expect(calls.some((c) => c.path === "/v1/admin/app-instances/i1/promote")).toBe(true));

@@ -59,6 +59,9 @@ export function useInstanceBoundApps() {
   return { apps, bound, pending: apps.isPending || details.some((q) => q.isPending) };
 }
 
+/** (FIX-290, D-511) What making a registration instance-wide also does, said before anyone does it. */
+const OPENS_PRIVATE_HOST = "Its host also becomes reachable on a private address, for this app's connected accounts only.";
+
 /**
  * The refusal of a host (FIX-132): says who holds it as far as the server tells (an organization
  * administrator never sees another organization's name), links an instance administrator to the page
@@ -112,7 +115,7 @@ function HostConflictNotice({
       ) : null}
       {c.promotable && c.instance_id && c.app_id === appId ? (
         <div className="space-y-1">
-          <p>Make that registration available to every organization instead of registering the host again.</p>
+          <p>Make that registration available to every organization instead of registering the host again. {OPENS_PRIVATE_HOST}</p>
           <Button
             size="sm"
             variant="outline"
@@ -318,7 +321,7 @@ function InstanceRow({
               open={confirmPromote}
               onOpenChange={setConfirmPromote}
               title={`Make ${inst.base_url} instance-wide?`}
-              description={`Every organization will see this self-hosted app and can connect to it. Its ${inst.connections} existing connection${inst.connections === 1 ? "" : "s"} keep working. This is recorded in the audit log.`}
+              description={`Every organization will see this self-hosted app and can connect to it. Its ${inst.connections} existing connection${inst.connections === 1 ? "" : "s"} keep working. ${OPENS_PRIVATE_HOST} This is recorded in the audit log.`}
               confirmLabel="Make instance-wide"
               busy={promote.isPending}
               onConfirm={() => promote.mutate(inst.id, { onSuccess: () => setConfirmPromote(false) })}

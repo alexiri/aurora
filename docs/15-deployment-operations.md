@@ -636,6 +636,16 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 - Migrations are forward-only and run before any new API replica serves;
   every migration MUST be compatible with the previous API and gateway version
   still running (expand → migrate → contract across two releases).
+- (FIX-290, D-511) **Self-hosted app hosts open on private addresses after this
+  upgrade.** Every instance-wide registration that already exists, including an
+  organization's registration that was promoted earlier, lets that app's
+  connected accounts reach its host on a private address (HTTPS, port 443),
+  with no `privateHosts` entry. **Check Administration › Apps & accounts ›
+  Self-hosted apps before or right after upgrading**, and remove or turn off any
+  you would not open (Administration › Limits then lists the ones that count). Set
+  `gateway.self_hosted_refused_ranges` to your pod and Service CIDRs. Package
+  presets and organizations' own registrations get nothing, and the
+  NetworkPolicies are unchanged. The chart's notes repeat this on `helm upgrade`.
 - (FIX-234, C-1163) **Run the access report before upgrading to a release with
   C-1160.** `aurora-api access-report` (JSON, or `--text`) lists, per
   organization, the workspaces with no active own-right owner, the schedules

@@ -450,8 +450,10 @@ pub async fn promote(
         actor,
         "app_instance.promote",
         &promoted,
+        // (FIX-290, SEC-170) Promoting also gives the host the private-address allowance of an
+        // administrator's own registration; recorded always, whatever the host resolves to today.
         json!({"app_id": promoted.app_id, "host": promoted.host, "from_org": from_org,
-               "connections": promoted.connections}),
+               "connections": promoted.connections, "allowance": "self_hosted_private"}),
     )
     .org(from_org);
     audit::insert_tx(&mut tx, &ev).await?;

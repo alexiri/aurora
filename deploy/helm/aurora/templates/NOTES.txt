@@ -2,6 +2,13 @@ Aurora {{ .Chart.AppVersion }} installed. Public URL: {{ .Values.externalUrl }}
 Upgrade order is enforced by the migrate hook (runs before any new api replica); roll api, hookhost, gateway, runner, web, connectors.
 Secrets: {{ include "aurora.secretName" . }} (generated once, never overwritten). Gateway CA: {{ include "aurora.caSecretName" . }}.
 
+{{- if .Release.IsUpgrade }}
+UPGRADE NOTE: every instance-wide self-hosted app registration (also an organization's one that was promoted earlier)
+now lets that app's connected accounts reach its host on a private address, with no privateHosts entry. Review them in
+Administration > Apps & accounts > Self-hosted apps, and set config.gateway.self_hosted_refused_ranges to your pod and
+Service CIDRs (docs/15, Upgrades).
+{{ end }}
+
 `helm uninstall` leaves these in the namespace (hook-created, Helm does not delete them): the Secret {{ include "aurora.secretName" . }}
 (generated database passwords, relay token), the Secret {{ include "aurora.caSecretName" . }} (the gateway CA PRIVATE KEY) and the ConfigMap
 {{ include "aurora.fullname" . }}-config. Keep them to reinstall into this namespace with the old database volume; for a clean removal delete them:
