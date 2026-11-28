@@ -116,8 +116,8 @@ test.describe("agent Files page", () => {
     await expect(page.getByRole("dialog", { name: "Delete src?" })).toContainText("everything inside the folder");
     await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
     await expect(page.getByRole("link", { name: "src", exact: true })).toHaveCount(0);
-    expect(fs.ops).toContainEqual({ op: "delete", path: "/workspace/src", recursive: true });
-    expect([...fs.nodes.keys()].some((p) => p.startsWith("/workspace/src"))).toBe(false);
+    await expect.poll(() => fs.ops).toContainEqual({ op: "delete", path: "/workspace/src", recursive: true });
+    await expect.poll(() => [...fs.nodes.keys()].some((p) => p.startsWith("/workspace/src"))).toBe(false);
   });
 
   test("downloads through the attachment link, never a new tab", async ({ page }) => {
@@ -343,7 +343,8 @@ test.describe("Files journey (C-907)", () => {
       await page.getByRole("menuitem", { name: "Delete" }).click();
       await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
       await expect(page.getByRole("link", { name: "proj", exact: true })).toHaveCount(0);
-      expect([...fs.nodes.keys()].some((p) => p.startsWith("/workspace/proj"))).toBe(false);
+      // The row can leave the list (a reload in flight) before the delete reaches the mock: wait for the mock's state.
+      await expect.poll(() => [...fs.nodes.keys()].some((p) => p.startsWith("/workspace/proj"))).toBe(false);
 
       // `.aurora` is Aurora's own: a Managed badge, and no Rename, Move or Delete.
       await page.getByRole("checkbox", { name: "Show hidden" }).check();
