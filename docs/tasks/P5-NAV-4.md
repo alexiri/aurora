@@ -78,3 +78,14 @@ Sonnet `sonnet-integration-reviewer` with a browser (comparison and change lists
 
 Passes, verdict counts per pass, report paths, what was sent back and merged, owner-accepted differences, cluster torn
 down.
+
+**Pass 1 (2026-11-28, on `99c41755`): not clean — 9 Match, 1 Minor difference, 2 Needs changes.**
+
+- Report: `docs/design/navigation/verify/NAV-2A-REPORT-pass1.md`; captures in `…/verify/nav-2a-pass1/`.
+- To send back: C-1 (broken, CI red: the Terminal page scrolls since the new header; `.term-pane` height) to
+  P5-NAV-1; C-2 (rough, older than P5-NAV-1: unfocusable code boxes on the BYO Connect page).
+- Two owner questions, counted as Match: the agent "…" menu, and phone Chat opening on the conversation.
+- Merged fixes: none yet. Owner-accepted differences: none recorded.
+- No direct fixes and no product code changed, so no tests or fail-first evidence of this lane's own.
+- Cluster `aurora-mem5` (:4530) **kept up** for P5-SKILLS-5 pass 2. PROGRESS and FEATURES not edited
+  (`P5/14§agent-tabs` is not done).
