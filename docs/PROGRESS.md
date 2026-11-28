@@ -523,6 +523,7 @@ Live reservations (numbers inside a block that a lane has already used are recor
 ## Open questions for the owner
 
 - **Phase 5:** review of the coordinator defaults recorded in D-268.
+- **FIX-290 / D-511 and NetworkPolicies (2026-11-28):** with the chart's default NetworkPolicies (and on Cilium), the gateway's and API's egress excludes private ranges, so a private host registered in the dashboard is still dropped by the network unless `privateHosts.names` or `gatewayExtraEgress`/`apiExtraEgress` opens it. FIX-290 only removes Aurora's own refusal. Should the chart get an opt-in value that, set once, opens TCP 443 from the gateway and the API to the private ranges? That fully removes the per-host Helm edit, but weakens the network layer to Aurora's own checks. Recommended: yes, opt-in and off by default, on clusters where Aurora's per-app check is trusted.
 - **FIX-292 part 2 (2026-11-28):** with FIX-291's raised limits, 14 of the 19 `anthropics/skills` skills can be added, `pdf` among them. The other 5 (`claude-api`, `docx`, `pptx`, `xlsx`, `canvas-design`) need a design change: files bigger than one 200 KiB sync part split across parts, up to about 120 files, folders 6 deep, and budgets for multi-MB skills. Build it now (size L), or leave those 5 refused with their plain reason? Recommended: leave them for now, since they are document-processing tool bundles rather than instructions.
 - **Answered 2026-11-28 (from the review of the week):**
   1. **Steer:** keep it (D-510).
