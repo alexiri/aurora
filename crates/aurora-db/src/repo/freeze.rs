@@ -445,6 +445,14 @@ pub async fn abandon_pending_approvals(
     conn: &mut PgConnection,
     agents: &[Uuid],
 ) -> Result<Vec<super::approvals::Ended>, DbError> {
+    // The conversations first (the lock order of `approvals`): the freeze writes the notices
+    // into them and ends the turns of the held rows.
+    super::approvals::lock_conversations(
+        &mut *conn,
+        "agent_id = ANY($1) AND (status = 'pending' OR resume_state = 'ready')",
+        super::approvals::LockBind::List(agents),
+    )
+    .await?;
     let rows: Vec<super::approvals::EndedRow> = sqlx::query_as(
         "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(),
              updated_at = now()

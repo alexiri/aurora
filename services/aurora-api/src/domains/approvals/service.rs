@@ -80,6 +80,7 @@ async fn apply_always(
     c: &Caller,
     tx: &mut audit::Tx,
     row: &ApprovalRow,
+    locked: &[Uuid],
 ) -> Result<(AlwaysApplied, Vec<ApprovalRow>, Vec<AuditEvent>), ApiError> {
     if !matches!(c.principal, Principal::Session { .. }) {
         return Err(always_not_available(
@@ -153,6 +154,7 @@ async fn apply_always(
         c.user_id,
         via(c),
         s.ops().approvals.park.resume_window_secs,
+        locked,
     )
     .await?;
     let applied = AlwaysApplied {
@@ -197,6 +199,21 @@ pub async fn decide(
     // RFE-012 (D-55, SEC-28): only `can_approve` decides; a plain member gets 403.
     crate::http::auth::require_approve(&auth)?;
     let mut tx = audit::begin(s).await?;
+    // Everything the decision locks later (its notices, the task's wake) comes before the first
+    // approval row is written: conversation, then row, as a cancel and a revocation take them.
+    let mut conversations: Vec<Uuid> = existing.conversation_id.into_iter().collect();
+    if always && let (Some(connection), Some(tool)) = (existing.connection_id, &existing.tool_id) {
+        conversations.extend(
+            approvals::pending_same_kind_conversations(
+                &mut tx,
+                existing.agent_id,
+                connection,
+                tool,
+            )
+            .await?,
+        );
+    }
+    crate::domains::peer_tasks::service::lock_for_decision(&mut tx, &conversations).await?;
     // (FIX-109, 07 §Approval deadlines) A decision after the deadline is refused and the
     // approval is expired in this same transaction (committed even though the answer is 409),
     // whether or not the 10 s sweep has run yet.
@@ -230,7 +247,7 @@ pub async fn decide(
     let mut applied = None;
     let mut extra_events: Vec<AuditEvent> = Vec::new();
     if always {
-        let (a, others, events) = apply_always(s, c, &mut tx, &row).await?;
+        let (a, others, events) = apply_always(s, c, &mut tx, &row, &conversations).await?;
         super::resume::after_decide(&mut tx, s, &others, true).await?;
         for o in &others {
             extra_events.push(decision_event(c, o, Decision::Approve, false));
@@ -321,6 +338,9 @@ pub async fn decide_batch(
         return Err(ApiError::not_found("Batch not found."));
     }
     let mut tx = audit::begin(s).await?;
+    // As for one decision: the conversations and their tasks before the rows.
+    let conversations = approvals::pending_batch_conversations(&mut tx, agent_id, batch_id).await?;
+    crate::domains::peer_tasks::service::lock_for_decision(&mut tx, &conversations).await?;
     // (FIX-109) Overdue members of the batch are expired here, not decided.
     let expired =
         approvals::expire_overdue_of_batch(&mut tx, c.user_id, org, ws, agent_id, batch_id).await?;

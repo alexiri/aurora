@@ -2,9 +2,12 @@
 //! one report, queue promotion and the 60 s expiry sweep. Everything runs in the caller's
 //! transaction.
 //!
-//! **Lock order, for every path: task conversation → link → task → other conversations.** A path
-//! takes what it needs in this order and never goes back to an earlier lock it does not already
-//! hold. A task conversation is locked before any link, also when it is only the **origin** of
+//! **Lock order, for every path: task conversation → link → task → other conversations →
+//! gateway approval rows.** A path takes what it needs in this order and never goes back to an
+//! earlier lock it does not already hold. The approval rows come last: a close abandons the
+//! task's pending ones while it holds everything else, so a decision takes its locks
+//! ([`lock_for_decision`]) before it writes a row, and every other writer of rows locks their
+//! conversations first (the whole list: `aurora_db::repo::approvals`). A task conversation is locked before any link, also when it is only the **origin** of
 //! the task at hand (a person can open a task from inside a task conversation, even back to the
 //! requester, on the same link): writing into it after the link would be the reverse of its own
 //! turn end. Where two are needed, the task conversation comes before the one it was opened
@@ -1358,6 +1361,35 @@ async fn lock_for_task_conversation(
     lock_task_origins(conn, found.id).await?;
     links::get_for_update(&mut *conn, found.link_id).await?;
     Ok(repo::get_for_update(&mut *conn, found.id).await?)
+}
+
+/// Everything a decision on approvals raised in `conversations` may lock later, taken in one
+/// pass before it writes any approval row: for each task conversation what
+/// [`lock_for_task_conversation`] takes (so the decision's notices and wake turn find the
+/// locks held, as a cancel does before it abandons the rows), then the other conversations,
+/// which the module order puts after it. Newest first in each group, as every writer that
+/// locks several conversations does: ids are time-ordered, so a task conversation comes before
+/// the one it was opened from.
+pub async fn lock_for_decision(
+    conn: &mut PgConnection,
+    conversations: &[Uuid],
+) -> Result<(), ApiError> {
+    let mut conversations = conversations.to_vec();
+    conversations.sort_unstable_by(|a, b| b.cmp(a));
+    conversations.dedup();
+    let mut others = Vec::new();
+    for conversation in conversations {
+        match repo::by_task_conversation(&mut *conn, conversation).await? {
+            Some(task) => {
+                lock_for_task_conversation(conn, &task).await?;
+            }
+            None => others.push(conversation),
+        }
+    }
+    for conversation in others {
+        convs::lock(&mut *conn, conversation).await?;
+    }
+    Ok(())
 }
 
 /// (FIX-257) The task conversations a close of `task` may write into, locked before the link.
