@@ -179,6 +179,20 @@ for (const [what, path] of [
   });
 }
 
+// (FIX-281) The grant doesn't cover what an agent inherits: its Skills page claims nothing about it.
+for (const width of [1256, 390]) {
+  test(`an agent's Skills draws nothing for what the grant doesn't cover, and says so (${width} px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const clean = await open(page, `${AGENT}?tab=skills`);
+    await expect(page.getByRole("list", { name: "Skills" })).toBeVisible();
+    const chips = page.getByRole("radiogroup", { name: "Show" }).getByRole("radio");
+    await expect(chips).toHaveText(["All 1", `${agent.name}’s own 1`, "Off 0"]);
+    await expect(page.getByText(`For ${agent.name}`, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(`Emergency read access shows only ${agent.name}’s own skills.`)).toBeVisible();
+    await clean();
+  });
+}
+
 // The rail doesn't offer these; a typed or remembered address reaches them.
 for (const path of ["/settings", "/apps", "/apps?tab=apps", "/apps/github", "/apps/github/connect", "/internet-access", "/approvals", "/welcome", "/credentials", "/agents/new/t1", "/agents/daneel/terminal"]) {
   test(`${path} says the grant doesn't cover it, and asks for nothing`, async ({ page }) => {

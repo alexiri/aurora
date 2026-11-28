@@ -21,9 +21,11 @@ import { PendingUpdatesNotice } from "./library";
 import { SkillChips, SkillCompactList, SkillSearch, SkillTable, SkillsFootnote, SourceChip } from "./list";
 import {
   agentRows,
+  emergencyOwnSkillsWords,
   levelRows,
   matchesFilter,
   matchesSearch,
+  ownSkillsOnly,
   pageScope,
   pageSubject,
   pageTier,
@@ -236,10 +238,11 @@ export function SkillsList({ page }: { page: SkillPage }) {
       {/* Counted from this page's own rows, so it agrees with the ones marked "Update available". */}
       <PendingUpdatesNotice count={rows.filter((r) => updateToReview(page, r)).length} />
       <ErrorNotice error={setEnabled.error ?? setOff.error} />
+      {page.kind === "agent" && ownSkillsOnly(page) ? <p className="text-xs text-muted">{emergencyOwnSkillsWords(page.agentName)}</p> : null}
       {empty ? (
         <>
           <EmptyState
-            title="No skills yet"
+            title={ownSkillsOnly(page) ? "No skills of its own" : "No skills yet"}
             when={
               canWrite
                 ? `A skill teaches ${page.kind === "agent" ? page.agentName : "agents"} how to do one task. Use Add skill to write one or bring one in.`
