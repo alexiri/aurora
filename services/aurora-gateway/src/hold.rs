@@ -149,7 +149,7 @@ fn hook_body<'a>(r: &SummaryRequest<'a>) -> Option<Cow<'a, [u8]>> {
         return None;
     }
     if media.starts_with("multipart/") || lower.contains("boundary") {
-        return first_part_only(content_type, r.body_prefix).map(Cow::Owned);
+        return first_part_only(content_type, r.body_prefix, r.truncated).map(Cow::Owned);
     }
     Some(Cow::Borrowed(r.body_prefix))
 }
@@ -205,8 +205,9 @@ fn bytes_as_sent(headers: &str) -> bool {
 
 /// A multipart body cut after its first part and closed again, when that part is the first for
 /// every reader (the body starts at the delimiter: a lenient reader takes the first place it
-/// occurs, a strict one only a line of its own), is declared JSON and has one reading.
-fn first_part_only(content_type: &str, body: &[u8]) -> Option<Vec<u8>> {
+/// occurs, a strict one only a line of its own), is declared JSON and has one reading. Of a
+/// cut-off body the part must be closed by a delimiter in what was read: else it may go on.
+fn first_part_only(content_type: &str, body: &[u8], truncated: bool) -> Option<Vec<u8>> {
     let find = |needle: &[u8], from: usize| {
         let rest = body.get(from..)?;
         let at = rest.windows(needle.len()).position(|w| w == needle)?;
@@ -236,7 +237,7 @@ fn first_part_only(content_type: &str, body: &[u8]) -> Option<Vec<u8>> {
     .into_iter()
     .flatten()
     .min()
-    .unwrap_or(body.len());
+    .or_else(|| (!truncated).then_some(body.len()))?;
     let one_reading =
         aurora_policy::json::parse(body.get(part..end)?).is_some_and(|d| !d.has_colliding_names());
     one_reading.then(|| {

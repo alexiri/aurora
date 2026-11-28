@@ -903,7 +903,8 @@ upstreams on random ports keep working.
    hook sees only the first part of a multipart body** (a `multipart/` type, or
    any mention of a boundary): the body is cut after that part and closed
    again. It gets that only when the body starts at the delimiter, the part is
-   declared JSON and has one reading, and every reader reads the same boundary:
+   declared JSON and has one reading (in a cut-off body, only a part that a
+   delimiter in what was read closes), and every reader reads the same boundary:
    one `;boundary=` parameter (no `boundary*=`, no space around `=`), a closed
    quote, RFC 2046's characters and no backslash.
 2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,

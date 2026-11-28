@@ -736,6 +736,29 @@ async fn an_encoded_body_or_first_part_never_reaches_the_hook() {
     }
 }
 
+/// A cut-off body whose first part has no closing delimiter: what was read may be a whole JSON
+/// value while the part the receiver gets goes on.
+#[tokio::test]
+async fn a_cut_off_first_part_never_reaches_the_hook() {
+    let related = Some("multipart/related; boundary=BND");
+    let part = "--BND\r\ncontent-type: application/json\r\n\r\n{\"to\":\"ok@example.com\"}";
+    for cut in ["", " ", "\r\n", "\r\n--BN"] {
+        let body = format!("{part}{cut}");
+        assert!(
+            sent_to_hook(related, body.as_bytes(), true).await.is_none(),
+            "{cut:?}"
+        );
+    }
+    // A delimiter in what was read ends the part, wherever the body is cut after it.
+    for rest in ["\r\n--BND", "\n--BND--", "\r\n--BND\r\ncontent-type: te"] {
+        let body = format!("{part}{rest}");
+        assert!(
+            sent_to_hook(related, body.as_bytes(), true).await.is_some(),
+            "{rest:?}"
+        );
+    }
+}
+
 #[test]
 fn the_body_is_buffered_only_when_a_form_params_tool_may_match() {
     let l = loaded();
