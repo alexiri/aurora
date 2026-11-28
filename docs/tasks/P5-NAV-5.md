@@ -95,3 +95,14 @@ down.
 - No direct fixes and no product code changed, so no fail-first evidence of this lane's own.
 - Cluster `aurora-mem5` (:4530) **kept up** for the next pass. PROGRESS and FEATURES not edited (`P5/14§places` is not
   done).
+
+**Pass 2 (2026-11-28, on `890d11e8`, with FIX-282 and FIX-283): clean, 16 rows Match. P5-NAV-5 is done.**
+
+- Report: `docs/design/navigation/verify/NAV-3-REPORT-pass2.md` (no captures: nothing is left that isn't Match).
+- C-1 to C-5 and the small items are fixed on the live stack. Merged fixes since pass 1: FIX-282, FIX-283.
+  Owner-accepted differences: none. Still open for the owner: whether people waiting to join are counted.
+- CI run 46100344241 is green. `places.spec.ts` and `place-picker.spec.ts` 34 passed locally (through `test.sh`).
+- No direct fixes and no product code changed. The broken accounts for C-1 were made by editing the throwaway database.
+- Cluster `aurora-mem5` **torn down**; named volumes kept, none pruned (the kind node's own unnamed `/var` volume went
+  with the cluster).
+- PROGRESS and FEATURES (`P5/14§places` can be marked done) are left to the coordinator.
