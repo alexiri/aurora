@@ -409,7 +409,8 @@ pub async fn expire_if_overdue(tx: &mut sqlx::PgConnection, id: Uuid) -> Result<
 }
 
 /// [`expire_if_overdue`] for the pending approvals of one batch of one agent that the user
-/// could decide. Returns how many it expired.
+/// could decide, in the conversations the caller has `locked` (or without one). Returns how many
+/// it expired.
 pub async fn expire_overdue_of_batch(
     tx: &mut sqlx::PgConnection,
     user: Uuid,
@@ -417,11 +418,13 @@ pub async fn expire_overdue_of_batch(
     ws: Option<Uuid>,
     agent: Uuid,
     batch_id: &str,
+    locked: &[Uuid],
 ) -> Result<usize, DbError> {
     let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals a SET status = 'expired', decided_at = now(), resolved_at = now(), \
          updated_at = now() \
          WHERE a.status = 'pending' AND a.deadline <= now() AND a.batch_id = $5 \
+         AND (a.conversation_id IS NULL OR a.conversation_id = ANY($6)) \
          AND a.agent_id = $4 AND {} AND ($2::uuid IS NULL OR a.org_id = $2) \
          AND ($3::uuid IS NULL OR a.workspace_id = $3) \
          RETURNING a.id, a.workspace_id",
@@ -432,6 +435,7 @@ pub async fn expire_overdue_of_batch(
     .bind(ws)
     .bind(agent)
     .bind(batch_id)
+    .bind(locked)
     .fetch_all(&mut *tx)
     .await?;
     for (id, w) in &rows {
@@ -577,7 +581,9 @@ pub async fn batch_visible(
     .await?)
 }
 
-/// Decide every pending approval of the batch (same agent) the user may decide.
+/// Decide every pending approval of the batch (same agent) the user may decide. Only those of the
+/// conversations the caller has `locked` (or without one): a member raised since stays pending,
+/// as in [`approve_same_kind`].
 /// Returns `(id, workspace_id)` of the rows this call resolved.
 #[allow(clippy::too_many_arguments)]
 pub async fn decide_batch(
@@ -590,6 +596,7 @@ pub async fn decide_batch(
     approve: bool,
     via: &str,
     resume_window_secs: u64,
+    locked: &[Uuid],
 ) -> Result<Vec<(Uuid, Uuid, Uuid)>, DbError> {
     let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals a SET status = $6, decided_by_user_id = $1, decided_via = $7, \
@@ -600,6 +607,7 @@ pub async fn decide_batch(
          WHERE a.status = 'pending' AND a.deadline > now() AND a.batch_id = $5 AND a.agent_id = $4 \
          AND {} \
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
+         AND (a.conversation_id IS NULL OR a.conversation_id = ANY($9)) \
          RETURNING a.id, a.workspace_id, a.org_id",
         may_decide()
     )))
@@ -611,6 +619,7 @@ pub async fn decide_batch(
     .bind(if approve { "approved" } else { "denied" })
     .bind(via)
     .bind(resume_window_secs as f64)
+    .bind(locked)
     .fetch_all(&mut *tx)
     .await?;
     for (id, w, _) in &rows {

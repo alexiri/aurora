@@ -341,9 +341,18 @@ pub async fn decide_batch(
     // As for one decision: the conversations and their tasks before the rows.
     let conversations = approvals::pending_batch_conversations(&mut tx, agent_id, batch_id).await?;
     crate::domains::peer_tasks::service::lock_for_writes_in(&mut tx, &conversations).await?;
-    // (FIX-109) Overdue members of the batch are expired here, not decided.
-    let expired =
-        approvals::expire_overdue_of_batch(&mut tx, c.user_id, org, ws, agent_id, batch_id).await?;
+    // (FIX-109) Overdue members of the batch are expired here, not decided. Both writes keep to
+    // the conversations locked above.
+    let expired = approvals::expire_overdue_of_batch(
+        &mut tx,
+        c.user_id,
+        org,
+        ws,
+        agent_id,
+        batch_id,
+        &conversations,
+    )
+    .await?;
     let rows = approvals::decide_batch(
         &mut tx,
         c.user_id,
@@ -354,6 +363,7 @@ pub async fn decide_batch(
         decision == Decision::Approve,
         via(c),
         s.ops().approvals.park.resume_window_secs,
+        &conversations,
     )
     .await?;
     if rows.is_empty() && expired > 0 {

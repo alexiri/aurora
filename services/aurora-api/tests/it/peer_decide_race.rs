@@ -847,6 +847,41 @@ async fn a_connection_delete_locks_every_conversation_before_the_first_row() {
     assert_eq!((writer, status < 300), (Ok(true), true), "{status} {body}");
 }
 
+/// A batch decision writes only in the conversations it locked: a member raised in another
+/// one since stays pending.
+#[tokio::test]
+async fn a_batch_decides_only_in_the_conversations_it_locked() {
+    let h = held(Some("batch-4")).await;
+    let pool = h.rig.h.pool();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let (other, _) = h.rig.person_turn(agent, h.rig.p.id).await;
+    let mut holder = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut holder).await;
+    assert!(convs::lock(&mut holder, h.task_conversation).await.unwrap());
+    let body = json!({"decision": "deny", "agent_id": agent});
+    let uri = "/v1/approvals/batches/batch-4/decision";
+    let decide = h.rig.post(&h.rig.p, uri, Some(body));
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        // The batch has read which conversations to lock and waits for the first.
+        let late = pending_approval(&h.rig, agent, other, Some("batch-4")).await;
+        holder.commit().await.unwrap();
+        late
+    };
+    let ((status, body), late) = tokio::join!(decide, finish);
+    assert_eq!((status, &body["decided"]), (200, &json!(1)), "{body}");
+    let s: String = sqlx::query_scalar("SELECT status FROM approvals WHERE id = $1")
+        .bind(late)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(s, "pending");
+}
+
 async fn a_close_that_holds_the_link(
     h: &Held,
     decide: impl Future<Output = (u16, serde_json::Value)>,
