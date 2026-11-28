@@ -290,6 +290,14 @@ pub(crate) fn entries(dir: BorrowedFd<'_>) -> io::Result<Vec<(OsString, FileType
         .collect())
 }
 
+/// [`entries`] of the folder `rel` below `home`; nothing when it is not there, or when it or a
+/// folder above it is a link or cannot be read.
+pub(crate) fn list_beneath(home: &Path, rel: &Path) -> Vec<(OsString, FileType)> {
+    open_dir_beneath(home, rel)
+        .and_then(|dir| entries(dir.as_fd()))
+        .unwrap_or_default()
+}
+
 /// Every entry below `dir` that is not a directory, relative to it. A tree deeper than
 /// [`WALK_MAX_DEPTH`] is an error.
 pub(crate) fn list_files(dir: OwnedFd) -> io::Result<Vec<PathBuf>> {
