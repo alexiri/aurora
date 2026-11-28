@@ -257,7 +257,6 @@ describe("one list (skill-1)", () => {
     const calls = routes(base({ "GET /v1/agents/a1/skills": () => json(200, { items: [triage], next_cursor: null }) }));
     wrap(<AgentSkills readOnly />);
     await list();
-    expect(within(row("triage-alerts")).getByRole("switch")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add skill" })).toBeNull();
     await open("triage-alerts");
     const p = await panel("Triage alerts");
@@ -266,6 +265,43 @@ describe("one list (skill-1)", () => {
     expect(within(p).queryByRole("link", { name: "Try it in chat" })).toBeNull();
     expect(within(p).getByText("You can read this skill. You can’t change it.")).toBeTruthy();
     expect(calls.some((c) => c.path.endsWith("/effective"))).toBe(false);
+  });
+
+  describe("what emergency read access doesn't cover is not drawn (FIX-281)", () => {
+    const LINE = "Emergency read access shows only Daneel’s own skills.";
+    const own = (items: unknown[]) => base({ "GET /v1/agents/a1/skills": () => json(200, { items, next_cursor: null }) });
+
+    it("a reader gets no chip or column for what they can't read, and one line that says so", async () => {
+      routes(own([triage, draft]));
+      wrap(<AgentSkills readOnly />);
+      await list();
+      expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["All 2", "Daneel’s own 2", "Off 1"]);
+      expect(screen.queryByText("For Daneel")).toBeNull();
+      expect(screen.getByText(LINE)).toBeTruthy();
+      // without the column, a skill that is off still says so
+      expect(within(row("draft-email")).getByText("Off")).toBeTruthy();
+      expect(within(row("triage-alerts")).queryByText("Off")).toBeNull();
+      expect(screen.queryByRole("switch")).toBeNull();
+    });
+
+    it("a reader of an agent with no skill of its own is not told that it has none at all", async () => {
+      routes(own([]));
+      wrap(<AgentSkills readOnly />);
+      expect(await screen.findByRole("heading", { name: "No skills of its own" })).toBeTruthy();
+      expect(screen.getByText(LINE)).toBeTruthy();
+      expect(screen.queryByRole("heading", { name: "No skills yet" })).toBeNull();
+    });
+
+    it("anyone else's page is unchanged", async () => {
+      routes(base());
+      wrap(<AgentSkills />);
+      await list();
+      await waitFor(() => expect(screen.getByRole("radio", { name: "From Acme 1" })).toBeTruthy());
+      expect(screen.getByRole("radio", { name: "From the workspace 1" })).toBeTruthy();
+      expect(screen.getByText("For Daneel")).toBeTruthy();
+      expect(within(row("triage-alerts")).getByRole("switch")).toBeTruthy();
+      expect(screen.queryByText(LINE)).toBeNull();
+    });
   });
 
   it("with no skill at all it says so once, and Add skill is the way to start", async () => {

@@ -14,6 +14,7 @@ import {
   combineWords,
   filterOptions,
   overrideSentence,
+  ownSkillsOnly,
   pageSubject,
   replaceWords,
   sourceChip,
@@ -119,22 +120,28 @@ interface RowsProps {
 // Three columns only where the table itself is wide enough (`@container` + `@xl:`, 36 rem): between 768 and 1100 px the
 // window is wide but the rail and the settings sub-nav leave about 300 px. Narrower, a row stacks.
 const COLUMNS = "@xl:grid @xl:grid-cols-[minmax(0,1fr)_auto_7.5rem] @xl:items-center @xl:gap-4";
+const COLUMNS_NO_SWITCH = "@xl:grid @xl:grid-cols-[minmax(0,1fr)_auto] @xl:items-center @xl:gap-4";
 
-/** The whole table: **Skill · Source · For <subject>**; on a phone each row stacks. */
+/**
+ * The whole table: **Skill · Source · For <subject>**; on a phone each row stacks. An emergency reader doesn't see what
+ * applies to an agent, so there is no **For <agent>** column; a skill that is off says so beside its source.
+ */
 export function SkillTable({ page, rows, selected, busyKey, onSelect, onToggle, onCompare }: RowsProps & { onCompare: (row: SkillRow) => void }) {
+  const ownOnly = ownSkillsOnly(page);
+  const columns = ownOnly ? COLUMNS_NO_SWITCH : COLUMNS;
   return (
     <div className="@container overflow-hidden rounded-card border border-line bg-surface">
-      <div aria-hidden="true" className={`hidden border-b border-line bg-subtle px-4 py-2 text-label font-semibold uppercase tracking-label text-muted ${COLUMNS}`}>
+      <div aria-hidden="true" className={`hidden border-b border-line bg-subtle px-4 py-2 text-label font-semibold uppercase tracking-label text-muted ${columns}`}>
         <span>Skill</span>
         <span className="text-right">Source</span>
-        <span>For {pageSubject(page)}</span>
+        {ownOnly ? null : <span>For {pageSubject(page)}</span>}
       </div>
       <ul aria-label="Skills" className="divide-y divide-line">
         {rows.map((row) => {
           const replaces = page.kind === "agent" ? replaceWords(page, row) : null;
           const usedBy = page.kind === "agent" ? null : row.skill.used_by_agents;
           return (
-            <li key={row.key} data-testid={`skill-row-${row.skill.name}`} className={cn("relative flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 hover:bg-subtle", COLUMNS, selected === row.key && "bg-subtle")}>
+            <li key={row.key} data-testid={`skill-row-${row.skill.name}`} className={cn("relative flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 hover:bg-subtle", columns, selected === row.key && "bg-subtle")}>
               <div className="min-w-0 basis-full">
                 {/* The name's button covers the whole row; the switch and Compare sit above it. */}
                 <button type="button" aria-current={selected === row.key ? "true" : undefined} className="block max-w-full text-left after:absolute after:inset-0" onClick={() => onSelect(row.key)}>
@@ -156,10 +163,13 @@ export function SkillTable({ page, rows, selected, busyKey, onSelect, onToggle, 
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 @xl:justify-end">
                 <SourceChip page={page} row={row} />
                 {updateToReview(page, row) ? <Badge className="text-xs">Update available</Badge> : null}
+                {ownOnly && !row.on ? <span className="text-xs text-ink-2">Off</span> : null}
               </div>
-              <div className="relative z-10 justify-self-start">
-                <SkillSwitch page={page} row={row} busy={busyKey === row.key} onToggle={onToggle} />
-              </div>
+              {ownOnly ? null : (
+                <div className="relative z-10 justify-self-start">
+                  <SkillSwitch page={page} row={row} busy={busyKey === row.key} onToggle={onToggle} />
+                </div>
+              )}
             </li>
           );
         })}

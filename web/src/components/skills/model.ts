@@ -40,6 +40,16 @@ export type SkillPage =
     }
   | { kind: "organization"; orgId: string; label: string };
 
+/**
+ * An agent's page for an emergency reader: it holds the agent's own skills and nothing of what the agent inherits, so
+ * it must draw nothing that would read as "nothing is inherited".
+ */
+export function ownSkillsOnly(page: SkillPage): boolean {
+  return page.kind === "agent" && page.readOnly;
+}
+
+export const emergencyOwnSkillsWords = (agentName: string) => `Emergency read access shows only ${agentName}’s own skills.`;
+
 export function pageScope(page: SkillPage): SkillScope {
   if (page.kind === "agent") return { kind: "agent", id: page.agentId };
   return page.kind === "workspace" ? { kind: "workspace", id: page.wsId } : { kind: "organization", id: page.orgId };
@@ -219,13 +229,8 @@ export function matchesFilter(row: SkillRow, filter: SkillFilter): boolean {
 export function filterOptions(page: SkillPage, rows: SkillRow[]): { value: SkillFilter; label: string }[] {
   const chip = (value: SkillFilter, words: string) => ({ value, label: `${words} ${rows.filter((r) => matchesFilter(r, value)).length}` });
   if (page.kind === "agent") {
-    return [
-      chip("all", "All"),
-      chip("own", `${page.agentName}’s own`),
-      chip("workspace", "From the workspace"),
-      chip("org", `From ${page.orgName}`),
-      chip("off", "Off"),
-    ];
+    const inherited = ownSkillsOnly(page) ? [] : [chip("workspace", "From the workspace"), chip("org", `From ${page.orgName}`)];
+    return [chip("all", "All"), chip("own", `${page.agentName}’s own`), ...inherited, chip("off", "Off")];
   }
   return [chip("all", "All"), chip("written", "Written here"), chip("libraries", "From libraries"), chip("off", "Off")];
 }
