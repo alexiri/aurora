@@ -888,9 +888,10 @@ upstreams on random ports keep working.
    `07 §One reading of a JSON body`) When what a template field reads has two
    readings, the card shows no value from the body and has a `Warning` field
    saying so (the generic summary does the same for a repeated name anywhere,
-   naming it). A template field that reads JSON from a body that is not valid
-   JSON, or is longer than what was read, adds a `Warning` saying which; its
-   values never just vanish. The hook gets JSON only when it has one reading,
+   naming it). A template field that reads JSON or GraphQL, directly or after
+   other decoders, adds a `Warning` when the body, or the part it decodes, cannot
+   be read or the body is longer than what was read; its values never just
+   vanish. A value that is only not there adds none. The hook gets JSON only when it has one reading,
    whatever the content type says: a body the core reads as JSON must repeat no
    name anywhere, also in another case; one it cannot read, a cut-off one
    included, stays with the template when its content type says JSON or it

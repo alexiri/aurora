@@ -79,7 +79,7 @@ pub fn summarize(a: &Approval, inp: &Input<'_>) -> ApprovalSummary {
         fields.push(crate::two_readings(
             "a name appears twice, or also in another case",
         ));
-    } else if let Some(why) = unreadable_json(a, inp) {
+    } else if let Some(why) = unreadable_body(a, inp) {
         fields.push(crate::warning(format!(
             "{why}, so the values this card reads from it are not shown."
         )));
@@ -164,24 +164,57 @@ fn json_at(body: &[u8], pointer: &str, wildcard: bool) -> Option<Vec<serde_json:
     nodes.iter().map(|n| n.value().ok()).collect()
 }
 
-/// Why a field that reads JSON from the body cannot, when there is a body: such a field never
-/// just vanishes from the card. (A `graphql` field also reads a bare query text.)
-fn unreadable_json(a: &Approval, inp: &Input<'_>) -> Option<&'static str> {
-    let reads_json = a.fields.iter().any(|f| {
-        matches!(&f.source, Source::Body { steps } if matches!(
-            steps.first(),
-            Some(Decoder::Json(_) | Decoder::JsonCount(_) | Decoder::JsonText(_))
-        ))
-    });
-    if !reads_json || inp.body_prefix.is_empty() {
-        None
-    } else if inp.truncated {
-        Some("The body is longer than what was read")
-    } else if json::parse(inp.body_prefix).is_none() {
-        Some("The body is not valid JSON")
-    } else {
-        None
+/// Why a field that reads JSON or GraphQL from the body cannot, when there is a body: such a
+/// field never just vanishes from the card, whatever decoders come before. A value that is only
+/// not there is no reason.
+fn unreadable_body(a: &Approval, inp: &Input<'_>) -> Option<&'static str> {
+    if inp.body_prefix.is_empty() {
+        return None;
     }
+    a.fields.iter().find_map(|f| {
+        let Source::Body { steps } = &f.source else {
+            return None;
+        };
+        let last = steps.iter().rposition(reads_document)?;
+        if inp.truncated {
+            return Some("The body is longer than what was read");
+        }
+        unreadable_by(&steps[..=last], inp.body_prefix)
+    })
+}
+
+fn reads_document(d: &Decoder) -> bool {
+    matches!(
+        d,
+        Decoder::Json(_) | Decoder::JsonCount(_) | Decoder::JsonText(_) | Decoder::Graphql(_)
+    )
+}
+
+/// Where the chain `steps`, which ends in a JSON or GraphQL step, fails to read `body`.
+fn unreadable_by(steps: &[Decoder], body: &[u8]) -> Option<&'static str> {
+    let mut v = Val::Bytes(body.to_vec());
+    for (i, s) in steps.iter().enumerate() {
+        let readable = match s {
+            Decoder::Graphql(_) => graphql_request(v.bytes())
+                .is_some_and(|(q, _)| graphql_parser::parse_query::<String>(&q).is_ok()),
+            _ if reads_document(s) => json::parse(v.bytes()).is_some(),
+            _ => true,
+        };
+        if !readable {
+            return Some(match s {
+                _ if i > 0 => "Part of the body could not be read",
+                Decoder::Graphql(_) => "The body could not be read as a GraphQL request",
+                _ => "The body is not valid JSON",
+            });
+        }
+        match step(s, &v) {
+            Some(next) => v = next,
+            // The document was read and the value is not in it.
+            None if reads_document(s) => return None,
+            None => return Some("Part of the body could not be read"),
+        }
+    }
+    None
 }
 
 /// Whether the body, as the first step of `steps` reads it, has two readings. A body that is
@@ -485,20 +518,26 @@ fn collect_text(v: &serde_json::Value, out: &mut Vec<String>, depth: usize) {
     }
 }
 
-/// `operation_name`: the request's `operationName`, else the first named operation.
-/// `field_names`: top-level fields of the first operation, comma-separated.
-fn graphql(body: &[u8], sel: GraphqlSelect) -> Option<String> {
-    let (query, op_name) = match json::parse(body) {
+/// The query text and `operationName` of a GraphQL request: a JSON object with a string
+/// `query`, else the whole body as the query text.
+fn graphql_request(body: &[u8]) -> Option<(String, Option<String>)> {
+    match json::parse(body) {
         Some(doc @ Node::Object(_)) => {
             let member = |name: &str| match doc.get(name) {
                 Lookup::Found(Node::Scalar(v)) => Ok(v.as_str().map(str::to_owned)),
                 Lookup::Found(_) | Lookup::Missing => Ok(None),
                 Lookup::Ambiguous => Err(TwoReadings),
             };
-            (member("query").ok()??, member("operationName").ok()?)
+            Some((member("query").ok()??, member("operationName").ok()?))
         }
-        _ => (std::str::from_utf8(body).ok()?.to_owned(), None),
-    };
+        _ => Some((std::str::from_utf8(body).ok()?.to_owned(), None)),
+    }
+}
+
+/// `operation_name`: the request's `operationName`, else the first named operation.
+/// `field_names`: top-level fields of the first operation, comma-separated.
+fn graphql(body: &[u8], sel: GraphqlSelect) -> Option<String> {
+    let (query, op_name) = graphql_request(body)?;
     let doc = graphql_parser::parse_query::<String>(&query).ok()?;
     use graphql_parser::query::{Definition, OperationDefinition as Op, Selection};
     let ops: Vec<(Option<&str>, &graphql_parser::query::SelectionSet<String>)> = doc
@@ -674,7 +713,9 @@ mod tests {
             }
             assert_eq!(val(&s, "Task").as_deref(), Some("t1"));
         }
-        let s = run(a, "/t1", None, br#"{"to":"ok@example.com","cc":[]}"#, false);
+        // A body every field can read, the `graphql` one included.
+        let body = br#"{"to":"ok@example.com","cc":[],"query":"{ a }"}"#;
+        let s = run(a, "/t1", None, body, false);
         assert_eq!(val(&s, "To").as_deref(), Some("ok@example.com"));
         assert!(val(&s, "Warning").is_none());
     }
@@ -712,6 +753,63 @@ mod tests {
             {"label":"A","source":"body","steps":[{"form":"Action"}]}]});
         let s = run(form, "/", None, b"Action=Run", false);
         assert!(val(&s, "Warning").is_none());
+    }
+
+    /// The same for a field that reaches JSON through another decoder, and for a `graphql`
+    /// field. A value that is merely not there is no warning.
+    #[test]
+    fn a_decoder_chain_or_graphql_field_that_cannot_read_says_so() {
+        let one = |steps: serde_json::Value| json!({"title":"T","fields":[{"label":"V","source":"body","steps":steps}]});
+        for (steps, body) in [
+            (
+                json!([{"form":"payload"},{"json":"/to"}]),
+                "payload=not-json",
+            ),
+            (json!([{"form":"payload"},{"json":"/to"}]), "other=1"),
+            (json!([{"mime_text":{}},{"json":"/to"}]), "\u{0}"),
+            (json!([{"base64":{}},{"json":"/to"}]), "!!!"),
+            (json!([{"graphql":"operation_name"}]), "{ not graphql"),
+            (json!([{"graphql":"field_names"}]), r#"{"query": 5}"#),
+            (
+                json!([{"graphql":"field_names"}]),
+                r#"{"query": "mutation {"}"#,
+            ),
+        ] {
+            let s = run(one(steps.clone()), "/", None, body.as_bytes(), false);
+            assert!(val(&s, "V").is_none(), "{steps}: {body}");
+            assert!(
+                val(&s, "Warning").is_some_and(
+                    |w| w.contains("could not be read") || w.contains("not valid JSON")
+                ),
+                "{steps}: {body}: {s:?}"
+            );
+        }
+        let s = run(
+            one(json!([{"graphql":"operation_name"}])),
+            "/",
+            None,
+            b"{",
+            true,
+        );
+        assert!(
+            val(&s, "Warning").is_some_and(|w| w.contains("longer than")),
+            "{s:?}"
+        );
+        for (steps, body) in [
+            (
+                json!([{"form":"payload"},{"json":"/to"}]),
+                r#"payload={"cc":1}"#,
+            ),
+            (
+                json!([{"graphql":"operation_name"}]),
+                r#"{"query":"{ a }"}"#,
+            ),
+            (json!([{"graphql":"field_names"}]), "{ a }"),
+            (json!([{"json":"/to"}]), r#"{"cc":1}"#),
+        ] {
+            let s = run(one(steps.clone()), "/", None, body.as_bytes(), false);
+            assert!(val(&s, "Warning").is_none(), "{steps}: {body}: {s:?}");
+        }
     }
 
     #[test]
