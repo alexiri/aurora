@@ -111,3 +111,72 @@ Sonnet `nextjs-developer` (one complex component with role-dependent content, ke
 
 Commits; screenshots of the three pickers (dark, light), the rail foot, the phone sheet, beside the mockups; remaining
 differences with reasons; tests changed; commands and results.
+
+### Report (2026-11-28, branch `alexiri/p5-nav-2`, on `master` b5755ed5)
+
+**Built** (`ce3eb6be`). `lib/nav/places.ts` builds the list of places (pure); `components/nav/place-picker.tsx` is the
+picker's content; `scope-switcher.tsx` is the card with its popover (`ScopeSwitcher`, now in every place) and the
+phone's pill with a sheet (`TopBarPlace`); `BottomSheetContent` is new in `ui/dialog.tsx`; `app-shell.tsx` has the
+rail's foot entry and the top bar; Ctrl K reads the same places (group **Places**: Manage <org>, Administration).
+No API or server change.
+
+**Only places the person can enter.** Sources: the session's memberships; the open organization's list, keeping only
+rows with `my_role` (an administrator's list holds every workspace); and the workspace on screen when its own answer
+says `emergency_reader` (labelled "Emergency read access", gone when the grant is). So a reader's workspace is listed
+only while they are on one of its pages, which is where that answer is read; from elsewhere it isn't listed (the way
+there is the manage page's link, FIX-277). A suspended membership offers no Manage; an organization with nothing to
+open is not listed. The owners' "All n workspaces…" count is the organization's list length; it links to Manage ›
+Workspaces and adds no rows.
+
+**Decided by the coordinator** (asked 2026-11-28): every row reads "<Role> · <Org>"; there is no "Organization
+workspace" caption (see differences).
+
+**Found while testing, fixed:** a search group's `aria-labelledby` was built from the organization's name, so a name
+with a space labelled nothing; the browser's clear mark of a search field covered the count; the rail's foot cut
+"Manage <org>" to "Manage A…"; Ctrl K on a workspace's manage page offered that workspace's pages (its `ws` parameter).
+
+**Mockup comparison** (`e2e/place-picker.spec.ts` screenshots at 1256 and 390 px, both themes: Bob, Alice, the search,
+the rail's foot, the top bar, the sheet, the drawer; beside `after/nav-3a*`, `nav-3*`, `nav-3d*`, `nav-5*`; sample data
+differs). Kept:
+- nav-3a's caption "Organization workspace" on "Default": every row reads "<Role> · <Org>" (review.md's table: "your
+  role in each"). The API has no such kind, and a caption keyed on the slug `default` would break on a rename;
+- the rail's foot has **Manage <org> above Administration** (brief, D-508(g); nav-3's second frame has it below) and
+  its count but not the "Owner" badge of that frame: both don't fit the 256 px rail, and the picker shows the role;
+- the popover is 384 px wide, not 440: it also opens inside the phone's drawer;
+- Administration's and Your account's cards have a chevron, which nav-4 draws without: the picker opens from the card
+  in every place (brief, Scope 1);
+- the current **Manage** or **Administration** row has ✓ as a current workspace does;
+- the phone's sheet lists the same groups in full, where nav-3d folds "Other organizations · Globex" to one line and
+  leaves New out (brief, Scope 4: the same groups); the count beside the search field is hidden below 640 px;
+- the phone's top bar has the menu icon where nav-3d sketches "…", no logo (nav-3d has none; the drawer has it), and
+  the drawer now opens from the left, the side of its button;
+- the rail's foot keeps its rule, theme switch and "Instance admin" line (nav-3 and nav-5 draw none): those are not in
+  this brief's scope, and at about 783 px of height Manage's menu still scrolls inside the rail (P5-NAV-2's report).
+
+**Removed:** the count on the closed place card (the rail's foot carries it); drilling into another organization inside
+the menu (choosing one opens it); the phone top bar's logo link.
+
+**Tests changed** (why):
+- new `tests/place-picker.test.tsx`, `e2e/place-picker.spec.ts`: this brief (three people, groups and who sees them,
+  keyboard, search, reader, rail foot, sheet, no select);
+- `context-switcher`: row names, "All n workspaces…", another organization opens instead of drilling in, search results
+  are options grouped by organization, Manage's count on the foot; account and Administration cards are picker buttons;
+- `places`: those two cards no longer lack a switcher;
+- `palette-registry`, `command-palette`: "Manage <org>" and "Administration";
+- `switcher-loading`: `ScopeSwitcher` takes the place;
+- e2e `p5-polish-8-switcher`: the new rows and search, focus back on the card; `places`: the account card.
+
+**Commands and results** (all through `test.sh` / `heavy.sh`):
+- vitest, every test file touching a changed module plus the drift and design guards: 27 files, 345 pass, **1 fails
+  and it is not this branch's**: `design-guards` "no unlayered element selector in globals.css" reports
+  `main:has([data-fill-pane])`, `main :has([data-fill-pane])`, `main [data-fill-pane]`. `globals.css` is unchanged here;
+  the selectors came with `579cbf0f` (the fill-pane CI fix) on `master`;
+- Playwright (mocked): `place-picker` 12, and with `places`, `p5-polish-8-switcher`, `refine-16`, `shell-theme`: 83
+  pass;
+- `pnpm typecheck`, eslint on touched files, `scripts/guards/run-all.sh`, `extract-schema.py --check`,
+  `cargo fmt --all --check`: pass;
+- fail-first, the tests over the previous `web/src` (new modules left in place so they import): 23 of 76 fail
+  (`place-picker` 12 of 16, `context-switcher` 8, `palette-registry` 2, `command-palette` 1).
+
+**Screenshots** are not committed: `AURORA_SHOTS=<dir> scripts/dev/test.sh <lane> web playwright
+e2e/place-picker.spec.ts --project=mocked` writes them again.
