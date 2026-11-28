@@ -244,7 +244,8 @@ describe("SimulationResult", () => {
         workspace: { verdict: "needs_approval", considered: [{ rule_logical_id: "r1", rule_name: "Pay", source: "hand", matched: true, reason: "host matched" }] },
       },
     };
-    render(<SimulationResult sim={sim} agentName="Dani" />);
+    // With "Show more controls" on (`wrap`'s default), the Technical details fold is there.
+    wrap(<SimulationResult sim={sim} agentName="Dani" />);
     expect(screen.getByTestId("sim-answer")).toHaveTextContent("Dani will ask you first. Your rule Pay asks first.");
     expect(screen.getByTestId("sim-technical").tagName).toBe("DETAILS");
     expect(screen.getByTestId("sim-technical")).not.toHaveAttribute("open");

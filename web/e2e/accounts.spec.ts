@@ -21,7 +21,7 @@ const who = (a: { id: string; name: string; handle: string }) => ({ agent: { id:
 const can = { give_access: true, change_access: true, manage: true };
 
 /** A workspace whose one AWS account (the walkthrough's) is read only with its writes set to ask, kept in the mock. */
-async function mockAws(page: Page, agents: "one" | "two") {
+async function mockAws(page: Page, agents: "one" | "two", health: Record<string, unknown> = { state: "not_used", last_used_at: now }) {
   const state = { daneel: "custom" as "custom" | "read" | "ask", puts: [] as unknown[] };
   await mockApi(page);
   await page.route("**/v1/**", async (route) => {
@@ -39,7 +39,7 @@ async function mockAws(page: Page, agents: "one" | "two") {
         items: [
           {
             ref: { type: "connection", id: C_AWS }, kind: "app", name: "platform-prod", scope: "workspace", levels: ["read", "ask", "act"],
-            app: { app_id: "aws-keys", name: "AWS", custom_only: false }, health: { state: "not_used", last_used_at: now },
+            app: { app_id: "aws-keys", name: "AWS", custom_only: false }, health,
             agents: agents === "one" ? [daneel] : [daneel, { ...who(second), level: "act" }], can,
           },
         ],
@@ -113,6 +113,36 @@ for (const scheme of ["light", "dark"] as const) {
         const more = await row.getByRole("button", { name: /^More for/ }).boundingBox();
         expect(level && more && Math.abs(level.y + level.height / 2 - (more.y + more.height / 2)) < 8).toBe(true);
         await check(page, "agent-access", scheme, width);
+      });
+
+      // (FIX-286) A status line's fix sits right after its sentence, not at the far end of a wide card; where there is no
+      // room it goes under the sentence. The dot stays on the sentence's first line.
+      test("agent-access: a failed account's Reconnect sits right after its status sentence", async ({ page }) => {
+        await mockAws(page, "one", { state: "failing", last_error: "rejected", last_error_at: now, last_used_at: now });
+        await open(page, "/o/acme/w/main/agents/daneel?tab=access", scheme);
+        const button = page.getByRole("button", { name: "Reconnect", exact: true }).first();
+        await expect(button).toBeVisible();
+        const line = button.locator("xpath=ancestor::p[1]");
+        const at = await line.evaluate((p) => {
+          const dot = p.querySelector("span[aria-hidden='true']")!;
+          const walker = document.createTreeWalker(p, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.textContent!.startsWith("Failed") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP) });
+          const range = document.createRange();
+          range.selectNodeContents(walker.nextNode()!);
+          const rows = [...range.getClientRects()];
+          const box = (r: DOMRect) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+          return { dot: box(dot.getBoundingClientRect()), first: box(rows[0]!), text: box(range.getBoundingClientRect()), button: box(p.querySelector("button")!.getBoundingClientRect()) };
+        });
+        expect(at.dot.top, "the dot is on the sentence's first line").toBeGreaterThanOrEqual(at.first.top);
+        expect(at.dot.bottom, "the dot is on the sentence's first line").toBeLessThanOrEqual(at.first.bottom);
+        const beside = at.button.top < at.text.bottom;
+        if (width === 1280) expect(beside, "on a wide row the button is beside the sentence").toBe(true);
+        if (beside) {
+          expect(at.button.left - at.text.right, "the button follows the sentence").toBeGreaterThanOrEqual(0);
+          expect(at.button.left - at.text.right, "the button follows the sentence").toBeLessThanOrEqual(16);
+        } else {
+          expect(at.button.top).toBeGreaterThanOrEqual(at.text.bottom - 1);
+        }
+        await check(page, "agent-access-reconnect", scheme, width);
       });
 
       test("a read-only AWS account with writes set to ask: choosing Ask before changes is one click and one save", async ({ page }) => {

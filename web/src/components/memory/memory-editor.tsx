@@ -231,6 +231,7 @@ export function MemoryEditor({
         />
       </Field>
       <MarkdownEditor
+        reading
         id="mem-content"
         label={`What should ${agentName} remember?`}
         value={content}

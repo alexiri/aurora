@@ -23,8 +23,8 @@ const LIMITS: ApprovalLimits = {
 function stub(routes: Record<string, unknown> = {}) {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: Request) => {
-      const path = new URL(input.url, "http://localhost").pathname;
+    vi.fn(async (input: Request | string) => {
+      const path = new URL(typeof input === "string" ? input : input.url, "http://localhost").pathname;
       if (path in routes) return json(200, routes[path]);
       if (path === "/v1/policy/approval-limits") return json(200, LIMITS);
       if (path === "/v1/workspaces/w1") return json(200, { my_role: "approver" });
@@ -192,11 +192,12 @@ describe("Admin: Web Push line", () => {
   });
 
   it("keeps the setting name and the command under Technical details, never in the sentence (setup-4)", async () => {
-    stub({ "/v1/instance": { features: { push: false } } });
+    // The Admin overview's viewer is an instance administrator, who sees the fold.
+    stub({ "/v1/instance": { features: { push: false } }, "/v1/me": { user: { id: "u1", display_name: "Root", email: "root@x.io", is_instance_admin: true } } });
     wrap(<PushLine />);
     const line = await screen.findByTestId("push-line");
     expect(line).toHaveTextContent("Ask whoever installed Aurora to turn it on.");
-    const fold = line.querySelector("details")!;
+    const fold = await waitFor(() => line.querySelector("details") ?? Promise.reject(new Error("no fold yet")));
     expect(fold).toHaveTextContent("Technical details");
     expect(fold).toHaveTextContent("push.enabled");
     expect(line.querySelector("span.min-w-0")!.textContent).not.toContain("push.enabled");

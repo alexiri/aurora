@@ -359,6 +359,7 @@ function StoreRow({
   const editable = s.source === "dashboard";
   return (
     <ListRow
+      wideText
       actions={
         editable ? (
           <>

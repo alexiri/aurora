@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 
+import { Altitude } from "@/components/ui/altitude";
 import { useMe } from "@/lib/api/queries";
 import { cn } from "@/lib/utils";
 
@@ -10,8 +11,8 @@ import { cn } from "@/lib/utils";
  * someone setting things up needs (ids, hosts, methods, image names, raw phases). Members never need it open.
  *
  * `admin` renders it only for instance administrators (`GET /v1/me`). Without `admin` it is for Set up altitude and
- * above; the altitude check is P5-REFINE-3's `Altitude`.
- * TODO(P5-REFINE-3): until it merges this renders for everyone; brief 3 replaces the check by the altitude.
+ * above (`Altitude`, registry id `tech.details`): a person at Use doesn't see it, and "Show more controls" opens it.
+ * A control that does nothing but open this fold needs the same `Altitude` around it.
  */
 export function TechnicalDetails({
   admin = false,
@@ -32,7 +33,9 @@ export function TechnicalDetails({
       <Fold {...props} />
     </AdminOnly>
   ) : (
-    <Fold {...props} />
+    <Altitude id="tech.details" level="setup">
+      <Fold {...props} />
+    </Altitude>
   );
 }
 

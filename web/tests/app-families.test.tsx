@@ -251,6 +251,16 @@ describe("a registered self-hosted variant is connectable (FIX-202)", () => {
     expect(onPick).toHaveBeenCalledWith({ appId: "jira-dc", instanceId: "ji1" });
   });
 
+  it("Apps tab: the Jira card describes the Data Center app when only that one is usable, not Cloud", async () => {
+    const cloud = { ...JCLOUD, summary: "Issues, projects and comments in Jira Cloud." };
+    const server = { ...JDC, summary: "Issues, projects and comments on your Jira Data Center." };
+    stub({ ...jiraRoutes(), "GET /v1/apps": () => json(200, { items: [cloud, server] }) });
+    wrap(<AppsTab workspaceId="w1" orgId="o1" canOwn />);
+    const list = await screen.findByRole("list", { name: "Apps: Ready to connect" });
+    expect(await within(list).findByText("Issues, projects and comments on your Jira Data Center.")).toBeInTheDocument();
+    expect(within(list).queryByText("Issues, projects and comments in Jira Cloud.")).toBeNull();
+  });
+
   it("Apps tab: Connect on the Jira card opens the Data Center sign-in with the server, not Cloud", async () => {
     // jsdom has no `matchMedia`; the journey's frame asks whether the viewport is wide.
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }));

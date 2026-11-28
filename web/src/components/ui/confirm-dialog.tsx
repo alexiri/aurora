@@ -39,16 +39,23 @@ export function ConfirmDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title={title} description={description}>
+      <DialogContent
+        title={title}
+        description={description}
+        // With nothing between the sentence and the actions, the body is no empty band.
+        bodyClassName={children ? undefined : "p-0"}
+        footer={
+          <div className="flex flex-wrap justify-end gap-2">
+            <DialogClose asChild>
+              <Button variant="outline">{cancelLabel}</Button>
+            </DialogClose>
+            <Button variant={danger ? "danger" : "primary"} disabled={busy} onClick={onConfirm}>
+              {confirmLabel}
+            </Button>
+          </div>
+        }
+      >
         {children}
-        <div className="mt-4 flex flex-wrap justify-end gap-2">
-          <DialogClose asChild>
-            <Button variant="outline">{cancelLabel}</Button>
-          </DialogClose>
-          <Button variant={danger ? "danger" : "primary"} disabled={busy} onClick={onConfirm}>
-            {confirmLabel}
-          </Button>
-        </div>
       </DialogContent>
     </Dialog>
   );

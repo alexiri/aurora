@@ -38,9 +38,14 @@ export function StatusLine({
   return (
     // items-baseline: the dot (no text, so its baseline is its bottom edge) sits on the first line's baseline, not in the
     // middle of a wrapped block (P5-POLISH-11 pass 2); an action button lines up by its text too.
+    // The dot and the sentence are one item as wide as their words, so the action follows the sentence however wide the
+    // row is, and goes under it when there is no room. Inside the item nothing wraps but the sentence's own text, so a long
+    // one never leaves the dot alone on a line.
     <p data-testid={testId} className={cn("flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm", TEXT[tone], className)}>
-      <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", DOT[tone])} />
-      <span className="min-w-0 flex-1">{children}</span>
+      <span className="flex min-w-0 items-baseline gap-x-2">
+        <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", DOT[tone])} />
+        <span className="min-w-0">{children}</span>
+      </span>
       {action}
     </p>
   );

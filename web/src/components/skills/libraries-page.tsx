@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { EmptyState, ErrorState, Loading } from "@/components/states";
 import { Button } from "@/components/ui/button";
@@ -29,7 +29,14 @@ export function SkillLibrariesTab({ slug, orgId, orgName }: { slug: string; orgI
   const own = items.filter((l) => l.scope !== "instance");
   const shared = items.filter((l) => l.scope === "instance");
   const review = orgRoutes(slug).skills();
-  const skills = orgSkills.data?.items ?? [];
+  const skills = orgSkills.data?.items;
+  // A check changes both lists: the skills are read again when a library's waiting updates change, so a card never
+  // says an update waits elsewhere only because the skills are the older read.
+  const waiting = items.map((l) => `${l.id}:${l.pending_updates ?? 0}`).join();
+  const { refetch: readSkills } = orgSkills;
+  useEffect(() => {
+    if (waiting) void readSkills();
+  }, [waiting, readSkills]);
   const groups = activeLibraries(items);
   return (
     <div className="space-y-8">

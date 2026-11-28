@@ -218,7 +218,9 @@ to do its own way. A page uses these; a new page never invents its own. (Mock-up
 - **Copy system.** `lib/labels.ts` is the only map from an enumeration the API returns to words (`label()`
   gives "?" for an unknown key, never the key). `copy-guard.test.ts` fails on a snake_case word, a UUID or a
   dotted key shown outside `<code>` or **Technical details**. `TechnicalDetails` is the one fold for
-  machinery.
+  machinery. It is **Set up** and above (`<Altitude id="tech.details">`, §Altitudes): a person at Use
+  doesn't see it, and **Show more controls** opens it; `admin` folds are for instance administrators. A
+  control that only opens such a fold (the audit row's **Details**) is hidden with it.
 
 **Scope: the whole dashboard.** This section is the dashboard's visual
 identity, not a restyle of individual screens. **Every** screen MUST follow
@@ -576,7 +578,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
     checklists, tables" beside them, a monospace textarea at least 25 rem tall that
     grows with its text (no inner scrollbar), and `Markdown` for the preview
     ("Nothing to preview yet." when empty). The box's border shows focus; the error
-    is linked to the textarea.
+    is linked to the textarea. With `reading` (Memory) the preview is drawn as the
+    reading view: its size, and ticked checklist boxes drawn with their lines struck
+    through.
   - **ListDetail**, **SubScreenHeader**, **HeaderActions** (`ui/list-detail.tsx`)
     [P5-MEMORY-2]: a list with the chosen item beside it (18 rem and the rest).
     Below the surrounding chrome's cut-off they are two screens: the list, or the
@@ -922,7 +926,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
       visibility line's tooltip (retention-tooltip: hover, keyboard focus or a
       tap on the line opens it, Escape or leaving the line closes it), so the
       line fits the pinned 64 px header and a desktop width never loses the
-      window. This line replaces the separate retention and visibility banners;
+      window. The dot between two parts belongs to the one before it, so a row of the
+      wrapped line never starts with a dot. This line replaces the separate retention and visibility banners;
       the empty state shows the same sentence under the greeting, so a chat with
       no messages says who sees it before anything is written.
     - On the right: a connection pill and a "Conversation actions" icon
@@ -1366,7 +1371,7 @@ here, add it here and document it.
 | Page header | `PageHeader` | Breadcrumb, title, one-line description, right-aligned actions. First element of every shell page. |
 | Section | `Section` | A titled block (`h2`, description, actions) with optional `card`; also the way to group an overview page. |
 | Card | `Card` | A bordered `surface` panel (borders replace shadows in dark). |
-| List | `ItemList` + `ListRow` | Divided rows with an actions slot; rows wrap on narrow screens. For few, rich rows (agents, members, keys). |
+| List | `ItemList` + `ListRow` | Divided rows with an actions slot; rows wrap on narrow screens. For few, rich rows (agents, members, keys). `wideText`: a row of running text beside several buttons (Secret stores): the text keeps at least 16 rem and the buttons go below it when that doesn't fit. |
 | Data table | `DataTable`, `Th`, `Td` | For columns of comparable data. The wrapper scrolls inside itself at 390 px, so the page never scrolls horizontally. Always give `caption`. |
 | Diff | `DiffView` (in `web/src/components/ui/diff-view.tsx`) | (phase 6, FIX-250) The one GitLab-style line diff — the template review's, the person's Review changes dialog's and the skill library update review's. Every change with old and new line numbers and three lines of context; longer runs of unchanged lines fold into one "N unchanged lines" row with **Show 20 more above / below** and **Show all** (expanding in steps, like GitLab); a **Show the whole file** switch in the file header; a changed-line pair highlights the words that differ (in a block of removed then added lines they pair up in order); a file that was added or removed says so (one with no text: "The file is empty."); files with no change show as "Unchanged." only, never as a diff. (FIX-271) A file too large to compare says "This file is too large to compare line by line; the whole old and new text are below." with both texts in closed folds. Long lines scroll inside the box (a named region), never the page; the fold rows are labelled buttons naming the line range. (P5-MEMORY-3) The optional `wrap` prop, off by default, is for prose in a narrow column (a memory's History): long lines wrap, so the box never scrolls sideways and the fold row's buttons stay inside it. No other component renders a line diff. |
 | Form | `Form`, `FormSection`, `FormActions`, `Field`, `inputClass` | `Field` links label, hint and error to the control; `FormSection` is a fieldset with a heading; `FormActions` is the submit row. Frontend validation is UX only. |
@@ -1377,8 +1382,9 @@ here, add it here and document it.
 | States | `Loading`, `EmptyState`, `ErrorState` | Every list/query shows one of the three. |
 | Notice | `Notice` (`neutral`, `accent`, `pending`, `danger`) | Inline callout for conflicts, warnings, errors and info. Use `role="alert"` after an action, `role="status"` otherwise. |
 | Popover | `Popover`, `PopoverTrigger`, `PopoverContent` (`ui/popover.tsx`, Radix) | (phase 5, P5-AGENT-2) A small non-modal panel anchored to a control (the status rail's Needs-you items). Esc closes it and returns focus to the trigger; use `Menu` for a list of commands and `Dialog` when the content needs the whole screen. |
-| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. (Phase 5, FIX-149, D-272) **Every dialog has a close icon**: `DialogContent` renders a × button (`aria-label="Close"`, `XIcon`, at least a 44 px target on touch) at the right of its title row. The title row stays visible while the body scrolls. Escape and a click on the scrim still dismiss. A view is shown on top of a page only as a `Dialog`, never as a page opened in another browser window (`window.open` is reserved for an OAuth provider's sign-in, C-842, and the terminal's owner-requested **Open in new window**, FIX-138; guard test). |
+| Dialogs | `ConfirmDialog`, `FormDialog`, `Dialog` | Confirmation (with `danger` for destructive confirms) and a dialog around a form; both pin their actions in the dialog's bordered footer. Focus is trapped and returned by Radix. Width comes from `DialogContent`'s `size` prop (`sm` 28 rem default, `md` 34, `lg` 40, `xl` 48, `2xl` 56; always capped at the viewport minus a gutter), never a class. A hand-rolled `role="alertdialog"` is not allowed: use `ConfirmDialog`. (Phase 5, FIX-149, D-272) **Every dialog has a close icon**: `DialogContent` renders a × button (`aria-label="Close"`, `XIcon`, at least a 44 px target on touch) at the right of its title row. The title row stays visible while the body scrolls. Escape and a click on the scrim still dismiss. A view is shown on top of a page only as a `Dialog`, never as a page opened in another browser window (`window.open` is reserved for an OAuth provider's sign-in, C-842, and the terminal's owner-requested **Open in new window**, FIX-138; guard test). |
 | Badges and dots | `Badge`, `StatusDot` | Status pills and dots. They always carry text; tone is `neutral`, `accent`, `pending` or `danger`. |
+| Status lines | `StatusLine` | A dot and one sentence, with an optional action ("Reconnect"). The dot sits on the sentence's first line, and a long sentence wraps beside it. The action follows the sentence however wide the row is, and goes under it when there is no room. |
 | Tabs | `Tabs` (`segmented`, `underline`), `SubTabs` | `segmented` switches a view of the same data, `underline` moves between the pages of one topic (the agent page's tab row), and `SubTabs` is the quiet second row under a tab (D-507). A strip scrolls within itself (`scroll`, the default). `overflow="menu"` (FIX-129) instead collapses what does not fit (measured with a `ResizeObserver`) into a trailing **More ▾** menu button (`aria-haspopup="menu"`, `aria-expanded`, Enter/Space opens, Escape closes); the selected tab is always shown (it replaces the last visible tab if it lives in the menu); arrow keys, Home and End still move across every tab. The agent page no longer uses it. |
 | Buttons | `Button` (`primary`, `outline`, `approve`, `pending`, `ghost`, `danger`) | Primary actions use `size="lg"` (44 px); others are at least 36 px. `pending` is the one action of an amber card. |
 | Auth layout | `AuthCard` | Split layout with the dark brand panel, for every public auth view. |
@@ -1967,6 +1973,12 @@ structure for every level". Members don't see Manage, D-508(e).)
     **Needs attention** with the reason on the card (the sanitized reason; "The repository needs an access token"
     when that is it; a library migrated without an address says "Enter the repository's git address" and offers
     **Set address** instead of Check now and Edit); **Over budget**. Amber only where the viewer can act (D-384).
+    **Check pending** stands in for Up to date while a library with added skills has no compared commit
+    (`last_head_sha` null, for example right after its branch changed); the list is then read again every 5 s.
+    `pending_updates` counts every level, but the organization's Skills tab shows only the organization's own
+    skills: on an organization's page the chip's link counts those, with none it links nowhere, and the card
+    says how many wait on skills of agents or workspaces ("2 updates wait on skills of agents or workspaces.
+    Whoever manages those skills reviews them on their Skills page.", "n more …" beside a link).
   - **Add a library** is a two-step dialog that stores nothing until the last button. Step 1 *Where is it?*:
     Repository address (required; hint: "The address you clone, or the repository's page. For example
     https://gitlab.example.org/team/skills or https://github.com/acme/skills/tree/main/skills"), Branch or
@@ -3011,7 +3023,8 @@ the page is one empty state.
   **…** (History, Delete with a confirmation); the text rendered with `Markdown` (checklists as ticked boxes); the meta
   line "Added by <name> on <date> · Changed once|twice|n times · <Agent> last used it in “<conversation>” <when>" or
   "<Agent> hasn't used it yet", then "Locked by <name> on <date>" when locked. The key is nowhere in the list, and
-  there is no Technical details fold.
+  there is no Technical details fold. An untitled memory has no visible heading (its name is the text's first line,
+  shown just below; the heading stays for screen readers).
 - **Edit and new** are one form in the same column: **Title**; on an existing memory the Key chip with "<Agent> finds
   the memory by this name. It can't be changed."; on a new one a **Key** field filled from the title (else the first
   words) with "Made from the title" until the person edits it, checked as the server checks it, and "<Agent> finds the
@@ -3912,7 +3925,7 @@ workspaces' conversations; limits by repository or project inside an account.
 
 ## Key flows
 
-- **App families** (phase 5, FIX-135, D-242, C-744): apps that declare `about.family` are **one tile** in the Apps tab (named by the family, connection counts summed, Details opens the hosted member); the connect dialog of a family opens with **"Where does your <family> run?"** (ChoiceCards: the hosted variant, then each active registered server of the family's instance-bound apps as "<variant> · <label>" with its address; a notice with a **Register a server…** link to Self-hosted apps (phase 5, D-338: Administration or the org's Apps & accounts › Self-hosted apps) for instance admins, or "ask an administrator" for others), then the chosen app's own methods and form with the server already selected (no second instance picker). Everywhere else an app is named — connections, grant dialogs, availability, OAuth clients, instances — "<family> · <variant>" through `appDisplayName` / `AppName` (`web/src/lib/api/app-name.ts`); a test fails if one of those surfaces stops importing it.
+- **App families** (phase 5, FIX-135, D-242, C-744): apps that declare `about.family` are **one tile** in the Apps tab (named by the family, connection counts summed, the tile's text is the hosted member's unless only one other member is usable, when it is that member's, Details opens the hosted member); the connect dialog of a family opens with **"Where does your <family> run?"** (ChoiceCards: the hosted variant, then each active registered server of the family's instance-bound apps as "<variant> · <label>" with its address; a notice with a **Register a server…** link to Self-hosted apps (phase 5, D-338: Administration or the org's Apps & accounts › Self-hosted apps) for instance admins, or "ask an administrator" for others), then the chosen app's own methods and form with the server already selected (no second instance picker). Everywhere else an app is named — connections, grant dialogs, availability, OAuth clients, instances — "<family> · <variant>" through `appDisplayName` / `AppName` (`web/src/lib/api/app-name.ts`); a test fails if one of those surfaces stops importing it.
 - (Phase 5, P5-UX-3, D-337, C-914) **Connect opens the connect journey** of §Agents, accounts and
   access §3 (the agent, its access, the suggested method; everything below stays reachable under its
   **Advanced**). Reconnect keeps the dialog described here.
