@@ -1089,7 +1089,15 @@ The home (`/workspace`) holds:
   boot, is bounded and follows no link; a link, a FIFO or a larger file counts
   as none (no databases). The other reads of files in the home (memory harvest,
   tool catalogue, outbound files, boot files kept unless managed) follow no link
-  in the last component and never wait on a FIFO.
+  in the last component and never wait on a FIFO; what is not a regular file is
+  not opened at all. The same descriptor rule covers what the supervisor lists,
+  writes and removes elsewhere in the home (the Claude Code and Codex session
+  purges, Codex's `config.toml`, the fake harness's markers, boot files) and
+  `/run/aurora/harness.env`, whose folder the agent can write. A boot file is
+  replaced by a temp file and a rename, never opened for writing; a folder
+  linked to another folder of the home is resolved first and stays a link.
+  Restoring a locked memory changes the mode only of a file that is the agent's
+  and has one name; any other is replaced.
 - (FIX-258) The skills and helpers roots are pruned **before** the staged files
   are installed, so a path may turn from a file into a folder, or back, between
   two generations. A skill file the home cannot hold (a file where a folder is
@@ -1451,6 +1459,10 @@ treats both identically.
 (tool catalogue cache, inbox attachments, home projection state), size ≤
 `ATTACH_OUT_FILE_MAX`, then uploads in `file.part` chunks (≤ 144 KiB (S-06)) with a
 final `file.commit`; the API enforces per-turn and per-conversation caps.
+(FIX-297, SEC-173) It opens the file along the resolved path from the home's
+descriptor, and sends it only when the open file is the agent uid's and has one
+name (no other hard link): a root supervisor reads more than the agent may. The
+tool's error tells the agent to send a copy.
 
 ## Logging
 
