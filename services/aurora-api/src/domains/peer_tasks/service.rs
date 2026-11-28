@@ -1068,6 +1068,14 @@ async fn ask_mail_facts(
     })
 }
 
+/// `id`, if that task still runs (`queued`, `open` or `waiting`).
+async fn live_task(conn: &mut PgConnection, id: Uuid) -> Result<Option<Uuid>, ApiError> {
+    Ok(repo::get(&mut *conn, id)
+        .await?
+        .filter(|t| matches!(t.status.as_str(), "queued" | "open" | "waiting"))
+        .map(|t| t.id))
+}
+
 /// (FIX-252 review, D-178) The approver's name is a detail: `named` only for a conversation
 /// that is one person's own, `plain` (the fact alone) for every other. With a channel thread,
 /// the thread must be `direct`; without one, the conversation itself must be a `direct` chat: a
@@ -1192,6 +1200,29 @@ pub async fn approval_notice(
         // The person is already in the thread or gets the card: no follow-up turn.
         post_notice(conn, home, &task, code, &line, Some(extra)).await
     } else {
+        // With a delegating task above, its wake below takes links: they come before the notice's
+        // conversation (a close of that task holds its link and then writes there). Without one,
+        // only a woken task needs links.
+        if repo::by_task_conversation(&mut *conn, task.origin_conversation_id)
+            .await?
+            .is_some()
+        {
+            repo::lock_chain_links(conn, task.id).await?;
+        }
+        // Who hears from whom: the task reporting into each delegator's conversation, if it
+        // still runs before this delivery wakes anything.
+        let delegators = repo::delegating_conversations(&mut *conn, task.id, home).await?;
+        let mut reporting = Vec::with_capacity(delegators.len());
+        let mut below = Some(task.id);
+        for conversation in &delegators {
+            reporting.push(match below {
+                Some(id) => live_task(conn, id).await?,
+                None => None,
+            });
+            below = repo::by_task_conversation(&mut *conn, *conversation)
+                .await?
+                .map(|t| t.id);
+        }
         // (FIX-253, D-490(b); security review, medium 2) The decision (or the deadline) is a
         // `waiting` task's wake: through the one wake helper, which re-checks the requester's
         // rights and the freeze — a refused wake cancels the task with its close report and no
@@ -1221,28 +1252,16 @@ pub async fn approval_notice(
             );
             platform_turn(conn, &pc, task.id, &text).await?;
         }
-        // With a delegating task above, its wake below takes links: they come before the notice's
-        // conversation (a close of that task holds its link and then writes there). A woken task
-        // holds them already. Without one, no link is needed at all.
-        if repo::by_task_conversation(&mut *conn, task.origin_conversation_id)
-            .await?
-            .is_some()
-        {
-            repo::lock_chain_links(conn, task.id).await?;
-        }
         // The notice first: it is what marks this delivery done.
         let said = line_for(conn, home, &line, named.as_deref()).await?;
         post_notice(conn, home, &task, code, said, Some(extra)).await?;
         let source = format!("approval:{}", row.id);
-        let delegators = repo::delegating_conversations(&mut *conn, task.id, home).await?;
-        for (level, conversation) in delegators.into_iter().enumerate() {
-            // A task cancelled at its wake has just sent its close report to its origin, which
-            // woke a delegating task there: that is its follow-up.
-            if level == 0
-                && wake == Wake::Cancelled
-                && repo::by_task_conversation(&mut *conn, conversation)
-                    .await?
-                    .is_some()
+        for (conversation, reporter) in delegators.into_iter().zip(reporting) {
+            // One wake per event: a task this delivery cancelled (at its own wake, or at any
+            // level of the cascade) has sent its close report into this conversation, and that
+            // is the delegating agent's follow-up.
+            if let Some(id) = reporter
+                && live_task(conn, id).await?.is_none()
             {
                 continue;
             }

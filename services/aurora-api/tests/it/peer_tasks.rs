@@ -3684,7 +3684,10 @@ async fn the_approvers_name_stays_out_of_conversations_that_others_read() {
     x.d.report_approval(id).await;
     let decided = x.d.rig.notices(x.d.conv, "peer_approval_decided").await;
     assert!(
-        decided[0]["text"].as_str().unwrap().contains("approved by "),
+        decided[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("approved by "),
         "{}",
         decided[0]
     );
@@ -3743,11 +3746,17 @@ async fn a_requester_who_lost_the_homes_workspace_gets_no_card_there() {
         .unwrap();
     let id = x.pending_at_c().await;
     assert_eq!(
-        x.d.rig.notices(x.d.conv, "peer_waiting_for_approval").await.len(),
+        x.d.rig
+            .notices(x.d.conv, "peer_waiting_for_approval")
+            .await
+            .len(),
         0
     );
     assert_eq!(
-        x.d.rig.notices(x.pcb, "peer_waiting_for_approval").await.len(),
+        x.d.rig
+            .notices(x.pcb, "peer_waiting_for_approval")
+            .await
+            .len(),
         1
     );
     x.d.answer(id, "approved").await;
@@ -3757,7 +3766,10 @@ async fn a_requester_who_lost_the_homes_workspace_gets_no_card_there() {
         1
     );
     assert_eq!(
-        x.d.rig.notices(x.d.conv, "peer_approval_decided").await.len(),
+        x.d.rig
+            .notices(x.d.conv, "peer_approval_decided")
+            .await
+            .len(),
         0
     );
     assert!(x.d.system_turns(x.d.conv).await.is_empty());
@@ -3934,6 +3946,53 @@ async fn waking_a_delegating_task_rechecks_the_requester() {
     assert!(x.d.system_turns(x.pcb).await.is_empty(), "no turn for B");
     let closed = x.d.rig.notices(x.d.conv, "peer_task_closed").await;
     assert_eq!(closed.len(), 1, "{closed:?}");
+}
+
+/// (FIX-288) One wake per event at every level: a task cancelled by a wake sends its close
+/// report to the task above, which is that task's wake for this decision. No second follow-up,
+/// wherever in the chain the cancel happened.
+#[tokio::test]
+async fn a_task_cancelled_during_a_delivery_wakes_the_one_above_it_once() {
+    for exhausted in [
+        "the approval's task and the one above",
+        "the one above only",
+    ] {
+        let (x, _, leaf) = three_levels().await;
+        let pool = x.d.rig.h.pool();
+        let id = x.d.approval(leaf).await;
+        x.d.report_approval(id).await;
+        x.d.finish_receiving_turn(leaf).await;
+        let mut spent = vec![x.low];
+        if exhausted != "the one above only" {
+            spent.push(leaf);
+        }
+        sqlx::query("UPDATE peer_tasks SET messages_used = message_budget WHERE id = ANY($1)")
+            .bind(spent)
+            .execute(pool)
+            .await
+            .unwrap();
+        let pcc = x.d.rig.peer_conversation(x.low).await;
+        let told_c = x.d.system_turns(pcc).await.len();
+        x.d.answer(id, "approved").await;
+        x.d.report_approval(id).await;
+        assert_eq!(x.d.rig.task_status(x.low).await, "expired", "{exhausted}");
+        assert_eq!(x.d.system_turns(pcc).await.len(), told_c, "{exhausted}");
+        let above = x.d.system_turns(x.pcb).await;
+        assert_eq!(above.len(), 1, "{exhausted}: {above:?}");
+        assert!(above[0].contains("budget"), "{exhausted}: {above:?}");
+        assert_eq!(
+            x.d.system_turns(x.d.conv).await.len(),
+            1,
+            "{exhausted}: the person's agent"
+        );
+        assert_eq!(
+            x.d.rig
+                .notices(x.d.conv, "peer_approval_decided")
+                .await
+                .len(),
+            1
+        );
+    }
 }
 
 /// (FIX-288, D-509) A frozen B holds its own wake only: C is woken and the person told at once;
@@ -4137,13 +4196,21 @@ async fn a_close_takes_the_conversations_of_tasks_queued_behind_those_above_it()
         let pcc = d.rig.peer_conversation(low).await;
 
         let mut turn_end = pool.begin().await.unwrap();
-        assert!(convs::lock(&mut turn_end, other_conversation).await.unwrap());
+        assert!(
+            convs::lock(&mut turn_end, other_conversation)
+                .await
+                .unwrap()
+        );
         let pid = backend_pid(&mut turn_end).await;
         let close = async {
             if unlink {
                 let uri = format!("/v1/agent-links/{link}");
                 let headers = [("cookie", d.rig.p.cookie.as_str()), ("origin", ORIGIN)];
-                let (status, _, body) = d.rig.h.send(http::Method::DELETE, &uri, &headers, None).await;
+                let (status, _, body) = d
+                    .rig
+                    .h
+                    .send(http::Method::DELETE, &uri, &headers, None)
+                    .await;
                 assert_eq!(status.as_u16(), 204, "{body}");
             } else {
                 let mut tx = pool.begin().await.unwrap();
@@ -4163,7 +4230,11 @@ async fn a_close_takes_the_conversations_of_tasks_queued_behind_those_above_it()
         };
         tokio::join!(close, other);
         assert_eq!(d.rig.task_status(top).await, "cancelled", "unlink={unlink}");
-        assert_eq!(d.rig.task_status(queued).await, "cancelled", "unlink={unlink}");
+        assert_eq!(
+            d.rig.task_status(queued).await,
+            "cancelled",
+            "unlink={unlink}"
+        );
         assert_eq!(
             d.rig
                 .notices(other_conversation, "peer_task_closed")
