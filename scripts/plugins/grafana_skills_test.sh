@@ -784,6 +784,7 @@ if grep -q create_alert_rule "$STUB_LOG"; then bad "a rule with a long expressio
 prom_rule() {  # prom_rule JQ_FILTER: the stored Prometheus rule, changed
   jq --arg long "$LONG_EXPR" "$1" "$FIX/get_alert_rule.json" > "$WORK/changed.json"
 }
+# shellcheck disable=SC2016  # $long is a jq variable, expected verbatim
 for filter in '.data[0].model.expr = $long' '.data[0].model.expr = ["up"]' '.data[0].model.expr = "up == 0"'; do
   prom_rule "$filter"
   reset
@@ -791,6 +792,7 @@ for filter in '.data[0].model.expr = $long' '.data[0].model.expr = ["up"]' '.dat
     update tripwire-p95 --managed-by night --folder night-folder --title t2
   if grep -q update_alert_rule "$STUB_LOG"; then bad "a rule with a long expression was resent"; fi
 done
+# shellcheck disable=SC2016  # $long is a jq variable, expected verbatim
 prom_rule '.data[0].model.expr = $long'
 reset
 if STUB_RULE_FILE="$WORK/changed.json" AL delete tripwire-p95 --managed-by night --folder night-folder >"$WORK/out" 2>"$WORK/err" \
