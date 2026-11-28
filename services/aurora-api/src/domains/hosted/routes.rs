@@ -18,7 +18,7 @@ use crate::http::json::{Json, Path};
 use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::agents::AgentRow;
-use aurora_db::repo::{conversations as convs, hosted, secrets};
+use aurora_db::repo::{hosted, secrets};
 use axum::extract::State;
 use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};

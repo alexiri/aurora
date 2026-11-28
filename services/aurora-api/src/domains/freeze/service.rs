@@ -9,7 +9,6 @@ use crate::domains::conversations::service as conv;
 use crate::domains::hosted::lifecycle;
 use aurora_core::{ApiError, sanitize};
 use aurora_db::DbError;
-use aurora_db::repo::conversations as convs;
 use aurora_db::repo::credentials;
 use aurora_db::repo::freeze::{self as repo, Effective, Scope};
 use axum::http::StatusCode;

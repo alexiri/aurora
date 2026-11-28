@@ -15,7 +15,6 @@ use crate::domains::conversations::service as conv;
 use aurora_core::{ApiError, sanitize};
 use aurora_db::DbError;
 use aurora_db::repo::approvals::ApprovalRow;
-use aurora_db::repo::conversations as convs;
 use serde_json::json;
 use sqlx::{Connection, PgConnection};
 
