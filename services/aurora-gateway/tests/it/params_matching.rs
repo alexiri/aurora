@@ -501,6 +501,19 @@ async fn a_summary_hook_is_not_asked_about_a_body_the_core_cannot_read() {
 
 /// What the summarize hook was sent for a request, `None` when it was not asked.
 async fn sent_to_hook(content_type: Option<&str>, body: &[u8], truncated: bool) -> Option<Vec<u8>> {
+    let headers: Vec<(&str, &str)> = content_type
+        .map(|v| ("content-type", v))
+        .into_iter()
+        .collect();
+    sent_with_headers(&headers, body, truncated).await
+}
+
+/// [`sent_to_hook`] for a request with these headers.
+async fn sent_with_headers(
+    headers: &[(&str, &str)],
+    body: &[u8],
+    truncated: bool,
+) -> Option<Vec<u8>> {
     use aurora_gateway::hold::{SummaryRequest, build_summary_hooked};
     use aurora_gateway::summarize_client::{SummarizeCall, Summarizer};
     use aurora_summary::{ApprovalSummary, SummarySource};
@@ -528,18 +541,28 @@ async fn sent_to_hook(content_type: Option<&str>, body: &[u8], truncated: bool) 
     }});
     let l = parse("h", v).unwrap();
     let app = identify_app(&l, "ec2.eu-west-1.amazonaws.com", 443, "/").unwrap();
-    let header = |_: &str| None;
+    let all_headers: Vec<(String, String)> = headers
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+    let header = |name: &str| {
+        all_headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+    };
+    let content_type = header("content-type");
     let request = SummaryRequest {
         method: "POST",
         host: "ec2.eu-west-1.amazonaws.com",
         base_path: None,
         path: "/",
         query: None,
-        content_type,
+        content_type: content_type.as_deref(),
         header: &header,
         body_prefix: body,
         truncated,
-        headers: &[],
+        headers: &all_headers,
     };
     let hook = Hook::default();
     build_summary_hooked(Some(&hook), Some(&l), Some(&app), Some("send"), &request).await;
@@ -635,6 +658,80 @@ async fn a_hook_gets_the_checked_first_part_of_a_multipart_body_and_nothing_else
                 "--{boundary}\r\ncontent-type: application/json\r\n\r\n{{\"to\":\"ok@example.com\"}}\r\n--{boundary}--\r\n"
             ),
             "{content_type}"
+        );
+    }
+}
+
+/// The core checks the bytes as they are. An encoding, of the request or of the first part, is
+/// something only the hook's reader would undo, so what it reads was never checked.
+#[tokio::test]
+async fn an_encoded_body_or_first_part_never_reaches_the_hook() {
+    // The start of a gzip stream: not JSON for the core, and it starts like neither.
+    let gzip: &[u8] = &[0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff];
+    // (Types under which an unreadable body is the hook's when nothing encodes it.)
+    let octets = ("content-type", "application/octet-stream");
+    assert!(
+        sent_with_headers(&[octets], gzip, false).await.is_some(),
+        "no encoding"
+    );
+    for encodings in [
+        &["gzip"][..],
+        &["GZIP"],
+        &["identity, br"],
+        &["identity", "deflate"],
+    ] {
+        let mut headers = vec![octets];
+        headers.extend(encodings.iter().map(|v| ("Content-Encoding", *v)));
+        assert!(
+            sent_with_headers(&headers, gzip, false).await.is_none(),
+            "{encodings:?}"
+        );
+    }
+    let json = ("content-type", "application/json");
+    for encoding in ["identity", "Identity", ""] {
+        let headers = [json, ("content-encoding", encoding)];
+        assert!(
+            sent_with_headers(&headers, br#"{"to":"ok@example.com"}"#, false)
+                .await
+                .is_some(),
+            "{encoding:?}"
+        );
+    }
+    // Quoted-printable: `t=6F` is `to` once decoded, so a decoder reads the name twice.
+    let part = |headers: &str| {
+        format!(
+            "--BND\r\ncontent-type: application/json\r\n{headers}\r\n\r\n{{\"to\":\"ok@example.com\",\"t=6F\":\"evil@example.org\"}}\r\n--BND--"
+        )
+    };
+    let related = "multipart/related; boundary=BND";
+    for headers in [
+        "content-transfer-encoding: quoted-printable",
+        "Content-Transfer-Encoding: BASE64",
+        "content-transfer-encoding : quoted-printable",
+        "content-transfer-encoding:\r\n quoted-printable",
+        "content-transfer-encoding: 7bit\r\n ; quoted-printable",
+        "content-transfer-encoding: 7bit\r\ncontent-transfer-encoding: quoted-printable",
+        "content-transfer-encoding: 7bit\rquoted-printable",
+        "content-transfer-encoding:",
+    ] {
+        assert!(
+            sent_to_hook(Some(related), part(headers).as_bytes(), false)
+                .await
+                .is_none(),
+            "{headers:?}"
+        );
+    }
+    for headers in [
+        "content-transfer-encoding: 7bit",
+        "Content-Transfer-Encoding:8BIT",
+        "content-transfer-encoding:  binary ",
+        "x-other: 1",
+    ] {
+        assert!(
+            sent_to_hook(Some(related), part(headers).as_bytes(), false)
+                .await
+                .is_some(),
+            "{headers:?}"
         );
     }
 }

@@ -109,7 +109,9 @@ fn past_space_and_bom(mut body: &[u8]) -> &[u8] {
 ///   object or an array (behind white space or a byte order mark too); a cut-off body does not
 ///   parse. An empty body has nothing to read;
 /// - of a multipart body (a `multipart/` type, or any mention of a boundary) a hook gets the
-///   first part only, which must be JSON with one reading: nothing it could read is unchecked.
+///   first part only, which must be JSON with one reading: nothing it could read is unchecked;
+/// - the core checks bytes as they are, so an encoded body (any `content-encoding` but
+///   `identity`) or first part (a transfer encoding that changes bytes) is a guess too.
 ///
 /// The body to give the hook, `None` when it would have to guess.
 fn hook_body<'a>(r: &SummaryRequest<'a>) -> Option<Cow<'a, [u8]>> {
@@ -122,6 +124,16 @@ fn hook_body<'a>(r: &SummaryRequest<'a>) -> Option<Cow<'a, [u8]>> {
         .filter(|(name, _)| name.eq_ignore_ascii_case("content-type"))
         .count();
     if content_types > 1 {
+        return None;
+    }
+    let encoded = r.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("content-encoding")
+            && value
+                .split(',')
+                .map(str::trim)
+                .any(|coding| !coding.is_empty() && !coding.eq_ignore_ascii_case("identity"))
+    });
+    if encoded {
         return None;
     }
     let media = lower.split(';').next().unwrap_or_default().trim();
@@ -174,6 +186,23 @@ fn boundary_of(content_type: &str) -> Option<&str> {
     .then_some(boundary)
 }
 
+/// Whether a part's (lowercased) headers leave its bytes as sent: every mention of
+/// `content-transfer-encoding` is a plain header line of its own, not continued on the next,
+/// naming `7bit`, `8bit` or `binary`. Readers differ on any other spelling.
+fn bytes_as_sent(headers: &str) -> bool {
+    const NAME: &str = "content-transfer-encoding";
+    headers.match_indices(NAME).all(|(at, _)| {
+        let (before, rest) = headers.split_at(at);
+        let Some(value) = rest.strip_prefix(NAME).and_then(|v| v.strip_prefix(':')) else {
+            return false;
+        };
+        let (value, next) = value.split_once('\n').unwrap_or((value, ""));
+        before.ends_with('\n')
+            && !next.starts_with([' ', '\t'])
+            && matches!(value.trim(), "7bit" | "8bit" | "binary")
+    })
+}
+
 /// A multipart body cut after its first part and closed again, when that part is the first for
 /// every reader (the body starts at the delimiter: a lenient reader takes the first place it
 /// occurs, a strict one only a line of its own), is declared JSON and has one reading.
@@ -196,7 +225,7 @@ fn first_part_only(content_type: &str, body: &[u8]) -> Option<Vec<u8>> {
         (None, None) => return None,
     };
     let headers = String::from_utf8_lossy(body.get(start..headers_end)?).to_ascii_lowercase();
-    if !headers.contains("json") {
+    if !headers.contains("json") || !bytes_as_sent(&headers) {
         return None;
     }
     let part = headers_end + blank;

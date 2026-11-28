@@ -896,7 +896,10 @@ upstreams on random ports keep working.
    name anywhere, also in another case; one it cannot read, a cut-off one
    included, stays with the template when its content type says JSON or it
    starts with `{` or `[` (behind white space or a byte order mark too; an empty
-   body has nothing to read). So does a request with two content types. **A
+   body has nothing to read). So does a request with two content types, with a
+   `content-encoding` other than `identity`, or whose multipart first part names
+   a transfer encoding other than `7bit`, `8bit` or `binary`: the core checks
+   bytes as they are. **A
    hook sees only the first part of a multipart body** (a `multipart/` type, or
    any mention of a boundary): the body is cut after that part and closed
    again. It gets that only when the body starts at the delimiter, the part is
