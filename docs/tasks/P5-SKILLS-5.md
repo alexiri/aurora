@@ -112,3 +112,14 @@ cluster torn down.
 - Not verified: the emergency reader (the build predates the FIX-277 code), app skills; see the report.
 - Cluster `aurora-mem5` (:4530) **kept up** for P5-MEMORY-5 pass 2, on the owner's coordinator's instruction. PROGRESS
   and FEATURES not edited; `P5/14§skills-polish` is not done.
+
+**Pass 2 (2026-11-28, on `406605f6`, with FIX-278 and FIX-279): 26 Match, 1 Minor, 0 Needs changes.**
+
+- Report: `docs/design/skills-memory/verify/SKILLS-REPORT-pass2.md`; captures in `…/verify/skills-pass2/`.
+- Confirmed fixed on the real `anthropics/skills`: C-1 to C-7, and B-1 in both directions (a dropped proposal's
+  approve is 409). The emergency reader's Skills pages list files without opening them, with no 403 and no write.
+- To send back: D-1 (words: the reader's agent list shows "From Acme 0" and "From the workspace 0" although such skills
+  apply). Merged fixes since pass 1: FIX-278, FIX-279 (and FIX-280).
+- The Tests row waits for CI on `246a5fa9` (the migration-test fix); `a1a59836` was red on it and on
+  `terminal.spec.ts`.
+- No product code changed. Cluster `aurora-mem5` **kept up** for P5-NAV-4 pass 2. `P5/14§skills-polish` is not done.
