@@ -334,7 +334,8 @@ or in a skill — must be valid UTF-8 without a NUL byte, so the admin can read
 everything that will run. Every **helper file** must be text, executable or
 not (owner decision 2026-11-24): the home sync carries UTF-8 text only, so a
 non-text helper would be stored but silently never installed. A skill's
-non-executable data files may be binary.
+non-executable data files may be binary, at most 145 917 bytes each
+(`SKILL_BINARY_FILE_MAX`: they reach the agent as base64 in one sync entry).
 
 ### What is refused, and why
 

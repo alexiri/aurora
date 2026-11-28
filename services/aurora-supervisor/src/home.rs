@@ -7,7 +7,9 @@
 //! generation (or a restart of the same one at part 0) wipes the stale staging area.
 //!
 //! Entry shapes (the wire leaves them untyped, so they are defined here):
-//! - `skills`: `{path, content}`, `path` inside the harness skills dir (files become 0444).
+//! - `skills`: `{path, content}`, `path` inside the harness skills dir (files become 0444). A
+//!   file that isn't UTF-8 (FIX-292) has `content: null` and its bytes in `content_base64`; one
+//!   that does not decode is skipped like a file the home cannot hold. No other part is binary.
 //! - `memory`: `{path: "memory/<key>.md", content}` (supervisor appends the checksum trailer; 0644,
 //!   or 0444 when the entry carries `locked: true` — P6-MEMLOCK, C-1149: a locked memory is
 //!   installed read-only and the harvest restores it instead of uploading it)
@@ -30,6 +32,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use aurora_protocol::runner::{HomeSync, HomeSyncKind};
+use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -90,8 +93,12 @@ pub enum PartOutcome {
 #[derive(Deserialize)]
 struct FileEntry {
     path: String,
+    /// Text; null beside `content_base64`.
     #[serde(default)]
-    content: String,
+    content: Option<String>,
+    /// (FIX-292) Skill files only: the bytes of a file that isn't UTF-8.
+    #[serde(default)]
+    content_base64: Option<String>,
     /// Skill files only: install as 0555 instead of 0444 (`14` skills, executable bit).
     #[serde(default)]
     exec: bool,
@@ -99,6 +106,13 @@ struct FileEntry {
     /// older API never sends it, so the default is the old behaviour.
     #[serde(default)]
     locked: bool,
+}
+
+/// An entry of a part that carries text only (apps, helpers).
+fn text_entry(v: &Value) -> Option<FileEntry> {
+    serde_json::from_value::<FileEntry>(v.clone())
+        .ok()
+        .filter(|e| e.content_base64.is_none())
 }
 
 #[derive(Deserialize)]
@@ -410,10 +424,33 @@ impl HomeProjector {
                             continue;
                         }
                     };
-                    let body = if memory && rel.file_name().is_some_and(|n| n != INDEX_FILE) {
-                        seal(&e.content)
-                    } else {
-                        e.content
+                    let body = match e.content_base64 {
+                        None => {
+                            let text = e.content.unwrap_or_default();
+                            if memory && rel.file_name().is_some_and(|n| n != INDEX_FILE) {
+                                seal(&text).into_bytes()
+                            } else {
+                                text.into_bytes()
+                            }
+                        }
+                        Some(_) if memory => {
+                            tracing::warn!(path = %e.path.escape_debug(), "binary memory entry refused");
+                            continue;
+                        }
+                        Some(encoded) => {
+                            match base64::engine::general_purpose::STANDARD.decode(encoded) {
+                                Ok(bytes) => bytes,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        path = %e.path.escape_debug(),
+                                        %error,
+                                        "skill file does not decode; skipped"
+                                    );
+                                    self.skipped.insert(rel);
+                                    continue;
+                                }
+                            }
+                        }
                     };
                     // The exec flag travels through staging as the owner-x bit.
                     let staged_mode = if e.exec && !memory { 0o700 } else { 0o600 };
@@ -421,11 +458,7 @@ impl HomeProjector {
                     if memory && e.locked {
                         self.locked_keys.insert(rel.clone());
                     }
-                    match write_atomic(
-                        &self.staged_files().join(&rel),
-                        body.as_bytes(),
-                        staged_mode,
-                    ) {
+                    match write_atomic(&self.staged_files().join(&rel), &body, staged_mode) {
                         Ok(()) => {
                             self.skipped.remove(&rel);
                         }
@@ -444,7 +477,7 @@ impl HomeProjector {
             }
             HomeSyncKind::Apps => {
                 for v in entries {
-                    let Ok(e) = serde_json::from_value::<FileEntry>(v.clone()) else {
+                    let Some(e) = text_entry(v) else {
                         tracing::warn!("malformed app file entry refused");
                         continue;
                     };
@@ -452,7 +485,7 @@ impl HomeProjector {
                         Some(r) if is_app_path(&r) => {
                             write_atomic(
                                 &self.staged_files().join(&r),
-                                e.content.as_bytes(),
+                                e.content.unwrap_or_default().as_bytes(),
                                 0o600,
                             )?;
                         }
@@ -467,7 +500,7 @@ impl HomeProjector {
             // bit travels through staging as the owner-x bit, like a skill file's.
             HomeSyncKind::Helpers => {
                 for v in entries {
-                    let Ok(e) = serde_json::from_value::<FileEntry>(v.clone()) else {
+                    let Some(e) = text_entry(v) else {
                         tracing::warn!("malformed helper file entry refused");
                         continue;
                     };
@@ -478,7 +511,7 @@ impl HomeProjector {
                             // is skipped: it must not stall the whole sync.
                             match write_atomic(
                                 &self.staged_files().join(&r),
-                                e.content.as_bytes(),
+                                e.content.unwrap_or_default().as_bytes(),
                                 staged_mode,
                             ) {
                                 Ok(()) => {

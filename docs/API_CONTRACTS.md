@@ -3023,7 +3023,9 @@ names, and copy the route rows into `05`, the tables into `03`, the rules into `
   `reason_code: SkillInvalidReason|null` on `LibrarySkillItem`, `LibrarySkillContent` and `LibraryUpdateView` (the
   latter for `kind: "invalid"`), non-null exactly when the skill is invalid or unjudged: `too_large` |
   `body_too_large` | `file_too_large` | `too_many_files` | `unsupported_path` | `unsupported_entry` | `skill_md` |
-  `bad_name` | `unknown_size`. The free-text reasons stay; `blocked.reason` is unchanged.
+  `bad_name` | `unknown_size` | (FIX-292) `description_too_long` (a description over `SKILL_DESCRIPTION_MAX`, until
+  then `skill_md`). (FIX-292) `file_too_large` also covers a file that isn't UTF-8 over `SKILL_BINARY_FILE_MAX`. The
+  free-text reasons stay; `blocked.reason` is unchanged.
 - C-1177 **Dashboard routes** (D-506, D-497; P5-SKILLS-2, P5-MEMORY-2; `14`). `/o/<org>/skills` with `?tab=skills|libraries`
   (Manage <org> › Skills); `/admin/skills` (Administration › Skills: instance libraries and library settings); the
   agent's memory deep link `…/agents/<handle>?tab=memory&memory=<key>` (opens that memory's reading view; `&history=1`

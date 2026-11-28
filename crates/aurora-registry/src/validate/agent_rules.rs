@@ -356,7 +356,7 @@ pub fn archive_rules(
 
 const fn code_of(k: Kind) -> &'static str {
     match k {
-        Kind::Frontmatter => "app_skill_frontmatter",
+        Kind::Frontmatter | Kind::DescriptionTooLong => "app_skill_frontmatter",
         Kind::BodyTooLarge => "app_skill_body_too_large",
         Kind::Path => "app_skill_path",
         Kind::TooManyFiles => "app_skill_too_many_files",

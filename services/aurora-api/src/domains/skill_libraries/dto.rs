@@ -31,6 +31,8 @@ pub enum SkillInvalidReason {
     UnsupportedEntry,
     /// `SKILL.md` is missing or misnamed, or its front matter, description or body is wrong.
     SkillMd,
+    /// The description in `SKILL.md` is over the format's maximum.
+    DescriptionTooLong,
     /// The folder name is not a valid skill name.
     BadName,
     /// It could not be judged within the limits of one read of the repository.
@@ -38,7 +40,7 @@ pub enum SkillInvalidReason {
 }
 
 impl SkillInvalidReason {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::TooLarge,
         Self::BodyTooLarge,
         Self::FileTooLarge,
@@ -46,6 +48,7 @@ impl SkillInvalidReason {
         Self::UnsupportedPath,
         Self::UnsupportedEntry,
         Self::SkillMd,
+        Self::DescriptionTooLong,
         Self::BadName,
         Self::UnknownSize,
     ];
@@ -61,6 +64,7 @@ impl SkillInvalidReason {
             Self::UnsupportedPath => "unsupported_path",
             Self::UnsupportedEntry => "unsupported_entry",
             Self::SkillMd => "skill_md",
+            Self::DescriptionTooLong => "description_too_long",
             Self::BadName => "bad_name",
             Self::UnknownSize => "unknown_size",
         }
@@ -77,6 +81,7 @@ impl From<aurora_registry::skill_format::Kind> for SkillInvalidReason {
         use aurora_registry::skill_format::Kind;
         match k {
             Kind::Frontmatter => Self::SkillMd,
+            Kind::DescriptionTooLong => Self::DescriptionTooLong,
             Kind::BodyTooLarge => Self::BodyTooLarge,
             Kind::Path => Self::UnsupportedPath,
             Kind::TooManyFiles => Self::TooManyFiles,

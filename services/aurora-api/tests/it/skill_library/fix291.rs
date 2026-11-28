@@ -96,7 +96,8 @@ async fn fix291_one_over_each_limit_is_refused_with_its_reason_code() {
         put("body-at/SKILL.md", md_sized(limits::SKILL_BODY_MAX)),
         put("body-over/SKILL.md", md_sized(limits::SKILL_BODY_MAX + 1)),
         put("file-at/SKILL.md", md("d", "b")),
-        put("file-at/x.bin", vec![0xff; limits::LIBRARY_FILE_MAX]),
+        // Text: a binary file also has to fit a sync entry as base64 (FIX-292, below).
+        put("file-at/x.txt", vec![b'x'; limits::LIBRARY_FILE_MAX]),
         put("file-over/SKILL.md", md("d", "b")),
         put("file-over/x.bin", vec![0xff; limits::LIBRARY_FILE_MAX + 1]),
         // Within the byte limit of a file, but every line break takes two bytes as JSON.
@@ -152,6 +153,82 @@ async fn fix291_a_library_skill_with_a_1024_character_description_is_addable() {
     let (s, a) = w.add_agent(lib, "guide", &sha).await;
     assert_eq!(s, 201, "{a}");
     assert_eq!(a["description"], "d".repeat(1_024), "stored whole");
+}
+
+/// FIX-292: a description over the format's maximum has its own code, in the listing, the
+/// preview and a stored update.
+#[tokio::test]
+async fn fix292_a_too_long_description_has_its_own_reason_code() {
+    let w = world().await;
+    w.git.add_repo("acme/skills");
+    let long = "d".repeat(limits::SKILL_DESCRIPTION_MAX + 1);
+    let sha = w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("grows/SKILL.md", md("d", "b")),
+            put("wordy/SKILL.md", md(&long, "b")),
+        ],
+    );
+    let lib = w.library().await;
+    let v = browse(&w, lib).await;
+    assert_eq!(
+        item(&v, "wordy")["reason_code"],
+        "description_too_long",
+        "{v}"
+    );
+    let (s, p) = w
+        .call(
+            &w.admin,
+            Method::GET,
+            &format!("/v1/skill-libraries/{lib}/skills/wordy"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200, "{p}");
+    assert_eq!(p["reason_code"], "description_too_long", "{p}");
+    let id = add_org_id(&w, lib, "grows", &sha).await;
+    w.git.commit(
+        "acme/skills",
+        "main",
+        &[put("grows/SKILL.md", md(&long, "b"))],
+    );
+    w.refresh(lib).await;
+    let p = w.pending(id).await;
+    assert_eq!(p["update"]["kind"], "invalid", "{p}");
+    assert_eq!(p["update"]["reason_code"], "description_too_long", "{p}");
+}
+
+/// FIX-292: a binary file reaches the agent as base64 in one sync entry, so one that does not
+/// fit it is refused here, whatever the file limit allows.
+#[tokio::test]
+async fn fix292_a_library_binary_too_big_to_carry_is_refused() {
+    let w = world().await;
+    w.git.add_repo("acme/skills");
+    let sha = w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("fits/SKILL.md", md("d", "b")),
+            put("fits/x.bin", vec![0xff; 145_917]),
+            put("heavy/SKILL.md", md("d", "b")),
+            put("heavy/x.bin", vec![0xff; 145_918]),
+        ],
+    );
+    let lib = w.library().await;
+    let v = browse(&w, lib).await;
+    assert_eq!(item(&v, "fits")["valid"], true, "{v}");
+    let (s, a) = w.add_agent(lib, "fits", &sha).await;
+    assert_eq!(s, 201, "{a}");
+    let heavy = item(&v, "heavy");
+    assert_eq!(heavy["valid"], false, "{heavy}");
+    assert_eq!(heavy["reason_code"], "file_too_large", "{heavy}");
+    assert!(
+        heavy["reason"].as_str().unwrap().contains("base64"),
+        "{heavy}"
+    );
+    let (s, e) = w.add_agent(lib, "heavy", &sha).await;
+    assert_eq!((s, code(&e)), (422, "library_skill_invalid"), "{e}");
 }
 
 /// "Stop updates and edit" turns a library skill into the agent's own: it must fit there.

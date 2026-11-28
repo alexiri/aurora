@@ -41,11 +41,12 @@ export const LIBRARY_STATUS = {
 export const SKILL_INVALID_REASON = {
   too_large: { label: "This skill is larger than 300,000 characters, the most a skill may hold." },
   body_too_large: { label: "Its instructions are longer than 48,000 characters, the most a skill’s instructions may be." },
-  file_too_large: { label: "One of its files is too large: a file may be at most 160 KB, and less if it has many line breaks, quotes or special characters." },
+  file_too_large: { label: "One of its files is too large: a text file may be at most 160 KB (less with many line breaks, quotes or special characters), and any other file about 140 KB." },
   too_many_files: { label: "It has more than 50 files, the most a skill may hold." },
   unsupported_path: { label: "Some of its file names use characters Aurora can’t store, or sit too many folders deep." },
   unsupported_entry: { label: "It holds a link, a submodule or another kind of file a skill can’t hold." },
   skill_md: { label: "Its SKILL.md is missing, misnamed or not written the way a skill needs." },
+  description_too_long: { label: "Its description is longer than 1,024 characters, the most a skill’s description may be." },
   bad_name: { label: "Its folder name can’t be used as a skill name." },
   unknown_size: { label: "Aurora couldn’t read all of it to check its size, so it can’t be added." },
 } satisfies LabelTable;

@@ -714,6 +714,21 @@ fn parse_skills(
                 ));
                 continue;
             }
+            // A file that isn't UTF-8 reaches the agent as base64, in one sync entry.
+            if f.bytes.len() > limits::SKILL_BINARY_FILE_MAX
+                && std::str::from_utf8(&f.bytes).is_err()
+            {
+                problems.push(TemplateProblem::new(
+                    ProblemCode::TemplateSkillInvalid,
+                    &f.path,
+                    format!(
+                        "this file isn't text, so it is sent to the agent as base64: it may be \
+                         at most {} bytes",
+                        limits::SKILL_BINARY_FILE_MAX
+                    ),
+                ));
+                continue;
+            }
             if f.mode == 0o100755 && !skill_rules::is_text(&f.bytes) {
                 problems.push(TemplateProblem::new(
                     ProblemCode::TemplateExecutableBinary,
@@ -1395,6 +1410,29 @@ pub(crate) mod tests {
         assert!(
             err.iter()
                 .any(|p| p.code == ProblemCode::TemplateField && p.path.contains("#/locked"))
+        );
+    }
+
+    /// FIX-292: a skill's binary file is sent to the agent as base64 in one sync entry.
+    #[test]
+    fn fix292_a_skill_binary_too_big_to_carry_is_refused() {
+        let with = |len: usize| {
+            let mut files = sample_files();
+            files.push(TreeFile {
+                path: "service-monitor/skills/what-is-on/data.bin".to_owned(),
+                bytes: vec![0xff; len],
+                mode: 0o100644,
+            });
+            read_tree("service-monitor", &files)
+        };
+        assert!(with(145_917).is_ok());
+        let err = with(145_918).unwrap_err();
+        assert!(
+            err.iter()
+                .any(|p| p.code == ProblemCode::TemplateSkillInvalid
+                    && p.path.ends_with("data.bin")
+                    && p.message.contains("base64")),
+            "{err:?}"
         );
     }
 

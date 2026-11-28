@@ -17088,7 +17088,7 @@ export interface components {
          *     it is for logs and older clients).
          * @enum {string}
          */
-        SkillInvalidReason: "too_large" | "body_too_large" | "file_too_large" | "too_many_files" | "unsupported_path" | "unsupported_entry" | "skill_md" | "bad_name" | "unknown_size";
+        SkillInvalidReason: "too_large" | "body_too_large" | "file_too_large" | "too_many_files" | "unsupported_path" | "unsupported_entry" | "skill_md" | "description_too_long" | "bad_name" | "unknown_size";
         SkillLastUse: {
             /** Format: date-time */
             at: string;
