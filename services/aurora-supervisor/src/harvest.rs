@@ -237,12 +237,14 @@ impl Harvester {
     }
 
     /// The memory file `name`, bounded; a link at `memory/` or at the file is not followed.
-    fn read_memory(&self, name: &str) -> std::io::Result<Option<Vec<u8>>> {
-        read_bounded_beneath(
-            &self.root,
-            &Path::new(MEMORY_DIR).join(name),
-            MEMORY_FILE_READ_MAX,
-        )
+    /// With it, judged on the same open file: whether its content may be uploaded, which asks
+    /// for the agent's own file with this one name.
+    fn read_memory(&self, name: &str) -> std::io::Result<(Option<Vec<u8>>, bool)> {
+        let rel = Path::new(MEMORY_DIR).join(name);
+        let file = nofollow::open_regular_beneath(&self.root, &rel)?;
+        let meta = file.metadata()?;
+        let own = may_lock(meta.nlink(), meta.uid(), self.agent_uid);
+        Ok((read_capped(file, MEMORY_FILE_READ_MAX)?, own))
     }
 
     pub fn scan(&mut self, locked: &HashMap<String, Vec<u8>>) -> Vec<MemoryWrite> {
@@ -267,18 +269,19 @@ impl Harvester {
             if let Some(recorded) = locked.get(key) {
                 // (P6-MEMLOCK, C-1149) Never uploaded: the recorded install is the truth. A file
                 // that is gone or oversized counts as changed and is restored from the bytes.
-                let current = self.read_memory(name).ok().flatten();
+                // It is only compared, never uploaded.
+                let current = self.read_memory(name).ok().and_then(|(bytes, _)| bytes);
                 self.guard_locked(key, name, recorded, current.as_deref());
                 continue;
             }
             // (FIX-114) The agent writes these files: never read one whole before checking its
             // size (a multi-gigabyte file would kill the supervisor on the memory limit).
-            let text = match self.read_memory(name) {
-                Ok(Some(b)) => match String::from_utf8(b) {
-                    Ok(t) => t,
+            let (text, own) = match self.read_memory(name) {
+                Ok((Some(b), own)) => match String::from_utf8(b) {
+                    Ok(t) => (t, own),
                     Err(_) => continue,
                 },
-                Ok(None) => {
+                Ok((None, _)) => {
                     let digest = format!("oversized:{name}");
                     if self.uploaded.get(name) != Some(&digest) {
                         self.notice(format!(
@@ -297,6 +300,14 @@ impl Harvester {
             }
             let digest = sha_hex(text.as_bytes());
             if self.uploaded.get(name) == Some(&digest) {
+                continue;
+            }
+            if !own {
+                self.notice(format!(
+                    "memory file `{name}` was not saved: it belongs to another user or has \
+                     another name (a hard link); write it as a new file"
+                ));
+                self.uploaded.insert(name.clone(), digest);
                 continue;
             }
             if !valid_key(key) {
@@ -465,6 +476,35 @@ mod tests {
 
     fn write_keys(writes: &[MemoryWrite]) -> Vec<&str> {
         writes.iter().map(|w| w.key.as_str()).collect()
+    }
+
+    /// (FIX-297) What is uploaded is the agent's own file with this one name: a hard link in
+    /// `memory/` may be a file only the supervisor can read, and so may another user's file.
+    #[test]
+    fn only_the_agents_own_singly_named_memory_files_are_uploaded() {
+        let dir = std::env::temp_dir().join(format!("aurora-harvest-{}", Uuid::now_v7()));
+        let home = dir.join("home");
+        std::fs::create_dir_all(home.join(MEMORY_DIR)).unwrap();
+        std::fs::write(dir.join("secret"), "not the agent's to read\n").unwrap();
+        std::fs::hard_link(dir.join("secret"), home.join("memory/linked.md")).unwrap();
+        std::fs::write(home.join("memory/mine.md"), "agent text\n").unwrap();
+
+        let mut h = Harvester::new(&home);
+        let uploaded: Vec<String> = h.scan(&HashMap::new()).into_iter().map(|w| w.key).collect();
+        assert_eq!(uploaded, ["mine"]);
+        let notices = h.take_notices();
+        assert!(
+            notices.len() == 1 && notices[0].contains("`linked.md` was not saved"),
+            "{notices:?}"
+        );
+        // Said once, not at every scan.
+        assert!(h.scan(&HashMap::new()).is_empty() && h.take_notices().is_empty());
+
+        // The test's files are not those of the uid named here as the agent's.
+        let mut other = Harvester::new(&home);
+        other.set_agent_uid(rustix::process::getuid().as_raw() + 1);
+        assert!(other.scan(&HashMap::new()).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// (FIX-297) A locked memory that holds the recorded bytes but is a hard link to another
