@@ -210,9 +210,10 @@ fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> BootError + '_ {
 }
 
 /// Replaces `rel` below `base` (a temp file and a rename): what was at the name, a FIFO or a
-/// hard link among them, is never opened, and no link below `base` is followed.
+/// hard link among them, is never opened, and no link below `base` is followed. A replaced
+/// file's owner is kept.
 fn write_file(base: &Path, rel: &Path, content: &[u8], mode: u32) -> Result<(), BootError> {
-    crate::nofollow::write_beneath(base, rel, content, mode).map_err(io_err(&base.join(rel)))
+    crate::nofollow::rewrite_beneath(base, rel, content, mode).map_err(io_err(&base.join(rel)))
 }
 
 /// `path` (one [`confine`] passed) below the real home, with the links among its folders

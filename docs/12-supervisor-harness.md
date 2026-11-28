@@ -1094,8 +1094,9 @@ The home (`/workspace`) holds:
   writes and removes elsewhere in the home (the Claude Code and Codex session
   purges, Codex's `config.toml`, the fake harness's markers, boot files) and
   `/run/aurora/harness.env`, whose folder the agent can write. A boot file is
-  replaced by a temp file and a rename, never opened for writing; a folder
-  linked to another folder of the home is resolved first and stays a link.
+  replaced by a temp file and a rename, never opened for writing, and keeps the
+  owner of the file it replaces (a regular file with one name); a folder linked
+  to another folder of the home is resolved first and stays a link.
   Restoring a locked memory changes the mode only of a file that is the agent's
   and has one name; any other is replaced. The harvest uploads only such a file
   too (a hard link may be a file only the supervisor can read); the agent is

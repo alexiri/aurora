@@ -2036,6 +2036,43 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// (FIX-297) A boot file that replaces a file keeps its owner and group: a root supervisor
+    /// does not take the agent's files over. Without root only the group can be told apart, so
+    /// this needs a second group (nothing is checked for a user with one).
+    #[test]
+    fn a_rewritten_boot_file_keeps_its_owner() {
+        let (dir, home, _) = scratch();
+        let primary = rustix::process::getgid().as_raw();
+        let Some(other) = rustix::process::getgroups()
+            .unwrap()
+            .into_iter()
+            .map(|g| g.as_raw())
+            .find(|g| *g != primary)
+        else {
+            eprintln!("no second group: not checked");
+            return;
+        };
+        let file = home.join("rc");
+        fs::write(&file, "old").unwrap();
+        std::os::unix::fs::chown(&file, None, Some(other)).unwrap();
+        let doc: crate::boot::BootDocument = serde_json::from_value(serde_json::json!({
+            "v": 1, "sandbox_id": uuid::Uuid::now_v7(), "boot_id": uuid::Uuid::now_v7(),
+            "agent": {"id": uuid::Uuid::now_v7(), "handle": "ada", "name": "Ada"},
+            "harness": {"id": "fake"},
+            "runner_url": "ws://runner:1", "bootstrap_token": "t",
+            "gateway": {"proxy": "gw:1", "tls": true, "boot_token": "t"},
+            "ca_pem": "ca",
+            "files": [{"path": file, "content_b64": "eA==", "mode": "0600"}]
+        }))
+        .unwrap();
+        crate::boot::write_boot_files_in(&doc, &dir.join("ca.pem"), &home).unwrap();
+        let meta = fs::metadata(&file).unwrap();
+        assert_eq!((meta.uid(), meta.gid()), (me(), other));
+        assert_eq!(meta.mode() & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "x");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     /// (FIX-297) The terminal state folders are made, chmodded and chowned (as root) in the
     /// home only.
     #[test]

@@ -83,6 +83,28 @@ pub(crate) fn write_atomic_at(
     bytes: &[u8],
     mode: u32,
 ) -> io::Result<()> {
+    write_owned_at(dir, name, bytes, mode, None)
+}
+
+/// [`write_beneath`] that gives the new file the owner and group of the file it replaces, when
+/// that is a regular file with this one name: a root supervisor does not take a file over.
+pub(crate) fn rewrite_beneath(home: &Path, rel: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
+    let (parent, name) = split(rel)?;
+    let dir = ensure_dir_beneath(home, parent)?;
+    let owner = rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW)
+        .ok()
+        .filter(|s| FileType::from_raw_mode(s.st_mode) == FileType::RegularFile && s.st_nlink == 1)
+        .map(|s| (s.st_uid, s.st_gid));
+    write_owned_at(dir.as_fd(), name, bytes, mode, owner)
+}
+
+fn write_owned_at(
+    dir: BorrowedFd<'_>,
+    name: &OsStr,
+    bytes: &[u8],
+    mode: u32,
+    owner: Option<(u32, u32)>,
+) -> io::Result<()> {
     // Not built from the file's name, which may already be as long as a name can be.
     let tmp = format!(".{}.aurora-tmp", Uuid::now_v7().simple());
     // `O_CREAT | O_EXCL` never follows a link.
@@ -95,7 +117,14 @@ pub(crate) fn write_atomic_at(
     )?);
     let done = file
         .write_all(bytes)
-        .and_then(|()| set_mode(&file, mode))
+        .and_then(|()| {
+            // Before the mode, which a change of owner would strip bits from. Best effort:
+            // only root can give a file away.
+            if let Some((uid, gid)) = owner {
+                let _ = std::os::unix::fs::fchown(&file, Some(uid), Some(gid));
+            }
+            set_mode(&file, mode)
+        })
         .and_then(|()| file.sync_all())
         .and_then(|()| Ok(rustix::fs::renameat(dir, tmp.as_str(), dir, name)?));
     if done.is_err() {
