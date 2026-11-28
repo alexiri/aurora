@@ -4,7 +4,7 @@
   mkfixture.py stage <src> <dst> [hooks.wasm]   copy a fixture source dir, add icon/guide/wasm
   mkfixture.py mutate <archive> <mode>          damage a built archive (archive-level invalid cases)
 """
-import gzip, io, os, shutil, struct, sys, tarfile, zlib
+import gzip, io, os, re, shutil, struct, sys, tarfile, zlib
 
 SKIP = {"hooks", "mutate", "target", "dist"}
 
@@ -60,6 +60,16 @@ def _skill_md(name, body="Steps.\n"):
     return f"---\nname: {name}\ndescription: Do the thing.\n---\n\n{body}".encode()
 
 
+def limit(name):
+    """A size limit as crates/aurora-core/src/limits.rs defines it (`48_000` or `160 * KIB`), so
+    the oversized cases move with it."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../crates/aurora-core/src/limits.rs")
+    m = re.search(rf"^pub const {name}: usize = ([0-9_]+)( \* KIB)?;", open(path).read(), re.M)
+    if not m:
+        sys.exit(f"limit {name} not found in limits.rs")
+    return int(m.group(1)) * (1024 if m.group(2) else 1)
+
+
 def app_skills(dst, mode):
     """Writes the skills of the `fixture-invalid-app-skill-*` cases whose size makes a checked-in
     copy unreasonable (the limits are in docs/02 section Limits)."""
@@ -72,13 +82,19 @@ def app_skills(dst, mode):
 
     one = "invalid-app-x"
     if mode == "app-skill-body-too-large":
-        put(one, "SKILL.md", _skill_md(one, "x" * 24_001))
-    elif mode == "app-skill-too-large":  # body 20000 + a 13000-character file: over 32000 in total
-        put(one, "SKILL.md", _skill_md(one, "x" * 20_000))
-        put(one, "reference/notes.txt", b"y" * 13_000)
+        put(one, "SKILL.md", _skill_md(one, "x" * (limit("SKILL_BODY_MAX") + 1)))
+    elif mode == "app-skill-too-large":
+        # One character over SKILL_TOTAL_MAX, with the body and each of the two files within its
+        # own limit. Skill text has no more characters than bytes and APP_SKILLS_APP_MAX is the
+        # smaller number, so this package is also refused as app_skills_app_too_large.
+        body = limit("SKILL_BODY_MAX")
+        rest = limit("SKILL_TOTAL_MAX") + 1 - body
+        put(one, "SKILL.md", _skill_md(one, "x" * body))
+        put(one, "reference/notes-1.txt", b"y" * (rest // 2))
+        put(one, "reference/notes-2.txt", b"y" * (rest - rest // 2))
     elif mode == "app-skill-file-too-large":
         put(one, "SKILL.md", _skill_md(one))
-        put(one, "reference/big.txt", b"z" * (64 * 1024 + 1))
+        put(one, "reference/big.txt", b"z" * (limit("LIBRARY_FILE_MAX") + 1))
     elif mode == "app-skill-too-many-files":
         put(one, "SKILL.md", _skill_md(one))
         for i in range(51):

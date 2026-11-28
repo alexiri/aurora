@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests the four scripts that the built-in grafana package ships in its skills: `grafana-query`
 # (grafana-query/scripts), `grafana-os` (grafana-opensearch/scripts), `grafana-prom`
-# (grafana-prometheus/scripts; one script per skill because of the 32000-character skill limit) and
+# (grafana-prometheus/scripts; one script per skill, split under an earlier, lower skill size limit) and
 # `grafana-alert` (grafana-alerts/scripts), with no network: a stub
 # `aurora-agent` first on PATH records its arguments and the request bodies and answers canned files
 # from scripts/plugins/fixtures/grafana/. The canned frames follow the shapes of Grafana's
@@ -84,8 +84,8 @@ for s in "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT"; do
   if python3 -I -m py_compile "$s"; then ok "py_compile $(basename "$s")"; else bad "py_compile $(basename "$s")"; fi
 done
 find "$SKILLS" -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
-# The scripts each carry their own copy of the small helpers (a skill may hold at most 32000
-# characters, so no shared module): the copies must stay identical.
+# The scripts each carry their own copy of the small helpers (there is no shared module): the
+# copies must stay identical.
 if python3 -I - "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT" <<'PY'
 import ast, sys
 files = dict(zip(("query", "os", "prom", "alert"), sys.argv[1:]))
