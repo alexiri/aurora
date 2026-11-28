@@ -12,6 +12,7 @@ import {
   type GovIssues,
 } from "@/lib/api/governance";
 import { useWorkspaces } from "@/lib/api/queries";
+import { isEmergencyReader } from "@/lib/emergency";
 import { cn } from "@/lib/utils";
 
 /** The organization's Internet access controls of the governance document (C-965): postures, allow-list, blocked hosts. */
@@ -19,7 +20,10 @@ export function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
   form: GovForm; patch: (p: Partial<GovForm>) => void; issues: GovIssues; readOnly: boolean; eff: EffectiveGovernance; orgId: string;
 }) {
   const workspaces = useWorkspaces(orgId);
-  const blocked = useBlockedHosts((workspaces.data?.items ?? []).map((w) => w.id), true);
+  // An administrator's list also holds workspaces they aren't in, whose activity they can't read: don't ask for those.
+  const all = workspaces.data?.items ?? [];
+  const readable = all.filter((w) => w.my_role || isEmergencyReader(w));
+  const blocked = useBlockedHosts(readable.map((w) => w.id), true);
   const setRow = (i: number, p: Partial<{ host: string; path: string }>) =>
     patch({ allowlist: form.allowlist.map((r, j) => (j === i ? { ...r, ...p } : r)) });
   const listed = new Set(form.allowlist.map((r) => r.host));
@@ -80,6 +84,7 @@ export function EgressTab({ form, patch, issues, readOnly, eff, orgId }: {
       {blocked.length > 0 ? (
         <section aria-label="Recently blocked hosts" className="space-y-3">
           <h2 className="font-display text-base font-semibold text-ink">Recently blocked hosts</h2>
+          {readable.length < all.length ? <p className="text-xs text-muted">From the workspaces you can read.</p> : null}
           <ItemList aria-label="Recently blocked hosts">
             {blocked.map((b) => (
               <ListRow

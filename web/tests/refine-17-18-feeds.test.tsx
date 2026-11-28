@@ -121,6 +121,41 @@ describe("Manage › Overview: Needs you from the organization feed (#16, C-1080
     await waitFor(() => expect(calls.find((c) => c.key.startsWith("POST"))?.body).toEqual({ message: "Not this quarter." }));
   });
 
+  it("a library update and a broken organization account: a line, a link and a status each (nav-3b)", async () => {
+    const update = {
+      ...common, id: "library_update:l1", kind: "library_update", topic: "skills", subject_id: "l1", since: SINCE,
+      title: "Anthropic skills has an update to review", detail: "Shared with every workspace in Acme",
+      href: "/o/acme/skills?tab=libraries", decision: true, actors: [], actors_total: 0, can_decline: false,
+      action: { label: "Review", href: "/o/acme/skills?tab=libraries" },
+    };
+    const broken = {
+      ...common, id: "org_account_broken:c1", kind: "org_account_broken", topic: "accounts", subject_id: "c1", since: SINCE,
+      title: "The GitHub account for Acme failed to refresh its token", detail: "Workspaces that use it stop until it is renewed",
+      href: "/o/acme/apps?tab=accounts", decision: true, actors: [], actors_total: 0, can_decline: false,
+      action: { label: "Fix", href: "/o/acme/apps?tab=accounts" },
+    };
+    mockFetch({
+      "GET /v1/orgs/o1/attention": feed([update, broken]),
+      "GET /v1/orgs/o1/invitations": () => json(200, { items: [], next_cursor: null }),
+    });
+    wrap(<NeedsYouOrg orgId="o1" orgSlug="acme" />);
+    const card = await screen.findByTestId("org-needs-you");
+    expect(within(card).getByLabelText("2 waiting")).toBeInTheDocument();
+
+    const lib = within(card).getByTestId("attention-item-library_update:l1");
+    expect(lib).toHaveTextContent("Skills · Shared with every workspace in Acme");
+    expect(within(lib).getByRole("link", { name: update.title })).toHaveAttribute("href", "/o/acme/skills?tab=libraries");
+    expect(within(lib).getByText("Review")).toBeInTheDocument();
+    // The whole row opens the page: the status is not a second link.
+    expect(within(lib).getAllByRole("link")).toHaveLength(1);
+
+    const account = within(card).getByTestId("attention-item-org_account_broken:c1");
+    expect(account).toHaveTextContent("Apps & accounts · Workspaces that use it stop until it is renewed");
+    expect(within(account).getByRole("link", { name: broken.title })).toHaveAttribute("href", "/o/acme/apps?tab=accounts");
+    expect(within(account).getByText("Failed")).toHaveClass("text-danger-ink");
+    expect(within(account).getAllByRole("link")).toHaveLength(1);
+  });
+
   it("nothing waits: no card", async () => {
     const calls = mockFetch({
       "GET /v1/orgs/o1/attention": feed([]),

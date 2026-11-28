@@ -70,7 +70,7 @@ export function usePickerModel(place: Place, open: boolean): PickerModel {
     userId: viewerId,
     memberships,
     recent,
-    canCreateWorkspace: current !== undefined && current.id !== undefined && current.manage,
+    canCreateWorkspace: current !== undefined && current.id !== undefined && current.canCreate,
     // (org-5) Only where sign-up lets this person create an organization; the API still refuses in words.
     canCreateOrg: me.data != null && (instanceAdmin || instance.data?.org_creation === "anyone"),
     search: placeCount(orgs, instanceAdmin) > SEARCH_ABOVE,

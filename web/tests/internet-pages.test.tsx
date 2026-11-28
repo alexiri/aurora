@@ -329,6 +329,36 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     );
   });
 
+  it("asks for the activity only of workspaces the viewer is in or reads under emergency access", async () => {
+    const asked: string[] = [];
+    const activity = (id: string) => () => {
+      asked.push(id);
+      return id === "w2"
+        ? json(403, { error: { code: "forbidden", message: "no" } })
+        : json(200, { items: [{ host: `${id}.blocked.example` }], next_cursor: null });
+    };
+    routes({
+      "GET /v1/orgs/o1/workspaces": () =>
+        json(200, {
+          items: [
+            { id: "w1", slug: "release", name: "Release", my_role: "owner", emergency_reader: false },
+            { id: "w2", slug: "theirs", name: "Theirs", my_role: null, emergency_reader: false },
+            { id: "w3", slug: "review", name: "Review", my_role: null, emergency_reader: true },
+          ],
+          next_cursor: null,
+        }),
+      "GET /v1/workspaces/w1/activity": activity("w1"),
+      "GET /v1/workspaces/w2/activity": activity("w2"),
+      "GET /v1/workspaces/w3/activity": activity("w3"),
+    });
+    wrap(<OrgInternet org={org} slug="acme" />);
+    expect(await screen.findByText("w1.blocked.example")).toBeInTheDocument();
+    expect(screen.getByText("w3.blocked.example")).toBeInTheDocument();
+    expect(asked.sort()).toEqual(["w1", "w3"]);
+    // The list is not the whole organization's, and says so.
+    expect(screen.getByText("From the workspaces you can read.")).toBeInTheDocument();
+  });
+
   it("lists the workspaces that tightened, with a link to each", async () => {
     routes();
     wrap(<OrgInternet org={org} slug="acme" />);

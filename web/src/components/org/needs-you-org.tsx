@@ -6,6 +6,7 @@ import { useState, type ComponentType, type ReactNode, type SVGProps } from "rea
 import { DeclineRequestDialog } from "@/components/attention/decline-dialog";
 import { AttentionHistory, askedNoun } from "@/components/attention/needs-you-feed";
 import { AttentionChip } from "@/components/ui/attention-chip";
+import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ArrowRightIcon, MailIcon, MessageIcon, PlugIcon, SparkIcon, UsersIcon } from "@/components/ui/icons";
 import { ItemList } from "@/components/ui/section";
@@ -29,7 +30,15 @@ const TOPICS: Record<string, { label: string; icon: Icon }> = {
 };
 
 /** Something that stopped working reads as danger; everything else waits for an answer. */
-const BROKEN: ReadonlySet<AttentionItem["kind"]> = new Set(["broken_account", "connector_down", "agent_cannot_answer"]);
+const BROKEN: ReadonlySet<AttentionItem["kind"]> = new Set(["broken_account", "org_account_broken", "connector_down", "agent_cannot_answer"]);
+
+/** (nav-3b) Kinds whose row ends in a word for what is the matter, not in a button: the whole row opens the page. */
+const STATUS: Partial<Record<AttentionItem["kind"], string>> = { library_update: "Review", org_account_broken: "Failed" };
+
+function Status({ word, broken, itemId }: { word: string; broken: boolean; itemId: string }) {
+  // Amber names the thing it is about: the row's own link.
+  return broken ? <Badge tone="danger">{word}</Badge> : <AttentionChip actionId={itemId}>{word}</AttentionChip>;
+}
 
 function Row({
   icon: Mark,
@@ -37,6 +46,7 @@ function Row({
   title,
   detail,
   href,
+  linkId,
   actions,
   ...rest
 }: {
@@ -45,6 +55,7 @@ function Row({
   title: ReactNode;
   detail: ReactNode;
   href: string;
+  linkId?: string;
   actions?: ReactNode;
 } & Record<`data-${string}`, string | undefined>) {
   return (
@@ -56,7 +67,7 @@ function Row({
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2">
         <span className="min-w-0 flex-1 basis-48">
           {/* The whole row opens the item's page; the row's own controls sit above this link's hit area. */}
-          <Link href={href} className="block font-semibold text-ink after:absolute after:inset-0">
+          <Link id={linkId} href={href} className="block font-semibold text-ink after:absolute after:inset-0">
             {title}
           </Link>
           <span className="block text-xs text-muted">{detail}</span>
@@ -81,6 +92,8 @@ function ItemRow({
 }) {
   const [open, setOpen] = useState(false);
   const topic = TOPICS[item.topic] ?? { label: undefined, icon: PlugIcon };
+  const status = STATUS[item.kind];
+  const linkId = status ? `attention-link-${item.id.replace(/[^a-zA-Z0-9-]/g, "-")}` : undefined;
   return (
     <Row
       data-kind={item.kind}
@@ -96,30 +109,35 @@ function ItemRow({
         </>
       }
       href={item.href}
+      linkId={linkId}
       actions={
-        <>
-          {item.action ? (
-            <Link href={item.action.href} aria-label={`${item.action.label}: ${item.title}`} className={buttonVariants({ variant: "outline", size: "sm" })}>
-              {item.action.label}
-            </Link>
-          ) : null}
-          {item.can_decline ? (
-            <>
-              <Button variant="ghost" size="sm" aria-label={`Decline: ${item.title}`} onClick={() => setOpen(true)}>
-                Decline
-              </Button>
-              <DeclineRequestDialog
-                open={open}
-                onOpenChange={setOpen}
-                names={item.actors.map((a) => personName(a.display_name))}
-                noun={askedNoun(item)}
-                busy={declining}
-                error={declineError}
-                onDecline={(message) => onDecline(message, () => setOpen(false))}
-              />
-            </>
-          ) : null}
-        </>
+        status ? (
+          <Status word={status} broken={BROKEN.has(item.kind)} itemId={linkId!} />
+        ) : (
+          <>
+            {item.action ? (
+              <Link href={item.action.href} aria-label={`${item.action.label}: ${item.title}`} className={buttonVariants({ variant: "outline", size: "sm" })}>
+                {item.action.label}
+              </Link>
+            ) : null}
+            {item.can_decline ? (
+              <>
+                <Button variant="ghost" size="sm" aria-label={`Decline: ${item.title}`} onClick={() => setOpen(true)}>
+                  Decline
+                </Button>
+                <DeclineRequestDialog
+                  open={open}
+                  onOpenChange={setOpen}
+                  names={item.actors.map((a) => personName(a.display_name))}
+                  noun={askedNoun(item)}
+                  busy={declining}
+                  error={declineError}
+                  onDecline={(message) => onDecline(message, () => setOpen(false))}
+                />
+              </>
+            ) : null}
+          </>
+        )
       }
     />
   );
