@@ -63,7 +63,8 @@ pub async fn write(
     let Some(cid) = row.conversation_id else {
         return Ok(());
     };
-    if !convs::lock(&mut *tx, cid).await? {
+    // In a task conversation the origin notice below goes on to take the task origins.
+    if !crate::domains::peer_tasks::service::lock_with_task_origins(tx, cid).await? {
         return Ok(());
     }
     let ty = kind.ty();

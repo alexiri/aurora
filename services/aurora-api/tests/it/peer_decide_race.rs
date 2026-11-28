@@ -501,6 +501,153 @@ async fn a_batch_takes_every_conversation_before_any_link() {
     );
 }
 
+/// A task whose pair has a queued task opened from a task conversation **newer** than the
+/// task's own: `(rig, bravo, the open task, its conversation, that newer conversation)`.
+async fn queued_from_a_newer_conversation() -> (Rig, Uuid, Uuid, Uuid, Uuid) {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let c = rig.agent(rig.ws1, "charlie").await;
+    let (origin, turn) = rig.person_turn(a, rig.p.id).await;
+    let task = delegate(&rig, (a, origin, turn), "@bravo").await;
+    let conversation = rig.peer_conversation(task).await;
+    let (origin, turn) = rig.person_turn(c, rig.p.id).await;
+    let to_alpha = delegate(&rig, (c, origin, turn), "@alpha").await;
+    let newer = rig.peer_conversation(to_alpha).await;
+    if let Some(t) = rig.running_turn(newer).await {
+        rig.finish_turn(t).await;
+    }
+    let turn = rig.turn(newer, a, "person", Some(rig.p.id)).await;
+    let queued = delegate(&rig, (a, newer, turn), "@bravo").await;
+    assert_eq!(rig.task_status(queued).await, "queued");
+    assert!(newer > conversation);
+    (rig, b, task, conversation, newer)
+}
+
+/// A writer that locks several conversations takes the newest first. While it holds the newer
+/// one and still wants the task's, `work` waits for it holding neither.
+async fn works_beside_a_newest_first_writer<T>(
+    pool: &PgPool,
+    newer: Uuid,
+    older: Uuid,
+    work: impl Future<Output = T>,
+) -> (T, Result<bool, String>) {
+    let mut writer = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut writer).await;
+    assert!(convs::lock(&mut writer, newer).await.unwrap());
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let locked = convs::lock(&mut writer, older)
+            .await
+            .map_err(|e| e.to_string());
+        if locked.is_ok() {
+            writer.commit().await.unwrap();
+        }
+        locked
+    };
+    tokio::join!(work, finish)
+}
+
+#[tokio::test]
+async fn a_cancel_takes_a_newer_task_origin_before_the_task_conversation() {
+    let (rig, _, task, conversation, newer) = queued_from_a_newer_conversation().await;
+    let pool = rig.h.pool();
+    let cancel = async {
+        let mut tx = pool.begin().await.unwrap();
+        let done = peers::cancel_by_requester(&mut tx, rig.p.id, task)
+            .await
+            .map(|c| matches!(c, RequesterCancel::Done(_)))
+            .map_err(|e| e.message().to_owned());
+        if done.is_ok() {
+            tx.commit().await.unwrap();
+        }
+        done
+    };
+    let (cancelled, writer) =
+        works_beside_a_newest_first_writer(pool, newer, conversation, cancel).await;
+    assert_eq!((cancelled, writer), (Ok(true), Ok(true)));
+}
+
+#[tokio::test]
+async fn a_turn_end_takes_a_newer_task_origin_before_the_task_conversation() {
+    use aurora_api::domains::hosted::lifecycle;
+    let (rig, _, task, conversation, newer) = queued_from_a_newer_conversation().await;
+    let pool = rig.h.pool();
+    let turn: Uuid = sqlx::query_scalar(
+        "SELECT id FROM turns WHERE conversation_id = $1 AND role = 'turn'
+           AND status IN ('queued','dispatched','running')",
+    )
+    .bind(conversation)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let end = async {
+        let mut tx = pool.begin().await.unwrap();
+        let ended = lifecycle::fail(&mut tx, turn, conversation, "agent_restarted", "Restarted.")
+            .await
+            .map(|t| t.is_some())
+            .map_err(|e| e.message().to_owned());
+        if ended.is_ok() {
+            tx.commit().await.unwrap();
+        }
+        ended
+    };
+    let (ended, writer) = works_beside_a_newest_first_writer(pool, newer, conversation, end).await;
+    assert_eq!((ended, writer), (Ok(true), Ok(true)));
+    assert_eq!(rig.task_status(task).await, "cancelled");
+}
+
+#[tokio::test]
+async fn an_approval_delivery_takes_a_newer_task_origin_before_the_task_conversation() {
+    use aurora_api::domains::approvals::transcript;
+    let (rig, b, task, conversation, newer) = queued_from_a_newer_conversation().await;
+    let approval = pending_approval(&rig, b, conversation, None).await;
+    let pool = rig.h.pool();
+    let origin: Uuid =
+        sqlx::query_scalar("SELECT origin_conversation_id FROM peer_tasks WHERE id = $1")
+            .bind(task)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let deliver = async {
+        transcript::write_current(&rig.h.state, approval)
+            .await
+            .map_err(|e| e.message().to_owned())
+    };
+    let (delivered, writer) =
+        works_beside_a_newest_first_writer(pool, newer, conversation, deliver).await;
+    assert_eq!((delivered, writer), (Ok(()), Ok(true)));
+    // The delivery's own writes are best-effort: they must not have been the ones given up.
+    assert_eq!(
+        rig.notices(origin, "peer_waiting_for_approval").await.len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_reply_takes_a_newer_task_origin_before_the_task_conversation() {
+    let (rig, b, _, conversation, newer) = queued_from_a_newer_conversation().await;
+    let pool = rig.h.pool();
+    let turn: Uuid = sqlx::query_scalar(
+        "SELECT id FROM turns WHERE conversation_id = $1 AND role = 'turn'
+           AND status IN ('queued','dispatched','running')",
+    )
+    .bind(conversation)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let reply = rig.tool(
+        b,
+        conversation,
+        Some(turn),
+        "message_agent",
+        json!({"agent": "@alpha", "text": "a question"}),
+    );
+    let (sent, writer) = works_beside_a_newest_first_writer(pool, newer, conversation, reply).await;
+    assert!(sent.ok, "{:?}", sent.error);
+    assert_eq!(writer, Ok(true));
+}
+
 async fn a_close_that_holds_the_link(
     h: &Held,
     decide: impl Future<Output = (u16, serde_json::Value)>,

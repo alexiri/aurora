@@ -668,7 +668,7 @@ async fn restart(
     }
     let mut flush = Vec::new();
     for (turn, cid) in hosted::active_turns_of_agent(&mut tx, agent).await? {
-        convs::lock(&mut tx, cid).await?;
+        crate::domains::peer_tasks::service::lock_with_task_origins(&mut tx, cid).await?;
         if lifecycle::fail(
             &mut tx,
             turn,

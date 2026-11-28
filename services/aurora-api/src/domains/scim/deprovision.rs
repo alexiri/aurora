@@ -292,7 +292,7 @@ pub async fn abort_speaker_turns(
         }
         let mut ended = 0;
         for (turn, conversation) in turns {
-            aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
+            crate::domains::peer_tasks::service::lock_with_task_origins(conn, conversation).await?;
             conv::append_event(
                 conn,
                 conversation,

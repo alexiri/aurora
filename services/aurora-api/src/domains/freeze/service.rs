@@ -379,7 +379,7 @@ async fn end_turns(
 ) -> Result<usize, ApiError> {
     let mut n = 0;
     for (turn, conversation) in turns {
-        convs::lock(&mut *tx, conversation).await?;
+        crate::domains::peer_tasks::service::lock_with_task_origins(tx, conversation).await?;
         conv::append_event(
             tx,
             conversation,
