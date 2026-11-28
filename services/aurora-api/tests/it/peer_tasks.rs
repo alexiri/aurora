@@ -3729,6 +3729,47 @@ async fn a_chain_that_starts_in_an_automation_thread_reports_there() {
     );
 }
 
+/// (FIX-288, D-509) The card goes further up only while the person can still use the workspace
+/// of the conversation it would stand in; once they cannot, it stays at the task's own origin.
+#[tokio::test]
+async fn a_requester_who_lost_the_homes_workspace_gets_no_card_there() {
+    let x = chain().await;
+    // The first conversation's workspace is one the person cannot use (any more).
+    sqlx::query("UPDATE conversations SET workspace_id = $2 WHERE id = $1")
+        .bind(x.d.conv)
+        .bind(x.d.rig.ws2)
+        .execute(x.d.rig.h.pool())
+        .await
+        .unwrap();
+    let id = x.pending_at_c().await;
+    assert_eq!(
+        x.d.rig.notices(x.d.conv, "peer_waiting_for_approval").await.len(),
+        0
+    );
+    assert_eq!(
+        x.d.rig.notices(x.pcb, "peer_waiting_for_approval").await.len(),
+        1
+    );
+    x.d.answer(id, "approved").await;
+    x.d.report_approval(id).await;
+    assert_eq!(
+        x.d.rig.notices(x.pcb, "peer_approval_decided").await.len(),
+        1
+    );
+    assert_eq!(
+        x.d.rig.notices(x.d.conv, "peer_approval_decided").await.len(),
+        0
+    );
+    assert!(x.d.system_turns(x.d.conv).await.is_empty());
+    assert!(
+        aurora_db::repo::peer_tasks::held_decision_ids(x.d.rig.h.pool(), 100)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the sweeps look where it was delivered"
+    );
+}
+
 /// (FIX-288, D-509) Eight levels are allowed and the deepest one's approval still reaches the
 /// person; a ninth is refused with a plain line, before anything (also an approval) is created.
 #[tokio::test]

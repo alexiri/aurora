@@ -1517,6 +1517,17 @@ async fn peer_approval_two_levels_down_cards_the_persons_thread_with_their_butto
         let requester = if may_decide { w.member } else { w.outsider };
         let (id, _task, origin) = w.peer_approval("group", requester).await;
         w.add_hop_above(origin, requester).await;
+        if !may_decide {
+            // Can use the workspace of the first conversation, cannot approve there.
+            sqlx::query(
+                "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')",
+            )
+            .bind(w.ws)
+            .bind(requester)
+            .execute(w.pool())
+            .await
+            .unwrap();
+        }
         w.fanout().await;
         w.fanout().await;
         let posts = w.ops("message.post").await;
