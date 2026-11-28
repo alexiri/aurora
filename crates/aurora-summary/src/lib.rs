@@ -68,14 +68,19 @@ impl ApprovalSummary {
     }
 }
 
-/// The card's warning for a body that does not have one reading.
-pub(crate) fn two_readings(why: &str) -> SummaryField {
+/// A card's warning about what it does not show.
+pub(crate) fn warning(value: String) -> SummaryField {
     SummaryField {
         label: "Warning".to_owned(),
-        value: format!(
-            "The body can be read more than one way ({why}), so its values are not shown."
-        ),
+        value,
     }
+}
+
+/// The card's warning for a body that does not have one reading.
+pub(crate) fn two_readings(why: &str) -> SummaryField {
+    warning(format!(
+        "The body can be read more than one way ({why}), so its values are not shown."
+    ))
 }
 
 /// `a=1&b=2` ->`a=***&b=***` (keys kept, values never shown).

@@ -79,6 +79,10 @@ pub fn summarize(a: &Approval, inp: &Input<'_>) -> ApprovalSummary {
         fields.push(crate::two_readings(
             "a name appears twice, or also in another case",
         ));
+    } else if let Some(why) = unreadable_json(a, inp) {
+        fields.push(crate::warning(format!(
+            "{why}, so the values this card reads from it are not shown."
+        )));
     }
     for f in &a.fields {
         if doubt && matches!(f.source, Source::Body { .. }) {
@@ -158,6 +162,26 @@ fn json_at(body: &[u8], pointer: &str, wildcard: bool) -> Option<Vec<serde_json:
     let doc = json::parse(body)?;
     let nodes = nodes_at(&doc, pointer, wildcard).ok()?;
     nodes.iter().map(|n| n.value().ok()).collect()
+}
+
+/// Why a field that reads JSON from the body cannot, when there is a body: such a field never
+/// just vanishes from the card. (A `graphql` field also reads a bare query text.)
+fn unreadable_json(a: &Approval, inp: &Input<'_>) -> Option<&'static str> {
+    let reads_json = a.fields.iter().any(|f| {
+        matches!(&f.source, Source::Body { steps } if matches!(
+            steps.first(),
+            Some(Decoder::Json(_) | Decoder::JsonCount(_) | Decoder::JsonText(_))
+        ))
+    });
+    if !reads_json || inp.body_prefix.is_empty() {
+        None
+    } else if inp.truncated {
+        Some("The body is longer than what was read")
+    } else if json::parse(inp.body_prefix).is_none() {
+        Some("The body is not valid JSON")
+    } else {
+        None
+    }
 }
 
 /// Whether the body, as the first step of `steps` reads it, has two readings. A body that is
@@ -655,6 +679,41 @@ mod tests {
         assert!(val(&s, "Warning").is_none());
     }
 
+    /// Fields that cannot be read from the body never just vanish from the card.
+    #[test]
+    fn a_body_that_cannot_be_read_says_so() {
+        let a = json!({"title":"Share","fields":[
+            {"label":"Email","source":"body","steps":[{"json":"/emailAddress"}]},
+            {"label":"File","source":"path","segment":1}]});
+        for (body, truncated, why) in [
+            (
+                br#"{"emailAddress":"a@x","p":"\ud800"}"#.as_slice(),
+                false,
+                "not valid JSON",
+            ),
+            (b"emailAddress=a@x".as_slice(), false, "not valid JSON"),
+            (
+                br#"{"emailAddress":"a@x","p":"aaa"#.as_slice(),
+                true,
+                "longer than",
+            ),
+        ] {
+            let s = run(a.clone(), "/f1", None, body, truncated);
+            let note = val(&s, "Warning").unwrap_or_default();
+            assert!(note.contains(why), "{note:?}");
+            assert_eq!(s.fields.first().map(|f| f.label.as_str()), Some("Warning"));
+            assert!(val(&s, "Email").is_none());
+            assert_eq!(val(&s, "File").as_deref(), Some("f1"));
+        }
+        // No body, or no field that reads JSON from it: nothing is hidden.
+        let s = run(a, "/f1", None, b"", false);
+        assert!(val(&s, "Warning").is_none());
+        let form = json!({"title":"T","fields":[
+            {"label":"A","source":"body","steps":[{"form":"Action"}]}]});
+        let s = run(form, "/", None, b"Action=Run", false);
+        assert!(val(&s, "Warning").is_none());
+    }
+
     #[test]
     fn raw_mime_message() {
         let mime = "To: Alice <alice@example.com>, bob@example.com\r\nSubject: =?UTF-8?B?SMOpbGxv?=\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello body\r\n";
@@ -685,7 +744,9 @@ mod tests {
             &body[..20],
             true,
         );
-        assert!(s.fields.is_empty());
+        // The card says why instead of showing nothing.
+        let labels: Vec<&str> = s.fields.iter().map(|f| f.label.as_str()).collect();
+        assert_eq!(labels, ["Warning"]);
     }
 
     /// (FIX-118, PKG-1) Every recipient — repeated `To:` lines, Cc and Bcc — and the attachment
