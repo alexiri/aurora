@@ -19,6 +19,7 @@ use crate::harness::{
     HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEvent, HarnessEventStream,
     HarnessSession, SessionOptions, SteerAck, SteerInput, TurnInput,
 };
+use crate::nofollow;
 
 const STEER_WAIT: Duration = Duration::from_secs(10);
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -56,11 +57,13 @@ impl HarnessAdapter for FakeHarness {
             .clone()
             .unwrap_or_else(|| format!("fake-{}", opts.conversation_id));
         // A marker file stands in for the stored session so purges are observable in tests.
-        if let Some(dir) = fake_session_dir(&opts.working_dir)
-            && std::fs::create_dir_all(&dir).is_ok()
-        {
-            let _ = std::fs::write(dir.join(&session_ref), b"fake session");
-        }
+        // The home is the agent's: no link in it is followed.
+        let _ = nofollow::write_beneath(
+            &opts.working_dir,
+            &Path::new(FAKE_SESSIONS_DIR).join(&session_ref),
+            b"fake session",
+            0o644,
+        );
         Ok(Box::new(FakeSession {
             opts,
             session_ref,
@@ -79,20 +82,17 @@ impl HarnessAdapter for FakeHarness {
                 "unsafe session reference",
             ));
         }
-        if let Some(dir) = fake_session_dir(working_dir) {
-            match std::fs::remove_file(dir.join(session_ref)) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(HarnessError::new("purge_failed", e.to_string())),
-            }
-        }
-        Ok(())
+        let marker = Path::new(FAKE_SESSIONS_DIR).join(session_ref);
+        nofollow::remove_file_beneath(working_dir, &marker)
+            .map_err(|e| HarnessError::new("purge_failed", e.to_string()))
     }
 }
 
+const FAKE_SESSIONS_DIR: &str = ".fake-sessions";
+
 /// Where the fake harness keeps its session marker files (`<home>/.fake-sessions`).
 pub fn fake_session_dir(working_dir: &Path) -> Option<PathBuf> {
-    Some(working_dir.join(".fake-sessions"))
+    Some(working_dir.join(FAKE_SESSIONS_DIR))
 }
 
 struct ActiveTurn {
@@ -485,6 +485,37 @@ impl Script {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (FIX-297) The session markers are neither written nor removed through a link, at their
+    /// folder or at a marker's own name.
+    #[tokio::test]
+    async fn a_session_marker_is_never_written_or_removed_through_a_link() {
+        use std::fs;
+        for link in [".fake-sessions", ".fake-sessions/r1"] {
+            let dir = std::env::temp_dir().join(format!("fake-link-{}", uuid::Uuid::now_v7()));
+            let (home, outside) = (dir.join("home"), dir.join("outside"));
+            fs::create_dir_all(&outside).unwrap();
+            fs::write(outside.join("r1"), "outside").unwrap();
+            let at = home.join(link);
+            fs::create_dir_all(at.parent().unwrap()).unwrap();
+            let target = if link.ends_with("r1") {
+                outside.join("r1")
+            } else {
+                outside.clone()
+            };
+            std::os::unix::fs::symlink(target, &at).unwrap();
+
+            let mut opts = crate::adapters::pi::config::tests::opts("openai_chat", "");
+            opts.working_dir = home.clone();
+            opts.resume_ref = Some("r1".into());
+            let _session = FakeHarness.start_session(opts).await.unwrap();
+            let kept = || fs::read_to_string(outside.join("r1")).unwrap();
+            assert_eq!(kept(), "outside", "{link}: written");
+            let _ = FakeHarness.purge_session(&home, "r1").await;
+            assert_eq!(kept(), "outside", "{link}: removed");
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
 
     #[test]
     fn parses_directives() {
