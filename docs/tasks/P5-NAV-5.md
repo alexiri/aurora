@@ -82,3 +82,16 @@ Sonnet `sonnet-integration-reviewer` with a browser.
 
 Passes, verdict counts per pass, report paths, what was sent back and merged, owner-accepted differences, cluster torn
 down.
+
+**Pass 1 (2026-11-28, on `1e9f0c34`): not clean — 12 Match, 2 Minor difference, 2 Needs changes.**
+
+- Report: `docs/design/navigation/verify/NAV-3-REPORT-pass1.md`; captures in `…/verify/nav-3-pass1/`.
+- To send back: C-1 (flow: Manage's count and Needs you hold only requests, no library updates or broken organization
+  accounts; needs a contract change), C-2 (words: "Bob's workspace" in Bob's own back line), C-3 (rough: the back line
+  keeps an ended emergency workspace) and C-4 (rough: the active menu entry is out of sight at 783 px high) to
+  P5-NAV-2; C-5 (flow: members who may create workspaces aren't offered **New workspace**) to P5-NAV-3.
+- Merged fixes: none yet. Owner-accepted differences: none recorded.
+- Tests run: `places.spec.ts` and `place-picker.spec.ts` 33 passed, `design-guards` 17 passed (through `test.sh`).
+- No direct fixes and no product code changed, so no fail-first evidence of this lane's own.
+- Cluster `aurora-mem5` (:4530) **kept up** for the next pass. PROGRESS and FEATURES not edited (`P5/14§places` is not
+  done).

@@ -99,3 +99,10 @@ down.
   never reaches Playwright; `terminal.spec` and `agent-fill-pane.spec` pass 53/53 locally).
 - Merged fixes since pass 1: `579cbf0f`. Owner questions still open.
 - No product code changed. Cluster `aurora-mem5` **kept up** for P5-SKILLS-5 pass 3.
+
+**Pass 3 (2026-11-28, on `1e9f0c34`, with `285b04a4`): clean, 12 rows Match.**
+
+- Report: `docs/design/navigation/verify/NAV-2A-REPORT-pass3.md` (no captures).
+- T-1 is fixed and CI run 46092801164 is green, mocked Playwright included. The pane measurements and the BYO Connect
+  axe result are the same as in pass 2.
+- Owner questions from pass 1 still open. No product code changed. Cluster `aurora-mem5` **kept up**.
