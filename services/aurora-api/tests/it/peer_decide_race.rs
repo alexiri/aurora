@@ -648,6 +648,59 @@ async fn a_reply_takes_a_newer_task_origin_before_the_task_conversation() {
     assert_eq!(writer, Ok(true));
 }
 
+/// A caller that revokes twice in one transaction: the first call ends a held row, the second a
+/// parked one in the same conversation. A decision of the first row, arriving between them,
+/// waits for the whole transaction.
+#[tokio::test]
+async fn a_decision_waits_for_a_caller_that_revokes_twice() {
+    let h = held(None).await;
+    let pool = h.rig.h.pool();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut revoke = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut revoke).await;
+    let ended = approvals::abandon_pending_depending_on(
+        &mut revoke,
+        approvals::Dependency::AgentSecrets { agent_id: agent },
+    )
+    .await
+    .unwrap();
+    assert_eq!(ended.len(), 1);
+    let decide = decide(&h);
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let second = pending_approval(&h.rig, agent, h.task_conversation, None).await;
+        sqlx::query(
+            "UPDATE approvals SET parked = true, fp_salt = '\\x00', fingerprint = '\\x00'
+              WHERE id = $1",
+        )
+        .bind(second)
+        .execute(pool)
+        .await
+        .unwrap();
+        let ended = approvals::end_parked_of(
+            &mut revoke,
+            approvals::Scope::Conversation(h.task_conversation),
+        )
+        .await
+        .map(|e| e.len())
+        .map_err(|e| e.to_string());
+        if ended.is_ok() {
+            revoke.commit().await.unwrap();
+        }
+        ended
+    };
+    let ((status, body), second) = tokio::join!(decide, finish);
+    assert_eq!(
+        (second, status, &body["error"]["code"]),
+        (Ok(1), 409, &json!("already_decided")),
+        "{body}"
+    );
+}
+
 async fn a_close_that_holds_the_link(
     h: &Held,
     decide: impl Future<Output = (u16, serde_json::Value)>,

@@ -15,8 +15,9 @@
 //!   peer-task service, which also takes the tasks' origins, links and tasks. `revoke_ready`
 //!   and `set_resume_turn` follow under those locks.
 //! - The revocations ([`end_parked_of`], [`abandon_pending_depending_on`]): the conversations
-//!   of the rows that get a notice (parked pending, ready grants), by [`lock_conversations`].
-//!   A held row gets no notice, so its conversation is not locked.
+//!   of every pending row and ready grant they select, by [`lock_conversations`]. Held rows
+//!   too, though they get no notice: a caller may revoke again in the same transaction, and the
+//!   later call locks conversations for its notices.
 //! - A freeze (`repo::freeze::abandon_pending_approvals`): the conversations of every row it
 //!   ends, since it also ends the held rows' turns.
 //! - [`expire_resume_windows`]: the conversations of the grants it expires.
@@ -682,7 +683,7 @@ pub async fn end_parked_of(
     };
     lock_conversations(
         &mut *tx,
-        &format!("{col} = $1 AND {NOTIFIED}"),
+        &format!("{col} = $1 AND {ENDABLE}"),
         LockBind::Uuid(id),
     )
     .await?;
@@ -818,8 +819,8 @@ enum RevokeBind<'a> {
     Text(&'a str),
 }
 
-/// The rows a revocation writes a notice for: parked pending ones and ready grants.
-const NOTIFIED: &str = "((status = 'pending' AND parked) OR resume_state = 'ready')";
+/// The rows a revocation may end: pending ones (held or parked) and ready grants.
+const ENDABLE: &str = "(status = 'pending' OR resume_state = 'ready')";
 
 /// What [`lock_conversations`] binds to its predicate's placeholders.
 pub(super) enum LockBind<'a> {
@@ -906,8 +907,8 @@ pub async fn abandon_pending_depending_on(
     };
     let (revoked, rows): (Vec<Ended>, Vec<EndedRow>) = if let Dependency::App { app_id } = dep {
         let pred = "connection_id IN (SELECT id FROM app_connections WHERE app_id = $1)";
-        let notified = format!("{pred} AND {NOTIFIED}");
-        lock_conversations(&mut *tx, &notified, LockBind::Text(app_id)).await?;
+        let endable = format!("{pred} AND {ENDABLE}");
+        lock_conversations(&mut *tx, &endable, LockBind::Text(app_id)).await?;
         // (P4-011B-2, C-826) The `ready` grants that depend on the same thing are revoked in
         // the same transaction (they are not `pending`, so this runs first and apart).
         let revoked = revoke_ready_where(&mut *tx, pred, RevokeBind::Text(app_id)).await?;
@@ -921,8 +922,8 @@ pub async fn abandon_pending_depending_on(
         .await?;
         (revoked, rows)
     } else {
-        let notified = format!("{pred} AND {NOTIFIED}");
-        lock_conversations(&mut *tx, &notified, LockBind::Uuids(b1, b2)).await?;
+        let endable = format!("{pred} AND {ENDABLE}");
+        lock_conversations(&mut *tx, &endable, LockBind::Uuids(b1, b2)).await?;
         let revoked = revoke_ready_where(&mut *tx, pred, RevokeBind::Uuids(b1, b2)).await?;
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \
