@@ -83,25 +83,6 @@ impl W {
             .await
             .unwrap();
     }
-
-    async fn audit_rows(&self, action: &str) -> i64 {
-        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = $1")
-            .bind(action)
-            .fetch_one(self.h.pool())
-            .await
-            .unwrap()
-    }
-
-    /// Best-effort audit rows land after the answer: wait (bounded) until `n` exist.
-    async fn wait_audit_rows(&self, action: &str, n: i64) {
-        for _ in 0..100 {
-            if self.audit_rows(action).await >= n {
-                return;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
-        panic!("{action}: fewer than {n} audit rows");
-    }
 }
 
 fn kinds(v: &Value) -> Vec<&str> {
@@ -252,7 +233,7 @@ async fn a_reason_is_sanitized_bounded_replaced_and_private() {
         v["askers"][0]["reason"],
         "So Daneel can file issues\n\nthanks"
     );
-    w.wait_audit_rows("app_setup_request.ask", 1).await;
+    w.h.wait_audit_rows("app_setup_request.ask", None, 1).await;
     let meta: Value = sqlx::query_scalar(
         "SELECT metadata FROM audit_log WHERE action = 'app_setup_request.ask' LIMIT 1",
     )
@@ -290,7 +271,7 @@ async fn a_reason_is_sanitized_bounded_replaced_and_private() {
         "an asker sees only their own ask"
     );
     assert_eq!(c["askers"][0]["reason"], "Carl's");
-    w.wait_audit_rows("app_setup_request.ask", 2).await;
+    w.h.wait_audit_rows("app_setup_request.ask", None, 2).await;
     let notices: i64 = sqlx::query_scalar("SELECT count(*) FROM app_setup_request_notices")
         .fetch_one(w.h.pool())
         .await
@@ -304,7 +285,7 @@ async fn a_reason_is_sanitized_bounded_replaced_and_private() {
     let (_, v) = w.ask_app(&w.ws_owner, "lin", None).await;
     assert_eq!(v["askers"][0]["reason"], "Newer");
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    assert_eq!(w.audit_rows("app_setup_request.ask").await, 2);
+    assert_eq!(w.h.audit_rows("app_setup_request.ask", None).await, 2);
     let after: i64 = sqlx::query_scalar("SELECT count(*) FROM app_setup_request_notices")
         .fetch_one(w.h.pool())
         .await
@@ -405,7 +386,8 @@ async fn a_decline_carries_a_message_and_names_the_role() {
         "links are defused for mail and push: {detail}"
     );
     assert!(!format!("{title}{detail}").contains("Adam"));
-    w.wait_audit_rows("app_setup_request.decline", 1).await;
+    w.h.wait_audit_rows("app_setup_request.decline", None, 1)
+        .await;
     let meta: Value = sqlx::query_scalar(
         "SELECT metadata FROM audit_log WHERE action = 'app_setup_request.decline' LIMIT 1",
     )

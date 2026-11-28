@@ -1691,14 +1691,10 @@ async fn peer_ask_an_approver_emails_the_deciders_once() {
         "{out}"
     );
     assert_eq!(w.h.mail.sent().len(), 2);
-    let (action,): (String,) = sqlx::query_as(
-        "SELECT action FROM audit_log WHERE action = 'approval.ask_approver'
-         ORDER BY created_at DESC LIMIT 1",
-    )
-    .fetch_one(w.pool())
-    .await
-    .unwrap();
-    assert_eq!(action, "approval.ask_approver");
+    // One row, on this approval: the refused second click writes none.
+    w.h.wait_audit_rows("approval.ask_approver", Some(id), 1)
+        .await;
+    assert_eq!(w.h.audit_rows("approval.ask_approver", Some(id)).await, 1);
 }
 
 /// (FIX-252 review, D-178 Q-R5-9) The decided line keeps the approver's name out of a shared
