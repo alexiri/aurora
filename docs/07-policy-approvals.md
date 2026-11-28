@@ -158,6 +158,11 @@ present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
     whole number the bytes did not write as an integer (`1e2`, `100.0`);
   - the GraphQL kind applies the first rule to `query` and `operationName`.
 
+  In short: a whole number written as a float (`100.0`, `1e2`, `-0`) or a name
+  that also, or only, appears in another case makes a policy condition
+  **Unknown**: a rule that requires approval holds the request, a block rule
+  blocks it, and an allow rule does not match. It never makes a rule allow.
+
   What is off the path decides nothing. The same reader serves every other place
   that parses a request body and lets the bytes, or a rewrite of them, go on: a
   model allow-list reads `/model` (no reading ⇒ no model); an approval card
