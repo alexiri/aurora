@@ -60,10 +60,10 @@ export function ChatPanel({
     <div
       ref={ref}
       onKeyDown={onKeyDown}
-      // From 768 px it is the page's full-height pane; the height here is the phone's.
+      // From 768 px it is the page's full-height pane; the height here is the phone's (`max-md:`), the min-height both.
       data-fill-pane=""
       className={cn(
-        "relative flex h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card",
+        "relative flex max-md:h-[calc(100dvh-21rem)] min-h-[560px] overflow-hidden rounded-card border border-line bg-surface shadow-card",
         className,
       )}>
       <div {...inert} className={cn("min-h-0 min-w-0 flex-1 flex-col border-line lg:flex lg:flex-none lg:shrink-0 lg:border-r", listWide ? "lg:w-80" : "lg:w-58", threadOpen ? "hidden" : "flex")}>
