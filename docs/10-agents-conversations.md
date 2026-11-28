@@ -1083,6 +1083,11 @@ they would pass it, D-513). Body ≤
 base64 length). `SKILL.md` with its front matter, and each text file, is also at most
 `SKILL_ENTRY_JSON_MAX` as a JSON string, because each is one home-sync entry: a write
 that would pass it is refused 422 `file_too_large` (D-513).
+A tier's own skills together (instructions plus files, counted like its library budget and
+apart from it) hold at most `OWN_SKILL_BYTES_PER_*` (4 / 8 / 16 MiB per agent / workspace /
+organization): a write that leaves the tier over it and bigger than before is refused 422
+`own_skill_budget_exceeded`, "Stop updates and edit" included. A write that does not grow the
+tier passes, and deleting a library is never blocked (D-513).
 - Files: relative paths, `[A-Za-z0-9._/-]`, depth ≤ 4, no `..`, no leading `/`,
 no name equal to `skill.md` case-insensitively; optional executable bit
 (projected 0555, else 0444).

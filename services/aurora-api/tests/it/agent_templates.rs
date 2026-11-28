@@ -4167,6 +4167,33 @@ async fn upd_watch_body(u: &Upd) -> String {
         .unwrap()
 }
 
+/// FIX-291: a template apply writes the agent's own skills, so it keeps their byte budget.
+#[tokio::test]
+async fn fix291_an_apply_that_grows_the_own_skills_past_their_budget_is_refused() {
+    let u = upd_world().await;
+    sqlx::query(
+        "INSERT INTO skills (id, org_id, agent_id, name, description, body, enabled, created_by_kind)
+         SELECT gen_random_uuid(), org_id, id, 'filler', 'd', repeat('x', 4194100), true, 'user'
+         FROM agents WHERE id = $1",
+    )
+    .bind(u.agent)
+    .execute(u.w.h.pool())
+    .await
+    .unwrap();
+    upd_advance(&u, "2.0.0").await;
+    let (s, v) = upd_take_merged(
+        &u,
+        "2.0.0",
+        "skill",
+        "watch",
+        |_| json!({"choice": "text", "text": "b".repeat(5_000)}),
+    )
+    .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "own_skill_budget_exceeded", "{v}");
+    assert_eq!(upd_watch_body(&u).await, "Watch body: mine.");
+}
+
 /// The merged skill's body and files together keep a manual edit's total limit (FIX-251):
 /// each is within its own limit, the sum is not.
 #[tokio::test]

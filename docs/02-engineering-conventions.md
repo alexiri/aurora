@@ -267,6 +267,7 @@ overridden by the named configuration key (`15`).
 | `MEMORY_INDEX_MAX` | 6 000 chars | — | 10 |
 | `MEMORY_SNIPPETS` | 3 × 800 chars, score ≥ 0.1 | — | 10 |
 | `MEMORY_SEARCH_HITS` | 8 | — | 10 |
+| `OWN_SKILL_BYTES_PER_AGENT` / `_WORKSPACE` / `_ORG` | 4 / 8 / 16 MiB (D-513): a tier's own (not library) skills, instructions plus files, counted as the library budget counts and apart from it. A write that leaves the tier over it **and** bigger than before is refused 422 `own_skill_budget_exceeded` (create, edit, file write, template create and apply, detach from a library); deleting a library, which turns its skills into own ones, is not blocked | — | 10 |
 | `SKILL_NAME_MAX` / `SKILL_DESCRIPTION_MAX` | 64 / 1 024 chars (D-513; the open Agent Skills format's maximum) | — | 10 |
 | `SKILL_INDEX_SHARE` | 500 chars (D-513): the skill index (the `description` of every projected `SKILL.md`, and of `skill_list`) holds at most this many characters per listed skill, taken together. When more, the longest are cut to one common length with "…"; a description of up to 500 characters is never cut. `skill_get` and the API give the whole text | — | 10, 12 |
 | `SKILL_BODY_MAX` / `SKILL_TOTAL_MAX` | 48 000 / 300 000 chars (D-513) | — | 10 |

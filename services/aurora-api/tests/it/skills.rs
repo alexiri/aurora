@@ -9,6 +9,8 @@ use http::Method;
 mod app_tier;
 #[path = "skills_library.rs"]
 mod library_tier;
+#[path = "skills_budget.rs"]
+mod own_budget;
 #[path = "skills_index.rs"]
 mod skill_index;
 #[path = "skills_use.rs"]

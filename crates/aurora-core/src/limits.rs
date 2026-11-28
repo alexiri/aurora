@@ -248,6 +248,12 @@ pub const LIBRARY_SKILLS_PER_AGENT: usize = 25;
 pub const LIBRARY_BYTES_PER_WORKSPACE: usize = 8 * MIB;
 pub const LIBRARY_SKILLS_PER_WORKSPACE: usize = 50;
 pub const LIBRARY_BYTES_PER_ORG: usize = 16 * MIB;
+/// (D-513) What a tier's own (not library) skills may hold, instructions plus files, counted as
+/// the library budget counts: as much as its library skills, and counted apart from them.
+/// Every home sync carries them.
+pub const OWN_SKILL_BYTES_PER_AGENT: usize = LIBRARY_BYTES_PER_AGENT;
+pub const OWN_SKILL_BYTES_PER_WORKSPACE: usize = LIBRARY_BYTES_PER_WORKSPACE;
+pub const OWN_SKILL_BYTES_PER_ORG: usize = LIBRARY_BYTES_PER_ORG;
 pub const LIBRARY_SKILLS_PER_ORG: usize = 100;
 /// Bytes of one skill file (D-513). A text file is also held to `SKILL_ENTRY_JSON_MAX`.
 pub const LIBRARY_FILE_MAX: usize = 160 * KIB;

@@ -880,7 +880,13 @@ async fn create_in_tx(
         content_sha256: instructions_hash(&rendered.instructions),
     });
 
-    // The agent's own skills from the template: ordinary editable skills (C-1111).
+    // The agent's own skills from the template: ordinary editable skills (C-1111). Their
+    // files are written after each skill, so the byte budget is checked again after all.
+    let own = Owner {
+        agent: Some(agent.id),
+        workspace: None,
+    };
+    let own_before = skills_domain::service::own_before(tx, org, own).await?;
     for s in &rendered.skills {
         let view = skills_domain::service::create_in_tx(
             tx,
@@ -924,6 +930,7 @@ async fn create_in_tx(
         });
         skills_out.push(skills_domain::service::view(tx, view.row).await?.into());
     }
+    skills_domain::service::check_own_budget(tx, org, own, own_before).await?;
 
     // The chosen library skills, through the library add path at the agent tier (C-1111,
     // C-1142): pinned, read-only, with their budgets — `library_budget_exceeded` rolls back.

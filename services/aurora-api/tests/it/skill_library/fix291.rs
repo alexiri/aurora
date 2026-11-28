@@ -154,6 +154,43 @@ async fn fix291_a_library_skill_with_a_1024_character_description_is_addable() {
     assert_eq!(a["description"], "d".repeat(1_024), "stored whole");
 }
 
+/// "Stop updates and edit" turns a library skill into the agent's own: it must fit there.
+#[tokio::test]
+async fn fix291_detach_is_refused_when_the_own_skills_have_no_room() {
+    let w = world().await;
+    let sha = w.seed();
+    let lib = w.library().await;
+    let (s, v) = w.add_agent(lib, "alpha", &sha).await;
+    assert_eq!(s, 201, "{v}");
+    let id = v["id"].as_str().unwrap().to_owned();
+    sqlx::query(
+        "INSERT INTO skills (id, org_id, agent_id, name, description, body, enabled, created_by_kind)
+         VALUES ($1,$2,$3,'filler','d',repeat('x', 4194300),true,'user')",
+    )
+    .bind(Uuid::now_v7())
+    .bind(w.org)
+    .bind(w.agent)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let (s, v) = w
+        .call(
+            &w.member,
+            Method::POST,
+            &format!("/v1/skills/{id}/library/detach"),
+            None,
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, "own_skill_budget_exceeded"), "{v}");
+    let linked: bool =
+        sqlx::query_scalar("SELECT library_id IS NOT NULL FROM skills WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert!(linked, "nothing changed");
+}
+
 #[tokio::test]
 async fn fix291_tier_budgets_are_4_8_and_16_mib() {
     assert_eq!(limits::LIBRARY_BYTES_PER_AGENT, 4 * 1024 * 1024);
