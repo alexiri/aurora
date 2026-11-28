@@ -754,7 +754,7 @@ pub struct EmailTestResult {
     pub error_code: Option<String>,
 }
 
-fn classify_mail_error(msg: &str) -> &'static str {
+pub(crate) fn classify_mail_error(msg: &str) -> &'static str {
     let m = msg.to_ascii_lowercase();
     if m.contains("timed out") || m.contains("timeout") {
         "timeout"
