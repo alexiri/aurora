@@ -68,7 +68,17 @@ impl ApprovalSummary {
     }
 }
 
-/// `a=1&b=2` -> `a=***&b=***` (keys kept, values never shown).
+/// The card's warning for a body that does not have one reading.
+pub(crate) fn two_readings(why: &str) -> SummaryField {
+    SummaryField {
+        label: "Warning".to_owned(),
+        value: format!(
+            "The body can be read more than one way ({why}), so its values are not shown."
+        ),
+    }
+}
+
+/// `a=1&b=2` ->`a=***&b=***` (keys kept, values never shown).
 #[must_use]
 pub fn mask_query(query: &str) -> String {
     query
@@ -134,11 +144,21 @@ pub fn generic(
         field("Host", host),
         field("Path", full_path.clone()),
     ];
-    let parsed = if is_json(content_type) && !truncated {
-        serde_json::from_slice::<serde_json::Value>(body_prefix).ok()
+    // The approver answers what the card says and the receiver gets the bytes: of a body with
+    // a repeated name no key or value is listed.
+    let (parsed, repeated) = if is_json(content_type) && !truncated {
+        match aurora_policy::json::read_unrepeated(body_prefix) {
+            Ok(v) => (Some(v), None),
+            Err(repeated) => (None, repeated),
+        }
     } else {
-        None
+        (None, None)
     };
+    if let Some(name) = repeated {
+        fields.push(two_readings(&format!(
+            "the name `{name}` appears twice in one object"
+        )));
+    }
     match parsed {
         Some(serde_json::Value::Object(o)) => {
             fields.extend(
@@ -210,6 +230,46 @@ mod tests {
         assert_eq!(get("tags"), "array(2 items)");
         assert_eq!(get("Method"), "POST");
         assert_eq!(s.source, SummarySource::Generic);
+    }
+
+    #[test]
+    fn a_json_body_with_two_readings_lists_no_keys_and_says_so() {
+        for body in [
+            br#"{"to":"a","amount":1,"amount":1000000}"#.as_slice(),
+            br#"{"items":[{"id":1,"id":2}]}"#.as_slice(),
+        ] {
+            let s = generic(
+                "POST",
+                "h",
+                "/",
+                None,
+                Some("application/json"),
+                body,
+                false,
+            );
+            let note = s.fields.iter().find(|f| f.label == "Warning");
+            assert!(
+                note.is_some_and(|f| f.value.contains("more than one way")),
+                "{s:?}"
+            );
+            assert!(
+                !s.fields
+                    .iter()
+                    .any(|f| f.label == "to" || f.label == "items")
+            );
+        }
+        // The private name is a member like any other: it is listed, never unwrapped.
+        let body = br#"{"$serde_json::private::RawValue":"{\"to\":\"a\"}"}"#;
+        let s = generic(
+            "POST",
+            "h",
+            "/",
+            None,
+            Some("application/json"),
+            body,
+            false,
+        );
+        assert!(!s.fields.iter().any(|f| f.label == "to"), "{s:?}");
     }
 
     #[test]

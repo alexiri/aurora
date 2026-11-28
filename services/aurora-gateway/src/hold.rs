@@ -54,6 +54,7 @@ pub async fn build_summary_hooked(
     if let (Some(sz), Some(l), Some(m)) = (summarizer, l, app)
         && let Some(a) = tool_id.and_then(|t| m.app.approvals.get(t))
         && template::wants_hook(a)
+        && !hook_would_guess(r)
     {
         let digest = l
             .snapshot
@@ -84,6 +85,13 @@ pub async fn build_summary_hooked(
         }
     }
     build_summary(l, app, tool_id, r)
+}
+
+/// A hook reads the body with its own parser, and the core cannot tell which names it reads:
+/// a JSON body that repeats a name anywhere, also in another case, is not given to it.
+fn hook_would_guess(r: &SummaryRequest<'_>) -> bool {
+    !r.truncated
+        && aurora_policy::json::parse(r.body_prefix).is_some_and(|doc| doc.has_colliding_names())
 }
 
 /// The one approval-summary entry point (live holds and `check-snapshot`): the tool's

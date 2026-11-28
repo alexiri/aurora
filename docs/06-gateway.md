@@ -884,7 +884,12 @@ upstreams on random ports keep working.
 1. Build the **approval summary** (`09 §Approval summaries`): manifest template
    for the tool → `approval.summarize` hook (only if declared; bounded call to
    the hook host with the body prefix ≤ `APPROVAL_BODY_PEEK`, no egress) →
-   generic redacting summarizer. Raw bodies are never stored.
+   generic redacting summarizer. Raw bodies are never stored. (FIX-284,
+   `07 §One reading of a JSON body`) When what a template field reads has two
+   readings, the card shows no value from the body and has a `Warning` field
+   saying so (the generic summary does the same for a repeated name anywhere,
+   naming it); the hook is not asked about a body that repeats a name, also in
+   another case.
 2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
    gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
    effective timeout comes from the matching rules (`07 §Approval deadlines`,

@@ -1,4 +1,5 @@
 //! GraphQL operation-kind classification, fail-closed (07 §Matching primitives).
+use crate::json::{self, Lookup, Node};
 use graphql_parser::query::{Definition, OperationDefinition, parse_query};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,24 +22,23 @@ pub fn classify(body_prefix: &[u8], truncated: bool) -> GraphqlKind {
 }
 
 fn is_query_body(body: &[u8]) -> bool {
-    match serde_json::from_slice::<Value>(body) {
-        Ok(Value::Array(items)) => !items.is_empty() && items.iter().all(is_query_request),
-        Ok(v) => is_query_request(&v),
-        Err(_) => false,
+    // The kind is decided here and the server gets the bytes: a `query` or `operationName`
+    // with more than one reading is doubt (`crate::json`).
+    match json::parse(body) {
+        Some(Node::Array(items)) => !items.is_empty() && items.iter().all(is_query_request),
+        Some(v) => is_query_request(&v),
+        None => false,
     }
 }
 
-fn is_query_request(v: &Value) -> bool {
-    let Some(obj) = v.as_object() else {
+fn is_query_request(v: &Node) -> bool {
+    let Lookup::Found(Node::Scalar(Value::String(query))) = v.get("query") else {
         return false;
     };
-    let Some(query) = obj.get("query").and_then(Value::as_str) else {
-        return false;
-    };
-    let name = match obj.get("operationName") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(s.as_str()),
-        Some(_) => return false,
+    let name = match v.get("operationName") {
+        Lookup::Missing | Lookup::Found(Node::Scalar(Value::Null)) => None,
+        Lookup::Found(Node::Scalar(Value::String(s))) => Some(s.as_str()),
+        Lookup::Found(_) | Lookup::Ambiguous => return false,
     };
     let Ok(doc) = parse_query::<String>(query) else {
         return false;

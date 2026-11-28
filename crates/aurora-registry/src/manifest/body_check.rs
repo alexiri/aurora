@@ -3,7 +3,7 @@
 //! before any rule, approval or injection, so nothing the approval card cannot show is ever
 //! held for a person's approval. Fail closed: a body that is absent, truncated, not a JSON
 //! object, or otherwise not checkable is refused too.
-use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
+use aurora_policy::json::read_unrepeated;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -450,92 +450,6 @@ impl BodyCheck {
     }
 }
 
-/// `body` as a JSON value that says what the bytes say. `Err(Some(key))`: an object at some
-/// depth repeats `key`. Receivers do not agree on what a repeat means (a map keeps the last
-/// value, but a decoder may merge a repeated object into the one it already filled), so no
-/// single value stands for such a body. `Err(None)`: the body is not one JSON value.
-///
-/// One parse builds the value and finds the repeat, so the two can never disagree about what
-/// was read. It also takes every member name literally, unlike the library's own `Value`
-/// parser, which reads one private name as an instruction to parse the member's string.
-fn read_unrepeated(body: &[u8]) -> Result<serde_json::Value, Option<String>> {
-    let mut repeated = None;
-    let mut de = serde_json::Deserializer::from_slice(body);
-    let read = Unrepeated(&mut repeated)
-        .deserialize(&mut de)
-        .and_then(|v| de.end().map(|()| v));
-    read.map_err(|_| repeated)
-}
-
-/// The visitor of [`read_unrepeated`]; it records the repeated key it stopped at.
-struct Unrepeated<'a>(&'a mut Option<String>);
-
-impl<'de> DeserializeSeed<'de> for Unrepeated<'_> {
-    type Value = serde_json::Value;
-
-    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        d.deserialize_any(self)
-    }
-}
-
-impl<'de> Visitor<'de> for Unrepeated<'_> {
-    type Value = serde_json::Value;
-
-    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("a JSON value")
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(serde_json::Value::Null)
-    }
-
-    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
-        Ok(v.into())
-    }
-
-    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-        Ok(v.into())
-    }
-
-    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-        Ok(v.into())
-    }
-
-    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
-        Ok(v.into())
-    }
-
-    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
-        Ok(v.into())
-    }
-
-    fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
-        Ok(v.into())
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        let mut out = Vec::new();
-        while let Some(v) = seq.next_element_seed(Unrepeated(&mut *self.0))? {
-            out.push(v);
-        }
-        Ok(serde_json::Value::Array(out))
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        let mut out = serde_json::Map::new();
-        // The key arrives unescaped, so `a` and `a` are the same key here too.
-        while let Some(key) = map.next_key::<String>()? {
-            if out.contains_key(&key) {
-                *self.0 = Some(key);
-                return Err(serde::de::Error::custom("a repeated key"));
-            }
-            let v = map.next_value_seed(Unrepeated(&mut *self.0))?;
-            out.insert(key, v);
-        }
-        Ok(serde_json::Value::Object(out))
-    }
-}
-
 /// The value `member` names from `entry` (object keys and array indexes separated by `/`),
 /// with the place it was found at, quoted in the refusal message; `Err` names how far the
 /// walk came when a segment is missing.
@@ -564,13 +478,7 @@ fn member_value<'a>(
 /// Folds a key the way the receiver's JSON parser matches field names: without case, and with
 /// the Kelvin sign (U+212A) and the long s (U+017F), which that matcher folds to `k` and `s`.
 fn fold(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '\u{212A}' => 'k',
-            '\u{017F}' => 's',
-            c => c.to_lowercase().next().unwrap_or(c),
-        })
-        .collect()
+    aurora_policy::json::fold(s).collect()
 }
 
 #[cfg(test)]

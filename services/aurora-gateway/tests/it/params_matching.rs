@@ -330,6 +330,62 @@ fn loaded() -> Loaded {
     parse("h", v).unwrap()
 }
 
+/// A summarize hook reads the body with its own parser: it is not asked about a body with more
+/// than one reading, whose card the core renders (and which says so).
+#[tokio::test]
+async fn a_summary_hook_is_not_asked_about_a_body_with_two_readings() {
+    use aurora_gateway::hold::{SummaryRequest, build_summary_hooked};
+    use aurora_gateway::summarize_client::{SummarizeCall, Summarizer};
+    use aurora_summary::{ApprovalSummary, SummarySource};
+
+    struct Hook;
+    #[async_trait::async_trait]
+    impl Summarizer for Hook {
+        async fn summarize(&self, _: SummarizeCall<'_>) -> Option<ApprovalSummary> {
+            Some(ApprovalSummary {
+                title: "from the hook".into(),
+                fields: Vec::new(),
+                text: None,
+                link: None,
+                group: None,
+                source: SummarySource::Hook,
+            })
+        }
+    }
+    let mut v: Value = serde_json::from_slice(&snapshot_json()).unwrap();
+    v["apps"][0]["approvals"] = serde_json::json!({"send": {
+        "title": "Send", "summarize": "hook",
+        "fields": [{"label": "To", "source": "body", "steps": [{"json": "/to"}]}]
+    }});
+    let l = parse("h", v).unwrap();
+    let app = identify_app(&l, "ec2.eu-west-1.amazonaws.com", 443, "/").unwrap();
+    let header = |_: &str| None;
+    let title = async |body: &str| {
+        let request = SummaryRequest {
+            method: "POST",
+            host: "ec2.eu-west-1.amazonaws.com",
+            base_path: None,
+            path: "/",
+            query: None,
+            content_type: Some("application/json"),
+            header: &header,
+            body_prefix: body.as_bytes(),
+            truncated: false,
+            headers: &[],
+        };
+        build_summary_hooked(Some(&Hook), Some(&l), Some(&app), Some("send"), &request)
+            .await
+            .title
+    };
+    assert_eq!(title(r#"{"to":"a@example.com"}"#).await, "from the hook");
+    for body in [
+        r#"{"to":"evil@example.org","to":"a@example.com"}"#,
+        r#"{"to":"a@example.com","message":{"id":1,"ID":2}}"#,
+    ] {
+        assert_eq!(title(body).await, "Send", "{body}");
+    }
+}
+
 #[test]
 fn the_body_is_buffered_only_when_a_form_params_tool_may_match() {
     let l = loaded();

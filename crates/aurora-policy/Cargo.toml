@@ -21,5 +21,8 @@ sha2 = { workspace = true }
 aws-lc-rs = { workspace = true }
 
 [dev-dependencies]
+# The gateway is built with `raw_value` (through sqlx and axum), which changes how `Value`
+# parses one private member name: the tests here must parse the way the gateway does.
+serde_json = { workspace = true, features = ["raw_value"] }
 serde_yaml = { workspace = true }
 proptest = { workspace = true }
