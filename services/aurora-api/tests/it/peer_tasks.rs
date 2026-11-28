@@ -3881,7 +3881,11 @@ async fn a_chain_approval_delivered_twice_is_delivered_once() {
     for conv in [x.d.conv, x.pcb, x.pcc] {
         assert_eq!(x.d.system_turns(conv).await.len(), 1);
     }
-    assert_eq!(x.d.budget_used(x.top).await, 2, "B charged once");
+    assert_eq!(
+        x.d.counters(x.top).await,
+        (1, 0),
+        "an onward event counts nothing"
+    );
     assert!(
         aurora_db::repo::peer_tasks::held_decision_ids(pool, 100)
             .await
@@ -3930,7 +3934,175 @@ async fn a_message_from_the_onward_task_wakes_the_waiting_task() {
             .await;
     assert_eq!(Rig::ok(&sent)["status"], "delivered");
     assert_eq!(x.d.rig.task_status(x.top).await, "open");
-    assert_eq!(x.d.budget_used(x.top).await, 2, "the wake is charged");
+    assert_eq!(
+        x.d.counters(x.top).await,
+        (1, 0),
+        "an onward event counts nothing"
+    );
+}
+
+impl Duo {
+    /// `(messages_used, wakes_used)`: what the two per-task caps are measured on.
+    async fn counters(&self, task: Uuid) -> (i32, i32) {
+        sqlx::query_as("SELECT messages_used, wakes_used FROM peer_tasks WHERE id = $1")
+            .bind(task)
+            .fetch_one(self.rig.h.pool())
+            .await
+            .unwrap()
+    }
+
+    /// Both of a task's caps used up.
+    async fn spend_both_caps(&self, task: Uuid) {
+        sqlx::query(
+            "UPDATE peer_tasks SET messages_used = message_budget, wakes_used = $2 WHERE id = $1",
+        )
+        .bind(task)
+        .bind(aurora_core::limits::PEER_TASK_WAKES_MAX)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+    }
+}
+
+/// (FIX-288, D-509) What an onward task sends up — a message, an approval's outcome, its report,
+/// also one held while the agent was frozen — counts toward neither cap of the tasks above and
+/// is stopped by neither: a chatty C cannot get B (or anything above it) cancelled.
+#[tokio::test]
+async fn an_onward_tasks_events_do_not_count_against_the_tasks_above() {
+    let (x, echo, leaf) = three_levels().await;
+    let pool = x.d.rig.h.pool();
+    // Both delegating tasks are already at both caps.
+    for task in [x.top, x.low] {
+        x.d.spend_both_caps(task).await;
+    }
+    let spent = x.d.counters(x.top).await;
+    let alive = |step: &'static str| {
+        let x = &x;
+        async move {
+            for task in [x.top, x.low] {
+                let status = x.d.rig.task_status(task).await;
+                assert!(status == "open" || status == "waiting", "{step}: {status}");
+                assert_eq!(x.d.counters(task).await, spent, "{step}");
+            }
+        }
+    };
+
+    // An approval two levels below `top`, decided while its task works on.
+    let id = x.d.approval(leaf).await;
+    x.d.report_approval(id).await;
+    x.d.answer(id, "denied").await;
+    x.d.report_approval(id).await;
+    alive("outcome").await;
+    assert_eq!(x.d.system_turns(x.pcb).await.len(), 1);
+
+    // A message from the onward task to a waiting task.
+    sqlx::query("UPDATE peer_tasks SET status = 'waiting' WHERE id = $1")
+        .bind(x.low)
+        .execute(pool)
+        .await
+        .unwrap();
+    let pcd = x.d.rig.peer_conversation(leaf).await;
+    let turn = x.d.rig.running_turn(pcd).await;
+    Rig::ok(
+        &x.d.rig
+            .tool(
+                echo,
+                pcd,
+                turn,
+                "message_agent",
+                json!({"agent": "@charlie", "text": "which one?"}),
+            )
+            .await,
+    );
+    assert_eq!(x.d.rig.task_status(x.low).await, "open");
+    alive("message").await;
+
+    // The report, held while the delegating agent is frozen and delivered by the sweep.
+    sqlx::query(
+        "UPDATE agents SET frozen_at = now(), frozen_reason = 'drill',
+            frozen_authority = 'workspace_owner' WHERE id = $1",
+    )
+    .bind(x.c)
+    .execute(pool)
+    .await
+    .unwrap();
+    Rig::ok(
+        &x.d.rig
+            .tool(
+                echo,
+                pcd,
+                turn,
+                "complete_task",
+                json!({"report": "found it"}),
+            )
+            .await,
+    );
+    alive("held report").await;
+    sqlx::query(
+        "UPDATE agents SET frozen_at = NULL, frozen_reason = NULL, frozen_authority = NULL
+          WHERE id = $1",
+    )
+    .bind(x.c)
+    .execute(pool)
+    .await
+    .unwrap();
+    assert_eq!(peers::sweep(pool).await.unwrap(), 0);
+    alive("delivered report").await;
+    let pcc = x.d.rig.peer_conversation(x.low).await;
+    assert!(
+        x.d.system_turns(pcc)
+            .await
+            .iter()
+            .any(|t| t.contains("found it"))
+    );
+}
+
+/// (FIX-288, D-509) A delegating task's **own** wake-ups still count and still stop at its caps:
+/// its own approval's decision closes it on a used-up budget, and counts one wake otherwise.
+#[tokio::test]
+async fn a_delegating_tasks_own_wakes_still_hit_its_caps() {
+    for (cap, ends) in [
+        (None, "open"),
+        (Some("budget"), "expired"),
+        (Some("wakes"), "cancelled"),
+    ] {
+        let x = chain().await;
+        let pool = x.d.rig.h.pool();
+        // B's own approval while its task waits for the onward one.
+        x.d.rig.turn(x.pcb, x.d.b, "system", None).await;
+        let id = x.d.approval(x.top).await;
+        x.d.report_approval(id).await;
+        sqlx::query("UPDATE turns SET status = 'done' WHERE conversation_id = $1")
+            .bind(x.pcb)
+            .execute(pool)
+            .await
+            .unwrap();
+        assert_eq!(x.d.rig.task_status(x.top).await, "waiting");
+        match cap {
+            Some("budget") => {
+                sqlx::query("UPDATE peer_tasks SET messages_used = message_budget WHERE id = $1")
+                    .bind(x.top)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+            }
+            Some(_) => {
+                sqlx::query("UPDATE peer_tasks SET wakes_used = $2 WHERE id = $1")
+                    .bind(x.top)
+                    .bind(aurora_core::limits::PEER_TASK_WAKES_MAX)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+            }
+            None => {}
+        }
+        x.d.answer(id, "approved").await;
+        x.d.report_approval(id).await;
+        assert_eq!(x.d.rig.task_status(x.top).await, ends, "{cap:?}");
+        if cap.is_none() {
+            assert_eq!(x.d.counters(x.top).await, (2, 1), "its own wake counts");
+        }
+    }
 }
 
 /// (FIX-288) The wake of a delegating task re-checks the requester's rights: lost access cancels
@@ -3953,7 +4125,7 @@ async fn waking_a_delegating_task_rechecks_the_requester() {
 /// wherever in the chain the cancel happened.
 #[tokio::test]
 async fn a_task_cancelled_during_a_delivery_wakes_the_one_above_it_once() {
-    for exhausted in [
+    for cancelled in [
         "the approval's task and the one above",
         "the one above only",
     ] {
@@ -3962,12 +4134,19 @@ async fn a_task_cancelled_during_a_delivery_wakes_the_one_above_it_once() {
         let id = x.d.approval(leaf).await;
         x.d.report_approval(id).await;
         x.d.finish_receiving_turn(leaf).await;
-        let mut spent = vec![x.low];
-        if exhausted != "the one above only" {
-            spent.push(leaf);
+        // The approval's task is cancelled at its own wake by its used-up budget.
+        if cancelled != "the one above only" {
+            sqlx::query("UPDATE peer_tasks SET messages_used = message_budget WHERE id = $1")
+                .bind(leaf)
+                .execute(pool)
+                .await
+                .unwrap();
         }
-        sqlx::query("UPDATE peer_tasks SET messages_used = message_budget WHERE id = ANY($1)")
-            .bind(spent)
+        // The one above is cancelled at the wake from below: its requester can no longer use
+        // the sending agent's workspace (`bravo` sends only that task).
+        sqlx::query("UPDATE agents SET workspace_id = $2 WHERE id = $1")
+            .bind(x.d.b)
+            .bind(x.d.rig.ws2)
             .execute(pool)
             .await
             .unwrap();
@@ -3975,15 +4154,18 @@ async fn a_task_cancelled_during_a_delivery_wakes_the_one_above_it_once() {
         let told_c = x.d.system_turns(pcc).await.len();
         x.d.answer(id, "approved").await;
         x.d.report_approval(id).await;
-        assert_eq!(x.d.rig.task_status(x.low).await, "expired", "{exhausted}");
-        assert_eq!(x.d.system_turns(pcc).await.len(), told_c, "{exhausted}");
+        assert_eq!(x.d.rig.task_status(x.low).await, "cancelled", "{cancelled}");
+        assert_eq!(x.d.system_turns(pcc).await.len(), told_c, "{cancelled}");
         let above = x.d.system_turns(x.pcb).await;
-        assert_eq!(above.len(), 1, "{exhausted}: {above:?}");
-        assert!(above[0].contains("budget"), "{exhausted}: {above:?}");
+        assert_eq!(above.len(), 1, "{cancelled}: {above:?}");
+        assert!(
+            above[0].contains("could not continue"),
+            "{cancelled}: {above:?}"
+        );
         assert_eq!(
             x.d.system_turns(x.d.conv).await.len(),
             1,
-            "{exhausted}: the person's agent"
+            "{cancelled}: the person's agent"
         );
         assert_eq!(
             x.d.rig

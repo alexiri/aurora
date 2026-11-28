@@ -768,8 +768,8 @@ struct FollowUp<'a> {
 /// notice is what stays).
 ///
 /// (FIX-288, D-509) In the conversation of a **live task** it is that task's wake-up, through the
-/// one wake helper: the requester is re-checked and the turn charged; while the agent runs, the
-/// turn queues behind (nothing else would tell it); while it is frozen, the wake-up is held and
+/// one wake helper: the requester is re-checked (an onward wake counts toward no cap,
+/// [`Cause::Onward`]); while the agent runs, the turn queues behind (nothing else would tell it); while it is frozen, the wake-up is held and
 /// the sweep delivers it once after the unfreeze.
 async fn follow_up(
     conn: &mut PgConnection,
@@ -1229,7 +1229,7 @@ pub async fn approval_notice(
         // turn starts. A task that was not waiting (the decision landed mid-turn) gets no wake
         // turn: the gateway unblocks the tool call the agent is already running.
         let wake = if task.status == "waiting" {
-            wake_task(conn, task.task_conversation_id, &["waiting"]).await?
+            wake_task(conn, task.task_conversation_id, &["waiting"], Cause::Own).await?
         } else {
             Wake::NoLiveTask
         };
@@ -1513,21 +1513,36 @@ impl Wake {
 /// on the *sending* agent's workspace (fire-time authority, 04), and neither the receiving agent
 /// nor its workspace/org is frozen. A frozen receiver holds the wake: the task is left as it is
 /// (the watch and schedule paths already stop there before calling; the approval decision is
-/// delivered by the sweep after the unfreeze). The wake turn is charged to the message budget
-/// like a task turn, and a task is woken at most `PEER_TASK_WAKES_MAX` times without a report.
+/// delivered by the sweep after the unfreeze). The task's own wake turn is charged to the message
+/// budget like a task turn, and a task is woken that way at most `PEER_TASK_WAKES_MAX` times
+/// without a report (wake-ups by an onward task's events are not counted, [`Cause::Onward`]).
 /// A failed rights check or a reached limit closes the task with the platform's close report —
 /// which is its one report — and no turn starts.
 pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Result<Wake, ApiError> {
-    wake_task(conn, conversation, &["open", "waiting"]).await
+    wake_task(conn, conversation, &["open", "waiting"], Cause::Own).await
 }
 
-/// [`wake_task`], boxed: a wake can close a task, whose report wakes the task above it.
+/// What wakes a task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cause {
+    /// Its own registration: its watch, its one-time wake-up, its own approval. Counted in
+    /// `messages_used` and `wakes_used`, and stopped by both caps.
+    Own,
+    /// (FIX-288, D-509) An event of a task opened from it (or further down): that task's report
+    /// or close line, a message inside it, an approval's outcome. It counts toward neither cap
+    /// and neither stops it: whoever is further down must not get a task above cancelled. The
+    /// requester check and the freeze apply, and the turn's tokens are recorded as any turn's.
+    Onward,
+}
+
+/// An onward wake through [`wake_task`], boxed: a wake can close a task, whose report wakes the
+/// task above it.
 fn wake_boxed<'a>(
     conn: &'a mut PgConnection,
     conversation: Uuid,
     wakeable: &'static [&'static str],
 ) -> Pin<Box<dyn Future<Output = Result<Wake, ApiError>> + Send + 'a>> {
-    Box::pin(wake_task(conn, conversation, wakeable))
+    Box::pin(wake_task(conn, conversation, wakeable, Cause::Onward))
 }
 
 /// [`resume_on_wake`] for a task in one of the `wakeable` states. An approval decision wakes a
@@ -1536,6 +1551,7 @@ async fn wake_task(
     conn: &mut PgConnection,
     conversation: Uuid,
     wakeable: &[&str],
+    cause: Cause,
 ) -> Result<Wake, ApiError> {
     let Some(found) = repo::by_task_conversation(&mut *conn, conversation).await? else {
         return Ok(Wake::NoLiveTask);
@@ -1570,6 +1586,10 @@ async fn wake_task(
     if let Some(why) = refusal {
         close_with_promotion(conn, &task, &Close::Cancelled(Some(&why))).await?;
         return Ok(Wake::Cancelled);
+    }
+    if cause == Cause::Onward {
+        repo::reopen(conn, conversation).await?;
+        return Ok(Wake::Resumed);
     }
     if task.messages_used >= task.message_budget {
         close_with_promotion(conn, &task, &Close::Budget(task.message_budget)).await?;
@@ -1659,7 +1679,14 @@ async fn deliver_held_wakes(conn: &mut PgConnection, id: Uuid) -> Result<(), Api
     {
         return Ok(());
     }
-    let wake = wake_task(conn, found.task_conversation_id, &["open", "waiting"]).await?;
+    // Only onward events are held here (a task's own wake-ups are held where they come from).
+    let wake = wake_task(
+        conn,
+        found.task_conversation_id,
+        &["open", "waiting"],
+        Cause::Onward,
+    )
+    .await?;
     if wake == Wake::Held {
         return Ok(());
     }

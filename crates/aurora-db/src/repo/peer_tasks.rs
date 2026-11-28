@@ -641,6 +641,19 @@ pub async fn resume(conn: &mut PgConnection, conversation: Uuid) -> Result<Optio
     .await?)
 }
 
+/// (FIX-288, D-509) [`resume`] for a wake by an onward task's event: the task is `open` again
+/// and neither counter moves. The caller holds the task's row lock.
+pub async fn reopen(conn: &mut PgConnection, conversation: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE peer_tasks SET status = 'open', updated_at = now()
+         WHERE task_conversation_id = $1 AND status IN ('open', 'waiting')",
+    )
+    .bind(conversation)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Count the tasks already waiting: `(of the requester, on the receiving agent)`. It first
 /// *tries* the transaction locks of this requester and receiver, which keep concurrent "go
 /// waiting" transitions from counting past each other, and counts without a lock another one
