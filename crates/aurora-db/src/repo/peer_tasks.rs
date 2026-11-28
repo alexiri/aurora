@@ -118,48 +118,51 @@ pub async fn by_task_conversation<'e, E: PgExecutor<'e>>(
 }
 
 /// (FIX-257) The conversations that closing task `id` may write into and that are task
-/// conversations themselves: its origin, and the origins of its pair's queued tasks (the
-/// promotion after the close may end one of those). (FIX-288) And every task conversation above
-/// those: a report wakes the delegating task, whose own close writes one level higher. Newest
-/// first, so a task conversation comes before the one it was opened from.
+/// conversations themselves: the origins of every task in [`CLOSE_REACH`]. Newest first, so a
+/// task conversation comes before the one it was opened from.
 pub async fn task_origins<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "WITH RECURSIVE {up} SELECT DISTINCT origin FROM up
-          WHERE EXISTS (SELECT 1 FROM peer_tasks p WHERE p.task_conversation_id = up.origin)
-          ORDER BY 1 DESC",
-        up = UP_FROM_TASK
+        "WITH RECURSIVE {CLOSE_REACH} SELECT DISTINCT t.origin_conversation_id
+           FROM reach JOIN peer_tasks t ON t.id = reach.id
+          WHERE EXISTS (SELECT 1 FROM peer_tasks p
+                 WHERE p.task_conversation_id = t.origin_conversation_id)
+          ORDER BY 1 DESC"
     )))
     .bind(id)
-    .bind(PEER_CHAIN_DEPTH_MAX)
     .fetch_all(exec)
     .await?)
 }
 
-/// (FIX-288) The recursive part of [`task_origins`] and [`lock_chain_links`]: `$1` the task
-/// (with its pair's queued tasks), `$2` the depth bound. One row per task on the way up:
-/// its origin and its link.
-const UP_FROM_TASK: &str = "up (origin, link_id, depth) AS (
-        SELECT t.origin_conversation_id, t.link_id, 1 FROM peer_tasks c
+/// (FIX-288) Every task a close of task `$1` may go on to write for: the task and its pair's
+/// queued tasks (the promotion after the close may end one of those at once), and, from any of
+/// these, the task whose conversation it was opened from **with that pair's queued tasks**: the
+/// report wakes that task, the wake may cancel it, and its close promotes in turn. A fixed
+/// point over task ids (`UNION` ends it; a queued task's own chain can be as long as any, so no
+/// depth count cuts it).
+const CLOSE_REACH: &str = "reach (id) AS (
+        SELECT t.id FROM peer_tasks c
           JOIN peer_tasks t ON t.id = c.id
             OR (t.from_agent_id = c.from_agent_id AND t.to_agent_id = c.to_agent_id
                 AND t.status = 'queued')
          WHERE c.id = $1
         UNION
-        SELECT p.origin_conversation_id, p.link_id, up.depth + 1
-          FROM up JOIN peer_tasks p ON p.task_conversation_id = up.origin
-         WHERE up.depth < $2
+        SELECT t.id FROM reach
+          JOIN peer_tasks below ON below.id = reach.id
+          JOIN peer_tasks p ON p.task_conversation_id = below.origin_conversation_id
+          JOIN peer_tasks t ON t.id = p.id
+            OR (t.from_agent_id = p.from_agent_id AND t.to_agent_id = p.to_agent_id
+                AND t.status = 'queued')
     )";
 
-/// (FIX-288) Row-locks the link of task `id` and of every task above it (and above its pair's
-/// queued tasks), in id order, so that two closes whose chains share links take them alike.
+/// (FIX-288) Row-locks the links of every task in [`CLOSE_REACH`] of task `id`, in id order, so
+/// that two closes whose chains share links take them alike.
 pub async fn lock_chain_links(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "WITH RECURSIVE {up} SELECT l.id FROM agent_links l
-          WHERE l.id IN (SELECT link_id FROM up) ORDER BY l.id FOR UPDATE OF l",
-        up = UP_FROM_TASK
+        "WITH RECURSIVE {CLOSE_REACH} SELECT l.id FROM agent_links l
+          WHERE l.id IN (SELECT t.link_id FROM reach JOIN peer_tasks t ON t.id = reach.id)
+          ORDER BY l.id FOR UPDATE OF l"
     )))
     .bind(id)
-    .bind(PEER_CHAIN_DEPTH_MAX)
     .execute(conn)
     .await?;
     Ok(())
@@ -167,14 +170,15 @@ pub async fn lock_chain_links(conn: &mut PgConnection, id: Uuid) -> Result<(), D
 
 /// (FIX-257) The same for everything that unlinking a pair writes into: the origins of its live
 /// tasks, and the conversations its pending `message_agent` approvals were asked in; (FIX-288)
-/// with every task conversation above them.
+/// and, from any of them that is a task conversation, the origins of its task and of that pair's
+/// queued tasks, and so on up (as [`CLOSE_REACH`]).
 pub async fn link_origins<'e, E: PgExecutor<'e>>(
     exec: E,
     link: Uuid,
 ) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
-        "WITH RECURSIVE up (id, depth) AS (
-            SELECT o.id, 1 FROM (
+        "WITH RECURSIVE up (id) AS (
+            SELECT o.id FROM (
                 SELECT origin_conversation_id AS id FROM peer_tasks
                  WHERE link_id = $1 AND status IN ('queued', 'open', 'waiting')
                 UNION
@@ -182,16 +186,17 @@ pub async fn link_origins<'e, E: PgExecutor<'e>>(
                  WHERE action_key = 'message_agent' AND status = 'pending'
                    AND payload->>'link_id' = $1::text) o
             UNION
-            SELECT p.origin_conversation_id, up.depth + 1
+            SELECT t.origin_conversation_id
               FROM up JOIN peer_tasks p ON p.task_conversation_id = up.id
-             WHERE up.depth < $2
+              JOIN peer_tasks t ON t.id = p.id
+                OR (t.from_agent_id = p.from_agent_id AND t.to_agent_id = p.to_agent_id
+                    AND t.status = 'queued')
          )
-         SELECT DISTINCT id FROM up
+         SELECT id FROM up
           WHERE EXISTS (SELECT 1 FROM peer_tasks p WHERE p.task_conversation_id = up.id)
           ORDER BY 1 DESC",
     )
     .bind(link)
-    .bind(PEER_CHAIN_DEPTH_MAX)
     .fetch_all(exec)
     .await?)
 }

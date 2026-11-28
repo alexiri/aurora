@@ -3969,6 +3969,98 @@ async fn a_close_waits_for_every_task_conversation_above_it_before_any_link() {
     assert_eq!(x.d.rig.task_status(x.low).await, "open", "woken");
 }
 
+/// (FIX-288) Lock order: closing C's task can wake B's into a cancel, which promotes the task
+/// queued behind B's; that one is refused at once and reports into the task conversation it was
+/// opened from, which wakes a third task. The close (and an unlink that closes) takes all of it
+/// before any link or task.
+#[tokio::test]
+async fn a_close_takes_the_conversations_of_tasks_queued_behind_those_above_it() {
+    use aurora_db::repo::conversations as convs;
+    for unlink in [false, true] {
+        let d = duo().await;
+        let pool = d.rig.h.pool();
+        let c = d.rig.agent(d.rig.ws1, "charlie").await;
+        d.rig.agent(d.rig.ws1, "delta").await;
+        let delta: Uuid = sqlx::query_scalar("SELECT id FROM agents WHERE handle = 'delta'")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let top = Rig::id(&d.send("do it").await["peer_task_id"]);
+        d.rig.finish_turn(d.turn).await;
+        // delta → alpha, and from that task's conversation alpha → bravo, queued behind `top`.
+        let (from_delta, turn) = d.rig.person_turn(delta, d.rig.p.id).await;
+        let sent = d
+            .rig
+            .tool(
+                delta,
+                from_delta,
+                Some(turn),
+                "message_agent",
+                json!({"agent": "@alpha", "text": "help"}),
+            )
+            .await;
+        let side = Rig::id(&Rig::ok(&sent)["peer_task_id"]);
+        d.rig.finish_turn(turn).await;
+        let (queued, turn) = d.delegate_on(side, d.a, d.rig.p.id, "bravo").await;
+        d.rig.finish_turn(turn).await;
+        assert_eq!(d.rig.task_status(queued).await, "queued");
+        let other_conversation = d.rig.peer_conversation(side).await;
+        let (low, turn) = d.delegate_on(top, d.b, d.rig.p.id, "charlie").await;
+        d.end_turn(turn, "done").await;
+        assert_eq!(d.rig.task_status(top).await, "waiting");
+        // Both of the pair's tasks now fail the requester check: the wake of `top` cancels it,
+        // and the promoted `queued` is refused at once.
+        sqlx::query("UPDATE peer_tasks SET requester_user_id = $1 WHERE id = ANY($2)")
+            .bind(d.rig.r.id)
+            .bind(vec![top, queued])
+            .execute(pool)
+            .await
+            .unwrap();
+        let link: Uuid = sqlx::query_scalar("SELECT link_id FROM peer_tasks WHERE id = $1")
+            .bind(low)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let pcc = d.rig.peer_conversation(low).await;
+
+        let mut turn_end = pool.begin().await.unwrap();
+        assert!(convs::lock(&mut turn_end, other_conversation).await.unwrap());
+        let pid = backend_pid(&mut turn_end).await;
+        let close = async {
+            if unlink {
+                let uri = format!("/v1/agent-links/{link}");
+                let headers = [("cookie", d.rig.p.cookie.as_str()), ("origin", ORIGIN)];
+                let (status, _, body) = d.rig.h.send(http::Method::DELETE, &uri, &headers, None).await;
+                assert_eq!(status.as_u16(), 204, "{body}");
+            } else {
+                let mut tx = pool.begin().await.unwrap();
+                peers::complete(&mut tx, c, pcc, "done")
+                    .await
+                    .unwrap()
+                    .unwrap();
+                tx.commit().await.unwrap();
+            }
+        };
+        let other = async {
+            until_somebody_waits_for(pool, pid).await;
+            for task in [low, top, queued, side] {
+                lock_link_then_task(&mut turn_end, task).await;
+            }
+            turn_end.commit().await.unwrap();
+        };
+        tokio::join!(close, other);
+        assert_eq!(d.rig.task_status(top).await, "cancelled", "unlink={unlink}");
+        assert_eq!(d.rig.task_status(queued).await, "cancelled", "unlink={unlink}");
+        assert_eq!(
+            d.rig
+                .notices(other_conversation, "peer_task_closed")
+                .await
+                .len(),
+            1
+        );
+    }
+}
+
 /// (FIX-288) Lock order: a decision takes the links of the tasks it will wake before it writes
 /// into the person's conversation, also when the approval's own task is mid-turn. A close of the
 /// task above holds its link and then writes into that conversation.

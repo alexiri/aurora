@@ -13,13 +13,19 @@
 //! already hold. A task conversation is locked before any link, also when it is only an
 //! **origin** of the task at hand (a person can open a task from inside a task conversation,
 //! even back to the requester, on the same link): writing into it after the link would be the
-//! reverse of its own turn end. "Task origins" means every task conversation **above** a task
-//! (its origin, that one's origin, and so on; the same for its pair's queued tasks), because a
-//! wake-up cascades upwards. Where several are needed, a task conversation comes before the one
-//! it was opened from (newest first). "Chain links" are the links of a task and of every task
-//! above it, locked together in id order (`lock_chain_links`). "Other conversations" are the
-//! origins that are no task conversation (the notice and the follow-up turn) and a promoted
-//! task's new conversation.
+//! reverse of its own turn end.
+//!
+//! A close can cascade: it promotes the pair's queued task, which may end at once and report
+//! into its own origin; a report wakes the task above, the wake may cancel that one, and its
+//! close does the same again. So what a task may reach is taken **whole, before the first link**
+//! (`repo::CLOSE_REACH`): the task and its pair's queued tasks, and from each of them the task
+//! it was opened from together with *that* pair's queued tasks, and so on up. "Task origins"
+//! are the origins of all of these that are task conversations; "chain links" are all their
+//! links, locked together in id order (`lock_chain_links`). A cascade inside the close then
+//! asks only for conversations and links already held. Where several conversations are needed,
+//! a task conversation comes before the one it was opened from (newest first). "Other
+//! conversations" are the origins that are no task conversation (the notice and the follow-up
+//! turn) and a promoted task's new conversation.
 //!
 //! - Conversation, its task origins, chain links, task ([`lock_for_task_conversation`]): a wake
 //!   (also the wake of a delegating task from [`follow_up`], whose locks the close or the
