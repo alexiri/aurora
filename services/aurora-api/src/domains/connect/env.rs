@@ -3,7 +3,7 @@
 //! server (tests only).
 use super::hooks::HookClient;
 use arc_swap::ArcSwap;
-use aurora_core::ranges::{AppHost, RefusedRanges, app_address_opens};
+use aurora_core::ranges::{AppHost, LogThrottle, RefusedRanges, app_address_opens};
 use aurora_db::repo::app_instances::InstanceRow;
 use aurora_secrets::tls::with_extra_roots;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
@@ -36,6 +36,8 @@ pub struct Env {
     admissions: Arc<std::sync::atomic::AtomicU64>,
     /// (FIX-290, SEC-170) `gateway.self_hosted_refused_ranges`: closed to every allowance.
     refused_ranges: Arc<ArcSwap<RefusedRanges>>,
+    /// (FIX-290) How often a service that does not resolve is logged.
+    unresolved_log: Arc<LogThrottle>,
 }
 
 type StaticNames = Vec<(String, Vec<IpAddr>)>;
@@ -178,11 +180,16 @@ struct GuardedApp {
     names: Arc<StaticNames>,
     services: Arc<Vec<String>>,
     refused: Arc<RefusedRanges>,
+    unresolved_log: Arc<LogThrottle>,
     admissions: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// The addresses of Aurora's other services; `None` when one of them cannot be told.
-async fn service_addresses(services: &[String], names: &StaticNames) -> Option<Vec<IpAddr>> {
+async fn service_addresses(
+    services: &[String],
+    names: &StaticNames,
+    log: &LogThrottle,
+) -> Option<Vec<IpAddr>> {
     let mut out = Vec::new();
     for s in services {
         if let Ok(ip) = s.parse::<IpAddr>() {
@@ -192,8 +199,10 @@ async fn service_addresses(services: &[String], names: &StaticNames) -> Option<V
         match lookup(s, names).await {
             Ok(a) => out.extend(a.into_iter().map(|a| a.ip())),
             Err(error) => {
-                tracing::warn!(service = %s, %error,
-                    "one of Aurora's own services did not resolve; self-hosted app hosts stay closed");
+                if log.allow(s) {
+                    tracing::warn!(service = %s, %error,
+                        "one of Aurora's own services did not resolve; self-hosted app hosts stay closed");
+                }
                 return None;
             }
         }
@@ -206,6 +215,7 @@ impl Resolve for GuardedApp {
         let (app, allow) = (self.app.clone(), self.allow.clone());
         let (names, services) = (self.names.clone(), self.services.clone());
         let refused = self.refused.clone();
+        let log = self.unresolved_log.clone();
         let admissions = self.admissions.clone();
         Box::pin(async move {
             let host = name.as_str().to_owned();
@@ -214,7 +224,7 @@ impl Resolve for GuardedApp {
                 .await
                 .map(|a| a.into_iter().map(|a| a.ip()).collect())
                 .unwrap_or_default();
-            let services = service_addresses(&services, &names).await;
+            let services = service_addresses(&services, &names, &log).await;
             let named = app.covers(&host, app.port());
             let addrs = resolve_guarded(&host, &names, |ip| {
                 if allow.permits(ip, &host) {
@@ -294,6 +304,7 @@ impl Env {
             extra_ca_bundle: extra_ca_bundle.map(str::to_owned),
             admissions: Arc::default(),
             refused_ranges: Arc::default(),
+            unresolved_log: Arc::default(),
             http,
             http_instance,
             allow,
@@ -385,6 +396,7 @@ impl Env {
             names: self.names.load_full(),
             services: self.services.load_full(),
             refused: self.refused_ranges.load_full(),
+            unresolved_log: self.unresolved_log.clone(),
             admissions: self.admissions.clone(),
         };
         match guarded_client(Arc::new(resolver), self.extra_ca_bundle.as_deref()) {

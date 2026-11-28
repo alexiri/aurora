@@ -1,6 +1,6 @@
 //! Destination guard (06 step 2): SEC-06.
 
-use aurora_core::ranges::{AppHost, RefusedRanges};
+use aurora_core::ranges::{AppHost, LogThrottle, RefusedRanges};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -42,6 +42,8 @@ pub struct Guard {
     /// (FIX-290, D-511) Hosts of Aurora's other services, from this process's configuration. A
     /// self-hosted app's host that resolves to any address of one of them gets no allowance.
     services: arc_swap::ArcSwap<Vec<String>>,
+    /// (FIX-290) How often a service that does not resolve is logged.
+    unresolved_log: LogThrottle,
     /// (FIX-290, SEC-170) `gateway.self_hosted_refused_ranges`: closed to every allowance.
     refused_ranges: arc_swap::ArcSwap<RefusedRanges>,
     /// Fixed answers for names (tests only; empty in a running gateway).
@@ -211,6 +213,7 @@ impl Guard {
             services: arc_swap::ArcSwap::from_pointee(Vec::new()),
             names: arc_swap::ArcSwap::from_pointee(Vec::new()),
             refused_ranges: arc_swap::ArcSwap::from_pointee(RefusedRanges::default()),
+            unresolved_log: LogThrottle::default(),
         })
     }
 
@@ -413,8 +416,10 @@ impl Guard {
                 Ok(a) => services.extend(ips(a)),
                 // Where that service is cannot be told apart from the app's address.
                 Err(error) => {
-                    tracing::warn!(service = %s, %error,
-                        "one of Aurora's own services did not resolve; self-hosted app hosts stay closed");
+                    if self.unresolved_log.allow(s) {
+                        tracing::warn!(service = %s, %error,
+                            "one of Aurora's own services did not resolve; self-hosted app hosts stay closed");
+                    }
                     return AppBounds {
                         absolute: Vec::new(),
                         services: Vec::new(),

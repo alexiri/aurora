@@ -114,6 +114,8 @@ const BROWSER: &str = "aub_browser";
 
 /// (FIX-290, D-511) Self-hosted app hosts on private addresses.
 mod self_hosted;
+/// (FIX-290) How often an unresolvable service of Aurora's is logged.
+mod service_log;
 
 #[derive(Default)]
 struct Rows {

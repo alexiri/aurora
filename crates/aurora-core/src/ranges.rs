@@ -13,7 +13,10 @@
 //! address: IPv4-mapped `::ffff:0:0/96`, NAT64 `64:ff9b::/96` and 6to4 `2002::/16` (the embedded
 //! address is judged; one embedding a public IPv4 address is public).
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 /// The cloud metadata addresses.
 const METADATA_V4: Ipv4Addr = Ipv4Addr::new(169, 254, 169, 254);
@@ -106,6 +109,32 @@ pub fn app_host_may_reach(ip: IpAddr) -> bool {
                 && !(s[0] == 0xfd00 && s[1] == 0x0ec2)
                 && !(s[0] == 0xfd20 && s[1] == 0x00ce && s[2..7] == [0; 5] && s[7] == 0x0254)
         }
+    }
+}
+
+/// How often [`LogThrottle`] lets one name through.
+const LOG_EVERY: Duration = Duration::from_secs(60);
+
+/// (FIX-290) One log line a minute per name, for a warning that would otherwise repeat on every
+/// dial. The names come from the configuration, so there are few of them.
+#[derive(Debug, Default)]
+pub struct LogThrottle(Mutex<HashMap<String, Instant>>);
+
+impl LogThrottle {
+    /// May a line about `name` be written now? Saying yes starts its minute.
+    pub fn allow(&self, name: &str) -> bool {
+        self.allow_at(name, Instant::now())
+    }
+
+    fn allow_at(&self, name: &str, now: Instant) -> bool {
+        let mut last = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let due = last
+            .get(name)
+            .is_none_or(|at| now.saturating_duration_since(*at) >= LOG_EVERY);
+        if due {
+            last.insert(name.to_owned(), now);
+        }
+        due
     }
 }
 
@@ -406,6 +435,22 @@ mod tests {
         assert!(!opens(a, &[a], &[ip("::ffff:10.1.2.3")]));
         let loopback = ip("127.0.0.1");
         assert!(!opens(loopback, &[loopback], &[]));
+    }
+
+    #[test]
+    fn a_throttled_log_lets_each_name_through_once_a_minute() {
+        let t = LogThrottle::default();
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+        assert!(t.allow_at("db", at(0)));
+        assert!(!t.allow_at("db", at(1)));
+        assert!(!t.allow_at("db", at(59)));
+        assert!(
+            t.allow_at("vault", at(1)),
+            "another name has its own minute"
+        );
+        assert!(t.allow_at("db", at(60)));
+        assert!(!t.allow_at("db", at(61)));
     }
 
     /// (FIX-290, SEC-170) The operator's refused ranges close what the allowance would open.
