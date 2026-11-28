@@ -34,7 +34,8 @@ async fn titles_switches_and_uses_on_an_upgraded_database() {
     }
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
-        .filter(|m| m.version != FIRST && m.version != SECOND)
+        // Everything before the two, never a later migration: a later one may need their columns.
+        .filter(|m| m.version < FIRST)
         .cloned()
         .collect();
     Migrator::with_migrations(before).run(&pool).await.unwrap();

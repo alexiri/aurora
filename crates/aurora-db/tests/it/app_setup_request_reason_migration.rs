@@ -14,7 +14,8 @@ async fn the_backfill_names_the_closing_role_and_the_texts_are_bounded() {
     let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let without: Vec<_> = aurora_db::MIGRATOR
         .iter()
-        .filter(|m| m.version != VERSION)
+        // Everything before it, never a later migration: a later one may need its columns.
+        .filter(|m| m.version < VERSION)
         .cloned()
         .collect();
     assert!(
