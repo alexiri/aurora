@@ -280,7 +280,7 @@ pub struct CreateSkillRequest {
     /// The display name: one line of plain text, at most 80 characters; blank or absent means
     /// none.
     pub title: Option<String>,
-    /// Single line, at most 500 characters. Required unless `from_library` is given.
+    /// Single line, at most 1,024 characters. Required unless `from_library` is given.
     pub description: Option<String>,
     /// Required unless `from_library` is given.
     pub body: Option<String>,

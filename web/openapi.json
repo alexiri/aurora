@@ -54410,7 +54410,7 @@
               "string",
               "null"
             ],
-            "description": "Single line, at most 500 characters. Required unless `from_library` is given."
+            "description": "Single line, at most 1,024 characters. Required unless `from_library` is given."
           },
           "enabled": {
             "type": [

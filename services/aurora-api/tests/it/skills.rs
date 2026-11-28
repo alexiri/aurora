@@ -9,6 +9,8 @@ use http::Method;
 mod app_tier;
 #[path = "skills_library.rs"]
 mod library_tier;
+#[path = "skills_index.rs"]
+mod skill_index;
 #[path = "skills_use.rs"]
 mod switch_and_use;
 #[path = "skills_workspace.rs"]
@@ -107,7 +109,7 @@ async fn crud_limits_and_names() {
             .await;
         assert_eq!(s, 400, "{bad}");
     }
-    for d in ["", "two\nlines", &"d".repeat(501)] {
+    for d in ["", "two\nlines", &"d".repeat(1_025)] {
         let (s, _) = r
             .user(
                 Method::POST,

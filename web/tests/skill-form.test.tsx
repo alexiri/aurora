@@ -305,6 +305,15 @@ describe("reading a skill folder", () => {
     expect(result.folder.files.map((f) => [f.path, f.executable])).toEqual([["notes.md", false], ["scripts/run.sh", true]]);
   });
 
+  it("takes a description of up to 1,024 characters, the open skill format's maximum", async () => {
+    const md = (n: number) => `---\nname: release-notes\ndescription: ${"d".repeat(n)}\n---\n\nbody\n`;
+    expect(await readSkillFolder(picked({ "SKILL.md": md(1_024) }), [], "Daneel")).toMatchObject({ ok: true });
+    expect(await readSkillFolder(picked({ "SKILL.md": md(1_025) }), [], "Daneel")).toEqual({
+      ok: false,
+      problems: ["SKILL.md: the description is longer than 1024 characters."],
+    });
+  });
+
   it("names every problem per file, in plain words", async () => {
     const none = await readSkillFolder(picked({ "readme.md": "x" }), [], "Daneel");
     expect(none).toEqual({ ok: false, problems: ["The folder has no SKILL.md at its top level."] });

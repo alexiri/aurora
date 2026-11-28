@@ -1075,7 +1075,10 @@ from searching the incoming message with score ≥ 0.1.
   was last used, naming that conversation only to its readers; workspace and organization
   skills say how many agents used them in the last 30 days.
 - Name = directory name (immutable; `aurora-*` reserved). Single-line
-description (frontmatter the harness uses to decide when to load). Body ≤
+description of at most `SKILL_DESCRIPTION_MAX` characters (frontmatter the harness uses to
+decide when to load; every harness lists them all, so the projected index is held to
+`SKILL_INDEX_SHARE` characters per skill taken together: the longest are cut with "…" when
+they would pass it, D-513). Body ≤
 `SKILL_BODY_MAX`; body + files ≤ `SKILL_TOTAL_MAX` chars (binary counted as
 base64 length). `SKILL.md` with its front matter, and each text file, is also at most
 `SKILL_ENTRY_JSON_MAX` as a JSON string, because each is one home-sync entry: a write

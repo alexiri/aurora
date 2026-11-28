@@ -132,6 +132,28 @@ async fn fix291_one_over_each_limit_is_refused_with_its_reason_code() {
     }
 }
 
+/// The open skill format's own maximum for a description is 1,024 characters.
+#[tokio::test]
+async fn fix291_a_library_skill_with_a_1024_character_description_is_addable() {
+    let w = world().await;
+    w.git.add_repo("acme/skills");
+    let sha = w.git.commit(
+        "acme/skills",
+        "main",
+        &[
+            put("guide/SKILL.md", md(&"d".repeat(1_024), "b")),
+            put("wordy/SKILL.md", md(&"d".repeat(1_025), "b")),
+        ],
+    );
+    let lib = w.library().await;
+    let v = browse(&w, lib).await;
+    assert_eq!(item(&v, "guide")["valid"], true, "{v}");
+    assert_eq!(item(&v, "wordy")["valid"], false, "{v}");
+    let (s, a) = w.add_agent(lib, "guide", &sha).await;
+    assert_eq!(s, 201, "{a}");
+    assert_eq!(a["description"], "d".repeat(1_024), "stored whole");
+}
+
 #[tokio::test]
 async fn fix291_tier_budgets_are_4_8_and_16_mib() {
     assert_eq!(limits::LIBRARY_BYTES_PER_AGENT, 4 * 1024 * 1024);

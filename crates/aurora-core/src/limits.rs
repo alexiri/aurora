@@ -208,7 +208,15 @@ pub const MEMORY_SNIPPET_CHARS: usize = 800;
 pub const MEMORY_SNIPPET_MIN_SCORE: f32 = 0.1;
 pub const MEMORY_SEARCH_HITS: u32 = 8;
 pub const SKILL_NAME_MAX: usize = 64;
-pub const SKILL_DESCRIPTION_MAX: usize = 500;
+/// (D-513) The open Agent Skills format's own maximum.
+pub const SKILL_DESCRIPTION_MAX: usize = 1_024;
+/// (D-513) Every harness lists each skill's description to the model. That index holds at most
+/// this many characters per listed skill, taken together; when the descriptions would pass it,
+/// the longest are cut to one common length, so a long one only uses room that short ones
+/// leave. A description of at most this length is never cut.
+pub const SKILL_INDEX_SHARE: usize = 500;
+/// Characters of a memory's description in a memory-write request.
+pub const MEMORY_WRITE_DESCRIPTION_MAX: usize = 500;
 /// (D-513) Characters of a skill's instructions, and of instructions and files together (binary
 /// files counted as base64 length). Chosen to hold the public skills measured then, with at
 /// least 25 % headroom.

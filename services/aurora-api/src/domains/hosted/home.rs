@@ -748,10 +748,29 @@ pub async fn render(
     let mut skill_entries = Vec::new();
     let db_skills =
         hosted::skills(conn, inputs.org_id, inputs.workspace_id, claim.agent_id).await?;
+    let taken = taken_of(&db_skills);
+    let (mut render_inputs, folders) =
+        render_inputs(state, conn, claim.agent_id, &inputs, &taken, skills_root).await?;
+    // (D-513) The harness lists every projected skill's description: together they are held to
+    // the index's size, the long ones folded.
+    let lengths: Vec<usize> = db_skills
+        .iter()
+        .map(|s| s.description.as_str())
+        .chain(
+            folders
+                .iter()
+                .flat_map(|f| f.skills.iter().map(|s| s.skill.description.as_str())),
+        )
+        .map(|d| d.chars().count())
+        .collect();
+    let index_cap = aurora_registry::skill_format::index_cap(&lengths);
     for s in &db_skills {
         let path = format!("{skills_root}/{}/SKILL.md", s.name);
-        let content =
-            aurora_registry::skill_format::projected_skill_md(&s.name, &s.description, &s.body);
+        let content = aurora_registry::skill_format::projected_skill_md(
+            &s.name,
+            &aurora_registry::skill_format::fold_description(&s.description, index_cap),
+            &s.body,
+        );
         manifest.push(json!({"path": path}));
         skill_entries.push(json!({"path": path, "content": content}));
         for f in hosted::skill_files(conn, s.id).await? {
@@ -764,7 +783,6 @@ pub async fn render(
             skill_entries.push(json!({"path": path, "content": text, "exec": f.executable}));
         }
     }
-    let taken = taken_of(&db_skills);
 
     let mems = hosted::memories(conn, claim.agent_id).await?;
     let mut memory_entries = Vec::new();
@@ -781,9 +799,6 @@ pub async fn render(
     }
     manifest.push(json!({"path": "memory/index.md"}));
     memory_entries.push(json!({"path": "memory/index.md", "content": memory_index(&mems)}));
-
-    let (mut render_inputs, folders) =
-        render_inputs(state, conn, claim.agent_id, &inputs, &taken, skills_root).await?;
 
     // (P6-MEMLOCK, C-1151) The instruction fragment about locked memories renders only when the
     // agent holds at least one locked memory.
@@ -814,11 +829,12 @@ pub async fn render(
                 tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, "app skill blob missing; not projected");
                 continue;
             };
-            let Some(text) = aurora_registry::app_folder::project_skill_md(
+            let Some(text) = aurora_registry::app_folder::project_skill_md_capped(
                 &sk.app_name,
                 &sk.version,
                 &sk.skill.name,
                 &md,
+                index_cap,
             ) else {
                 tracing::warn!(app = %sk.app_id, skill = %sk.skill.name, "app skill is not a valid SKILL.md; not projected");
                 continue;

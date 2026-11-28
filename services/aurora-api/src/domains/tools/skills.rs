@@ -62,6 +62,22 @@ fn summary(v: &SkillView) -> Value {
                 "commit_sha": s.commit_sha, "detached": s.detached}))})
 }
 
+/// The list is a skill index like the one the harness builds: held to the same size, so long
+/// descriptions never push other skills past the result limit. `skill_get` gives the whole one.
+fn fold_index(skills: &mut [Value]) {
+    use aurora_registry::skill_format::{fold_description, index_cap};
+    let lengths: Vec<usize> = skills
+        .iter()
+        .map(|s| s["description"].as_str().map_or(0, |d| d.chars().count()))
+        .collect();
+    let cap = index_cap(&lengths);
+    for s in skills {
+        if let Some(d) = s["description"].as_str() {
+            s["description"] = json!(fold_description(d, cap));
+        }
+    }
+}
+
 /// `library_skill_readonly`: only people change what a library pinned (docs/10 §Git skill
 /// library). The same code as the API's 409.
 fn library_readonly(v: &SkillView) -> Result<(), ToolError> {
@@ -140,7 +156,8 @@ impl PlatformTool for List {
     fn description(&self, _: &ToolContext) -> String {
         "List the skills you receive (your own, your workspace's, the organization's and the \
          skills of your apps; all but your own are read-only for you) with their tier and the \
-         tiers your own skills shadow, plus your own disabled skills."
+         tiers your own skills shadow, plus your own disabled skills. A long description may be \
+         cut here, ending in …; skill_get gives all of it."
             .into()
     }
     fn input_schema(&self) -> Value {
@@ -194,6 +211,7 @@ impl PlatformTool for List {
             skills.push(app_summary(a));
         }
         skills.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        fold_index(&mut skills);
         out(json!({"skills": skills}))
     }
 }

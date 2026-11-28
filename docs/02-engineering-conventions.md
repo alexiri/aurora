@@ -267,7 +267,8 @@ overridden by the named configuration key (`15`).
 | `MEMORY_INDEX_MAX` | 6 000 chars | — | 10 |
 | `MEMORY_SNIPPETS` | 3 × 800 chars, score ≥ 0.1 | — | 10 |
 | `MEMORY_SEARCH_HITS` | 8 | — | 10 |
-| `SKILL_NAME_MAX` / `SKILL_DESCRIPTION_MAX` | 64 / 500 chars | — | 10 |
+| `SKILL_NAME_MAX` / `SKILL_DESCRIPTION_MAX` | 64 / 1 024 chars (D-513; the open Agent Skills format's maximum) | — | 10 |
+| `SKILL_INDEX_SHARE` | 500 chars (D-513): the skill index (the `description` of every projected `SKILL.md`, and of `skill_list`) holds at most this many characters per listed skill, taken together. When more, the longest are cut to one common length with "…"; a description of up to 500 characters is never cut. `skill_get` and the API give the whole text | — | 10, 12 |
 | `SKILL_BODY_MAX` / `SKILL_TOTAL_MAX` | 48 000 / 300 000 chars (D-513) | — | 10 |
 | `SKILL_ENTRY_JSON_MAX` | 190 KiB: `SKILL.md` with its front matter, and each text file of a skill, as a JSON string. Each travels as one home-sync entry, which must fit a part (`HOME_SYNC_PART_MAX`); a bigger one is refused when written (422 `file_too_large`; a library skill is not addable, `file_too_large`). Binary files are not projected and not held to it (D-513) | — | 10, 12 |
 | `SKILL_PER_AGENT_MAX` / `SKILL_FILES_MAX` | 50 own skills per agent / 50 files per skill (409 `skill_limit_reached`, `skill_files_limit_reached`; checked under the agent / skill row lock; FIX-110). The other per-agent caps: 50 schedules, 20 webhooks, 100 memories | — | 10 |

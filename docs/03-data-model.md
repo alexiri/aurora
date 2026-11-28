@@ -1248,7 +1248,7 @@ A lock writes no `memory_revisions` row (it is not a content change); it is audi
 | workspace_id | uuid null FK→workspaces (cascade) | (phase 3, RFE-020, D-64) non-null ⇒ **workspace-tier** skill (`10 §Skills`). CHECK `skills_one_tier`: `workspace_id IS NULL OR agent_id IS NULL` (agent skills keep it null; their workspace is the agent's). Tier = agent (`agent_id` set) \| workspace (`workspace_id` set) \| org (both null). Deleting the workspace deletes its skills |
 | name | text not null | `[a-z0-9]+(-[a-z0-9]+)*` ≤64, immutable; `aurora-*` reserved |
 | title | text null | (P5-SKILLS-1, C-1173, D-498) the display name: 1..80 characters of plain text on one line (`CHECK`: no control character); null ⇒ the folder name made readable. Library and app skills have none |
-| description | text not null | single line ≤500 |
+| description | text not null | single line ≤1024 |
 | body | text not null | `SKILL.md` body |
 | enabled | bool not null default true | |
 | created_by_kind | text CHECK in (`user`,`agent`) | |

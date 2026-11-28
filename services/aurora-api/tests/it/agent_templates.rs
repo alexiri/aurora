@@ -6816,7 +6816,11 @@ fn long_skill_files(dir: &str, version: &str, body_pad: usize) -> Vec<(String, V
         format!("{dir}/skills/watch/SKILL.md"),
         tpl_skill_md(
             "watch",
-            "For {input.team} on {input.service} in {input.zone}",
+            // 500 characters of padding: three long inputs push it past 1,024, one does not.
+            &format!(
+                "{} For {{input.team}} on {{input.service}} in {{input.zone}}",
+                "p".repeat(500)
+            ),
             &format!("{} {{input.team}}", "b".repeat(body_pad)),
         ),
     ));
@@ -6838,8 +6842,8 @@ async fn a_create_refuses_a_skill_that_rendering_pushes_over_a_limit() {
     let plan = w.plan(ws, &owner, "t").await;
     let long = "x".repeat(200);
     for (inputs, limit) in [
-        // The description passes 500 characters.
-        (json!({"zone": long, "team": long, "service": long}), "500"),
+        // The description passes 1,024 characters.
+        (json!({"zone": long, "team": long, "service": long}), "1024"),
         // Only the body passes 48 000.
         (json!({"team": long}), "48000"),
     ] {
