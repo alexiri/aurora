@@ -39,7 +39,10 @@ async fn admin(h: &Harness, email: &str) -> Admin {
 }
 
 async fn call(h: &Harness, a: &Admin, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-    h.call(&a.cookie, m, uri, body).await
+    let out = h.call(&a.cookie, m, uri, body).await;
+    // The default-store notice leaves the request path: what a test reads next includes it.
+    h.state.notices.idle().await;
+    out
 }
 
 async fn status(h: &Harness, a: &Admin) -> Value {

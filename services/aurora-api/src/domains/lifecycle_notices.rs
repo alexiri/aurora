@@ -7,6 +7,12 @@
 //! or unfreeze prepares after its commit (the rows are still there). A failed send is logged
 //! and never fails or undoes the action — a lookup failure means no notice, also never a
 //! failure.
+//!
+//! (FIX-285) Sending is **off the request path**: every notice is spawned on
+//! [`AppState::notices`] right after the commit, with **no `.await` between the two**, so a slow
+//! mail server delays no request and a dropped request loses no notice. A process that exits
+//! (the settings command, a stopping server) waits for that tracker. They are not stored: a
+//! process that dies before the send loses them, as with the emergency-access notices.
 
 use crate::app::AppState;
 use crate::audit::AuditActor;
@@ -15,7 +21,7 @@ use crate::domains::freeze::service::Target;
 use crate::domains::push::deliver::Kind;
 use aurora_core::sanitize;
 use aurora_db::{DbError, PgPool};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use uuid::Uuid;
 
@@ -160,13 +166,13 @@ async fn actor_label(pool: &PgPool, actor: &AuditActor) -> String {
 }
 
 /// "14:05 UTC on 2026-11-25" in the recipient's time zone (UTC when they set none or an unknown
-/// one), as in the emergency-access notice.
-fn now_in(timezone: Option<&str>) -> String {
+/// one), as in the emergency-access notice. `at` is when the change committed, not when a slow
+/// send gets to this recipient.
+fn time_in(at: DateTime<Utc>, timezone: Option<&str>) -> String {
     let tz: Tz = timezone
         .and_then(|t| t.parse().ok())
         .unwrap_or(chrono_tz::UTC);
-    Utc::now()
-        .with_timezone(&tz)
+    at.with_timezone(&tz)
         .format("%H:%M %Z on %Y-%m-%d")
         .to_string()
 }
@@ -274,9 +280,17 @@ pub async fn prepare_org(
 }
 
 impl Notice {
+    /// Send it off the caller's path. Call right after the commit, before any `.await`.
+    pub fn dispatch(self, state: &AppState) {
+        let (at, owned) = (Utc::now(), state.clone());
+        state
+            .notices
+            .spawn(async move { self.send(&owned, at).await });
+    }
+
     /// Send it: one e-mail and one Web Push per recipient, fire-and-forget per recipient (a
     /// failed send is logged, as in the other notifiers). Never fails.
-    pub async fn send(self, state: &AppState) {
+    async fn send(self, state: &AppState, at: DateTime<Utc>) {
         if self.recipients.is_empty() {
             return;
         }
@@ -303,7 +317,7 @@ impl Notice {
                 self.action.verb(),
                 kind_word.to_lowercase(),
                 name(&self.scope_name),
-                now_in(p.timezone.as_deref()),
+                time_in(at, p.timezone.as_deref()),
                 self.action.meaning(self.org_scope),
             );
             let mail = match &self.path {
@@ -331,27 +345,33 @@ impl Notice {
 }
 
 /// The freeze hook: the freeze (created, or raised to a higher authority) just committed. Called
-/// after the commit; a failing notice never fails the freeze. The agent scope has no notice of
-/// its own — its people are told by the workspace's and organization's own changes.
-pub async fn freeze_committed(state: &AppState, target: &Target, actor: &AuditActor) {
-    scoped(state, target, actor, Action::Frozen).await;
+/// right after the commit; a failing notice never fails the freeze. The agent scope has no
+/// notice of its own — its people are told by the workspace's and organization's own changes.
+pub fn freeze_committed(state: &AppState, target: &Target, actor: &AuditActor) {
+    scoped(state, target, actor, Action::Frozen);
 }
 
 /// The unfreeze hook: the freeze was actually lifted and the change committed.
-pub async fn unfreeze_committed(state: &AppState, target: &Target, actor: &AuditActor) {
-    scoped(state, target, actor, Action::Unfrozen).await;
+pub fn unfreeze_committed(state: &AppState, target: &Target, actor: &AuditActor) {
+    scoped(state, target, actor, Action::Unfrozen);
 }
 
-async fn scoped(state: &AppState, target: &Target, actor: &AuditActor, action: Action) {
+/// The names and recipients are read in the spawned task too: nothing here may wait on the
+/// request.
+fn scoped(state: &AppState, target: &Target, actor: &AuditActor, action: Action) {
     use aurora_db::repo::freeze::Scope;
-    let notice = match target.scope {
-        Scope::Workspace => prepare_workspace(state, target.org_id, target.id, actor, action).await,
-        Scope::Org => prepare_org(state, target.id, actor, action).await,
-        Scope::Agent => None,
-    };
-    if let Some(n) = notice {
-        n.send(state).await;
-    }
+    let (at, owned) = (Utc::now(), state.clone());
+    let (scope, org_id, id, actor) = (target.scope, target.org_id, target.id, actor.clone());
+    state.notices.spawn(async move {
+        let notice = match scope {
+            Scope::Workspace => prepare_workspace(&owned, org_id, id, &actor, action).await,
+            Scope::Org => prepare_org(&owned, id, &actor, action).await,
+            Scope::Agent => None,
+        };
+        if let Some(n) = notice {
+            n.send(&owned, at).await;
+        }
+    });
 }
 
 /// The store's name as the dashboard shows it: the id, the built-in one by its plain name. The
@@ -366,9 +386,50 @@ fn store_name(id: &str) -> String {
 
 /// (FIX-244, D-486) The default secret store changed — an instance-wide setting (there is no
 /// per-organization default), so every organization's effective owners are told who changed it,
-/// when, and from which store to which store. Called after the commit; no secret value, endpoint
-/// or path appears; a failing send is logged and never fails the save.
-pub async fn default_store_changed(state: &AppState, actor: &AuditActor, from: &str, to: &str) {
+/// when, and from which store to which store. Called right after the commit; no secret value,
+/// endpoint or path appears; a failing send is logged and never fails the save.
+pub fn default_store_changed(state: &AppState, actor: &AuditActor, from: &str, to: &str) {
+    let (at, owned, actor) = (Utc::now(), state.clone(), actor.clone());
+    let (from, to) = (from.to_owned(), to.to_owned());
+    state.notices.spawn(async move {
+        tell_default_store(&owned, Some(&actor), &from, &to, at).await;
+    });
+}
+
+/// (FIX-285) The notice for a default store the deployment's configuration changed, taken from
+/// the mirroring of this start (at most once per process; replicas serialize on the mirroring
+/// lock, so only the one that wrote the change has it). Call once the settings are loaded.
+/// `false`: this start changed nothing.
+pub fn send_mirrored_default_store(state: &AppState) -> bool {
+    let Some((from, to)) = state.settings.take_mirrored_default_store() else {
+        return false;
+    };
+    let (at, owned) = (Utc::now(), state.clone());
+    state.notices.spawn(async move {
+        // The first load may still be building the transport the stored settings name.
+        owned.mail_live.swaps.idle().await;
+        tell_default_store(&owned, None, &from, &to, at).await;
+    });
+    true
+}
+
+/// Send [`send_mirrored_default_store`]'s notice when the settings are first loaded with the
+/// change in force: at start, or later when the database was unreachable then.
+pub fn spawn_mirrored_default_store(state: AppState) {
+    tokio::spawn(async move {
+        state.settings.mirrored_default_store_loaded().await;
+        send_mirrored_default_store(&state);
+    });
+}
+
+/// `actor` `None`: the deployment's configuration changed it.
+async fn tell_default_store(
+    state: &AppState,
+    actor: Option<&AuditActor>,
+    from: &str,
+    to: &str,
+    at: DateTime<Utc>,
+) {
     let rows: Vec<(Uuid, String, Option<String>)> = match sqlx::query_as(
         "SELECT e.user_id, u.email::text, u.timezone \
          FROM effective_org_members e \
@@ -376,7 +437,7 @@ pub async fn default_store_changed(state: &AppState, actor: &AuditActor, from: &
          WHERE e.role = 'owner' AND e.user_id IS DISTINCT FROM $1 \
          ORDER BY u.display_name, e.user_id",
     )
-    .bind(actor.id)
+    .bind(actor.and_then(|a| a.id))
     .fetch_all(&state.pool)
     .await
     {
@@ -395,7 +456,10 @@ pub async fn default_store_changed(state: &AppState, actor: &AuditActor, from: &
     if recipients.is_empty() {
         return;
     }
-    let who = actor_label(&state.pool, actor).await;
+    let who = match actor {
+        Some(a) => actor_label(&state.pool, a).await,
+        None => "the deployment configuration".to_owned(),
+    };
     let subject = "The default secret store changed".to_owned();
     for (user_id, email, timezone) in &recipients {
         let text = format!(
@@ -403,7 +467,7 @@ pub async fn default_store_changed(state: &AppState, actor: &AuditActor, from: &
              instead of {}. Values already stored have not been moved; moving them is a separate \
              migration.",
             who,
-            now_in(timezone.as_deref()),
+            time_in(at, timezone.as_deref()),
             store_name(to),
             store_name(from),
         );

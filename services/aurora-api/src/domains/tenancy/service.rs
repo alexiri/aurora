@@ -552,12 +552,13 @@ pub async fn delete_org(
         dep.rollback(state).await;
         return Err(e);
     }
+    // Before any other await: a request dropped from here on still sends it.
+    if let Some(n) = notice {
+        n.dispatch(state);
+    }
     dep.committed(state).await;
     token_discards.run(state).await;
     discard_managed(state, refs).await;
-    if let Some(n) = notice {
-        n.send(state).await;
-    }
     Ok(())
 }
 
@@ -591,10 +592,11 @@ pub async fn delete_workspace(
         del.rollback(state).await;
         return Err(e);
     }
-    del.committed(state).await;
+    // Before any other await: a request dropped from here on still sends it.
     if let Some(n) = notice {
-        n.send(state).await;
+        n.dispatch(state);
     }
+    del.committed(state).await;
     Ok(())
 }
 

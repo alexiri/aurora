@@ -20,7 +20,10 @@ impl Who {
 }
 
 async fn call(h: &Harness, who: &Who, m: Method, uri: &str, body: Option<Value>) -> (u16, Value) {
-    h.call_tok(&who.0, m, uri, body).await
+    let out = h.call_tok(&who.0, m, uri, body).await;
+    // The lifecycle notices leave the request path: what a test reads next includes them.
+    h.state.notices.idle().await;
+    out
 }
 
 async fn count(h: &Harness, sql: &str, id: Uuid) -> i64 {

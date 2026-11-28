@@ -43,12 +43,15 @@ impl LiveAuth {
 /// A mailer whose transport is replaced when the `email` settings change.
 pub struct LiveMailer {
     cell: ArcSwap<Arc<dyn Mailer>>,
+    /// The transports still being built after a change of the settings.
+    pub swaps: crate::in_flight::InFlight,
 }
 
 impl LiveMailer {
     pub fn new(m: Arc<dyn Mailer>) -> Self {
         Self {
             cell: ArcSwap::from_pointee(m),
+            swaps: crate::in_flight::InFlight::default(),
         }
     }
     pub fn set(&self, m: Arc<dyn Mailer>) {

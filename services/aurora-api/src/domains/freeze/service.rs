@@ -225,7 +225,7 @@ pub async fn freeze(
     tx.commit().await.map_err(DbError::from)?;
     // (FIX-244) The owners are told after the commit; a failing notice never fails the freeze.
     if created || escalated {
-        crate::domains::lifecycle_notices::freeze_committed(state, target, &who.actor).await;
+        crate::domains::lifecycle_notices::freeze_committed(state, target, &who.actor);
     }
     for (c, t) in flush {
         lifecycle::flush_deltas(state, c, t).await;
@@ -298,7 +298,7 @@ pub async fn unfreeze(
     tx.commit().await.map_err(DbError::from)?;
     // (FIX-244) The owners are told after the commit; a failing notice never fails the unfreeze.
     if unfroze {
-        crate::domains::lifecycle_notices::unfreeze_committed(state, target, &who.actor).await;
+        crate::domains::lifecycle_notices::unfreeze_committed(state, target, &who.actor);
     }
     Ok(FreezeResult {
         frozen: None,

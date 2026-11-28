@@ -110,31 +110,47 @@ impl ReadKind {
     }
 }
 
+/// What one `workspace.emergency_read` row is about.
+#[derive(Debug, Clone, Copy)]
+pub enum ReadOf {
+    /// One object, by its id: the row's target.
+    Object(Uuid),
+    /// A list (FIX-285): whose it is — the agent for an agent's list, else the workspace. The
+    /// row has no target; it names this in `metadata.listed`.
+    List(Uuid),
+}
+
 /// The record of a workspace-content read: nothing for an own-access reader; for an emergency
-/// reader one `workspace.emergency_read` row, **before the body is returned**. `target` is the
-/// one object read, `None` for a list. Once per (actor, grant, kind, target) and hour, under the
-/// same advisory-lock dedup as `conversation.emergency_view`. Not best-effort: any failure is
-/// the record failing, and the read is refused with 503 `audit_unavailable`.
+/// reader one `workspace.emergency_read` row, **before the body is returned**. Once per (actor,
+/// grant, kind, object or listed id) and hour, under the same advisory-lock dedup as
+/// `conversation.emergency_view`. Not best-effort: any failure is the record failing, and the
+/// read is refused with 503 `audit_unavailable`.
 pub async fn record_read(
     state: &crate::app::AppState,
     actor: &AuditActor,
     read: &ReadAuth,
     kind: ReadKind,
-    target: Option<Uuid>,
+    of: ReadOf,
 ) -> Result<(), ApiError> {
     let ReadAuth::Emergency(grant) = read else {
         return Ok(());
     };
     let refuse = |_| audit::unavailable();
     let kind = kind.as_str();
+    let (target, listed) = match of {
+        ReadOf::Object(id) => (Some(id), None),
+        ReadOf::List(id) => (None, Some(id)),
+    };
     let target_id = target.map(|t| t.to_string());
+    let listed_id = listed.map(|t| t.to_string());
     let mut tx = state.pool.begin().await.map_err(refuse)?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(format!(
-            "emergency_read:{}:{}:{kind}:{}",
+            "emergency_read:{}:{}:{kind}:{}:{}",
             actor.id.unwrap_or(Uuid::nil()),
             grant.id(),
-            target_id.as_deref().unwrap_or("")
+            target_id.as_deref().unwrap_or(""),
+            listed_id.as_deref().unwrap_or("")
         ))
         .execute(&mut *tx)
         .await
@@ -143,6 +159,7 @@ pub async fn record_read(
         "SELECT EXISTS (SELECT 1 FROM audit_log WHERE workspace_id = $1 AND actor_id = $2
            AND action = 'workspace.emergency_read' AND metadata->>'emergency_access' = $3
            AND metadata->>'kind' = $4 AND target_id IS NOT DISTINCT FROM $5
+           AND metadata->>'listed' IS NOT DISTINCT FROM $6
            AND created_at > now() - interval '1 hour')",
     )
     .bind(grant.workspace_id())
@@ -150,6 +167,7 @@ pub async fn record_read(
     .bind(grant.id().to_string())
     .bind(kind)
     .bind(target_id.as_deref())
+    .bind(listed_id.as_deref())
     .fetch_one(&mut *tx)
     .await
     .map_err(refuse)?;
@@ -161,6 +179,7 @@ pub async fn record_read(
                 "emergency_access": grant.id(),
                 "kind": kind,
                 "target": target,
+                "listed": listed,
             }));
         if let Some(t) = target {
             ev = ev.target(kind, t);

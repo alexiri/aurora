@@ -560,6 +560,17 @@ enum TokenChange {
     Set(Token),
 }
 
+/// How often a patch reads the repository again because another change moved the part of the
+/// address it keeps, before it gives up.
+const PATCH_READS: usize = 3;
+
+fn source_changed() -> ApiError {
+    ApiError::conflict(
+        "template_source_changed",
+        "The source kept changing while the repository was read; nothing was saved. Try again.",
+    )
+}
+
 /// Patch a source (C-1107): the schedule, the address parts and the token. A change of ref,
 /// path or token re-reads the repository first (422 keeps the old values); stored versions are
 /// never touched.
@@ -578,21 +589,25 @@ pub async fn update(
         return Err(bad_interval());
     }
     // The new address parts (`ref: ""` clears; absent keeps).
-    let reference = match &req.reference {
+    let new_reference = match &req.reference {
         Some(r) => {
             let r = r.trim();
             if r.is_empty() {
-                None
+                Some(None)
             } else {
                 check_ref(r)?;
-                Some(r.to_owned())
+                Some(Some(r.to_owned()))
             }
         }
-        None => row.reference.clone(),
+        None => None,
     };
-    let path = match &req.path {
-        Some(p) => normalize_path(p)?,
-        None => row.path.clone(),
+    let new_path = req.path.as_deref().map(normalize_path).transpose()?;
+    // The address a source gets: what the patch sets, and the source's own for the rest.
+    let address_on = |r: &SourceRow| {
+        (
+            new_reference.clone().unwrap_or_else(|| r.reference.clone()),
+            new_path.clone().unwrap_or_else(|| r.path.clone()),
+        )
     };
     let token_change = match &req.token {
         None => TokenChange::Keep,
@@ -609,35 +624,51 @@ pub async fn update(
         TokenChange::Keep | TokenChange::Remove => None,
         TokenChange::Set(t) => Some(seal_token(state, id, t).await?),
     };
-    // A change of ref, path or token re-reads the repository first (C-1107). The read uses the
-    // new values; the old token stays when it fails, because nothing was written.
-    let read = if revalidate || token_touched {
-        let opened;
-        let tok: Option<&Token> = match &token_change {
-            TokenChange::Set(t) => Some(t),
-            TokenChange::Remove => None,
-            TokenChange::Keep => {
-                opened = open_source_token(state, &row).await?;
-                opened.as_ref()
-            }
-        };
-        let read = git::read_source(state, &row.url, reference.as_deref(), &path, tok).await;
-        if read.is_err()
-            && let Some(r) = &sealed
-        {
-            discard_token(state, id, r).await;
-        }
-        Some(read?)
-    } else {
-        None
-    };
     let result = async {
-        let mut tx = audit::begin(state).await?;
-        // The row read above is not locked: another patch or a removal may have changed the
-        // token since. What is kept, replaced and discarded comes from this locked read.
-        let row = repo::lock_source(&mut tx, id)
-            .await?
-            .ok_or_else(|| ApiError::not_found("Template source not found."))?;
+        // What the address is merged with: first the unlocked row, then a locked read that
+        // turned out to differ.
+        let mut seen = row;
+        let mut reads = 0;
+        // A change of ref, path or token re-reads the repository first (C-1107), outside any
+        // row lock. The read uses the new values; the old token stays when it fails, because
+        // nothing was written.
+        let (mut tx, row, reference, path, read) = loop {
+            let (reference, path) = address_on(&seen);
+            let read = if revalidate || token_touched {
+                if reads == PATCH_READS {
+                    return Err(source_changed());
+                }
+                reads += 1;
+                let opened;
+                let tok: Option<&Token> = match &token_change {
+                    TokenChange::Set(t) => Some(t),
+                    TokenChange::Remove => None,
+                    TokenChange::Keep => {
+                        opened = open_source_token(state, &seen).await?;
+                        opened.as_ref()
+                    }
+                };
+                let read =
+                    git::read_source(state, &seen.url, reference.as_deref(), &path, tok).await?;
+                Some(read)
+            } else {
+                None
+            };
+            let mut tx = audit::begin(state).await?;
+            // `seen` is not locked: another patch or a removal may have changed the row since.
+            // What is kept, replaced and discarded comes from this locked read, the address
+            // parts too (FIX-285): if they differ from the ones just read from the repository,
+            // the new address is read before it is stored.
+            let locked = repo::lock_source(&mut tx, id)
+                .await?
+                .ok_or_else(|| ApiError::not_found("Template source not found."))?;
+            if read.is_some() && address_on(&locked) != (reference.clone(), path.clone()) {
+                drop(tx);
+                seen = locked;
+                continue;
+            }
+            break (tx, locked, reference, path, read);
+        };
         let new_token_ref = match &token_change {
             TokenChange::Keep => row.token_ref.clone(),
             TokenChange::Remove => None,
