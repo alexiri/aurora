@@ -1049,14 +1049,29 @@ The home (`/workspace`) holds:
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves
   stale bytes and no ack; the next boot starts at generation 0 with a full sync.
+- (FIX-294, SEC-171) The staging area is in the agent's home, so only what the
+  API sent is installed. The supervisor keeps in memory, for the generation being
+  staged, the SHA-256 and executable bit of every staged file (by destination)
+  and the SHA-256 of each merged document (`render_inputs.json`, `tools.json`,
+  `manifest.json`), never their content. A merged document is checked before the
+  next part is merged into it. The commit checks the whole staging area before it
+  touches anything installed (every entry present with its bytes, nothing else
+  there), and writes each file from the same buffer it checked; the instruction
+  files are rendered from the checked bytes, not from the installed
+  `render_inputs.json`. A difference makes the generation incomplete: the
+  installed one stays, there is no ack, and the API sends the whole generation
+  again when its sync lease lapses. A file that changes while the commit runs is
+  not written and the commit stops there, so the home can hold files of both
+  generations (each as sent) until the resend. Which generation is staged is also
+  the supervisor's memory alone: a generation first seen past part 0 (a
+  restarted supervisor) is incomplete.
 - (FIX-258) The skills and helpers roots are pruned **before** the staged files
   are installed, so a path may turn from a file into a folder, or back, between
   two generations. A skill file the home cannot hold (a file where a folder is
   needed or the reverse, a name too long) is skipped with a warning in the
   sandbox log, like a helper; the rest of the generation is installed and acked.
-  The previous version of a skipped skill or helper file (also of a staged one
-  that is refused) is removed, so the file is missing, never stale beside the
-  new rest. No report tells the API, so the skill is simply incomplete in the
+  The previous version of a skipped skill or helper file is removed, so the
+  file is missing, never stale beside the new rest. No report tells the API, so the skill is simply incomplete in the
   sandbox.
   Any other error on a skill file (a full disk) still fails the generation.
 - (FIX-292) A skill file that isn't UTF-8 travels in the `skills` part as

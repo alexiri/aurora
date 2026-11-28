@@ -108,6 +108,57 @@ fn header_safe(s: &str) -> String {
 #[error("mail delivery failed: {0}")]
 pub struct MailError(pub String);
 
+/// (SEC-171) A delivery failure in our words only: a fixed kind, and the SMTP reply code when
+/// there is one. The mail library's message can carry the server's reply, untrusted text that
+/// may repeat the recipient's address, so none of it is kept: every caller may log a
+/// [`MailError`]. The kinds are also what the e-mail settings test reads.
+fn smtp_failure(error: &lettre::transport::smtp::Error) -> MailError {
+    match error.status() {
+        Some(code) => {
+            let code = code.to_string();
+            // The library does not say which command was refused: the code is what tells.
+            let kind = match code.as_str() {
+                "421" => "connection",
+                "454" | "530" | "534" | "535" | "538" => "authentication",
+                "450" | "550" | "551" | "553" => "rejected recipient",
+                _ => "rejected message",
+            };
+            MailError(format!("{kind} (SMTP {code})"))
+        }
+        None => MailError(failure_without_reply(error).to_owned()),
+    }
+}
+
+/// The kind of a failure that has no reply code. The messages under the error are read to
+/// choose among the fixed kinds, never repeated.
+fn failure_without_reply(error: &lettre::transport::smtp::Error) -> &'static str {
+    if error.is_timeout() {
+        return "timeout";
+    }
+    if error.is_tls() {
+        return "TLS";
+    }
+    let mut causes = String::new();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        causes.push_str(&cause.to_string().to_ascii_lowercase());
+        source = cause.source();
+    }
+    let says = |words: &[&str]| words.iter().any(|w| causes.contains(w));
+    // An unparsable reply is the server's text too: it never chooses more than "connection".
+    if error.is_response() {
+        "connection"
+    } else if says(&["tls", "certificate", "handshake"]) {
+        "TLS"
+    } else if says(&["authentication", "credentials"]) {
+        "authentication"
+    } else if says(&["timed out"]) {
+        "timeout"
+    } else {
+        "connection"
+    }
+}
+
 #[async_trait::async_trait]
 pub trait Mailer: Send + Sync {
     async fn send(&self, mail: Mail) -> Result<(), MailError>;
@@ -193,7 +244,7 @@ impl Mailer for SmtpMailer {
             .send(msg)
             .await
             .map(|_| ())
-            .map_err(|e| MailError(e.to_string()))
+            .map_err(|e| smtp_failure(&e))
     }
 }
 
@@ -338,6 +389,132 @@ mod tests {
             );
         }
         assert!(!head.contains('\0'));
+    }
+
+    /// A one-connection SMTP server on loopback: every command is answered `250`, except the one
+    /// that starts with `refuse`, which gets `reply`.
+    async fn smtp_server(refuse: &'static str, reply: &'static str) -> String {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("smtp://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            write.write_all(b"220 test\r\n").await.unwrap();
+            let mut in_data = false;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let answer = if in_data {
+                    if line != "." {
+                        continue;
+                    }
+                    in_data = false;
+                    if refuse == "." { reply } else { "250 ok\r\n" }
+                } else if line.starts_with(refuse) {
+                    reply
+                } else if line.starts_with("EHLO") {
+                    "250-test\r\n250 AUTH PLAIN LOGIN\r\n"
+                } else if line.starts_with("AUTH") {
+                    "235 ok\r\n"
+                } else if line.starts_with("DATA") {
+                    in_data = true;
+                    "354 go on\r\n"
+                } else {
+                    "250 ok\r\n"
+                };
+                if write.write_all(answer.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+        url
+    }
+
+    /// The log of a background send through `url`, once it has said that it failed.
+    async fn failed_send_log(url: &str) -> String {
+        let buf = Buf::default();
+        let sub = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(sub);
+        let mailer: Arc<dyn Mailer> = Arc::new(
+            SmtpMailer::new(
+                url,
+                "aurora@example.org",
+                Some(("user".into(), "password".into())),
+            )
+            .unwrap(),
+        );
+        send_detached(
+            &mailer,
+            Mail::without_link("victim@example.org", "Notice", "Text"),
+        );
+        for _ in 0..500 {
+            let out = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+            if out.contains("email send failed") {
+                return out;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("the failed send was not logged");
+    }
+
+    /// The e-mail settings test names its failure from the same words.
+    #[test]
+    fn the_settings_test_reads_the_failure_kinds() {
+        use crate::domains::settings::sign_in::classify_mail_error;
+        for (kind, code) in [
+            ("connection", "connect"),
+            ("connection (SMTP 421)", "connect"),
+            ("TLS", "tls"),
+            ("timeout", "timeout"),
+            ("authentication (SMTP 535)", "auth"),
+            ("rejected recipient (SMTP 550)", "rejected"),
+            ("rejected message (SMTP 554)", "rejected"),
+        ] {
+            assert_eq!(classify_mail_error(kind), code, "{kind}");
+        }
+    }
+
+    /// (SEC-171) A server's reply is untrusted text that can repeat the recipient's address:
+    /// the log has the kind of failure and the reply code, nothing the server wrote.
+    #[tokio::test]
+    async fn a_failed_send_logs_its_kind_and_code_never_the_server_reply() {
+        for (refuse, reply, expected) in [
+            (
+                "RCPT",
+                "550-5.1.1 <victim@example.org> SERVERTEXT\r\n550 victim@example.org unknown\r\n",
+                "rejected recipient (SMTP 550)",
+            ),
+            (
+                ".",
+                "554 5.7.1 SERVERTEXT for victim@example.org\r\n",
+                "rejected message (SMTP 554)",
+            ),
+            (
+                "AUTH",
+                "535 5.7.8 SERVERTEXT victim@example.org\r\n",
+                "authentication (SMTP 535)",
+            ),
+            (
+                "MAIL",
+                "421 SERVERTEXT victim@example.org closing\r\n",
+                "connection (SMTP 421)",
+            ),
+            // A reply that does not parse has no code, and the parser's error is not logged.
+            (
+                "MAIL",
+                "SERVERTEXT victim@example.org\r\n",
+                "mail delivery failed: connection",
+            ),
+        ] {
+            let out = failed_send_log(&smtp_server(refuse, reply).await).await;
+            assert!(out.contains(expected), "{expected}: {out}");
+            assert!(!out.contains("victim"), "{out}");
+            assert!(!out.contains("SERVERTEXT"), "{out}");
+        }
     }
 
     /// FIX-116: with SMTP unset the log carries recipient and subject, never the token link

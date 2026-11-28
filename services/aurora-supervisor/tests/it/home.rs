@@ -8,7 +8,7 @@ use aurora_protocol::runner::HomeSync;
 use aurora_protocol::supervisor::{MAX_FILE_PART_DECODED, SupervisorToRunner};
 use aurora_supervisor::channel::ChannelSender;
 use aurora_supervisor::harvest::{Harvester, seal, verify};
-use aurora_supervisor::home::{HomeConfig, HomeProjector, PartOutcome};
+use aurora_supervisor::home::{HomeConfig, HomeError, HomeProjector, PartOutcome};
 use aurora_supervisor::outbound::{OutboundError, OutboundFile, send_file};
 use base64::Engine as _;
 use rustix::fs::{CWD, FileType, Mode, mknodat};
@@ -1813,9 +1813,10 @@ fn a_skill_file_skipped_at_staging_leaves_no_old_version() {
     assert_eq!(fs::read_to_string(root.join(inner)).unwrap(), "x2");
 }
 
-/// (FIX-258) And for a staged file that is refused because something else is at its name.
+/// (SEC-171) A staged file with something else at its name refuses the whole generation: the
+/// installed one stays as it was, never its old file beside the new rest.
 #[test]
-fn a_refused_staged_skill_file_leaves_no_old_version() {
+fn a_refused_staged_skill_file_keeps_the_installed_generation() {
     let d = TempDir::new();
     let outside = outside_dir();
     let mut p = projector(d.path());
@@ -1826,8 +1827,8 @@ fn a_refused_staged_skill_file_leaves_no_old_version() {
     let staged = d.path().join(".aurora/sync/files").join(run);
     fs::remove_file(&staged).unwrap();
     std::os::unix::fs::symlink(outside.path().join("victim"), &staged).unwrap();
-    p.commit(2).unwrap();
-    assert!(fs::symlink_metadata(d.path().join(run)).is_err(), "stale");
+    assert!(matches!(p.commit(2), Err(HomeError::Incomplete(2, _))));
+    assert_eq!(fs::read_to_string(d.path().join(run)).unwrap(), "v1");
     assert_untouched(outside.path());
 }
 
@@ -1852,8 +1853,8 @@ fn a_skipped_helper_leaves_no_old_version() {
     assert!(fs::symlink_metadata(root.join(helper)).is_err(), "stale");
 }
 
-/// A link left in the staging area before the commit is refused: nothing is installed under its
-/// name, its target is left alone, and the rest of the generation is installed.
+/// A link left in the staging area before the commit: (SEC-171) the generation is refused,
+/// nothing of it is installed and the link's target is left alone.
 #[test]
 fn a_staged_file_replaced_by_a_link_is_not_installed() {
     let d = TempDir::new();
@@ -1875,12 +1876,9 @@ fn a_staged_file_replaced_by_a_link_is_not_installed() {
         .join(".aurora/sync/files/.claude/skills/s/SKILL.md");
     fs::remove_file(&staged).unwrap();
     std::os::unix::fs::symlink(outside.path().join("victim"), &staged).unwrap();
-    p.commit(1).unwrap();
+    assert!(matches!(p.commit(1), Err(HomeError::Incomplete(1, _))));
     assert!(fs::symlink_metadata(d.path().join(".claude/skills/s/SKILL.md")).is_err());
-    assert_eq!(
-        fs::read_to_string(d.path().join(".claude/skills/s/other.md")).unwrap(),
-        "fine"
-    );
+    assert!(!d.path().join(".claude/skills/s/other.md").exists());
     assert_untouched(outside.path());
 }
 

@@ -22,7 +22,7 @@
 //!   0444 in 0555 directories and the root is pruned to the manifest.
 //! - `manifest`: `{path}`; every managed path that should exist.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Read as _;
@@ -120,12 +120,60 @@ struct ManifestEntry {
     path: String,
 }
 
+/// SHA-256 of staged bytes.
+type Digest32 = [u8; 32];
+
+fn digest_of(bytes: &[u8]) -> Digest32 {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).into()
+}
+
+/// (SEC-171) What the supervisor remembers of a staged file entry, never its content: the bytes
+/// stay in the staging area, which the agent can write.
+#[derive(Debug, Clone, Copy)]
+struct Staged {
+    /// Of the bytes the API sent (a memory file's with its trailer); `None` for a file too
+    /// large to install.
+    digest: Option<Digest32>,
+    /// Install as 0555. The staged file's own mode says nothing.
+    exec: bool,
+}
+
+/// The staged documents of a generation, as the commit read and checked them.
+struct StagedDocs {
+    manifest: Vec<u8>,
+    tools: Option<Vec<u8>>,
+    render_inputs: Option<Vec<u8>>,
+}
+
+const MANIFEST_DOC: &str = "manifest.json";
+const TOOLS_DOC: &str = "tools.json";
+const RENDER_INPUTS_DOC: &str = "render_inputs.json";
+
+/// (SEC-171) The refusal of a staged file that is not what was sent, logged with the path it
+/// was staged for (never its content). The generation is not acked, so it is sent again.
+fn swapped(generation: u64, path: &Path) -> HomeError {
+    tracing::warn!(
+        generation,
+        path = %path.to_string_lossy().escape_debug(),
+        "staged file is not what was sent; generation refused"
+    );
+    HomeError::Incomplete(generation, "a staged file is not what was sent")
+}
+
 #[derive(Debug)]
 pub struct HomeProjector {
     cfg: HomeConfig,
     /// A part of the current generation was invalid or failed; the generation must not be acked.
     failed: Option<&'static str>,
+    /// The generation being staged (or last committed). In memory only: a marker in the home
+    /// would be the agent's to rewrite.
     current: Option<u64>,
+    /// (SEC-171) Every staged file of the current generation, by destination (home-relative);
+    /// reset with the staging area. Only these are installed, and only with these bytes.
+    staged: BTreeMap<PathBuf, Staged>,
+    /// (SEC-171) The same for the documents merged from several parts, by staged name.
+    staged_docs: BTreeMap<&'static str, Digest32>,
     /// (P6-MEMLOCK, C-1149) The memory files staged as locked in the current generation (their
     /// rel paths); reset with the staging area. Only a memory file entry arrives with the flag.
     locked_keys: BTreeSet<PathBuf>,
@@ -270,25 +318,34 @@ fn prune_to(root: &Path, dir: &Path, keep: &BTreeSet<PathBuf>) {
     }
 }
 
+fn too_large() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidData, "staged file too large")
+}
+
+/// The bytes of an open staged file, if they are the ones `expected` names. `None` for any
+/// others, a longer file included (no file over the bound has a digest to match).
+fn read_sent(file: fs::File, expected: &Digest32) -> std::io::Result<Option<Vec<u8>>> {
+    let mut bytes = Vec::new();
+    file.take(STAGED_READ_MAX + 1).read_to_end(&mut bytes)?;
+    Ok((digest_of(&bytes) == *expected).then_some(bytes))
+}
+
 /// Installs one staged file, `file` being `src` already opened and checked, at `dst` with
 /// `mode`, and removes `src`. The content comes from the open file, never from the path: the
-/// staging area is in the agent's home, so `src` may name something else by now. Returns the
-/// installed bytes.
+/// staging area is in the agent's home, so `src` may name something else by now. What is
+/// written is what was read and found to be `expected` (SEC-171): the same buffer. Returns the
+/// installed bytes, or `None` with nothing written when the file holds anything else.
 fn install_staged(
     root: &Path,
     file: fs::File,
     src: &Path,
     dst: &Path,
     mode: u32,
-) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    file.take(STAGED_READ_MAX + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > STAGED_READ_MAX {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "staged file too large",
-        ));
-    }
+    expected: &Digest32,
+) -> std::io::Result<Option<Vec<u8>>> {
+    let Some(bytes) = read_sent(file, expected)? else {
+        return Ok(None);
+    };
     let outside = || std::io::Error::from(std::io::ErrorKind::InvalidInput);
     let rel = dst.strip_prefix(root).map_err(|_| outside())?;
     let (parent, name) = rel.parent().zip(rel.file_name()).ok_or_else(outside)?;
@@ -300,7 +357,7 @@ fn install_staged(
     nofollow::write_atomic_at(dir.as_fd(), name, &bytes, mode)?;
     // The whole staging area is removed after the commit anyway.
     let _ = fs::remove_file(src);
-    Ok(bytes)
+    Ok(Some(bytes))
 }
 
 fn walk_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -319,6 +376,8 @@ impl HomeProjector {
             cfg,
             failed: None,
             current: None,
+            staged: BTreeMap::new(),
+            staged_docs: BTreeMap::new(),
             locked_keys: BTreeSet::new(),
             skipped: BTreeSet::new(),
             locked_bytes: Arc::new(HashMap::new()),
@@ -368,17 +427,80 @@ impl HomeProjector {
         )
     }
 
+    /// Remembers what was just written to the staging area for `rel`.
+    fn record(&mut self, rel: PathBuf, body: &[u8], exec: bool) {
+        let digest = (body.len() as u64 <= STAGED_READ_MAX).then(|| digest_of(body));
+        self.staged.insert(rel, Staged { digest, exec });
+    }
+
+    /// The staged document `name`, checked against what was last written to it. `None` when no
+    /// part brought one.
+    fn read_doc(&self, generation: u64, name: &'static str) -> Result<Option<Vec<u8>>, HomeError> {
+        let path = self.sync_dir().join(name);
+        let Some(expected) = self.staged_docs.get(name) else {
+            return match fs::symlink_metadata(&path) {
+                Ok(_) => Err(swapped(generation, Path::new(name))),
+                Err(_) => Ok(None),
+            };
+        };
+        match crate::harvest::read_bounded(&path, STAGED_READ_MAX) {
+            Ok(Some(bytes)) if digest_of(&bytes) == *expected => Ok(Some(bytes)),
+            _ => Err(swapped(generation, Path::new(name))),
+        }
+    }
+
+    fn write_doc(&mut self, name: &'static str, bytes: &[u8]) -> Result<(), HomeError> {
+        write_atomic(&self.sync_dir().join(name), bytes, 0o600)?;
+        self.staged_docs.insert(name, digest_of(bytes));
+        Ok(())
+    }
+
+    /// (SEC-171) The whole staging area against what was sent, before anything installed is
+    /// touched: every staged entry is there with its bytes, and nothing else is.
+    fn verify_staged(&self, generation: u64) -> Result<StagedDocs, HomeError> {
+        let files = self.staged_files();
+        if !fs::symlink_metadata(&files).is_ok_and(|m| m.is_dir()) {
+            return Err(swapped(generation, Path::new("files")));
+        }
+        let mut found = Vec::new();
+        walk_files(&files, &mut found);
+        for path in found {
+            let rel = path.strip_prefix(&files).unwrap_or(&path);
+            if !self.staged.contains_key(rel) {
+                return Err(swapped(generation, rel));
+            }
+        }
+        for (rel, entry) in &self.staged {
+            // A file too large to install is never read: the install skips or refuses it.
+            let Some(expected) = &entry.digest else {
+                continue;
+            };
+            let sent =
+                nofollow::open_regular(&files.join(rel)).and_then(|file| read_sent(file, expected));
+            if !matches!(sent, Ok(Some(_))) {
+                return Err(swapped(generation, rel));
+            }
+        }
+        Ok(StagedDocs {
+            manifest: self
+                .read_doc(generation, MANIFEST_DOC)?
+                .ok_or(HomeError::Incomplete(generation, "no manifest part"))?,
+            tools: self.read_doc(generation, TOOLS_DOC)?,
+            render_inputs: self.read_doc(generation, RENDER_INPUTS_DOC)?,
+        })
+    }
+
     /// Applies one `home.sync` part. Part 0 (or a new generation) resets staging.
     pub fn apply_part(&mut self, sync: &HomeSync) -> Result<PartOutcome, HomeError> {
-        let gen_file = self.sync_dir().join("generation");
-        let staged_gen = fs::read_to_string(&gen_file)
-            .ok()
-            .and_then(|s| s.trim().parse::<u64>().ok());
-        if sync.part_index == 0 || staged_gen != Some(sync.generation) {
+        let new_generation = self.current != Some(sync.generation);
+        if sync.part_index == 0 || new_generation {
             let _ = fs::remove_dir_all(self.sync_dir());
             fs::create_dir_all(self.staged_files())?;
-            fs::write(&gen_file, sync.generation.to_string())?;
-            self.failed = None;
+            // A generation first seen past its first part (the supervisor restarted) is never
+            // complete: what was staged before cannot be checked.
+            self.failed = (sync.part_index != 0).then_some("earlier parts missing");
+            self.staged.clear();
+            self.staged_docs.clear();
             // (P6-MEMLOCK) The locked set belongs to the generation being staged.
             self.locked_keys.clear();
             self.skipped.clear();
@@ -452,15 +574,14 @@ impl HomeProjector {
                             }
                         }
                     };
-                    // The exec flag travels through staging as the owner-x bit.
-                    let staged_mode = if e.exec && !memory { 0o700 } else { 0o600 };
                     // (P6-MEMLOCK) The locked flag travels through staging as a tracked path.
                     if memory && e.locked {
                         self.locked_keys.insert(rel.clone());
                     }
-                    match write_atomic(&self.staged_files().join(&rel), &body, staged_mode) {
+                    match write_atomic(&self.staged_files().join(&rel), &body, 0o600) {
                         Ok(()) => {
                             self.skipped.remove(&rel);
+                            self.record(rel, &body, e.exec && !memory);
                         }
                         // A skill file the home cannot hold is skipped, like a helper.
                         Err(error) if !memory && cannot_hold(&error) => {
@@ -483,11 +604,9 @@ impl HomeProjector {
                     };
                     match clean_rel(&e.path) {
                         Some(r) if is_app_path(&r) => {
-                            write_atomic(
-                                &self.staged_files().join(&r),
-                                e.content.unwrap_or_default().as_bytes(),
-                                0o600,
-                            )?;
+                            let body = e.content.unwrap_or_default().into_bytes();
+                            write_atomic(&self.staged_files().join(&r), &body, 0o600)?;
+                            self.record(r, &body, false);
                         }
                         _ => {
                             tracing::warn!(path = %e.path.escape_debug(), "app file path refused");
@@ -496,8 +615,7 @@ impl HomeProjector {
                 }
             }
             // (P6-TPL-6, C-1143) The helper files: accepted only below `.aurora/helpers/` with
-            // the C-1141 rules; a refused entry is a warning, never a write elsewhere. The exec
-            // bit travels through staging as the owner-x bit, like a skill file's.
+            // the C-1141 rules; a refused entry is a warning, never a write elsewhere.
             HomeSyncKind::Helpers => {
                 for v in entries {
                     let Some(e) = text_entry(v) else {
@@ -506,16 +624,13 @@ impl HomeProjector {
                     };
                     match clean_rel(&e.path) {
                         Some(r) if is_helper_path(&r) => {
-                            let staged_mode = if e.exec { 0o700 } else { 0o600 };
                             // One helper the home cannot hold (a file that is also a folder)
                             // is skipped: it must not stall the whole sync.
-                            match write_atomic(
-                                &self.staged_files().join(&r),
-                                e.content.unwrap_or_default().as_bytes(),
-                                staged_mode,
-                            ) {
+                            let body = e.content.unwrap_or_default().into_bytes();
+                            match write_atomic(&self.staged_files().join(&r), &body, 0o600) {
                                 Ok(()) => {
                                     self.skipped.remove(&r);
+                                    self.record(r, &body, e.exec);
                                 }
                                 Err(error) => {
                                     tracing::warn!(
@@ -536,44 +651,40 @@ impl HomeProjector {
                     }
                 }
             }
+            // The three documents below are merged over several parts. What a part is merged
+            // into is checked first: it must not be the agent's.
             HomeSyncKind::RenderInputs => {
-                let path = self.sync_dir().join("render_inputs.json");
                 let mut merged: Map<String, Value> =
-                    crate::harvest::read_bounded(&path, STAGED_READ_MAX)
-                        .ok()
-                        .flatten()
-                        .and_then(|b| serde_json::from_slice(&b).ok())
-                        .unwrap_or_default();
+                    match self.read_doc(sync.generation, RENDER_INPUTS_DOC)? {
+                        Some(b) => serde_json::from_slice(&b)?,
+                        None => Map::new(),
+                    };
                 for v in entries {
                     if let Value::Object(o) = v {
                         merged.extend(o.clone());
                     }
                 }
-                write_atomic(&path, &serde_json::to_vec(&merged)?, 0o600)?;
+                self.write_doc(RENDER_INPUTS_DOC, &serde_json::to_vec(&merged)?)?;
             }
             HomeSyncKind::Tools => {
-                let path = self.sync_dir().join("tools.json");
-                let mut all: Vec<Value> = crate::harvest::read_bounded(&path, STAGED_READ_MAX)
-                    .ok()
-                    .flatten()
-                    .and_then(|b| serde_json::from_slice(&b).ok())
-                    .unwrap_or_default();
+                let mut all: Vec<Value> = match self.read_doc(sync.generation, TOOLS_DOC)? {
+                    Some(b) => serde_json::from_slice(&b)?,
+                    None => Vec::new(),
+                };
                 all.extend(entries.iter().cloned());
-                write_atomic(&path, &serde_json::to_vec(&all)?, 0o600)?;
+                self.write_doc(TOOLS_DOC, &serde_json::to_vec(&all)?)?;
             }
             HomeSyncKind::Manifest => {
-                let path = self.sync_dir().join("manifest.json");
-                let mut all: Vec<String> = crate::harvest::read_bounded(&path, STAGED_READ_MAX)
-                    .ok()
-                    .flatten()
-                    .and_then(|b| serde_json::from_slice(&b).ok())
-                    .unwrap_or_default();
+                let mut all: Vec<String> = match self.read_doc(sync.generation, MANIFEST_DOC)? {
+                    Some(b) => serde_json::from_slice(&b)?,
+                    None => Vec::new(),
+                };
                 for v in entries {
                     if let Ok(m) = serde_json::from_value::<ManifestEntry>(v.clone()) {
                         all.push(m.path);
                     }
                 }
-                write_atomic(&path, &serde_json::to_vec(&all)?, 0o600)?;
+                self.write_doc(MANIFEST_DOC, &serde_json::to_vec(&all)?)?;
             }
             _ => {}
         }
@@ -585,7 +696,11 @@ impl HomeProjector {
     pub fn commit(&mut self, generation: u64) -> Result<(), HomeError> {
         let root = self.cfg.root.clone();
         let sync = self.sync_dir();
-        let manifest: Vec<String> = serde_json::from_slice(&fs::read(sync.join("manifest.json"))?)?;
+        // (SEC-171) Refused here, the installed generation is left as it is. A file swapped
+        // while the commit runs is refused at its install below: nothing but what was sent is
+        // ever installed, and without an ack the generation is sent again.
+        let docs = self.verify_staged(generation)?;
+        let manifest: Vec<String> = serde_json::from_slice(&docs.manifest)?;
         let mut keep: BTreeSet<PathBuf> = manifest
             .iter()
             .filter_map(|p| clean_rel(p))
@@ -623,28 +738,11 @@ impl HomeProjector {
         prune_to(&root, &helpers_root, &keep);
 
         // Install.
-        let mut staged = Vec::new();
-        walk_files(&self.staged_files(), &mut staged);
-        staged.sort();
         let mut locked_bytes: HashMap<String, Vec<u8>> = HashMap::new();
-        for src in staged {
-            let Ok(rel) = src.strip_prefix(self.staged_files()) else {
-                continue;
-            };
-            let rel = rel.to_path_buf();
+        for (rel, entry) in &self.staged {
+            let rel = rel.clone();
+            let src = self.staged_files().join(&rel);
             let dst = root.join(&rel);
-            // The staging area is in the agent's home too: only a regular file is installed, and
-            // its mode and content are read from the open descriptor.
-            let file = match nofollow::open_regular(&src) {
-                Ok(f) => f,
-                Err(error) => {
-                    tracing::warn!(path = %rel.display(), %error, "staged file refused");
-                    if is_helper_path(&rel) || self.is_skill_path(&rel) {
-                        discard(&root, &mut keep, &rel);
-                    }
-                    continue;
-                }
-            };
             let locked = self.locked_keys.contains(&rel);
             let mode = if rel.starts_with(MEMORY_DIR) {
                 if rel.file_name().is_some_and(|n| n == INDEX_FILE) || locked {
@@ -653,13 +751,25 @@ impl HomeProjector {
                 } else {
                     0o644
                 }
-            } else if file.metadata()?.permissions().mode() & 0o100 != 0 {
+            } else if entry.exec {
                 0o555
             } else {
                 0o444
             };
-            let bytes = match install_staged(&root, file, &src, &dst, mode) {
-                Ok(b) => b,
+            // The staging area is in the agent's home too: only a regular file is installed,
+            // and only with the bytes that were sent.
+            let installed = match &entry.digest {
+                Some(expected) => {
+                    let Ok(file) = nofollow::open_regular(&src) else {
+                        return Err(swapped(generation, &rel));
+                    };
+                    install_staged(&root, file, &src, &dst, mode, expected)
+                }
+                None => Err(too_large()),
+            };
+            let bytes = match installed {
+                Ok(Some(b)) => b,
+                Ok(None) => return Err(swapped(generation, &rel)),
                 Err(error) => {
                     if !(is_helper_path(&rel) || self.is_skill_path(&rel) && cannot_hold(&error)) {
                         return Err(error.into());
@@ -732,17 +842,19 @@ impl HomeProjector {
         // removed helper is gone): locked read-only (0555/0444 files, 0555 dirs).
         lock_tree(&root, Path::new(HELPERS_DIR), self.agent_uid);
 
-        // .aurora cache + instruction files.
+        // .aurora cache + instruction files, from the bytes checked above.
         let aurora = root.join(AURORA_DIR);
-        let tools = sync.join("tools.json");
-        if tools.exists() {
-            fs::rename(&tools, aurora.join("tools.json"))?;
+        if let Some(tools) = &docs.tools {
+            write_atomic(&aurora.join(TOOLS_DOC), tools, 0o600)?;
         }
-        let ri = sync.join("render_inputs.json");
-        if ri.exists() {
-            fs::rename(&ri, aurora.join("render_inputs.json"))?;
+        match &docs.render_inputs {
+            Some(raw) => {
+                write_atomic(&aurora.join(RENDER_INPUTS_DOC), raw, 0o600)?;
+                // Never read back: the installed file is the agent's to rewrite.
+                self.render(raw)?;
+            }
+            None => self.render_installed()?,
         }
-        self.render_installed()?;
         let _ = fs::remove_dir_all(&sync);
         self.current = Some(generation);
         // (P6-MEMLOCK) What the harvest protects from now on; an empty map unlocks everything.
@@ -813,26 +925,31 @@ impl HomeProjector {
     pub fn render_installed(&self) -> Result<(), HomeError> {
         let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");
         // (FIX-114) Bounded read: the agent's uid owns this directory.
-        let raw = match crate::harvest::read_bounded(&path, RENDER_INPUTS_READ_MAX) {
-            Ok(Some(b)) => b,
-            _ => return Ok(()),
-        };
-        let inputs: RenderInputs = serde_json::from_slice(&raw)?;
+        match crate::harvest::read_bounded(&path, RENDER_INPUTS_READ_MAX) {
+            Ok(Some(raw)) => self.render(&raw),
+            _ => Ok(()),
+        }
+    }
+
+    /// Writes what the render inputs `raw` describe: the instruction files and the files beside
+    /// them.
+    fn render(&self, raw: &[u8]) -> Result<(), HomeError> {
+        let inputs: RenderInputs = serde_json::from_slice(raw)?;
         if let Some(port) = self.cfg.pg {
             // A failure here must not block the sync: the agent only loses `psql service=`.
-            if let Err(e) = crate::pg::write(&self.cfg.root, port, &installed_databases(&raw)) {
+            if let Err(e) = crate::pg::write(&self.cfg.root, port, &installed_databases(raw)) {
                 tracing::warn!(error = %e, "libpq service file not written");
             }
         }
         // (P5-ICS, D-273) The calendar links the agent may read, as synthetic addresses; removed
         // when there are none. A failure here must not block the sync either.
-        if let Err(e) = crate::links::write(&self.cfg.root, &crate::links::installed_links(&raw)) {
+        if let Err(e) = crate::links::write(&self.cfg.root, &crate::links::installed_links(raw)) {
             tracing::warn!(error = %e, "links.json not written");
         }
         // (P5-CALDAV, D-275) The servers of the person-pinned apps (addresses only); removed when
         // there are none.
         if let Err(e) =
-            crate::servers::write(&self.cfg.root, &crate::servers::installed_servers(&raw))
+            crate::servers::write(&self.cfg.root, &crate::servers::installed_servers(raw))
         {
             tracing::warn!(error = %e, "servers.json not written");
         }
@@ -961,7 +1078,10 @@ mod tests {
         fs::remove_file(&src).unwrap();
         std::os::unix::fs::symlink(&victim, &src).unwrap();
 
-        let installed = install_staged(&home, file, &src, &dst, 0o444).unwrap();
+        let expected = digest_of(b"checked bytes");
+        let installed = install_staged(&home, file, &src, &dst, 0o444, &expected)
+            .unwrap()
+            .unwrap();
 
         assert!(fs::symlink_metadata(&dst).unwrap().file_type().is_file());
         assert_eq!(fs::read(&dst).unwrap(), b"checked bytes");
@@ -1120,6 +1240,311 @@ mod tests {
         lock_tree(&home, Path::new("above/tree"), me());
         assert_outside_modes(&outside);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    const SKILL: &str = ".claude/skills/s/SKILL.md";
+    const RUN: &str = ".claude/skills/s/run.sh";
+    const HELPER: &str = ".aurora/helpers/help.sh";
+    const APP: &str = ".aurora/apps/demo/app.md";
+
+    fn projector(home: &Path) -> HomeProjector {
+        HomeProjector::new(HomeConfig {
+            root: home.to_path_buf(),
+            skills_dir: Some(".claude/skills".into()),
+            instruction_files: vec!["AGENTS.md".into()],
+            pg: None,
+            agent_cli: false,
+        })
+    }
+
+    /// A whole generation with one file of every staged kind; `tag` marks its content.
+    fn sync_parts(generation: u64, tag: &str) -> Vec<HomeSync> {
+        use serde_json::json;
+        let kinds = [
+            (
+                "skills",
+                json!([
+                    {"path": SKILL, "content": format!("skill {tag}")},
+                    {"path": RUN, "content": format!("run {tag}"), "exec": true}
+                ]),
+            ),
+            (
+                "memory",
+                json!([{"path": "memory/pinned.md", "content": format!("pinned {tag}"), "locked": true}]),
+            ),
+            (
+                "render_inputs",
+                json!([{"agent": {"name": "Ada", "handle": "ada", "workspace": "Acme"}}]),
+            ),
+            ("render_inputs", json!([{"brief": format!("brief {tag}")}])),
+            ("tools", json!([{"name": format!("tool_{tag}")}])),
+            ("tools", json!([{"name": "memory_save"}])),
+            (
+                "apps",
+                json!([{"path": APP, "content": format!("app {tag}")}]),
+            ),
+            (
+                "helpers",
+                json!([{"path": HELPER, "content": format!("helper {tag}"), "exec": true}]),
+            ),
+            (
+                "manifest",
+                json!([
+                    {"path": SKILL}, {"path": RUN}, {"path": "memory/pinned.md"},
+                    {"path": APP}, {"path": HELPER}
+                ]),
+            ),
+            ("final", json!([])),
+        ];
+        let count = kinds.len();
+        kinds
+            .into_iter()
+            .enumerate()
+            .map(|(i, (kind, entries))| {
+                serde_json::from_value(json!({
+                    "generation": generation, "part_index": i, "part_count": count,
+                    "part": {"kind": kind, "entries": entries}
+                }))
+                .unwrap()
+            })
+            .collect()
+    }
+
+    fn apply(p: &mut HomeProjector, parts: &[HomeSync]) {
+        for part in parts {
+            p.apply_part(part).unwrap();
+        }
+    }
+
+    /// Generation 1 installed, then every part of generation 2 staged.
+    fn staged_second_generation() -> (PathBuf, PathBuf, HomeProjector) {
+        let (dir, home, _) = scratch();
+        let mut p = projector(&home);
+        apply(&mut p, &sync_parts(1, "one"));
+        p.commit(1).unwrap();
+        apply(&mut p, &sync_parts(2, "two"));
+        (dir, home, p)
+    }
+
+    /// What the agent does to a file in its own home: new bytes, whatever its mode.
+    fn rewrite(path: &Path, bytes: &str) {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+
+    /// The home as generation 1 left it: nothing of generation 2 and nothing forged.
+    fn assert_first_generation(home: &Path, p: &HomeProjector) {
+        for (rel, text, mode) in [
+            (SKILL, "skill one", 0o444),
+            (RUN, "run one", 0o555),
+            (APP, "app one", 0o444),
+            (HELPER, "helper one", 0o555),
+        ] {
+            assert_eq!(fs::read_to_string(home.join(rel)).unwrap(), text, "{rel}");
+            assert_eq!(mode_of(&home.join(rel)), mode, "{rel}");
+        }
+        let sealed = seal("pinned one").into_bytes();
+        assert_eq!(fs::read(home.join("memory/pinned.md")).unwrap(), sealed);
+        assert_eq!(mode_of(&home.join("memory/pinned.md")), 0o444);
+        assert_eq!(p.locked_memories().get("pinned"), Some(&sealed));
+        let agents = fs::read_to_string(home.join("AGENTS.md")).unwrap();
+        assert!(agents.contains("brief one"), "{agents}");
+        let tools = fs::read_to_string(home.join(".aurora/tools.json")).unwrap();
+        assert!(tools.contains("tool_one"), "{tools}");
+    }
+
+    fn assert_refused(result: Result<(), HomeError>) {
+        assert!(
+            matches!(result, Err(HomeError::Incomplete(2, _))),
+            "{result:?}"
+        );
+    }
+
+    fn cleanup(dir: &Path, home: &Path) {
+        for rel in [".claude/skills", APPS_DIR, HELPERS_DIR] {
+            set_dirs(home, Path::new(rel), 0o755);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (SEC-171) The staging area is in the agent's home: a staged locked memory and the staged
+    /// render inputs (the instruction files) rewritten before the commit install nothing.
+    #[test]
+    fn rewritten_staged_files_refuse_the_generation() {
+        let (dir, home, mut p) = staged_second_generation();
+        let sync = home.join(SYNC_DIR);
+        rewrite(&sync.join("files/memory/pinned.md"), &seal("forged"));
+        rewrite(
+            &sync.join("render_inputs.json"),
+            r#"{"agent":{"name":"Eve","handle":"eve","workspace":"x"},"brief":"forged"}"#,
+        );
+        assert_refused(p.commit(2));
+        assert_first_generation(&home, &p);
+        cleanup(&dir, &home);
+    }
+
+    /// (SEC-171) The same untouched generation installs.
+    #[test]
+    fn untouched_staged_files_install() {
+        let (dir, home, mut p) = staged_second_generation();
+        p.commit(2).unwrap();
+        for (rel, text) in [
+            (SKILL, "skill two"),
+            (APP, "app two"),
+            (HELPER, "helper two"),
+        ] {
+            assert_eq!(fs::read_to_string(home.join(rel)).unwrap(), text);
+        }
+        let sealed = seal("pinned two").into_bytes();
+        assert_eq!(fs::read(home.join("memory/pinned.md")).unwrap(), sealed);
+        assert_eq!(p.locked_memories().get("pinned"), Some(&sealed));
+        let agents = fs::read_to_string(home.join("AGENTS.md")).unwrap();
+        assert!(agents.contains("brief two"), "{agents}");
+        assert!(!home.join(SYNC_DIR).exists());
+        cleanup(&dir, &home);
+    }
+
+    /// (SEC-171) Every staged entry is checked, one at a time: rewritten, removed, replaced by a
+    /// link, or put there by someone else.
+    #[test]
+    fn any_swapped_staged_entry_refuses_the_generation() {
+        let files = [
+            format!("files/{SKILL}"),
+            format!("files/{RUN}"),
+            "files/memory/pinned.md".to_owned(),
+            format!("files/{APP}"),
+            format!("files/{HELPER}"),
+        ];
+        let docs = ["render_inputs.json", "tools.json", "manifest.json"];
+        for rel in files.iter().map(String::as_str).chain(docs) {
+            for how in ["rewritten", "removed", "linked"] {
+                let (dir, home, mut p) = staged_second_generation();
+                let path = home.join(SYNC_DIR).join(rel);
+                match how {
+                    // Valid for every kind of staged file, JSON lists included.
+                    "rewritten" => rewrite(&path, "[]"),
+                    "removed" => fs::remove_file(&path).unwrap(),
+                    _ => {
+                        fs::remove_file(&path).unwrap();
+                        std::os::unix::fs::symlink(dir.join("victim"), &path).unwrap();
+                    }
+                }
+                let result = p.commit(2);
+                assert!(
+                    matches!(result, Err(HomeError::Incomplete(2, _))),
+                    "{rel} {how}: {result:?}"
+                );
+                assert_first_generation(&home, &p);
+                assert_eq!(fs::read(dir.join("victim")).unwrap(), b"outside");
+                cleanup(&dir, &home);
+            }
+        }
+        let (dir, home, mut p) = staged_second_generation();
+        let planted = home.join(SYNC_DIR).join("files/memory/planted.md");
+        fs::write(planted, seal("planted")).unwrap();
+        assert_refused(p.commit(2));
+        assert!(!home.join("memory/planted.md").exists());
+        assert_first_generation(&home, &p);
+        cleanup(&dir, &home);
+    }
+
+    /// (SEC-171) A file that changes after the check, while the commit runs, is not written.
+    #[test]
+    fn an_install_writes_nothing_that_was_not_sent() {
+        let (dir, home, _) = scratch();
+        let (src, dst) = (home.join("staged"), home.join("managed/file"));
+        fs::write(&src, "forged bytes").unwrap();
+        let file = nofollow::open_regular(&src).unwrap();
+        let expected = digest_of(b"sent bytes");
+        let installed = install_staged(&home, file, &src, &dst, 0o444, &expected).unwrap();
+        assert!(installed.is_none());
+        assert!(fs::symlink_metadata(&dst).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (SEC-171) The executable bit is what the API sent, not the staged file's mode.
+    #[test]
+    fn the_staged_mode_does_not_decide_the_executable_bit() {
+        let (dir, home, mut p) = staged_second_generation();
+        let files = home.join(SYNC_DIR).join("files");
+        for (rel, mode) in [(SKILL, 0o700), (RUN, 0o600), (APP, 0o700)] {
+            fs::set_permissions(files.join(rel), fs::Permissions::from_mode(mode)).unwrap();
+        }
+        p.commit(2).unwrap();
+        assert_eq!(mode_of(&home.join(SKILL)), 0o444);
+        assert_eq!(mode_of(&home.join(RUN)), 0o555);
+        assert_eq!(mode_of(&home.join(APP)), 0o444);
+        cleanup(&dir, &home);
+    }
+
+    /// (SEC-171) A merged document rewritten between two parts is not merged into: the sent
+    /// content would then be the agent's, with a digest of its own.
+    #[test]
+    fn a_document_rewritten_between_parts_refuses_the_generation() {
+        for (name, upto) in [("render_inputs.json", 3), ("tools.json", 5)] {
+            let (dir, home, _) = scratch();
+            let mut p = projector(&home);
+            apply(&mut p, &sync_parts(1, "one"));
+            p.commit(1).unwrap();
+            let parts = sync_parts(2, "two");
+            apply(&mut p, &parts[..upto]);
+            rewrite(
+                &home.join(SYNC_DIR).join(name),
+                if name == "tools.json" {
+                    r#"[{"name":"forged"}]"#
+                } else {
+                    r#"{"agent":{"name":"Eve","handle":"eve","workspace":"x"}}"#
+                },
+            );
+            assert!(p.apply_part(&parts[upto]).is_err(), "{name}");
+            let rest: Vec<_> = parts[upto + 1..].iter().map(|s| p.apply_part(s)).collect();
+            assert!(
+                matches!(rest.last(), Some(Err(HomeError::Incomplete(2, _)))),
+                "{name}: {rest:?}"
+            );
+            assert_first_generation(&home, &p);
+            cleanup(&dir, &home);
+        }
+    }
+
+    /// (SEC-171) Which generation is being staged is the supervisor's memory: a marker file the
+    /// agent rewrites cannot drop the parts already staged, and a supervisor that did not see a
+    /// generation's first part (a restart) never completes it.
+    #[test]
+    fn a_generation_without_its_first_parts_is_never_ready() {
+        for restart in [false, true] {
+            let (dir, home, _) = scratch();
+            let mut p = projector(&home);
+            apply(&mut p, &sync_parts(1, "one"));
+            p.commit(1).unwrap();
+            let parts = sync_parts(2, "two");
+            apply(&mut p, &parts[..2]);
+            if restart {
+                p = projector(&home);
+            } else {
+                fs::write(home.join(SYNC_DIR).join("generation"), "7").unwrap();
+            }
+            let results: Vec<_> = parts[2..].iter().map(|s| p.apply_part(s)).collect();
+            let last = results.last().unwrap();
+            if restart {
+                assert!(
+                    matches!(last, Err(HomeError::Incomplete(2, _))),
+                    "{results:?}"
+                );
+            } else {
+                assert!(
+                    matches!(last, Ok(PartOutcome::ReadyToCommit(2))),
+                    "{results:?}"
+                );
+                p.commit(2).unwrap();
+                assert_eq!(fs::read_to_string(home.join(SKILL)).unwrap(), "skill two");
+            }
+            // Sent again from its first part, it installs.
+            apply(&mut p, &sync_parts(2, "two"));
+            p.commit(2).unwrap();
+            assert_eq!(fs::read_to_string(home.join(SKILL)).unwrap(), "skill two");
+            cleanup(&dir, &home);
+        }
     }
 
     /// (P6-MEMLOCK, C-1149) `locked` is optional on a file entry: an older API never sends it and
