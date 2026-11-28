@@ -123,3 +123,12 @@ cluster torn down.
 - The Tests row waits for CI on `246a5fa9` (the migration-test fix); `a1a59836` was red on it and on
   `terminal.spec.ts`.
 - No product code changed. Cluster `aurora-mem5` **kept up** for P5-NAV-4 pass 2. `P5/14§skills-polish` is not done.
+
+**Pass 3 (2026-11-28, on `853fec1a`, with FIX-281): clean, 27 rows Match.**
+
+- Report: `docs/design/skills-memory/verify/SKILLS-REPORT-pass3.md` (no captures: nothing is left that isn't Match).
+- D-1 fixed. The Skills tests pass wherever CI ran them; master's `web` is red only on NAV-4's T-1, which stops CI
+  before the browser tests, so `skills` and `fix-277-reader` were run locally (68 passed).
+- Owner-accepted differences: none. One question stays open ("Use it to …" on list rows).
+- No product code changed. Cluster `aurora-mem5` **kept up** for NAV-4 pass 3. PROGRESS and FEATURES
+  (`P5/14§skills-polish`) are left to the coordinator.
