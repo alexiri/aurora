@@ -18,7 +18,6 @@
 //! probe call per `probe_interval` is let through, and a success closes the breaker.
 
 use std::collections::HashMap;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -603,7 +602,8 @@ impl ToolHub {
         }
         let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
+        // The folder may be the agent's to write: the name can be something else by now.
+        crate::nofollow::set_socket_mode(path, 0o666, rustix::process::getuid().as_raw())?;
         loop {
             let (conn, _) = listener.accept().await?;
             tokio::spawn(self.clone().connection(conn));

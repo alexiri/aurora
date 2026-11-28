@@ -2003,6 +2003,39 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// (FIX-297) The tools socket's mode is set on a socket the supervisor made and on nothing
+    /// else: its folder may be the agent's to write, so another entry can take its name.
+    #[test]
+    fn a_socket_mode_is_never_set_through_a_link() {
+        let (dir, home, victim) = scratch();
+        let socket = home.join("tools.sock");
+        let at = home.join("at");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        // A link to a file outside, a link to a socket, a plain file and a hard link to one.
+        for how in ["link", "link to a socket", "file", "hard link"] {
+            let _ = fs::remove_file(&at);
+            match how {
+                "link" => std::os::unix::fs::symlink(&victim, &at).unwrap(),
+                "link to a socket" => std::os::unix::fs::symlink(&socket, &at).unwrap(),
+                "file" => fs::write(&at, "x").unwrap(),
+                _ => fs::hard_link(&victim, &at).unwrap(),
+            }
+            assert!(
+                nofollow::set_socket_mode(&at, 0o666, me()).is_err(),
+                "{how}"
+            );
+            assert_eq!(mode_of(&victim), 0o600, "{how}");
+            assert_eq!(mode_of(&socket), 0o600, "{how}");
+        }
+        // Another user's socket (the test's is not the uid named here).
+        assert!(nofollow::set_socket_mode(&socket, 0o666, me() + 1).is_err());
+        assert_eq!(mode_of(&socket), 0o600);
+        nofollow::set_socket_mode(&socket, 0o666, me()).unwrap();
+        assert_eq!(mode_of(&socket), 0o666);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     /// (FIX-297) The terminal state folders are made, chmodded and chowned (as root) in the
     /// home only.
     #[test]

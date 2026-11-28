@@ -59,6 +59,20 @@ pub(crate) fn set_mode(file: &fs::File, mode: u32) -> io::Result<()> {
     file.set_permissions(fs::Permissions::from_mode(mode))
 }
 
+/// Sets `mode` on the socket at `path` that `owner` made, and on nothing else: the last
+/// component is held with `O_PATH` without following it, looked at, and changed through that
+/// descriptor's own `/proc` entry (`fchmod` refuses `O_PATH`).
+pub(crate) fn set_socket_mode(path: &Path, mode: u32, owner: u32) -> io::Result<()> {
+    let flags = OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let held = rustix::fs::open(path, flags, Mode::empty())?;
+    let stat = rustix::fs::fstat(&held)?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::Socket || stat.st_uid != owner {
+        return Err(invalid("not the socket that was bound"));
+    }
+    let entry = format!("/proc/self/fd/{}", held.as_raw_fd());
+    fs::set_permissions(entry, fs::Permissions::from_mode(mode))
+}
+
 /// Replaces `name` in the directory `dir` holds open with `bytes` at `mode`: a new temp file
 /// beside it (random name, created exclusively, so nothing planted is ever opened), then a rename
 /// over `name`. Both are relative to that descriptor, whatever its path names by now. The temp

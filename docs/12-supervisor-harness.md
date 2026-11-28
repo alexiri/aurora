@@ -1099,7 +1099,8 @@ The home (`/workspace`) holds:
   Restoring a locked memory changes the mode only of a file that is the agent's
   and has one name; any other is replaced. The harvest uploads only such a file
   too (a hard link may be a file only the supervisor can read); the agent is
-  told once about one it leaves.
+  told once about one it leaves. The tools socket's mode is set without
+  following its name, and only on a socket the supervisor's uid owns.
 - (FIX-258) The skills and helpers roots are pruned **before** the staged files
   are installed, so a path may turn from a file into a folder, or back, between
   two generations. A skill file the home cannot hold (a file where a folder is
