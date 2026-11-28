@@ -37,6 +37,7 @@ use http_body_util::{BodyExt, StreamBody};
 use hyper::body::Frame;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -197,6 +198,9 @@ struct Hook {
     /// (P5-UX-14, C-985) Where to record what an upstream answer shows about the injected account;
     /// `None` while the database is unreachable and in tests without a pool.
     account_health: Option<(Arc<AccountHealth>, aurora_db::PgPool)>,
+    /// (FIX-295) Set by the stale-code retry when it has already recorded why this answer stands:
+    /// the answer then says nothing more about the account.
+    health_told: Arc<AtomicBool>,
 }
 
 impl Hook {
@@ -329,6 +333,7 @@ impl PostHook for Hook {
         // (P5-UX-14, C-985) What the answer shows about the account whose credential was injected: a 401 is
         // `rejected`, a later 2xx or 3xx is `ok`, a 403 nothing. Informational; the answer is never altered.
         if ctx.injected > 0
+            && !self.health_told.load(Ordering::Relaxed)
             && let Some((h, pool)) = &self.account_health
             && let Some(account) = ctx
                 .connection_id
@@ -2090,6 +2095,8 @@ impl PolicyHandler {
                     query: q0,
                     headers: h0,
                     app_host: app_host.clone(),
+                    account_health: hook.account_health.clone(),
+                    health_told: hook.health_told.clone(),
                 }) as Box<dyn Retry>),
                 _ => None,
             };
@@ -2857,6 +2864,7 @@ impl PolicyHandler {
         Box::new(Hook {
             llm: None,
             account_health,
+            health_told: Arc::default(),
             ctx,
             log: self.log.clone(),
             fallback,
@@ -3246,6 +3254,9 @@ struct StaleRetry {
     query: Option<String>,
     headers: HeaderMap,
     app_host: Option<aurora_core::ranges::AppHost>,
+    /// The response hook's health recorder and the flag it reads (see [`Hook`]).
+    account_health: Option<(Arc<AccountHealth>, aurora_db::PgPool)>,
+    health_told: Arc<AtomicBool>,
 }
 
 #[async_trait::async_trait]
@@ -3256,11 +3267,28 @@ impl Retry for StaleRetry {
 
     async fn rebuild(self: Box<Self>) -> Option<PreparedRequest> {
         let s = *self;
-        let conn = s
+        let conn = match s
             .tokens
             .ensure_fresh(&s.loaded, &s.conn, &s.context, true)
             .await
-            .ok()?;
+        {
+            Ok(c) => c,
+            Err(e) => {
+                // (FIX-295) The token endpoint is refused: signing in again would not help, so
+                // the app's answer that stands must not read as a refused sign-in.
+                if matches!(e, RefreshError::Refused(_))
+                    && let Some((h, pool)) = &s.account_health
+                {
+                    s.health_told.store(true, Ordering::Relaxed);
+                    h.record(
+                        pool,
+                        AccountId::Connection(s.conn.id),
+                        Observed::Unreachable,
+                    );
+                }
+                return None;
+            }
+        };
         let app = s.loaded.snapshot.app(&conn.app_id)?;
         let raw = s.plaintext.get_connection(&conn).await.ok()?;
         let exec = Exec::new(app, &s.pkg_ctx, &conn, raw.expose(), s.context.clone())?;
