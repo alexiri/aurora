@@ -9,6 +9,19 @@ Administration > Apps & accounts > Self-hosted apps, and set config.gateway.self
 Service CIDRs (docs/15, Upgrades).
 {{ end }}
 
+{{- if and .Values.networkPolicy.enabled (.Values.networkPolicy.selfHostedPrivateEgress | default dict).enabled }}
+{{- $rule := index (include "aurora.selfHostedPrivateEgress" . | fromYamlArray) 0 }}
+{{- $ports := list }}{{ range $rule.ports }}{{ $ports = append $ports (int .port) }}{{ end }}
+{{- $ranges := list }}{{ range $rule.to }}{{ $ranges = append $ranges .ipBlock.cidr }}{{ end }}
+
+NOTE: networkPolicy.selfHostedPrivateEgress is on. The gateway's and the API's NetworkPolicies allow TCP {{ join ", " $ports }} to
+{{ join ", " $ranges }} (less the `except` list of each rendered ipBlock). At the network layer this is open to
+every request those two services make, so Aurora's own destination check is then the main control: it lets a self-hosted
+app's own requests reach the host an instance administrator registered, besides what config.gateway.allowed_private (and
+the LLM endpoints of the configuration) already open. List your pod and Service CIDRs, and the range of a private
+Kubernetes API endpoint, in config.gateway.self_hosted_refused_ranges: they are left out of this rule too.
+{{- end }}
+
 `helm uninstall` leaves these in the namespace (hook-created, Helm does not delete them): the Secret {{ include "aurora.secretName" . }}
 (generated database passwords, relay token), the Secret {{ include "aurora.caSecretName" . }} (the gateway CA PRIVATE KEY) and the ConfigMap
 {{ include "aurora.fullname" . }}-config. Keep them to reinstall into this namespace with the old database volume; for a clean removal delete them:

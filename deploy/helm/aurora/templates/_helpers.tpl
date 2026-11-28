@@ -346,6 +346,119 @@ spec:
         except: {{- toYaml . | nindent 10 }}
         {{- end }}
 {{- end -}}
+{{- /* (FIX-296) One CIDR as JSON {"v6": bool, "len": prefix length, "bits": the address as 32 or 128 '0'/'1'},
+       or nothing when the string is no CIDR. Sprig has no address functions; with the bits as a string,
+       "A contains B" is a prefix comparison. IPv6 with an embedded dotted IPv4 address is not accepted. */ -}}
+{{- define "aurora.cidr" -}}
+{{- $s := toString . -}}
+{{- $bits := "" -}}
+{{- $v6 := false -}}
+{{- if regexMatch "^(0|[1-9][0-9]{0,2})(\\.(0|[1-9][0-9]{0,2})){3}/(0|[1-9][0-9]{0,2})$" $s -}}
+{{- $ok := true -}}
+{{- range splitList "." (index (splitList "/" $s) 0) -}}
+{{- if gt (int .) 255 }}{{ $ok = false }}{{ end -}}
+{{- $bits = print $bits (printf "%08b" (int .)) -}}
+{{- end -}}
+{{- if not $ok }}{{ $bits = "" }}{{ end -}}
+{{- else if regexMatch "^[0-9a-fA-F:]+/(0|[1-9][0-9]{0,2})$" $s -}}
+{{- $v6 = true -}}
+{{- $halves := splitList "::" (index (splitList "/" $s) 0) -}}
+{{- $head := list -}}
+{{- $tail := list -}}
+{{- with index $halves 0 }}{{ $head = splitList ":" . }}{{ end -}}
+{{- if eq (len $halves) 2 }}{{ with index $halves 1 }}{{ $tail = splitList ":" . }}{{ end }}{{ end -}}
+{{- $gap := sub 8 (add (len $head) (len $tail)) | int -}}
+{{- if or (and (eq (len $halves) 1) (eq $gap 0)) (and (eq (len $halves) 2) (gt $gap 0)) -}}
+{{- $groups := $head -}}
+{{- range until $gap }}{{ $groups = append $groups "0" }}{{ end -}}
+{{- $groups = concat $groups $tail -}}
+{{- $nibble := dict "0" "0000" "1" "0001" "2" "0010" "3" "0011" "4" "0100" "5" "0101" "6" "0110" "7" "0111" "8" "1000" "9" "1001" "a" "1010" "b" "1011" "c" "1100" "d" "1101" "e" "1110" "f" "1111" -}}
+{{- $ok := true -}}
+{{- range $groups -}}
+{{- if regexMatch "^[0-9a-fA-F]{1,4}$" . -}}
+{{- $g := lower . -}}
+{{- range splitList "" (print (repeat (sub 4 (len $g) | int) "0") $g) }}{{ $bits = print $bits (get $nibble .) }}{{ end -}}
+{{- else }}{{ $ok = false }}{{ end -}}
+{{- end -}}
+{{- if not $ok }}{{ $bits = "" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- if $bits -}}
+{{- $len := int (index (splitList "/" $s) 1) -}}
+{{- if le $len (len $bits) }}{{ toJson (dict "v6" $v6 "len" $len "bits" $bits) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* "true" when the parsed CIDR `outer` contains all of `inner` (equal included). */ -}}
+{{- define "aurora.cidrContains" -}}
+{{- if and (eq .outer.v6 .inner.v6) (ge (int .inner.len) (int .outer.len)) -}}
+{{- if hasPrefix (substr 0 (int .outer.len) .outer.bits) .inner.bits }}true{{ end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* Parses a list of CIDRs into JSON {"all": [{"text", "cidr"}]}; fails the render on anything else.
+       Args: list, name (the value it came from). */ -}}
+{{- define "aurora.cidrList" -}}
+{{- $out := list -}}
+{{- range .list -}}
+{{- $parsed := include "aurora.cidr" . -}}
+{{- if not $parsed }}{{ fail (printf "%s: %q is not a CIDR (an address and a prefix length, such as 10.0.0.0/8 or fd00::/8; write IPv6 without a dotted IPv4 part)" $.name (toString .)) }}{{ end -}}
+{{- $out = append $out (dict "text" (toString .) "cidr" (fromJson $parsed)) -}}
+{{- end -}}
+{{- toJson (dict "all" $out) -}}
+{{- end -}}
+
+{{- /* (FIX-296, D-515) The one egress rule of networkPolicy.selfHostedPrivateEgress for the gateway's and the
+       API's policies; nothing while it is off. Only private unicast space can be listed, which is what
+       Aurora's own check may open to a self-hosted app's host (crates/aurora-core/src/ranges.rs
+       app_host_may_reach), so loopback, link-local and anything wider that contains them are refused; the
+       metadata addresses inside private space are carved out. `except` and
+       config.gateway.self_hosted_refused_ranges go into the ipBlock that contains them (Kubernetes wants a
+       strict subset, of the same family); one that covers a whole ipBlock removes it. An empty `to` would
+       mean every destination and empty `ports` every port, so neither can render. */ -}}
+{{- define "aurora.selfHostedPrivateEgress" -}}
+{{- $v := .Values.networkPolicy.selfHostedPrivateEgress | default dict -}}
+{{- if $v.enabled -}}
+{{- $at := "networkPolicy.selfHostedPrivateEgress" -}}
+{{- if not $v.ports }}{{ fail (printf "%s.ports is empty: list the TCP ports to open (443)" $at) }}{{ end -}}
+{{- $ports := list -}}
+{{- range $v.ports -}}
+{{- if not (and (regexMatch "^[1-9][0-9]{0,4}$" (toString .)) (le (int (toString .)) 65535)) }}{{ fail (printf "%s.ports: %q is not a port number (1-65535)" $at (toString .)) }}{{ end -}}
+{{- $ports = append $ports (dict "protocol" "TCP" "port" (int (toString .))) -}}
+{{- end -}}
+{{- if not $v.cidrs }}{{ fail (printf "%s.cidrs is empty: list the private ranges to open, or set enabled to false" $at) }}{{ end -}}
+{{- $private := (include "aurora.cidrList" (dict "name" $at "list" (list "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "fc00::/7")) | fromJson).all -}}
+{{- $metadataTexts := list "fd00:ec2::/32" "fd20:ce::254/128" "100.100.100.200/32" -}}
+{{- $metadata := (include "aurora.cidrList" (dict "name" $at "list" $metadataTexts) | fromJson).all -}}
+{{- $cidrs := (include "aurora.cidrList" (dict "name" (printf "%s.cidrs" $at) "list" $v.cidrs) | fromJson).all -}}
+{{- $refused := (((.Values.config).gateway).self_hosted_refused_ranges) | default list -}}
+{{- $excluded := concat
+      (include "aurora.cidrList" (dict "name" (printf "%s.except" $at) "list" ($v.except | default list)) | fromJson).all
+      (include "aurora.cidrList" (dict "name" "config.gateway.self_hosted_refused_ranges" "list" $refused) | fromJson).all
+      $metadata -}}
+{{- $to := list -}}
+{{- range $c := $cidrs -}}
+{{- $inPrivate := false -}}
+{{- range $private }}{{ if include "aurora.cidrContains" (dict "outer" .cidr "inner" $c.cidr) }}{{ $inPrivate = true }}{{ end }}{{ end -}}
+{{- range $metadata }}{{ if include "aurora.cidrContains" (dict "outer" .cidr "inner" $c.cidr) }}{{ $inPrivate = false }}{{ end }}{{ end -}}
+{{- if not $inPrivate }}{{ fail (printf "%s.cidrs: %q can't be opened: only ranges inside 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 or fc00::/7 can be listed, and never a cloud metadata address. Loopback and link-local addresses, and any wider range that holds them, are never opened" $at $c.text) }}{{ end -}}
+{{- $covered := false -}}
+{{- $inside := list -}}
+{{- range $excluded -}}
+{{- if include "aurora.cidrContains" (dict "outer" .cidr "inner" $c.cidr) }}{{ $covered = true }}
+{{- else if include "aurora.cidrContains" (dict "outer" $c.cidr "inner" .cidr) }}{{ $inside = append $inside .text }}{{ end -}}
+{{- end -}}
+{{- if not $covered -}}
+{{- $block := dict "cidr" $c.text -}}
+{{- with uniq $inside }}{{ $_ := set $block "except" . }}{{ end -}}
+{{- $to = append $to (dict "ipBlock" $block) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $to }}{{ fail (printf "%s is on but nothing is left to open: except or config.gateway.self_hosted_refused_ranges covers every entry of cidrs" $at) }}{{ end -}}
+{{- toYaml (list (dict "to" $to "ports" $ports)) -}}
+{{- end -}}
+{{- end -}}
+
 {{/* True ("true") when the Vault store uses kubernetes auth (projected token for api/gateway). */}}
 {{- define "aurora.vaultK8s" -}}
 {{- if and .Values.vault.enabled (eq .Values.vault.auth.method "kubernetes") }}true{{ end -}}
