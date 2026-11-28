@@ -490,6 +490,8 @@ async fn settings_command(
             }
         },
     };
+    // A change this command made may have notices still being sent.
+    state.notices.idle().await;
     match result {
         Ok(out) => {
             print!("{out}");
@@ -540,6 +542,8 @@ async fn serve(
     // the reset command (D-238(c)); an unreachable database only delays the first load.
     aurora_api::domains::settings::handle::start(&state.settings, &pool).await?;
     state.settings.spawn_reload(pool.clone(), "api");
+    // (FIX-285) The owners are told when the configuration changed the default secret store.
+    aurora_api::domains::lifecycle_notices::spawn_mirrored_default_store(state.clone());
     // (FIX-083) IdP-linked groups of a provider that no longer syncs them (provider ids only).
     aurora_api::domains::groups::sync::warn_orphaned_providers(&pool, &cfg.auth.oidc_providers)
         .await;
@@ -609,6 +613,7 @@ async fn serve(
         aurora_api::domains::plugins::internal::router(state.clone()).fallback(service::not_found),
         service::INTERNAL_TRUST,
     );
+    let notices = state.notices.clone();
     let public = service::traced(
         aurora_api::app::router(state, ops),
         aurora_api::http::trace_trust::PUBLIC_TRUST,
@@ -619,8 +624,19 @@ async fn serve(
         (service::bind(bind, INTERNAL_PORT).await?, internal),
     ];
     serve_all(servers).await?;
+    // Notices left the request path: a stop gives the ones in flight a moment to go out.
+    if tokio::time::timeout(NOTICE_DRAIN, notices.idle())
+        .await
+        .is_err()
+    {
+        tracing::warn!("stopping with lifecycle notices still unsent");
+    }
     Ok(())
 }
+
+/// How long a stopping server waits for notices still being sent: inside the pod's default
+/// termination grace period.
+const NOTICE_DRAIN: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Like `service::serve_all`, but exposes the peer address (`ConnectInfo`) so the
 /// client-IP middleware can resolve it.

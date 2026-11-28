@@ -1364,7 +1364,11 @@ record and authority).
    freeze or unfreeze of the workspace, and the organization's other effective owners of a
    freeze or unfreeze of the organization: what happened, who (an instance administrator is
    not named), when and what it means; never the actor, and a failed send never undoes the
-   freeze.
+   freeze. (FIX-285) These notices, the deletion ones below and the default-store one are
+   sent off the request path, spawned right after the commit: the request does not wait for
+   the mail server, and a dropped request loses none. A stopping server and the settings
+   command wait for the sends in flight; they are not stored, so a process that dies first
+   loses them.
    (phase 4, P4-PRV-1/2) **Previews** of an effectively frozen agent answer 423 `frozen`, never
    wake or start anything, and their open streams close within `PREVIEW_AUTH_CACHE`; the shares
    and preview sessions are kept (`11 §Port previews`, `§Preview access`).
@@ -1409,7 +1413,8 @@ legal and incident work sometimes needs the content.
   writes `conversation.emergency_view` before the body is sent; every other
   read of workspace content under the grant (memory, schedules, webhooks,
   skills, agents, activity, the timeline) writes `workspace.emergency_read`
-  (FIX-262, D-502, C-1165); a failed write refuses the read (503). The open,
+  (FIX-262, D-502, C-1165), a list's row naming whose list it was (FIX-285);
+  a failed write refuses the read (503). The open,
   list and end responses carry metadata only.
 - **It ends.** At `expires_at`, evaluated on every use (never only by the
   sweep); early, by the opener or any active org owner (critical audit row,

@@ -3,7 +3,7 @@ use super::dto::*;
 use super::service::{self, Author, Source, Write};
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent};
-use crate::domains::emergency_access::service::{ReadKind, record_read};
+use crate::domains::emergency_access::service::{ReadKind, ReadOf, record_read};
 use crate::http::auth::{Caller, Principal};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -60,17 +60,10 @@ async fn record_own_read(
     c: &Caller,
     s: &AppState,
     agent: &agents::AgentRow,
-    target: Option<Uuid>,
+    of: ReadOf,
 ) -> Result<(), ApiError> {
     let read = c.workspace_read(s, agent.workspace_id).await?;
-    record_read(
-        s,
-        &AuditActor::from_caller(c),
-        &read,
-        ReadKind::Memory,
-        target,
-    )
-    .await
+    record_read(s, &AuditActor::from_caller(c), &read, ReadKind::Memory, of).await
 }
 
 fn author(c: &Caller) -> Author {
@@ -166,7 +159,7 @@ async fn list_memories(
         &AuditActor::from_caller(&c),
         &read,
         ReadKind::Memory,
-        None,
+        ReadOf::List(agent),
     )
     .await?;
     Ok(Json(Page {
@@ -225,7 +218,7 @@ async fn search_memories(
         .into_iter()
         .map(Into::into)
         .collect();
-    record_own_read(&c, &s, &a, None).await?;
+    record_own_read(&c, &s, &a, ReadOf::List(agent)).await?;
     Ok(Json(MemorySearchResponse { items }))
 }
 
@@ -250,7 +243,7 @@ async fn get_memory(
         &AuditActor::from_caller(&c),
         &read,
         ReadKind::Memory,
-        Some(id),
+        ReadOf::Object(id),
     )
     .await?;
     Ok(body)
@@ -357,7 +350,7 @@ async fn list_revisions(
         .zip(&actors)
         .map(|(r, who): (RevisionRow, _)| MemoryRevision::present(r, who, &names))
         .collect();
-    record_own_read(&c, &s, &a, Some(memory)).await?;
+    record_own_read(&c, &s, &a, ReadOf::Object(memory)).await?;
     Ok(Json(Page {
         items,
         next_cursor: None,

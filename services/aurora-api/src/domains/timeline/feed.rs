@@ -20,7 +20,7 @@ use super::dto::{
 };
 use crate::app::AppState;
 use crate::audit::AuditActor;
-use crate::domains::emergency_access::service::{ReadKind, record_read};
+use crate::domains::emergency_access::service::{ReadKind, ReadOf, record_read};
 use crate::domains::schedules::results;
 use aurora_core::ApiError;
 use aurora_db::authz::ReadAuth;
@@ -285,7 +285,7 @@ impl<'a> Feed<'a> {
             &self.viewer.actor,
             &self.viewer.auth,
             ReadKind::Timeline,
-            None,
+            ReadOf::List(self.agent.id),
         )
         .await?;
         let seen = self

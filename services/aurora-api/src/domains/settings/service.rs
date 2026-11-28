@@ -1406,6 +1406,28 @@ async fn apply_inner(
             .collect(),
     };
     audit::commit_critical_many(tx, &events).await?;
+    // (FIX-244, D-486) The default secret store changed (an instance-wide setting): every
+    // organization's owners are told. Dispatched before any other await, so a request dropped
+    // from here on still sends it. A failing notice never fails the save.
+    for p in &changed {
+        if p.section != "secrets" {
+            continue;
+        }
+        for c in stored_changes(&p.section, &p.old, &p.new) {
+            if c["key"] == json!("secrets.default_store") {
+                let to = c["after"].as_str().unwrap_or("inline");
+                let from = prev_default.as_deref().unwrap_or("inline");
+                if from != to {
+                    crate::domains::lifecycle_notices::default_store_changed(
+                        state,
+                        &via.actor(),
+                        from,
+                        to,
+                    );
+                }
+            }
+        }
+    }
     // After commit: this replica's snapshot, the other replicas and gateways, the secrets that
     // were replaced, and the administrators.
     if let Err(e) = h.reload(&state.pool, "api").await {
@@ -1432,29 +1454,6 @@ async fn apply_inner(
         });
     }
     notify_admins(state, via, &changed, &reqs);
-    // (FIX-244, D-486) The default secret store changed (an instance-wide setting): every
-    // organization's owners are told after the commit. A failing notice never fails the
-    // save.
-    for p in &changed {
-        if p.section != "secrets" {
-            continue;
-        }
-        for c in stored_changes(&p.section, &p.old, &p.new) {
-            if c["key"] == json!("secrets.default_store") {
-                let to = c["after"].as_str().unwrap_or("inline");
-                let from = prev_default.as_deref().unwrap_or("inline");
-                if from != to {
-                    crate::domains::lifecycle_notices::default_store_changed(
-                        state,
-                        &via.actor(),
-                        from,
-                        to,
-                    )
-                    .await;
-                }
-            }
-        }
-    }
     Ok(Applied { changed: written })
 }
 

@@ -2,7 +2,7 @@ use super::bus::BusMsg;
 use super::dto::*;
 use super::{lifecycle, service};
 use crate::app::AppState;
-use crate::domains::emergency_access::service::{ReadKind, record_read};
+use crate::domains::emergency_access::service::{ReadKind, ReadOf, record_read};
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -408,7 +408,7 @@ async fn list_conversation_folders(
         ("webhook", ReadKind::Webhook),
     ] {
         if !ids_of(name).is_empty() {
-            record_read(&s, &actor, &read, kind, None).await?;
+            record_read(&s, &actor, &read, kind, ReadOf::List(agent)).await?;
         }
     }
     use crate::domains::schedules::results;

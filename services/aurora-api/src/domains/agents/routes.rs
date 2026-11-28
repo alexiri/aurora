@@ -3,7 +3,7 @@ use super::dto::*;
 use super::service;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent, Outcome};
-use crate::domains::emergency_access::service::{ReadKind, record_read};
+use crate::domains::emergency_access::service::{ReadKind, ReadOf, record_read};
 use crate::http::auth::{AgentCaller, Caller, SessionCaller};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -365,7 +365,7 @@ async fn list_agents(
     }
     // (FIX-262) The rows carry each agent's brief: an emergency reader's read is recorded.
     if let Some(read) = &read {
-        record_read(&state, &actor, read, ReadKind::Agent, None).await?;
+        record_read(&state, &actor, read, ReadKind::Agent, ReadOf::List(ws)).await?;
     }
     Ok(Json(Page {
         items,
@@ -399,7 +399,7 @@ async fn get_agent(
     let read = caller.workspace_read(&state, row.workspace_id).await?;
     let out = with_byo(&state, row).await?;
     let actor = AuditActor::from_caller(&caller);
-    record_read(&state, &actor, &read, ReadKind::Agent, Some(id)).await?;
+    record_read(&state, &actor, &read, ReadKind::Agent, ReadOf::Object(id)).await?;
     Ok(Json(out))
 }
 

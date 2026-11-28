@@ -7028,6 +7028,46 @@ async fn a_patch_that_keeps_the_token_does_not_write_back_a_discarded_one() {
     assert_eq!(mem.managed_count(), 1);
 }
 
+/// (FIX-285) Each patch changes one part of the address and must keep the other's change. The
+/// held row lock is the barrier: both have read the source before either writes.
+#[tokio::test]
+async fn two_concurrent_address_patches_keep_both_changes() {
+    for ref_first in [true, false] {
+        let w = world().await;
+        let mut changes = vec![
+            put("aurora-templates.yaml".into(), manifest_yaml().into_bytes()),
+            put(
+                "sub/aurora-templates.yaml".into(),
+                manifest_yaml().into_bytes(),
+            ),
+        ];
+        for (p, b) in files("t", "1.0.0") {
+            changes.push(put(format!("sub/{p}"), b.clone()));
+            changes.push(put(p, b));
+        }
+        w.git.add_repo("acme/tpl");
+        w.git.commit("acme/tpl", "main", &changes);
+        let src = w.add_source("acme/tpl", json!({})).await;
+        let id: Uuid = src["id"].as_str().unwrap().parse().unwrap();
+
+        let by_ref = (Method::PATCH, Some(json!({"ref": "main"})));
+        let by_path = (Method::PATCH, Some(json!({"path": "sub"})));
+        let requests = if ref_first {
+            [by_ref, by_path]
+        } else {
+            [by_path, by_ref]
+        };
+        let out = race_on_source(&w, id, requests).await;
+        assert!(out.iter().all(|(s, _)| *s == 200), "{out:?}");
+        let stored = w.source(id).await;
+        assert_eq!(
+            (stored["ref"].as_str(), stored["path"].as_str()),
+            (Some("main"), Some("sub")),
+            "ref first: {ref_first}; {stored}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_delete_racing_a_token_patch_leaves_no_sealed_token() {
     let (w, mem) = d_world().await;

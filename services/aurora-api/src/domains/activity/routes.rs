@@ -1,5 +1,5 @@
 use crate::app::AppState;
-use crate::domains::emergency_access::service::{ReadKind, record_read};
+use crate::domains::emergency_access::service::{ReadKind, ReadOf, record_read};
 use crate::http::auth::Caller;
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -137,6 +137,8 @@ async fn activity(
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.ts, r.id));
     let actor = crate::audit::AuditActor::from_caller(&c);
-    record_read(&s, &actor, &read, ReadKind::Activity, None).await?;
+    // A list narrowed to one agent is that agent's.
+    let of = ReadOf::List(q.agent_id.unwrap_or(ws));
+    record_read(&s, &actor, &read, ReadKind::Activity, of).await?;
     Ok(Json(page.map(RequestLogEntry::from)))
 }

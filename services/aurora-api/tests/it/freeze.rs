@@ -65,6 +65,8 @@ impl W {
                 body,
             )
             .await;
+        // The lifecycle notices leave the request path: what a test reads next includes them.
+        self.r.h.state.notices.idle().await;
         (s.as_u16(), v)
     }
 

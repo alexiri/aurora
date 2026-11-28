@@ -119,6 +119,9 @@ pub struct AppState {
     /// (phase 5, P5-APPSKILL-1, C-1134) App-skill budget of one home sync, `APP_SKILLS_SYNC_MAX`; a
     /// field only so tests can lower it ([`AppState::with_app_skills_sync_max`]).
     pub app_skills_sync_max: usize,
+    /// The lifecycle notices still being sent: they leave the request path, so a process that
+    /// exits waits for them.
+    pub notices: crate::in_flight::InFlight,
 }
 
 /// The encryption keyring of the configuration.
@@ -264,6 +267,7 @@ impl AppState {
             sse_keepalive: aurora_core::limits::SSE_KEEPALIVE,
             stream_recheck: crate::http::auth::STREAM_RECHECK,
             app_skills_sync_max: aurora_core::limits::APP_SKILLS_SYNC_MAX,
+            notices: crate::in_flight::InFlight::default(),
         };
         state.install_live_secrets();
         state.install_live_governance();
@@ -380,7 +384,7 @@ impl AppState {
             }
             if mail_changed {
                 let (vault, mail, email) = (vault.clone(), mail.clone(), cfg.email.clone());
-                tokio::spawn(async move {
+                mail.swaps.clone().spawn(async move {
                     mail.set(domains::settings::live::build_mailer(&vault, &email).await);
                 });
             }

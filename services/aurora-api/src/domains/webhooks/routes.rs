@@ -6,7 +6,7 @@ use crate::domains::automations::{
     dto::ReassignCreatorRequest,
     service::{self as auto, Acting, To},
 };
-use crate::domains::emergency_access::service::{ReadKind, record_read};
+use crate::domains::emergency_access::service::{ReadKind, ReadOf, record_read};
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -107,7 +107,7 @@ async fn list_webhooks(
         &AuditActor::from_caller(&c),
         &read,
         ReadKind::Webhook,
-        None,
+        ReadOf::List(agent),
     )
     .await?;
     Ok(Json(Page {
@@ -199,7 +199,7 @@ async fn get_webhook(
         &AuditActor::from_caller(&c),
         &read,
         ReadKind::Webhook,
-        Some(id),
+        ReadOf::Object(id),
     )
     .await?;
     Ok(Json(row.into()))
@@ -331,7 +331,7 @@ async fn list_deliveries(
         &AuditActor::from_caller(&c),
         &read,
         ReadKind::Webhook,
-        Some(id),
+        ReadOf::Object(id),
     )
     .await?;
     let page = Page::from_rows(rows, p.limit, |r| (r.created_at, r.id));

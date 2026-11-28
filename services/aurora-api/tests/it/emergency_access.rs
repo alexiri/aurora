@@ -2381,8 +2381,7 @@ async fn content_reads(w: &W) -> Vec<Read> {
     ]
 }
 
-/// The reads whose dedup row another read of the list above already holds (a list row has no
-/// target): each must record when it is the first of its kind.
+/// Further reads of kinds the list above already holds: each must record when read first.
 async fn more_reads(w: &W, reads: &[Read]) -> Vec<Read> {
     let agent = reads[9].target.unwrap();
     let schedule = reads[3].target.unwrap();
@@ -2467,6 +2466,39 @@ async fn every_workspace_content_read_is_recorded_once_an_hour() {
     assert!(
         n >= 1,
         "the rows name the grant, the reader and the workspace"
+    );
+}
+
+/// (FIX-285) A list row says whose list was read: two agents' skill lists within the hour are
+/// two rows, and so are an agent's list and the workspace's; the same list again is none.
+#[tokio::test]
+async fn two_agents_lists_read_within_an_hour_leave_two_rows() {
+    let w = world().await;
+    let reads = content_reads(&w).await;
+    let first = reads[9].target.unwrap();
+    let second = w.h.byo_agent(w.org, w.ws, "second", "Second").await;
+    w.opened("two agents").await;
+    let uris = [
+        format!("/v1/agents/{first}/skills"),
+        format!("/v1/agents/{second}/skills"),
+        format!("/v1/workspaces/{}/skills", w.ws),
+    ];
+    for uri in uris.iter().chain(&uris) {
+        let (s, v) = w.call(&w.opener_tok, Method::GET, uri, None).await;
+        assert_eq!(s, 200, "{uri}: {v}");
+    }
+    let listed: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT metadata->>'listed', target_id FROM audit_log \
+         WHERE action = 'workspace.emergency_read' AND metadata->>'kind' = 'skill' \
+         ORDER BY created_at, id",
+    )
+    .fetch_all(w.h.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        listed,
+        [first, second, w.ws].map(|id| (Some(id.to_string()), None)),
+        "one row per list, none with a target"
     );
 }
 

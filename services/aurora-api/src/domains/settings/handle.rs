@@ -24,6 +24,8 @@ pub struct RowMeta {
     pub updated_by: Option<(uuid::Uuid, String)>,
 }
 
+const DEFAULT_STORE_KEY: &str = "secrets.default_store";
+
 /// A problem found while validating a merged view: a dotted configuration key and a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
@@ -82,6 +84,11 @@ pub struct SettingsHandle {
     /// Set once the configuration's locked keys have been mirrored (start, or the first reload
     /// after a database outage at start).
     mirrored: std::sync::atomic::AtomicBool,
+    /// (FIX-285) The default secret store the mirroring changed, `(from, to)`, until it is taken
+    /// for its notice.
+    mirrored_default: std::sync::Mutex<Option<(String, String)>>,
+    /// Signalled by a successful reload while such a change is waiting.
+    mirrored_default_loaded: tokio::sync::Notify,
     snap: ArcSwap<Snapshot>,
     /// Run after every swap with the old and the new snapshot (live readers: FIX-124's store
     /// registry, and the section briefs' own).
@@ -169,6 +176,8 @@ impl SettingsHandle {
             source,
             validate,
             mirrored: std::sync::atomic::AtomicBool::new(false),
+            mirrored_default: std::sync::Mutex::new(None),
+            mirrored_default_loaded: tokio::sync::Notify::new(),
             snap: ArcSwap::from_pointee(Snapshot {
                 meta: BTreeMap::new(),
                 stored: Stored::default(),
@@ -199,6 +208,23 @@ impl SettingsHandle {
 
     pub fn snapshot(&self) -> Arc<Snapshot> {
         self.snap.load_full()
+    }
+
+    fn pending_default(&self) -> std::sync::MutexGuard<'_, Option<(String, String)>> {
+        self.mirrored_default
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The default secret store this process's mirroring changed, `(from, to)`; once.
+    pub fn take_mirrored_default_store(&self) -> Option<(String, String)> {
+        self.pending_default().take()
+    }
+
+    /// Returns after a successful load of the settings that had such a change waiting. A load
+    /// before this is awaited counts.
+    pub async fn mirrored_default_store_loaded(&self) {
+        self.mirrored_default_loaded.notified().await;
     }
 
     /// `helm > stored > default` over `stored`, then the merged-view validation: the same
@@ -250,6 +276,9 @@ impl SettingsHandle {
                 });
                 let old = self.snap.swap(new.clone());
                 self.run_hooks(&old, &new);
+                if self.pending_default().is_some() {
+                    self.mirrored_default_loaded.notify_one();
+                }
                 Ok(())
             }
             Err(problems) => {
@@ -418,6 +447,7 @@ pub async fn mirror(
 ) -> Result<Vec<(String, Vec<String>)>, String> {
     let reg = registry();
     let mut changed: Vec<(String, i64, Vec<String>)> = Vec::new();
+    let mut default_change = None;
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     repo::lock_mirroring(&mut tx)
         .await
@@ -441,6 +471,13 @@ pub async fn mirror(
             Some(Value::Object(m)) => m,
             _ => Map::new(),
         };
+        // (FIX-285) The default store in force before this mirroring: the stored one (a
+        // dashboard choice, or the last start's), else the built-in.
+        let default_before = value
+            .get(DEFAULT_STORE_KEY)
+            .and_then(Value::as_str)
+            .unwrap_or("inline")
+            .to_owned();
         let mut keys = Vec::new();
         for d in defs {
             let Some(helm) = handle.source.helm_value(d.key) else {
@@ -487,6 +524,12 @@ pub async fn mirror(
         if keys.is_empty() {
             continue;
         }
+        if keys.iter().any(|k| k == DEFAULT_STORE_KEY)
+            && let Some(to) = value.get(DEFAULT_STORE_KEY).and_then(Value::as_str)
+            && to != default_before
+        {
+            default_change = Some((default_before, to.to_owned()));
+        }
         let new_gen = repo::cas_write(
             &mut tx,
             section,
@@ -501,6 +544,9 @@ pub async fn mirror(
         changed.push((section.to_string(), new_gen, keys));
     }
     tx.commit().await.map_err(|e| e.to_string())?;
+    if default_change.is_some() {
+        *handle.pending_default() = default_change;
+    }
     for (section, generation, _) in &changed {
         if let Err(e) = repo::notify(pool, section, *generation).await {
             tracing::warn!(error = %e, section, "settings notify after mirroring failed");

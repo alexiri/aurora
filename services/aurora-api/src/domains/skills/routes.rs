@@ -4,7 +4,7 @@ use super::service::{self, NewSkill, Owner, Patch};
 use super::usage;
 use crate::app::AppState;
 use crate::audit::{self, AuditActor, AuditEvent};
-use crate::domains::emergency_access::service::{ReadKind, record_read};
+use crate::domains::emergency_access::service::{ReadKind, ReadOf, record_read};
 use crate::http::auth::{Caller, require_own};
 use crate::http::error::ErrorEnvelope;
 use crate::http::json::{Json, Path, Query};
@@ -159,7 +159,7 @@ async fn list_agent_skills(
         &AuditActor::from_caller(&c),
         &read,
         ReadKind::Skill,
-        None,
+        ReadOf::List(agent),
     )
     .await?;
     Ok(out)
@@ -268,7 +268,7 @@ async fn list_workspace_skills(
         &AuditActor::from_caller(&c),
         &read,
         ReadKind::Skill,
-        None,
+        ReadOf::List(ws),
     )
     .await?;
     Ok(out)
@@ -550,7 +550,7 @@ async fn get_skill(
     let out = service::dto(&s.pool, v).await?;
     if let Some(read) = &read {
         let actor = AuditActor::from_caller(&c);
-        record_read(&s, &actor, read, ReadKind::Skill, Some(id)).await?;
+        record_read(&s, &actor, read, ReadKind::Skill, ReadOf::Object(id)).await?;
     }
     Ok(Json(out))
 }

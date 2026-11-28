@@ -620,6 +620,7 @@ async fn a_lifecycle_push_carries_a_dashboard_path_and_the_sentence_only_with_de
     )
     .await;
     assert_eq!(s, 200, "{v}");
+    w.h.state.notices.idle().await;
     let frozen = lifecycle(&w);
     assert_eq!(frozen.len(), 2, "one push per device: {frozen:?}");
     for (device, p) in &frozen {
@@ -637,6 +638,7 @@ async fn a_lifecycle_push_carries_a_dashboard_path_and_the_sentence_only_with_de
     )
     .await;
     assert_eq!(s, 204, "{v}");
+    w.h.state.notices.idle().await;
     let all = lifecycle(&w);
     assert_eq!(all.len(), 4, "{all:?}");
     assert!(all[2..].iter().all(|(_, p)| p["url"] == "/"), "{all:?}");
