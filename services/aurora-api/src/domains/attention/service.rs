@@ -7,7 +7,8 @@
 //!
 //! - Workspace: approvals the caller may decide, access requests (`can_own`), broken accounts, and the
 //!   caller's own requests (`own: true`, never counted).
-//! - Organization: setup requests whose level ([`level::of`]) is `organization`.
+//! - Organization: setup requests whose level ([`level::of`]) is `organization`, library updates the
+//!   caller can decide (organization skills) and the organization's accounts that stopped working.
 //! - Administration: the six C-1022 kinds (`admin::attention`) plus requests of level `administration`.
 
 use super::text;
@@ -23,13 +24,16 @@ use crate::domains::app_setup_requests::service::{
     self as requests, REQUEST_HISTORY_DAYS, needs_of, thing_in,
 };
 use crate::domains::hosted::answer::{self, AnswerReason};
+use crate::domains::skill_libraries::service as skill_libraries;
 use crate::http::auth::Caller;
 use aurora_core::{ApiError, dash_paths};
 use aurora_db::authz::WorkspaceAuth;
 use aurora_db::repo::action_approvals::{self, ActionApprovalRow};
 use aurora_db::repo::app_setup_requests::{self as repo, AskerRow, MineDone, RequestRow};
 use aurora_db::repo::approvals::{self, ApprovalRow};
-use aurora_db::repo::attention::{self as arepo, AccessRow, AccountHealthRow, HostedAgentRow};
+use aurora_db::repo::attention::{
+    self as arepo, AccessRow, AccountHealthRow, HostedAgentRow, LibraryUpdatesRow,
+};
 use aurora_db::repo::contacts;
 use aurora_registry::snapshot::Snapshot;
 use serde::Serialize;
@@ -49,6 +53,7 @@ pub const TOPIC_PEOPLE: &str = "people";
 pub const TOPIC_APPROVALS: &str = "approvals";
 pub const TOPIC_ACCOUNTS: &str = "accounts";
 pub const TOPIC_AGENTS: &str = "agents";
+pub const TOPIC_SKILLS: &str = "skills";
 /// What agents may do (`/admin/internet-access`), the page that resolves a template version.
 pub const TOPIC_AGENT_POLICY: &str = "internet-access";
 
@@ -294,7 +299,87 @@ fn request_item(
     item
 }
 
-/// `GET /orgs/{org}/attention` (organization owners and admins).
+/// What the organization's open feed is made of (the counts count this).
+struct OrgOpen {
+    requests: Vec<RequestRow>,
+    /// Libraries with updates the caller can decide.
+    library_updates: Vec<LibraryUpdatesRow>,
+    /// The organization's own accounts that stopped working.
+    accounts: Vec<(AccountHealthRow, HealthState)>,
+}
+
+/// The organization's open items. The caller must already be known to be an owner or admin of
+/// `org`: both callers check it first.
+async fn org_open(s: &AppState, c: &Caller, org: Uuid) -> Result<OrgOpen, ApiError> {
+    let requests = open_requests_at(s, Some(org), RequestLevel::Organization).await?;
+    // Deciding a library update takes a signed-in session (an API key never can) and the
+    // feature switched on.
+    let library_updates = if c.is_session() && skill_libraries::ensure_enabled(s).is_ok() {
+        arepo::org_library_updates(&s.pool, org, FEED_LIMIT).await?
+    } else {
+        Vec::new()
+    };
+    let accounts = broken(arepo::org_accounts_needing_attention(&s.pool, org, FEED_LIMIT).await?);
+    Ok(OrgOpen {
+        requests,
+        library_updates,
+        accounts,
+    })
+}
+
+/// The candidates that are failing or must sign in again.
+fn broken(rows: Vec<AccountHealthRow>) -> Vec<(AccountHealthRow, HealthState)> {
+    rows.into_iter()
+        .filter_map(|a| {
+            let st = health::state_of(a.status.as_deref(), a.last_ok_at, a.last_error_at);
+            matches!(st, HealthState::Failing | HealthState::SignInExpired).then_some((a, st))
+        })
+        .collect()
+}
+
+fn library_update_item(l: &LibraryUpdatesRow, org_name: &str, slug: &str) -> AttentionItem {
+    let href = dash_paths::org_skills(slug);
+    AttentionItem::new(
+        AttentionKind::LibraryUpdate,
+        AttentionLevel::Organization,
+        TOPIC_SKILLS,
+        l.library_id.to_string(),
+        text::library_update_text(&l.label, l.updates, org_name),
+        l.since,
+        href.clone(),
+    )
+    .action("Review", href)
+}
+
+fn org_account_item(
+    a: &AccountHealthRow,
+    st: HealthState,
+    org_name: &str,
+    slug: &str,
+) -> AttentionItem {
+    let expired = st == HealthState::SignInExpired;
+    let accounts = dash_paths::org_accounts(slug);
+    let (label, href) = if expired && a.is_connection {
+        (
+            "Sign in again",
+            dash_paths::org_reconnect(slug, &a.id.to_string()),
+        )
+    } else {
+        ("Fix", accounts.clone())
+    };
+    AttentionItem::new(
+        AttentionKind::OrgAccountBroken,
+        AttentionLevel::Organization,
+        TOPIC_APPS,
+        a.id.to_string(),
+        text::org_account_text(&a.name, org_name, expired, a.last_error.as_deref()),
+        a.since,
+        accounts,
+    )
+    .action(label, href)
+}
+
+/// `GET /orgs/{org}/attention` (organization owners and admins). `done` lists requests only.
 pub async fn org_feed(
     s: &AppState,
     c: &Caller,
@@ -302,12 +387,32 @@ pub async fn org_feed(
     done: bool,
 ) -> Result<AttentionList, ApiError> {
     c.org(s, org).await?.require_admin()?;
-    let rows = if done {
-        closed_requests_at(s, Some(org), RequestLevel::Organization).await?
-    } else {
-        open_requests_at(s, Some(org), RequestLevel::Organization).await?
-    };
-    let items = render_requests(s, rows, RequestLevel::Organization, done).await?;
+    if done {
+        let rows = closed_requests_at(s, Some(org), RequestLevel::Organization).await?;
+        let items = render_requests(s, rows, RequestLevel::Organization, done).await?;
+        return Ok(list_of(items, done));
+    }
+    let o = org_open(s, c, org).await?;
+    let mut items = render_requests(s, o.requests, RequestLevel::Organization, done).await?;
+    if !o.library_updates.is_empty() || !o.accounts.is_empty() {
+        let not_found = || ApiError::not_found("Organization not found.");
+        let (slug, _) = contacts::slugs(&s.pool, org, None)
+            .await?
+            .ok_or_else(not_found)?;
+        let name = aurora_db::repo::orgs::name_of(&s.pool, org)
+            .await?
+            .ok_or_else(not_found)?;
+        items.extend(
+            o.library_updates
+                .iter()
+                .map(|l| library_update_item(l, &name, &slug)),
+        );
+        items.extend(
+            o.accounts
+                .iter()
+                .map(|(a, st)| org_account_item(a, *st, &name, &slug)),
+        );
+    }
     Ok(list_of(items, done))
 }
 
@@ -418,14 +523,8 @@ async fn ws_open(s: &AppState, c: &Caller, auth: &WorkspaceAuth) -> Result<WsOpe
     } else {
         Vec::new()
     };
-    let accounts = arepo::accounts_needing_attention(&s.pool, auth.org_id, ws, FEED_LIMIT)
-        .await?
-        .into_iter()
-        .filter_map(|a| {
-            let st = health::state_of(a.status.as_deref(), a.last_ok_at, a.last_error_at);
-            matches!(st, HealthState::Failing | HealthState::SignInExpired).then_some((a, st))
-        })
-        .collect();
+    let accounts =
+        broken(arepo::accounts_needing_attention(&s.pool, auth.org_id, ws, FEED_LIMIT).await?);
     let cannot_answer = if auth.can_own() {
         cannot_answer_of(s, auth).await?
     } else {
@@ -904,8 +1003,14 @@ pub async fn counts(
     };
     let organization = match org {
         Some(o) if c.org(s, o).await.is_ok_and(|a| a.role.is_admin()) => {
-            let reqs = open_requests_at(s, Some(o), RequestLevel::Organization).await?;
-            let (count, topics) = topics_of(reqs.iter().map(|r| subject_topic(&r.subject)));
+            let open = org_open(s, c, o).await?;
+            let (count, topics) = topics_of(
+                open.requests
+                    .iter()
+                    .map(|r| subject_topic(&r.subject))
+                    .chain(open.library_updates.iter().map(|_| TOPIC_SKILLS))
+                    .chain(open.accounts.iter().map(|_| TOPIC_APPS)),
+            );
             Some(OrgCount {
                 org_id: o,
                 count,

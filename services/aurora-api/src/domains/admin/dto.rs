@@ -115,6 +115,12 @@ pub enum AttentionKind {
     ChatPlatformRequest,
     /// (C-1080) People asked for an AI key (organization level).
     AiKeyRequest,
+    /// (C-1080) A skill library has updates to the organization's own skills that the caller can
+    /// decide (organization level).
+    LibraryUpdate,
+    /// (C-1080) An account of the organization itself that is failing or must sign in again, for
+    /// the people who can fix it (organization level).
+    OrgAccountBroken,
     /// (C-1080) A pending gateway or action approval the caller may decide (workspace level).
     Approval,
     /// (C-1080) An agent asked for an app or a website's token (workspace level).
@@ -139,6 +145,7 @@ impl AttentionKind {
             Self::ConnectorDown
                 | Self::OwnerlessOrg
                 | Self::BrokenAccount
+                | Self::OrgAccountBroken
                 | Self::AgentCannotAnswer
                 | Self::MyRequest
                 | Self::TemplateUpdate

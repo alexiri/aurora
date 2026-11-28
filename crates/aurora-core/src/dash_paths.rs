@@ -81,6 +81,24 @@ pub fn org_apps(org: &str, tab: &str) -> String {
     format!("/o/{org}/apps?tab={tab}")
 }
 
+/// The organization's accounts list.
+#[must_use]
+pub fn org_accounts(org: &str) -> String {
+    org_apps(org, "accounts")
+}
+
+/// The Reconnect dialog of one organization account on that list (C-842, C-937).
+#[must_use]
+pub fn org_reconnect(org: &str, connection: &str) -> String {
+    format!("{}&reconnect={connection}", org_accounts(org))
+}
+
+/// The organization's Skills page, where waiting library updates are reviewed.
+#[must_use]
+pub fn org_skills(org: &str) -> String {
+    format!("/o/{org}/skills")
+}
+
 #[must_use]
 pub fn org_oauth_clients(org: &str) -> String {
     org_apps(org, "oauth-clients")

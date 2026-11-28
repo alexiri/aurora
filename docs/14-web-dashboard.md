@@ -3726,6 +3726,8 @@ most frequent thing a person does in Aurora. It must be quick to read and quick 
   | `app_request` | "Bob Builder wants Jira" ("… and Carol Member want …", "…, Carol Member and 2 others want …") | by need, naming the **role**: "Needs a sign-in app for Jira that only an organization admin can register.", "Needs a Jira server that only an organization admin can register.", "Needs set-up that only an organization admin can do.", "Jira is switched off for the organization; only an organization admin can switch it on." ("an instance admin" at Administration) | **Set up** |
   | `chat_platform_request` | "Carol Member wants a chat platform" | "Your organization has no chat platform connected." | **Connect a chat platform** (a row may say **Connect**) |
   | `ai_key_request` | "… wants an AI key" | "Your organization has no AI key its agents can use." | **Add an AI key** |
+  | `library_update` (C-1179) | "<Library> has an update to review" / "… has 3 updates to review" | "Shared with every workspace in <Organization>." | **Review** |
+  | `org_account_broken` (C-1179) | "<Account> for <Organization> stopped working" / "… needs someone to sign in again" | the reason, then "Workspaces that use it stop until it is fixed." | **Sign in again** / **Fix** |
   | `approval` | "<Agent> is waiting for your approval" | "It wants to use <App>." / "It wants to reach <host>." | **Review** |
   | `access_request` | "<Agent> asks for <App>" / "… for a token for <host>" | "Give it access from the agent's Apps & access tab." | **Review** |
   | `broken_account` | "<Account>: the sign-in expired" / "<Account> stopped working" | the reason; for people who cannot fix it, "Ask a workspace owner." / "Ask an organization admin." | **Sign in again** / **Fix**, or none |

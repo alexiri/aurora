@@ -162,6 +162,85 @@ async fn me_shape_and_suspended_membership() {
     assert!(m["workspaces"].as_array().unwrap().is_empty(), "{m}");
 }
 
+/// Each membership of `GET /v1/me` says whether `POST /v1/orgs/{org}/workspaces` would work for
+/// this person: owners and admins always (a group's admin role too), members while the
+/// organization's `members_can_create_workspaces` is on (the default), a suspended member never.
+#[tokio::test]
+async fn can_create_workspaces_matches_post_workspaces() {
+    let h = Harness::new().await;
+    // The setting: unset (on by default), on, off.
+    let mut n = 0;
+    for setting in [None, Some(true), Some(false)] {
+        let org = h.org().await;
+        if let Some(on) = setting {
+            sqlx::query(
+                "UPDATE organizations SET settings = jsonb_build_object('members_can_create_workspaces', $2::bool) WHERE id = $1",
+            )
+            .bind(org)
+            .bind(on)
+            .execute(h.pool())
+            .await
+            .unwrap();
+        }
+        for who in ["owner", "admin", "member", "group_admin"] {
+            n += 1;
+            let u = h.user(&format!("c{n}@x.io"), false).await;
+            let role = if who == "group_admin" { "member" } else { who };
+            h.member(org, u, role, "active").await;
+            if who == "group_admin" {
+                let group = uuid::Uuid::now_v7();
+                sqlx::query(
+                    "INSERT INTO groups (id, org_id, name, org_role) VALUES ($1,$2,$3,'admin')",
+                )
+                .bind(group)
+                .bind(org)
+                .bind(format!("g{n}"))
+                .execute(h.pool())
+                .await
+                .unwrap();
+                sqlx::query(
+                    "INSERT INTO group_members (group_id, org_id, user_id) VALUES ($1,$2,$3)",
+                )
+                .bind(group)
+                .bind(org)
+                .bind(u)
+                .execute(h.pool())
+                .await
+                .unwrap();
+            }
+            let (_, tok) = h.good_session(u).await;
+            let (s, me) = call(&h, &tok, Method::GET, "/v1/me", None).await;
+            assert_eq!(s, 200, "{me}");
+            let want = who != "member" || setting != Some(false);
+            assert_eq!(
+                me["memberships"][0]["can_create_workspaces"],
+                json!(want),
+                "{who}, setting {setting:?}: {me}"
+            );
+            let (s, v) = call(
+                &h,
+                &tok,
+                Method::POST,
+                &format!("/v1/orgs/{org}/workspaces"),
+                Some(json!({"name": format!("New {n}")})),
+            )
+            .await;
+            assert_eq!(s, if want { 201 } else { 403 }, "{who}, {setting:?}: {v}");
+        }
+        // A suspended membership gives nothing, whatever the setting and the role.
+        n += 1;
+        let u = h.user(&format!("c{n}@x.io"), false).await;
+        h.member(org, u, "admin", "suspended").await;
+        let (_, tok) = h.good_session(u).await;
+        let (_, me) = call(&h, &tok, Method::GET, "/v1/me", None).await;
+        assert_eq!(
+            me["memberships"][0]["can_create_workspaces"],
+            json!(false),
+            "{me}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn patch_me_validation() {
     let h = Harness::new().await;

@@ -13,6 +13,8 @@ pub struct MembershipRow {
     pub name: String,
     pub role: String,
     pub status: String,
+    /// The organization's settings object.
+    pub settings: serde_json::Value,
 }
 
 /// All of the user's memberships (active and suspended), oldest first.
@@ -21,7 +23,7 @@ pub async fn memberships<'e, E: PgExecutor<'e>>(
     user: Uuid,
 ) -> Result<Vec<MembershipRow>, DbError> {
     Ok(sqlx::query_as(
-        "SELECT o.id AS org_id, o.slug, o.name, m.role, m.status
+        "SELECT o.id AS org_id, o.slug, o.name, m.role, m.status, o.settings
          FROM org_members m JOIN organizations o ON o.id = m.org_id
          WHERE m.user_id = $1 ORDER BY m.created_at, o.id",
     )

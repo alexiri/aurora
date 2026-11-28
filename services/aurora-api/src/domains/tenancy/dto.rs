@@ -123,6 +123,12 @@ pub struct OrgSettings {
 }
 
 impl OrgSettings {
+    /// May an active member with this effective role create a workspace? The one rule of
+    /// `POST /v1/orgs/{org}/workspaces` and `Me.memberships[].can_create_workspaces`.
+    pub fn may_create_workspace(&self, role: aurora_db::authz::OrgRole) -> bool {
+        role.is_admin() || self.members_can_create_workspaces
+    }
+
     pub fn from_json(v: &serde_json::Value) -> Self {
         Self {
             members_can_create_workspaces: v

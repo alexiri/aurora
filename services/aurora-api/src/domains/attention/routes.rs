@@ -36,8 +36,9 @@ async fn workspace_attention(
     Ok(Json(service::workspace_feed(&s, &c, ws, done).await?))
 }
 
-/// (C-1080) The requests the organization's owners and admins can resolve. Owners and admins; 404 for a
-/// non-member, 403 for a member.
+/// (C-1080) What the organization's owners and admins can act on: setup requests, skill library
+/// updates to organization skills (signed-in sessions only) and organization accounts that stopped
+/// working; `state=done` lists requests. Owners and admins; 404 for a non-member, 403 for a member.
 #[utoipa::path(get, path = "/orgs/{org}/attention", operation_id = "orgAttention", tag = "attention",
     params(("org" = Uuid, Path, description = "Organization id"), AttentionQuery),
     responses((status = 200, body = AttentionList), (status = 400, body = ErrorEnvelope),
