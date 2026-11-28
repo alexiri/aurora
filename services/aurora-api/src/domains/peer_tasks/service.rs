@@ -12,7 +12,7 @@
 //! gateway approval rows.** A path takes what it needs in this order and never goes back to an
 //! earlier lock it does not already hold. The approval rows come last: a close abandons the
 //! task's pending ones while it holds everything else, so a decision takes its locks
-//! ([`lock_for_decision`]) before it writes a row, and every other writer of rows locks their
+//! ([`lock_for_writes_in`]) before it writes a row, and every other writer of rows locks their
 //! conversations first (the whole list: `aurora_db::repo::approvals`). A task conversation is
 //! locked before any link, also when it is only an **origin** of the task at hand (a person can
 //! open a task from inside a task conversation, even back to the requester, on the same link):
@@ -40,8 +40,11 @@
 //!   wake (also the wake of a delegating task from [`follow_up`], whose locks the close or the
 //!   delivery below it already holds), the re-check of a waiting task, the requester's cancel
 //!   route, the delivery of held wake-ups.
-//! - A decision on approvals ([`lock_for_decision`]): the same for all the task conversations
-//!   among them at once, then the other conversations, then the approval rows.
+//! - A transaction that writes in several conversations ([`lock_for_writes_in`]): the same for
+//!   all the task conversations among them at once, then the other conversations, then
+//!   whatever it writes. A decision on approvals, over their conversations; a freeze, over
+//!   those of the rows it ends and of the turns it ends, before the first row; the sweep of
+//!   frozen agents' turns, a restart and offboarding, over those of the turns they end.
 //! - The delivery of an approval decision or of its raising ([`approval_notice`]): the approval's
 //!   conversation with its task origins; the approval task's chain links and the task, if it is
 //!   woken; its chain links in any case when a delegating task sits above; then the notice in the
@@ -70,9 +73,9 @@
 //!   link lock is not among them, should the same close promote and at once end it.
 //! - A path that already holds one link (a message, an approved request, unlinking) and then
 //!   takes the chain links.
-//! - A transaction that ends several unrelated turns (a freeze, offboarding, a restart, the
-//!   dispatcher's sweeps) takes the next turn's conversations while it holds the links of the
-//!   one before.
+//! - The dispatcher's sweeps and a failed sandbox start end several unrelated turns in one
+//!   transaction, and take the next turn's conversations while they hold the links of the one
+//!   before.
 
 use crate::domains::action_approvals::service as approvals;
 use crate::domains::conversations::service::{self as conv, NewMessage};
@@ -1698,11 +1701,12 @@ async fn lock_tasks(conn: &mut PgConnection, tasks: &[PeerTaskRow]) -> Result<()
     Ok(())
 }
 
-/// Everything a decision on approvals raised in `conversations` may lock later, taken before it
-/// writes any approval row: for the task conversations among them what [`lock_tasks`] takes (so
-/// the decision's notices and wake turns find the locks held, as a cancel does before it
+/// Everything a transaction that writes in several `conversations` may lock later (a decision
+/// on their approvals; a freeze, a restart or offboarding ending their turns), taken before it
+/// writes anything: for the task conversations among them what [`lock_tasks`] takes (so what
+/// follows, closes and wake turns included, finds the locks held, as a cancel does before it
 /// abandons the rows), then the other conversations, which the module order puts after.
-pub async fn lock_for_decision(
+pub async fn lock_for_writes_in(
     conn: &mut PgConnection,
     conversations: &[Uuid],
 ) -> Result<(), ApiError> {

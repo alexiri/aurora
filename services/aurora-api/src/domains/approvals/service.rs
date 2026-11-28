@@ -213,7 +213,7 @@ pub async fn decide(
             .await?,
         );
     }
-    crate::domains::peer_tasks::service::lock_for_decision(&mut tx, &conversations).await?;
+    crate::domains::peer_tasks::service::lock_for_writes_in(&mut tx, &conversations).await?;
     // (FIX-109, 07 §Approval deadlines) A decision after the deadline is refused and the
     // approval is expired in this same transaction (committed even though the answer is 409),
     // whether or not the 10 s sweep has run yet.
@@ -340,7 +340,7 @@ pub async fn decide_batch(
     let mut tx = audit::begin(s).await?;
     // As for one decision: the conversations and their tasks before the rows.
     let conversations = approvals::pending_batch_conversations(&mut tx, agent_id, batch_id).await?;
-    crate::domains::peer_tasks::service::lock_for_decision(&mut tx, &conversations).await?;
+    crate::domains::peer_tasks::service::lock_for_writes_in(&mut tx, &conversations).await?;
     // (FIX-109) Overdue members of the batch are expired here, not decided.
     let expired =
         approvals::expire_overdue_of_batch(&mut tx, c.user_id, org, ws, agent_id, batch_id).await?;

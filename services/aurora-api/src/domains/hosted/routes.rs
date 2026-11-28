@@ -667,8 +667,11 @@ async fn restart(
         };
     }
     let mut flush = Vec::new();
-    for (turn, cid) in hosted::active_turns_of_agent(&mut tx, agent).await? {
-        crate::domains::peer_tasks::service::lock_with_task_origins(&mut tx, cid).await?;
+    let turns = hosted::active_turns_of_agent(&mut tx, agent).await?;
+    // Every turn's locks before the first one ends: ending one takes links.
+    let conversations: Vec<Uuid> = turns.iter().map(|(_, c)| *c).collect();
+    crate::domains::peer_tasks::service::lock_for_writes_in(&mut tx, &conversations).await?;
+    for (turn, cid) in turns {
         if lifecycle::fail(
             &mut tx,
             turn,

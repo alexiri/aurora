@@ -515,7 +515,7 @@ impl Cmd<'_> {
         let mut tx = audit::begin(self.state).await.retry()?;
         // The conversation and its task before the approval row, as every decision takes them.
         let conversations: Vec<Uuid> = a.conversation_id.into_iter().collect();
-        crate::domains::peer_tasks::service::lock_for_decision(&mut tx, &conversations)
+        crate::domains::peer_tasks::service::lock_for_writes_in(&mut tx, &conversations)
             .await
             .retry()?;
         let done = approvals::decide(

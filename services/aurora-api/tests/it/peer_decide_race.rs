@@ -3,6 +3,7 @@
 //! the conversations, the link and the task before the approval row, so one waits for the other
 //! and neither deadlocks.
 
+use crate::common::ORIGIN;
 use crate::peers_rig::{Rig, rig};
 use aurora_api::domains::approvals::resume;
 use aurora_api::domains::peer_tasks::service::{self as peers, Close, RequesterCancel};
@@ -699,6 +700,104 @@ async fn a_decision_waits_for_a_caller_that_revokes_twice() {
         (Ok(1), 409, &json!("already_decided")),
         "{body}"
     );
+}
+
+/// Freezing an agent and deleting a workspace's connection are its owners' acts.
+async fn p_owns_the_workspace(rig: &Rig) {
+    sqlx::query(
+        "UPDATE workspace_access SET role = 'owner' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(rig.ws1)
+    .bind(rig.p.id)
+    .execute(rig.h.pool())
+    .await
+    .unwrap();
+}
+
+/// A close that never takes the task conversation holds the link and wants the task's rows when
+/// a freeze of the working agent arrives. The freeze takes what its turn ends will need before
+/// it ends a row, so it waits holding none.
+#[tokio::test]
+async fn a_freeze_takes_its_turns_locks_before_it_ends_a_row() {
+    let h = held(None).await;
+    p_owns_the_workspace(&h.rig).await;
+    park(&h).await;
+    let pool = h.rig.h.pool();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut close = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut close).await;
+    aurora_db::repo::peer_tasks::lock_chain_links(&mut close, &[h.task])
+        .await
+        .unwrap();
+    let uri = format!("/v1/agents/{agent}/freeze");
+    let freeze = h.rig.post(&h.rig.p, &uri, Some(json!({"reason": "test"})));
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let task = aurora_db::repo::peer_tasks::get(&mut *close, h.task)
+            .await
+            .unwrap()
+            .unwrap();
+        let closed = peers::close_with_promotion(&mut close, &task, &Close::Cancelled(None))
+            .await
+            .map(|c| c.is_some())
+            .map_err(|e| e.message().to_owned());
+        if closed.is_ok() {
+            close.commit().await.unwrap();
+        }
+        closed
+    };
+    let ((status, body), closed) = tokio::join!(freeze, finish);
+    assert_eq!((closed, status), (Ok(true), 200), "{body}");
+}
+
+/// A restart ends every turn of the agent in one transaction. It takes all their conversations
+/// before the first turn's links: the agent, messaging from the newer task conversation, holds
+/// it and takes the older task's pair link.
+#[tokio::test]
+async fn a_restart_takes_every_turns_conversations_before_any_link() {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let c = rig.agent(rig.ws1, "charlie").await;
+    let mut tasks = Vec::new();
+    for requester in [a, c] {
+        let (origin, turn) = rig.person_turn(requester, rig.p.id).await;
+        let task = delegate(&rig, (requester, origin, turn), "@bravo").await;
+        tasks.push((task, rig.peer_conversation(task).await));
+    }
+    let (older, newer) = (tasks[0], tasks[1]);
+    let pool = rig.h.pool();
+    sqlx::query(
+        "INSERT INTO sandboxes (id, agent_id, state, boot_id) VALUES ($1,$2,'running',$3)
+         ON CONFLICT (agent_id) DO UPDATE SET state = 'running'",
+    )
+    .bind(Uuid::now_v7())
+    .bind(b)
+    .bind(Uuid::now_v7())
+    .execute(pool)
+    .await
+    .unwrap();
+    let mut message = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut message).await;
+    assert!(convs::lock(&mut message, newer.1).await.unwrap());
+    let uri = format!("/v1/agents/{b}/restart");
+    let restart = rig.post(&rig.p, &uri, None);
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let link = aurora_db::repo::peer_tasks::lock_chain_links(&mut message, &[older.0])
+            .await
+            .map_err(|e| e.to_string());
+        if link.is_ok() {
+            message.commit().await.unwrap();
+        }
+        link
+    };
+    let ((status, body), link) = tokio::join!(restart, finish);
+    assert_eq!((link, status), (Ok(()), 202), "{body}");
 }
 
 async fn a_close_that_holds_the_link(

@@ -439,6 +439,26 @@ pub async fn agents_in(
         .await?)
 }
 
+/// The conversations a freeze of `agents` writes into: those of the approval rows it ends and
+/// of their active turns. What it locks before it writes anything.
+pub async fn conversations_a_freeze_writes(
+    conn: &mut PgConnection,
+    agents: &[Uuid],
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT conversation_id FROM approvals
+          WHERE agent_id = ANY($1) AND conversation_id IS NOT NULL
+            AND (status = 'pending' OR resume_state = 'ready')
+         UNION
+         SELECT conversation_id FROM turns
+          WHERE role = 'turn' AND status IN ('queued','dispatched','running')
+            AND agent_id = ANY($1)",
+    )
+    .bind(agents)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
 /// Pending gateway approvals of `agents` -> `abandoned` (they never revive). Returns
 /// the rows ended (the caller notifies waiters and writes the notices for the parked ones).
 pub async fn abandon_pending_approvals(

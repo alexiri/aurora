@@ -11,15 +11,17 @@
 //! turn) takes the conversation **first**:
 //!
 //! - A decision (`decide`, `decide_batch`, `approve_same_kind`, with `expire_if_overdue` and
-//!   `expire_overdue_of_batch`; the dashboard and the chat command): `lock_for_decision` of the
+//!   `expire_overdue_of_batch`; the dashboard and the chat command): `lock_for_writes_in` of the
 //!   peer-task service, which also takes the tasks' origins, links and tasks. `revoke_ready`
 //!   and `set_resume_turn` follow under those locks.
 //! - The revocations ([`end_parked_of`], [`abandon_pending_depending_on`]): the conversations
 //!   of every pending row and ready grant they select, by [`lock_conversations`]. Held rows
 //!   too, though they get no notice: a caller may revoke again in the same transaction, and the
 //!   later call locks conversations for its notices.
-//! - A freeze (`repo::freeze::abandon_pending_approvals`): the conversations of every row it
-//!   ends, since it also ends the held rows' turns.
+//! - A freeze: before its first row, `lock_for_writes_in` over the conversations of every row
+//!   it ends and of every turn it ends (`repo::freeze::conversations_a_freeze_writes`), since
+//!   ending a turn takes task origins, links and tasks. `abandon_pending_approvals` then locks
+//!   the rows' conversations again, held rows' too.
 //! - [`expire_resume_windows`]: the conversations of the grants it expires.
 //! - [`abandon_pending_of_conversation`] (a task's close): the close holds what the module
 //!   order puts before the rows.
