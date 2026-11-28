@@ -122,6 +122,8 @@ def days_of(s):
 
 
 def check_expr(expr):
+    if len(expr) > SHOWN_MAX:
+        die(f"--expr is at most {SHOWN_MAX} characters, so that an approval shows it in full")
     w = max((int(m.group(1)) * UNIT_S[m.group(2)]
              for m in re.compile(r"\[(\d+)([smhdw])\]").finditer(expr)), default=0)
     if w < 300:
@@ -333,7 +335,8 @@ def query_model(rule):
 def rule_kind(model):
     """`prometheus`, or `logs` when the script would build this very model from its values."""
     if "expr" in model and set(model) <= PROM_KEYS:
-        return "prometheus"
+        expr = model["expr"]
+        return "prometheus" if isinstance(expr, str) and len(expr) <= SHOWN_MAX else None
     try:
         (m,), (b,) = model["metrics"], model["bucketAggs"]
         values = (model["query"], m["type"], m.get("field"), b["settings"]["interval"],
@@ -360,6 +363,9 @@ def check_shape(rule):
             "or a recording rule would run on every evaluation, and another label could be what a "
             "notification policy matches")
     model = query_model(rule)
+    if not rule_kind(model) and "expr" in model and set(model) <= PROM_KEYS:
+        die(f"the rule's expression is not a text of at most {SHOWN_MAX} characters, which an "
+            "approval can show in full: delete it and create it again with a shorter one")
     if not rule_kind(model):
         die("the script resends only one Prometheus query, or one OpenSearch log query as it "
             f"builds it (texts up to {SHOWN_MAX} characters); the rule's query model is "

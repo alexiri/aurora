@@ -756,6 +756,33 @@ changed_rule '"min_doc_count": "1"' '.data[0].model.bucketAggs[0].settings.min_d
 changed_rule '"id": "7"' '.data[0].model.metrics[0].id = "7"'
 changed_rule "texts up to 200 characters" '.data[0].model.query = ("a" * 201)'
 
+# a PromQL expression is held to what the approval shows, like a log query: create refuses a
+# longer one, and a stored rule with a longer one (or no text) is not resent, though it can
+# still be deleted
+LONG_EXPR="sum(rate(x_total[5m])) > $(printf '1%.0s' $(seq 176))"
+reset
+refuse "--expr is at most 200 characters" create --managed-by night --folder night-folder --group agent-night \
+  --title t --ds prom-main --expr "$LONG_EXPR" --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
+if grep -q create_alert_rule "$STUB_LOG"; then bad "a rule with a long expression was sent"; fi
+prom_rule() {  # prom_rule JQ_FILTER: the stored Prometheus rule, changed
+  jq --arg long "$LONG_EXPR" "$1" "$FIX/get_alert_rule.json" > "$WORK/changed.json"
+}
+for filter in '.data[0].model.expr = $long' '.data[0].model.expr = ["up"]'; do
+  prom_rule "$filter"
+  reset
+  STUB_RULE_FILE="$WORK/changed.json" refuse "delete it and create it again with a shorter one" \
+    update tripwire-p95 --managed-by night --folder night-folder --title t2
+  if grep -q update_alert_rule "$STUB_LOG"; then bad "a rule with a long expression was resent"; fi
+done
+prom_rule '.data[0].model.expr = $long'
+reset
+if STUB_RULE_FILE="$WORK/changed.json" AL delete tripwire-p95 --managed-by night --folder night-folder >"$WORK/out" 2>"$WORK/err" \
+  && grep -qF 'delete_alert_rule uid=tripwire-p95' "$STUB_LOG"; then
+  ok "a rule with a long expression can still be deleted"
+else
+  bad "delete of a rule with a long expression failed"; cat "$WORK/err" >&2
+fi
+
 # expire deletes only the expired managed ones, each delete still held for approval
 reset
 out=$(AL expire --managed-by night --folder night-folder)

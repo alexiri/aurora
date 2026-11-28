@@ -3,7 +3,7 @@ name: grafana-alerts
 description: Use when an agent should create, change, list or delete Grafana alert rules, for example to be woken when a problem comes back
 ---
 
-Manage Grafana alert rules only through `scripts/grafana-alert` (see `--help`): `create`, `list` (shows each rule's kind), `update`, `delete`, `expire`. A rule is one Prometheus query (`--expr`, a range of at least 5m) or one OpenSearch log count (`--logs`, a Lucene query):
+Manage Grafana alert rules only through `scripts/grafana-alert` (see `--help`): `create`, `list` (shows each rule's kind), `update`, `delete`, `expire`. A rule is one Prometheus query (`--expr`, a range of at least 5m, at most 200 characters) or one OpenSearch log count (`--logs`, a Lucene query). A stored rule with a longer expression can be listed (kind `?`) and deleted, but not changed or renewed: delete it and create it again with a shorter one.
 
 ```
 grafana-alert create --managed-by night --folder F --group G --title "p95 over 2s" --ds PROM_UID \

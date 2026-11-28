@@ -160,6 +160,29 @@ fn every_length_the_package_holds_a_card_value_to_is_the_cards_own() {
             }
         }
     }
-    // Both rule tools, both OpenSearch variants, five values each.
-    assert_eq!(rules, 20);
+    // Both rule tools: the Prometheus expression, and five values in each OpenSearch
+    // variant.
+    assert_eq!(rules, 22);
+}
+
+#[test]
+fn the_prometheus_shape_requires_its_expression() {
+    let m = manifest();
+    let writes = m.apps[0].tools.as_ref().and_then(|t| t.write.as_ref());
+    let mut tools = 0;
+    for tool in &writes.unwrap().items {
+        let Some(check) = &tool.body_check else {
+            continue;
+        };
+        let rules = check.one_of[0].entry_max_len.values().flatten();
+        assert!(
+            rules
+                .into_iter()
+                .any(|l| l.member == "model/expr" && !l.optional),
+            "{}",
+            tool.id
+        );
+        tools += 1;
+    }
+    assert_eq!(tools, 2);
 }

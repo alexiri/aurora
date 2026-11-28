@@ -162,7 +162,9 @@ apps:
           # The three key lists share only `refId` between the two query languages, so a body
           # cannot mix them.
           #  1. Prometheus: exactly the keys the script's builder sends (editorMode, expr,
-          #     instant, legendFormat, refId), no other key and no other spelling of one.
+          #     instant, legendFormat, refId), no other key and no other spelling of one; the
+          #     expression must be there, a string of 1 to 200 characters the card shows
+          #     whole and unchanged. A stored rule with a longer one can't be changed here.
           #  2. and 3. OpenSearch: one Lucene query (`queryType: lucene`, so no PPL), exactly
           #     one metric and exactly one bucket, a date histogram (`entry_len`). The metric
           #     carries only id, type and field (no settings, so no script or pipeline), its
@@ -174,9 +176,10 @@ apps:
           #     out; as a zero-document bucket its value is null and the reduce step answers
           #     nothing). The two ids are the script's. Every text the card shows of the
           #     query (the query, the time field, the metric field, the bucket field and the
-          #     interval) is a string of 1 to 200 characters, the length the card shows in
-          #     full; the optional ones may only be absent. The step's own `queryType` is
-          #     empty in a new rule and `lucene` in a rule read back from the server.
+          #     interval) is a string of 1 to 200 characters that the card's cleaning leaves
+          #     unchanged, so it is shown in full and as it runs; the optional ones may only
+          #     be absent. The step's own `queryType` is empty in a new rule and `lucene` in
+          #     a rule read back from the server.
           # The first step's `datasourceUid` itself has no value to declare (it names the
           # connection's data source, whichever instance the connection was made on), so the
           # card shows it and nothing binds it here; the model keys are what keep a query type
@@ -241,6 +244,9 @@ apps:
                 - entry_member:
                     data:
                       - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                  entry_max_len:
+                    data:
+                      - { at: 0, member: model/expr, max: 200 }
                 # 2. One OpenSearch count or sum.
                 - entry_member:
                     data:
@@ -353,6 +359,9 @@ apps:
                 - entry_member:
                     data:
                       - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                  entry_max_len:
+                    data:
+                      - { at: 0, member: model/expr, max: 200 }
                 # 2. One OpenSearch count or sum.
                 - entry_member:
                     data:
