@@ -3021,3 +3021,36 @@ fn push_validation_follows_the_switch_and_the_override_rules() {
         );
     }
 }
+
+/// (FIX-290) The services a self-hosted app's allowance must never reach are read from the
+/// configuration: the URLs given, and every configured secret store.
+#[test]
+fn own_service_hosts_cover_the_urls_and_the_secret_stores() {
+    let cfg = load_with(
+        &format!(
+            "{BASE}[[secrets.stores]]\nid = \"corp\"\nkind = \"vault\"\naddress = \"https://Vault.corp.example:8200\"\n"
+        ),
+        &[],
+    )
+    .unwrap()
+    .api_config()
+    .unwrap();
+    assert_eq!(
+        aurora_config::own_service_hosts(
+            [
+                "postgres://u:p@db.corp.example:5432/a",
+                "http://rel-api:4101",
+                "",
+                "10.96.0.1"
+            ],
+            &cfg.secrets,
+            &cfg.counters,
+        ),
+        [
+            "10.96.0.1",
+            "db.corp.example",
+            "rel-api",
+            "vault.corp.example"
+        ]
+    );
+}

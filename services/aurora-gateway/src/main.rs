@@ -353,6 +353,21 @@ async fn serve(
     // implicit allowance is installed with the settings (`apply_limits_on_change`), which also
     // rebuilds it on every `llm` or `limits` reload.
     let guard = Arc::new(Guard::new(&cfg.gateway.allowed_private, own)?);
+    // (FIX-290) The other services of Aurora this gateway knows of: a self-hosted app's own
+    // allowance never opens their addresses. In a cluster the Kubernetes API is one of them.
+    let kubernetes = std::env::var("KUBERNETES_SERVICE_HOST").unwrap_or_default();
+    guard.set_own_services(aurora_config::own_service_hosts(
+        [
+            Some(cfg.gateway.hookhost_url.as_str()),
+            cfg.gateway.egress_proxy.as_deref(),
+            Some(db.get_host()).filter(|h| !h.starts_with('/')),
+            Some(kubernetes.as_str()),
+        ]
+        .into_iter()
+        .flatten(),
+        &cfg.secrets,
+        &cfg.counters,
+    ));
     let extra_ca_pem = match &cfg.tls.extra_ca_bundle {
         Some(p) => Some(std::fs::read(p)?),
         None => None,

@@ -95,6 +95,9 @@ pub struct Vars<'a> {
     /// `instance_host` is a *registered* instance (not the static `default_host`): its
     /// `{instance}` host entries apply to it.
     pub instance_registered: bool,
+    /// (FIX-290, D-511) Set when that registration is an instance administrator's:
+    /// [`Env::self_hosted`].
+    pub app_host: Option<aurora_core::ranges::AppHost>,
 }
 
 fn dns_ok(s: &str) -> bool {
@@ -173,6 +176,7 @@ pub fn render_url(t: &Template, tenant_host: Option<&str>) -> Option<String> {
             instance_host: None,
             instance_base_path: None,
             instance_registered: false,
+            app_host: None,
         },
         true,
     )
@@ -329,11 +333,12 @@ pub async fn run(
             _ => {}
         }
     }
-    // A registered instance is dialled through the guard that honours `gateway.allowed_private`.
+    // A registered instance is dialled through the guard that honours `gateway.allowed_private`
+    // (and, for an instance administrator's registration, its own host).
     let client = if v.instance_registered {
-        &env.http_instance
+        env.instance_client(v.app_host.as_ref(), &url)
     } else {
-        &env.http
+        env.http.clone()
     };
     let mut req = client
         .request(method, url)

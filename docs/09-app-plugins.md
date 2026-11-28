@@ -563,8 +563,13 @@ oauth_clients:
   governed LLM host (`08 §6`), and MUST NOT be one of Aurora's own addresses;
   these checks are per host and ignore the base path, so a path never gets
   around them (`instance_host_conflict`). The optional `probe` runs through the gateway's
-  destination guard. A private address is reachable only where the operator
-  allows it (`gateway.allowed_private`, `06`).
+  destination guard. A private address is reachable where the operator allows
+  it (`gateway.allowed_private`, `06`), and (FIX-290, D-511, SEC-169) without
+  an entry for an instance administrator's own registration: the API's
+  registration probe made by an instance administrator for all organizations, and
+  the connect probe, OAuth code exchange, sign-in app test and account test of
+  that registration; and the gateway's requests as `06` §Destination guard says.
+  An organization's registration and a preset get nothing.
 - (phase 5, D-231) **Base path.** A registration may carry a base path for an
   app served under a path (`https://its.cern.ch/jira`: host `its.cern.ch`, base
   path `/jira`). Validation (`instance_base_path_invalid`, pointer `/base_path`):

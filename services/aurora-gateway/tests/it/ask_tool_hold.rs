@@ -451,6 +451,7 @@ async fn approval_summary_path_segments_count_from_the_app_path_under_a_base_pat
                 app_id: "jira".into(),
                 host: "localhost".into(),
                 base_path: Some("/jira".into()),
+                admin_registered: false,
             }];
             r
         })

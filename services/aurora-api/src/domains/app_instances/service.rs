@@ -4,6 +4,7 @@ use crate::audit::{self, AuditActor, AuditEvent, Outcome};
 use crate::domains::connect::env::classify_send_error;
 use crate::domains::plugins::{ingest, registry};
 use crate::http::pagination::{Page, Pagination};
+use aurora_core::ranges::AppHost;
 use aurora_core::{ApiError, FieldError, ids};
 use aurora_db::repo::app_instances::{self as repo, InstanceRow, NewInstance};
 use aurora_db::repo::credentials;
@@ -143,6 +144,7 @@ async fn run_probe(
     base_path: Option<&str>,
     app_name: &str,
     probe: &InstanceProbe,
+    app_host: Option<&AppHost>,
 ) -> Result<(), ApiError> {
     let env = &state.connect;
     // (D-231) The probe path is relative to the registration: `https://<host><base_path><path>`.
@@ -188,7 +190,7 @@ async fn run_probe(
         ProbeMethod::Post => reqwest::Method::POST,
     };
     let resp = env
-        .http_instance
+        .instance_client(app_host, &url)
         .request(method, url)
         .timeout(env.probe_timeout())
         .send()
@@ -534,7 +536,21 @@ pub async fn create(
         return Err(instance_conflict(h));
     }
     if let Some(p) = app.instances.as_ref().and_then(|i| i.probe.as_ref()) {
-        run_probe(state, &req.host, base_path.as_deref(), &app.about.name, p).await?;
+        // (FIX-290, D-511) An instance-wide registration (only an instance administrator makes
+        // one) may be on a private address.
+        let app_host = org
+            .is_none()
+            .then(|| state.connect.registering(&req.host))
+            .flatten();
+        run_probe(
+            state,
+            &req.host,
+            base_path.as_deref(),
+            &app.about.name,
+            p,
+            app_host.as_ref(),
+        )
+        .await?;
     }
     let id = ids::new_id();
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;

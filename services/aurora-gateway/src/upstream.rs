@@ -4,6 +4,7 @@ use crate::guard::{DialError, Guard};
 use crate::pipeline::{PreparedRequest, Scheme};
 use crate::{Body, BoxError, guidance};
 use aurora_core::ApiError;
+use aurora_core::ranges::AppHost;
 use http::{HeaderValue, Request, Response, Uri, header};
 use hyper::body::Incoming;
 use hyper::rt::{Read, ReadBufCursor, Write};
@@ -51,9 +52,24 @@ pub async fn dial(
     host: &str,
     port: u16,
 ) -> Result<TcpStream, DialError> {
+    dial_with(guard, egress, host, port, None).await
+}
+
+/// (FIX-290, D-511) [`dial`] for the connections of requests that carry a self-hosted app's
+/// allowance (`app` names `host:port`).
+async fn dial_with(
+    guard: &Guard,
+    egress: Option<&EgressProxy>,
+    host: &str,
+    port: u16,
+    app: Option<&AppHost>,
+) -> Result<TcpStream, DialError> {
     if let Some(p) = egress {
         // (FIX-106) Names are judged locally before the egress proxy is contacted.
-        guard.judge_name(host, port).await?;
+        match app {
+            Some(a) => guard.judge_app_name(a).await?,
+            None => guard.judge_name(host, port).await?,
+        }
         let mut s = connect_any(
             &tokio::net::lookup_host((p.host.as_str(), p.port))
                 .await
@@ -88,7 +104,10 @@ pub async fn dial(
         }
         return Ok(s);
     }
-    let addrs = guard.resolve(host, port).await?;
+    let addrs = match app {
+        Some(a) => guard.resolve_app(a).await?,
+        None => guard.resolve(host, port).await?,
+    };
     connect_any(&addrs).await
 }
 
@@ -217,6 +236,9 @@ pub struct Connector {
     guard: Arc<Guard>,
     egress: Option<EgressProxy>,
     tls: TlsConnector,
+    /// (FIX-290) Dials with the allowance for the host and port being connected to. Only the
+    /// self-hosted clients have it, and only a request that carries the allowance uses them.
+    self_hosted: bool,
 }
 
 impl tower::Service<Uri> for Connector {
@@ -238,7 +260,17 @@ impl tower::Service<Uri> for Connector {
                 .trim_matches(['[', ']'])
                 .to_owned();
             let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
-            let tcp = dial(&this.guard, this.egress.as_ref(), &host, port).await?;
+            let app = if this.self_hosted {
+                Some(
+                    AppHost::new(&host, port)
+                        .filter(|_| https)
+                        .ok_or_else(|| DialError::Refused(host.clone()))?,
+                )
+            } else {
+                None
+            };
+            let tcp =
+                dial_with(&this.guard, this.egress.as_ref(), &host, port, app.as_ref()).await?;
             if !https {
                 return Ok(Conn {
                     io: TokioIo::new(Stream::Plain(tcp)),
@@ -263,6 +295,10 @@ pub struct Upstream {
     client: HyperClient,
     /// http/1.1 only (upgrades).
     client_h1: HyperClient,
+    /// (FIX-290, D-511) The same two for requests that carry a self-hosted app's allowance.
+    /// Their pools are their own, so no other request ever reuses a connection they opened.
+    app_client: HyperClient,
+    app_client_h1: HyperClient,
     /// `gateway.upstream_header_timeout_secs` in milliseconds; a live setting (SET-5) read per
     /// request.
     header_timeout_ms: std::sync::atomic::AtomicU64,
@@ -282,19 +318,22 @@ impl Upstream {
         extra_ca_pem: Option<&[u8]>,
         header_timeout: Duration,
     ) -> Result<Self, String> {
-        let mk = |alpn: &[&[u8]]| -> Result<HyperClient, String> {
+        let mk = |alpn: &[&[u8]], self_hosted: bool| -> Result<HyperClient, String> {
             let c = Connector {
                 guard: guard.clone(),
                 egress: egress.clone(),
                 tls: TlsConnector::from(client_config(extra_ca_pem, alpn)?),
+                self_hosted,
             };
             Ok(Client::builder(TokioExecutor::new())
                 .pool_idle_timeout(Duration::from_secs(60))
                 .build(c))
         };
         Ok(Self {
-            client: mk(&[b"h2", b"http/1.1"])?,
-            client_h1: mk(&[b"http/1.1"])?,
+            client: mk(&[b"h2", b"http/1.1"], false)?,
+            client_h1: mk(&[b"http/1.1"], false)?,
+            app_client: mk(&[b"h2", b"http/1.1"], true)?,
+            app_client_h1: mk(&[b"http/1.1"], true)?,
             header_timeout_ms: std::sync::atomic::AtomicU64::new(millis(header_timeout)),
             ldap: crate::ldap::client::Lane::new(
                 guard.clone(),
@@ -345,6 +384,11 @@ impl Upstream {
             .path_and_query(pq)
             .build()
             .map_err(|_| (guidance::ambiguous_path(), true))?;
+        // (FIX-290) The allowance holds for `https` to the host and port it names, nothing else.
+        let self_hosted = p.scheme == Scheme::Https
+            && p.app_host
+                .as_ref()
+                .is_some_and(|a| a.covers(&p.host, p.port));
         let mut req = Request::new(p.body);
         *req.method_mut() = p.method;
         *req.uri_mut() = uri;
@@ -354,7 +398,13 @@ impl Upstream {
             req.headers_mut()
                 .insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
             req.headers_mut().insert(header::UPGRADE, up);
-            &self.client_h1
+            if self_hosted {
+                &self.app_client_h1
+            } else {
+                &self.client_h1
+            }
+        } else if self_hosted {
+            &self.app_client
         } else {
             &self.client
         };

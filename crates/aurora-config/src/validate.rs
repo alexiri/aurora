@@ -257,6 +257,30 @@ pub struct ApiConfig {
     pub telemetry: TelemetrySection,
 }
 
+/// (FIX-290, D-511) The hosts of the other services a process's configuration names (`urls`,
+/// the configured secret stores and the counters Redis): a self-hosted app's host that resolves
+/// to one of their addresses is never opened by the app's own allowance.
+pub fn own_service_hosts<'a>(
+    urls: impl IntoIterator<Item = &'a str>,
+    secrets: &'a SecretsSection,
+    counters: &'a CountersConfig,
+) -> Vec<String> {
+    let stores = secrets
+        .stores
+        .iter()
+        .filter_map(|s| s.settings.expose().get("address")?.as_str());
+    let redis = counters.redis.iter().map(|r| r.address.as_str());
+    let mut hosts: Vec<String> = urls
+        .into_iter()
+        .chain(stores)
+        .chain(redis)
+        .filter_map(aurora_core::ranges::service_host)
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    hosts
+}
+
 /// Counter backend (`ratelimit.counters.backend`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CounterBackend {

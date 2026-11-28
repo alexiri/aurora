@@ -2,6 +2,9 @@
 
 use super::Unavailable;
 use super::template::{Dest, Vars, render};
+use crate::pipeline::Scheme;
+use aurora_core::ranges::AppHost;
+use aurora_db::repo::gateway::InstanceHostRow;
 use aurora_policy::HostPattern;
 use aurora_registry::manifest::{RewriteHost, Tenant};
 
@@ -93,6 +96,28 @@ pub fn instance_guard(
             expected: stored.to_ascii_lowercase(),
         })
     }
+}
+
+/// (FIX-290, D-511, SEC-169) The allowance to reach a self-hosted app's host on a private
+/// address, for a request that **won the granted connection** `conn_instance` belongs to; call it
+/// nowhere else. `serving` is the registration whose app match serves the request (`None` when
+/// the match did not come from a registration). It must be an instance administrator's own, be
+/// the very one the connection is bound to, and the request must leave over `https` to its host
+/// on 443, the only port an `{instance}` entry has.
+pub fn self_hosted_allowance(
+    serving: Option<&InstanceHostRow>,
+    conn_instance: Option<uuid::Uuid>,
+    scheme: Scheme,
+    up_host: &str,
+    port: u16,
+) -> Option<AppHost> {
+    let i = serving?;
+    let open = i.admin_registered
+        && conn_instance == Some(i.id)
+        && scheme == Scheme::Https
+        && port == 443
+        && up_host.eq_ignore_ascii_case(&i.host);
+    open.then(|| AppHost::new(&i.host, port)).flatten()
 }
 
 /// The upstream host (and TLS server name) replaced by the rendered template, which

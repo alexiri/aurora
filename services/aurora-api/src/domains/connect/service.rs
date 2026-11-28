@@ -432,6 +432,7 @@ impl Ctx<'_> {
                     instance_host: self.instance_host(),
                     instance_base_path: self.instance_base_path(),
                     instance_registered: self.instance.is_some(),
+                    app_host: self.app_host(),
                 },
             )
             .await;
@@ -461,6 +462,14 @@ impl Ctx<'_> {
                 .as_ref()
                 .and_then(|i| i.default_host.as_deref()),
         }
+    }
+
+    /// (FIX-290, D-511) What the registration being connected opens beyond
+    /// `gateway.allowed_private`.
+    fn app_host(&self) -> Option<aurora_core::ranges::AppHost> {
+        self.instance
+            .as_ref()
+            .and_then(|i| self.state.connect.self_hosted(i))
     }
 
     /// The registered instance's base path (D-231); a default-host connection has none.
@@ -582,6 +591,7 @@ impl Ctx<'_> {
                     instance_host: self.instance_host(),
                     instance_base_path: self.instance_base_path(),
                     instance_registered: self.instance.is_some(),
+                    app_host: self.app_host(),
                 },
             )
             .await
@@ -1875,10 +1885,9 @@ pub(crate) async fn probe_token_endpoint(
     };
     let host = host_of(&raw);
     let cf = client_fields(state, client).await.map_err(ApiError::from)?;
-    let http = if instance.is_some() {
-        &env.http_instance
-    } else {
-        &env.http
+    let http = match &instance {
+        Some(i) => env.instance_client(env.self_hosted(i).as_ref(), &url),
+        None => env.http.clone(),
     };
     let code = format!("aurora-test-{}", flow::random(16)?);
     let verifier = if ce.pkce {
@@ -1887,7 +1896,7 @@ pub(crate) async fn probe_token_endpoint(
         None
     };
     let req = token_request(
-        http,
+        &http,
         url,
         ce,
         &cf,
@@ -2062,14 +2071,15 @@ async fn token_exchange(
     )
     .ok_or(ConnectErr::Exchange)?;
     let url = env.prepare(&url).map_err(|_| ConnectErr::Exchange)?;
-    // A registered instance is dialled through the guard that honours `gateway.allowed_private`.
+    // A registered instance is dialled through the guard that honours `gateway.allowed_private`
+    // (and, for an instance administrator's registration, its own host).
     let http = if ctx.instance.is_some() {
-        &env.http_instance
+        env.instance_client(ctx.app_host().as_ref(), &url)
     } else {
-        &env.http
+        env.http.clone()
     };
     let req = token_request(
-        http,
+        &http,
         url,
         ce,
         cf,
