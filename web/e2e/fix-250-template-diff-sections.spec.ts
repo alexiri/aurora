@@ -6,8 +6,8 @@ import { overflow } from "./support/open";
 import { mockAgentTemplates } from "./support/agent-templates";
 
 // FIX-250: the review of a new version shows each part's diff inside the section it belongs to,
-// folded GitLab-style: three lines of context, "N unchanged lines" rows that expand, **Show the
-// whole file**, unchanged sections collapsed to one line "Unchanged". Followed from the
+// folded GitLab-style: three lines of context, "N unchanged lines" rows that expand (FIX-289: long
+// lines wrap, and the rows' buttons stay in view), unchanged sections collapsed to one line "Unchanged". Followed from the
 // administration Overview's Review link, with the API mocked; both themes, 1280 and 390 px, no
 // horizontal scroll, no serious axe violation.
 const expect = baseExpect.configure({ timeout: 30_000 });
@@ -89,10 +89,53 @@ async function mockReviewAgainst130(page: Page, base: Record<string, unknown> = 
   );
 }
 
+// (FIX-289) `TEMPLATE_SHOTS=<dir>` writes screenshots of the long-line review.
+const SHOTS = process.env.TEMPLATE_SHOTS;
+const longLine = (word: string) => `${word} ${"the schedule manager reads the whole queue before it answers anyone. ".repeat(5)}`.trim();
+const longReadme = (word: string) =>
+  Array.from({ length: 24 }, (_, i) => (i === 11 ? longLine(word) : `Section ${i + 1}: how the team works.`)).join("\n");
+
 for (const width of [1280, 390]) {
   test.describe(`the review's diffs sit inside their sections (${width} px)`, () => {
     test.use({ viewport: { width, height: 900 } });
     for (const scheme of ["light", "dark"] as const) {
+      // FIX-289: long lines wrap in every diff, so the fold buttons are always in view.
+      test(`long lines wrap and the fold buttons stay inside each box (${scheme})`, async ({ page }) => {
+        await mockAgentTemplates(page);
+        await mockReviewAgainst130(
+          page,
+          { ...content13, readme: longReadme("Before:"), instructions: instructions(longLine("Step 12: triage.")) },
+          { ...content14, readme: longReadme("After:"), instructions: instructions(longLine("Step 12: triage carefully.")) },
+        );
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto("/admin/internet-access/templates/schedule-manager/1.4.0");
+        await expect.poll(() => page.locator("html").getAttribute("data-theme")).toBe(scheme);
+        const about = page.getByRole("region", { name: "About this template", exact: true });
+        await expect(about.getByTestId("diff-box")).toBeVisible();
+        if (SHOTS) {
+          await page.screenshot({ path: `${SHOTS}/review-${width}-${scheme}.png`, fullPage: true });
+          await about.screenshot({ path: `${SHOTS}/about-${width}-${scheme}.png` });
+        }
+        const boxes = page.getByTestId("diff-box");
+        await expect(boxes).toHaveCount(4);
+        for (const box of await boxes.all()) {
+          expect(await box.evaluate((el) => el.scrollWidth - el.clientWidth), "a diff scrolls sideways").toBeLessThanOrEqual(0);
+          const edges = (await box.boundingBox())!;
+          const buttons = await box.getByTestId("diff-fold").getByRole("button").all();
+          expect(buttons.length).toBeGreaterThan(0);
+          for (const button of buttons) {
+            await expect(button).toBeVisible();
+            const b = (await button.boundingBox())!;
+            expect(b.x, "a fold button starts left of the box").toBeGreaterThanOrEqual(edges.x);
+            expect(b.x + b.width, "a fold button ends right of the box").toBeLessThanOrEqual(edges.x + edges.width);
+          }
+        }
+        await expect(page.getByRole("switch", { name: "Show the whole file" })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: /the current text/ })).toHaveCount(0);
+        expect(await serious(page)).toEqual([]);
+        expect(await overflow(page), "the review page overflows horizontally").toBeLessThanOrEqual(0);
+      });
+
       test(`Overview → Review → the folded diffs, the unchanged sections collapsed (${scheme})`, async ({ page }) => {
         const errors: string[] = [];
         page.on("pageerror", (e) => errors.push(e.message));
@@ -125,8 +168,8 @@ for (const width of [1280, 390]) {
         await expect(diff.getByRole("button", { name: "Show all 8 unchanged lines (lines 1 to 8)" })).toBeVisible();
         await diff.getByRole("button", { name: "Show all 8 unchanged lines (lines 1 to 8)" }).click();
         await expect(diff.getByText("Step 1: check the queue.")).toBeVisible();
-        // Show the whole file: every fold opens, the whole file is there.
-        await diff.getByRole("switch", { name: "Show the whole file" }).click();
+        // Show all on the other fold: with every fold open, the whole file is there.
+        await diff.getByRole("button", { name: "Show all 9 unchanged lines (lines 16 to 24)" }).click();
         await expect(folds).toHaveCount(0);
         await expect(diff.getByText("Step 24: check the queue.")).toBeVisible();
 
@@ -136,10 +179,9 @@ for (const width of [1280, 390]) {
         await expect(bodyDiff.getByTestId("diff-fold").first()).toContainText("11 unchanged lines");
         await bodyDiff.getByRole("button", { name: "Show all 11 unchanged lines (lines 1 to 11)" }).click();
         await expect(bodyDiff.getByText("Rule 1: be precise.")).toBeVisible();
-        // The skill file's diff is in the same card, and the current text is one toggle away.
+        // The skill file's diff is in the same card; the opened diff holds the current text.
         await expect(skill.getByRole("region", { name: "Diff of File checklist.md of skill code-review" })).toBeVisible();
-        await instructions.getByRole("button", { name: "Show the current text" }).click();
-        await expect(instructions.getByLabel("Instructions", { exact: true })).toContainText("Step 12: triage it carefully.");
+        await expect(diff).toContainText("Step 12: triage it carefully.");
 
         // The sections nothing touched are collapsed to one line "Unchanged" that expands.
         const unchanged = page.getByTestId("diff-unchanged");

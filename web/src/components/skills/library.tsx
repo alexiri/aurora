@@ -48,11 +48,11 @@ export function DiffView({ diff }: { diff: LibraryDiff }) {
     <div className="space-y-4">
       <section aria-label="Description change" className="space-y-1">
         <h4 className="text-sm font-semibold text-ink">Description{diff.description.changed ? "" : " (unchanged)"}</h4>
-        <FileDiffView old={diff.description.old} next={diff.description.new} label="Description diff" fileName="description" wrap />
+        <FileDiffView old={diff.description.old} next={diff.description.new} label="Description diff" fileName="description" />
       </section>
       <section aria-label="SKILL.md change" className="space-y-1">
         <h4 className="text-sm font-semibold text-ink">SKILL.md{diff.body.changed ? "" : " (unchanged)"}</h4>
-        <FileDiffView old={diff.body.old} next={diff.body.new} label="SKILL.md diff" fileName="SKILL.md" wrap />
+        <FileDiffView old={diff.body.old} next={diff.body.new} label="SKILL.md diff" fileName="SKILL.md" />
       </section>
       {diff.files.map((f) => (
         <section key={f.path} aria-label={`File ${f.path}`} className="space-y-1">
@@ -66,7 +66,7 @@ export function DiffView({ diff }: { diff: LibraryDiff }) {
           {f.binary ? (
             <p className="text-xs text-muted">Binary file: compared by content, not shown.</p>
           ) : f.change === "unchanged" ? null : (
-            <FileDiffView old={f.old ?? ""} next={f.new ?? ""} label={`Diff of ${f.path}`} fileName={f.path} status={f.change === "added" ? "added" : f.change === "removed" ? "removed" : null} wrap />
+            <FileDiffView old={f.old ?? ""} next={f.new ?? ""} label={`Diff of ${f.path}`} fileName={f.path} status={f.change === "added" ? "added" : f.change === "removed" ? "removed" : null} />
           )}
         </section>
       ))}

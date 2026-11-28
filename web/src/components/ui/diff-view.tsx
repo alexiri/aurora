@@ -5,12 +5,10 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Fold } from "@/components/ui/fold";
 import { Notice } from "@/components/ui/notice";
-import { Switch } from "@/components/ui/switch";
 import {
   EXPAND_STEP,
   buildDiff,
   expandAbove,
-  expandAll,
   expandBelow,
   expandFold,
   hiddenRange,
@@ -25,21 +23,19 @@ import {
  * The one diff primitive (FIX-250, replacing `Lines`): a GitLab-style unified diff of two texts —
  * every change with old and new line numbers and three lines of context, every longer run of
  * unchanged lines folded into one "N unchanged lines" row with **Show 20 more above / below** and
- * **Show all** buttons, and a **Show the whole file** switch in the header. A changed-line pair
- * highlights the words that differ; a file that was added or removed shows as such; files with no
- * change are not shown as diffs at all. Long lines scroll inside the box, never the page; with
- * `wrap` (a narrow column of prose) they wrap instead, so the box never scrolls sideways.
+ * **Show all** buttons. A changed-line pair highlights the words that differ; a file that was added
+ * or removed shows as such; files with no change are not shown as diffs at all. (FIX-289) Long
+ * lines always wrap, with a hanging indent, so the box never scrolls sideways, and the fold row sits
+ * at the left of the box, in view. Every diff has the same controls: there are no options.
  */
-export function DiffView({ old, next, label, fileName, status, wrap = false }: { old: string; next: string; label: string; fileName?: string; status?: "added" | "removed" | null; wrap?: boolean }) {
+export function DiffView({ old, next, label, fileName, status }: { old: string; next: string; label: string; fileName?: string; status?: "added" | "removed" | null }) {
   const base = useMemo(() => buildDiff(old, next), [old, next]);
   const [rows, setRows] = useState<DiffRow[]>(base.rows);
-  const [whole, setWhole] = useState(false);
   // A new pair of texts resets the folding (the render-time reset pattern; `key` also works).
   const [texts, setTexts] = useState({ old, next });
   if (texts.old !== old || texts.next !== next) {
     setTexts({ old, next });
     setRows(base.rows);
-    setWhole(false);
   }
   const added = status ? status === "added" : old === "" && next !== "";
   const removed = status ? status === "removed" : next === "" && old !== "";
@@ -68,29 +64,21 @@ export function DiffView({ old, next, label, fileName, status, wrap = false }: {
 
   return (
     <section role="region" aria-label={label} data-testid="diff-view" className="space-y-1">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <p className="min-w-0 font-mono text-xs text-ink">
-          {fileName ? <span className="font-semibold">{fileName}</span> : null}
-          {added ? (
-            <>
-              {" "}
-              <span className="text-muted">(added)</span>
-            </>
-          ) : null}
-          {removed ? (
-            <>
-              {" "}
-              <span className="text-muted">(removed)</span>
-            </>
-          ) : null}
-        </p>
-        {changed ? (
-          <label className="flex items-center gap-2 text-sm text-ink-2">
-            <Switch checked={whole} onCheckedChange={setWhole} />
-            Show the whole file
-          </label>
+      <p className="min-w-0 font-mono text-xs text-ink [overflow-wrap:anywhere]">
+        {fileName ? <span className="font-semibold">{fileName}</span> : null}
+        {added ? (
+          <>
+            {" "}
+            <span className="text-muted">(added)</span>
+          </>
         ) : null}
-      </div>
+        {removed ? (
+          <>
+            {" "}
+            <span className="text-muted">(removed)</span>
+          </>
+        ) : null}
+      </p>
       {base.veryLarge ? (
         <p className="text-xs text-muted">This file has {base.lines.toLocaleString("en-US")} lines, so only the changes and their context are shown until you expand them.</p>
       ) : null}
@@ -106,12 +94,12 @@ export function DiffView({ old, next, label, fileName, status, wrap = false }: {
         <div tabIndex={0} role="region" aria-label={`Scrollable lines: ${subject}`} className="max-w-full overflow-x-auto rounded-control border border-line bg-canvas" data-testid="diff-box">
           <table className="w-full border-collapse font-mono text-xs leading-5 text-ink">
             <tbody>
-              {(whole ? expandAll(base.rows) : rows).flatMap((row) => {
-                if (row.type === "line") return [<LineRow key={`l${row.line.new ?? `o${row.line.old}`}`} line={row.line} highlights={highlights} wrap={wrap} />];
+              {rows.flatMap((row) => {
+                if (row.type === "line") return [<LineRow key={`l${row.line.new ?? `o${row.line.old}`}`} line={row.line} highlights={highlights} />];
                 return [
-                  ...row.lines.slice(0, row.above).map((line) => <LineRow key={`l${line.new ?? `o${line.old}`}`} line={line} highlights={highlights} wrap={wrap} />),
+                  ...row.lines.slice(0, row.above).map((line) => <LineRow key={`l${line.new ?? `o${line.old}`}`} line={line} highlights={highlights} />),
                   <FoldButtons key={`f${row.id}`} fold={row} rows={rows} setRows={setRows} />,
-                  ...row.lines.slice(row.count - row.below).map((line) => <LineRow key={`l${line.new ?? `o${line.old}`}`} line={line} highlights={highlights} wrap={wrap} />),
+                  ...row.lines.slice(row.count - row.below).map((line) => <LineRow key={`l${line.new ?? `o${line.old}`}`} line={line} highlights={highlights} />),
                 ];
               })}
             </tbody>
@@ -144,27 +132,29 @@ function FoldButtons({ fold, rows, setRows }: { fold: FoldRow; rows: DiffRow[]; 
   const from = (line: DiffLine | undefined) => line?.new ?? line?.old ?? 0;
   return (
     <tr data-testid="diff-fold">
-      <td colSpan={3} className="border-y border-line bg-subtle px-2 py-1 text-center font-sans text-xs text-ink-2">
-        <span className="mr-2">
-          {n} unchanged line{n === 1 ? "" : "s"}
-        </span>
-        {/* The visible text must stay inside the accessible name (axe label-content-name-mismatch). */}
-        <Button size="sm" variant="outline" className="mx-0.5" aria-label={`Show ${more} more line${more === 1 ? "" : "s"} above (lines ${from(fold.lines[fold.above])} to ${from(fold.lines[aboveTo - 1])})`} onClick={() => setRows(expandAbove(rows, fold.id))}>
-          Show {more} more line{more === 1 ? "" : "s"} above
-        </Button>
-        <Button size="sm" variant="outline" className="mx-0.5" aria-label={`Show ${more} more line${more === 1 ? "" : "s"} below (lines ${from(fold.lines[belowFrom])} to ${from(fold.lines[fold.count - fold.below - 1])})`} onClick={() => setRows(expandBelow(rows, fold.id))}>
-          Show {more} more line{more === 1 ? "" : "s"} below
-        </Button>
-        <Button size="sm" variant="outline" className="mx-0.5" aria-label={`Show all ${n} unchanged lines (lines ${hidden.from} to ${hidden.to})`} onClick={() => setRows(expandFold(rows, fold.id))}>
-          Show all
-        </Button>
+      <td colSpan={3} className="border-y border-line bg-subtle px-2 py-1 text-left font-sans text-xs text-ink-2">
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="mr-1">
+            {n} unchanged line{n === 1 ? "" : "s"}
+          </span>
+          {/* The visible text must stay inside the accessible name (axe label-content-name-mismatch). */}
+          <Button size="sm" variant="outline" aria-label={`Show ${more} more line${more === 1 ? "" : "s"} above (lines ${from(fold.lines[fold.above])} to ${from(fold.lines[aboveTo - 1])})`} onClick={() => setRows(expandAbove(rows, fold.id))}>
+            Show {more} more line{more === 1 ? "" : "s"} above
+          </Button>
+          <Button size="sm" variant="outline" aria-label={`Show ${more} more line${more === 1 ? "" : "s"} below (lines ${from(fold.lines[belowFrom])} to ${from(fold.lines[fold.count - fold.below - 1])})`} onClick={() => setRows(expandBelow(rows, fold.id))}>
+            Show {more} more line{more === 1 ? "" : "s"} below
+          </Button>
+          <Button size="sm" variant="outline" aria-label={`Show all ${n} unchanged lines (lines ${hidden.from} to ${hidden.to})`} onClick={() => setRows(expandFold(rows, fold.id))}>
+            Show all
+          </Button>
+        </div>
       </td>
     </tr>
   );
 }
 
 /** One diff line: its old and new number, its sign, and its text with the changed words marked. */
-function LineRow({ line, highlights, wrap }: { line: DiffLine; highlights: Map<DiffLine, WordSpan[]>; wrap: boolean }) {
+function LineRow({ line, highlights }: { line: DiffLine; highlights: Map<DiffLine, WordSpan[]> }) {
   const spans = highlights.get(line);
   const sign = line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  ";
   const text = spans
@@ -174,23 +164,16 @@ function LineRow({ line, highlights, wrap }: { line: DiffLine; highlights: Map<D
     <tr data-diff={line.kind} className={line.kind === "add" ? "bg-accent-soft text-accent-ink" : line.kind === "del" ? "bg-danger-soft text-danger-ink" : undefined}>
       <td className="w-10 select-none border-r border-line px-1 text-right align-top text-muted tabular-nums">{line.old ?? ""}</td>
       <td className="w-10 select-none border-r border-line px-1 text-right align-top text-muted tabular-nums">{line.new ?? ""}</td>
-      {wrap ? (
-        // (FIX-277) A hanging indent: the sign has its own column, so a continued line starts under the text, and a
-        // long word with no spaces starts beside the sign and breaks where it must.
-        <td className="w-full px-2 align-top">
-          <div className="flex">
-            <span className="shrink-0 whitespace-pre">{sign}</span>
-            <span data-diff-text className="min-w-0 whitespace-pre-wrap wrap-anywhere">
-              {text}
-            </span>
-          </div>
-        </td>
-      ) : (
-        <td className="whitespace-pre px-2 align-top">
-          {sign}
-          {text}
-        </td>
-      )}
+      {/* (FIX-277) A hanging indent: the sign has its own column, so a continued line starts under the text, and a
+          long word with no spaces starts beside the sign and breaks where it must. */}
+      <td className="w-full px-2 align-top">
+        <div className="flex">
+          <span className="shrink-0 whitespace-pre">{sign}</span>
+          <span data-diff-text className="min-w-0 whitespace-pre-wrap wrap-anywhere">
+            {text}
+          </span>
+        </div>
+      </td>
     </tr>
   );
 }

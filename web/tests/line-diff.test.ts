@@ -184,7 +184,7 @@ describe("expanding a fold", () => {
     expect(lineText(rows).slice(0, 19)).toEqual(Array.from({ length: 19 }, (_, i) => `line ${i + 1}`));
   });
 
-  it("Show the whole file expands every fold", () => {
+  it("expandAll expands every fold", () => {
     const rows = expandAll(base.rows);
     expect(folds(rows)).toEqual([]);
     expect(rows).toHaveLength(81);
