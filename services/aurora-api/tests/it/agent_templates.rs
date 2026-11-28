@@ -4272,10 +4272,12 @@ async fn a_merged_description_follows_the_rules_of_an_edit() {
         .await
         .unwrap();
     upd_advance_watch_grows(&u).await;
+    let max = aurora_core::limits::SKILL_DESCRIPTION_MAX;
+    let too_long = format!("at most {max} characters");
     for (text, says) in [
         ("two\nlines".to_owned(), "single line"),
         (" ".to_owned(), "must not be empty"),
-        ("d".repeat(501), "at most 500 characters"),
+        ("d".repeat(max + 1), too_long.as_str()),
     ] {
         let (s, v) = upd_take_merged(&u, "2.0.0", "skill", "watch", |unit| {
             if unit == "description" {
