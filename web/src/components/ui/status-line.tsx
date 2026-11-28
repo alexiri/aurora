@@ -41,12 +41,14 @@ export function StatusLine({
     // The dot and the sentence are one item as wide as their words, so the action follows the sentence however wide the
     // row is, and goes under it when there is no room. Inside the item nothing wraps but the sentence's own text, so a long
     // one never leaves the dot alone on a line.
+    // Neither reaches out of a narrow column: a word longer than the line (a host name) breaks, and an action wider than
+    // the whole column wraps its own label.
     <p data-testid={testId} className={cn("flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm", TEXT[tone], className)}>
       <span className="flex min-w-0 items-baseline gap-x-2">
         <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", DOT[tone])} />
-        <span className="min-w-0">{children}</span>
+        <span className="min-w-0 break-words">{children}</span>
       </span>
-      {action}
+      {action ? <span className="flex min-w-0 max-w-full items-baseline *:max-w-full *:whitespace-normal">{action}</span> : null}
     </p>
   );
 }

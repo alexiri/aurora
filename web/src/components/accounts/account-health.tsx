@@ -30,7 +30,8 @@ export function AccountHealth({
         tone={TONE[line.tone]}
         action={
           line.fix && onFix ? (
-            <Button type="button" variant="outline" size="sm" onClick={() => onFix(line.fix!.kind)}>
+            // py-1: in a narrow card column the label takes two lines.
+            <Button type="button" variant="outline" size="sm" className="py-1" onClick={() => onFix(line.fix!.kind)}>
               {line.fix.label}
             </Button>
           ) : undefined
