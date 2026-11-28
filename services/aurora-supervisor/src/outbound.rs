@@ -24,7 +24,7 @@ pub enum OutboundError {
     /// Inside the platform-managed `.aurora/` directory (tool cache, inbox, projections).
     #[error("path is inside the platform directory .aurora/")]
     Reserved,
-    /// Another user's file, or one with another name (a hard link).
+    /// Another user's file, or (a root supervisor) one with another name, a hard link.
     #[error("the file is not the agent's own, or has more than one hard link")]
     NotOwned,
     #[error("file larger than {0} bytes")]
@@ -46,6 +46,17 @@ pub struct OutboundFile {
 
 /// Platform-managed directory under the home that `send_file` never reads (12 §Outbound files).
 pub const RESERVED_DIR: &str = ".aurora";
+
+/// The file is the agent's. When the supervisor runs as another uid it also has this one name,
+/// since a hard link may be a file the agent cannot read; with one uid for both there is nothing
+/// of that kind, and hard links are ordinary (package stores, local git clones).
+fn may_send(links: u64, owner: u32, agent: u32, supervisor: u32) -> bool {
+    if agent == supervisor {
+        owner == agent
+    } else {
+        may_lock(links, owner, agent)
+    }
+}
 
 /// Uploads one file; returns the `upload_id` the runner answers `file.result` with.
 pub async fn send_file(
@@ -74,7 +85,8 @@ pub async fn send_file(
     // The supervisor may read with more rights than the agent has: it sends only what is the
     // agent's own, judged on the file it holds open.
     let meta = file.metadata()?;
-    if !may_lock(meta.nlink(), meta.uid(), agent_uid) {
+    let own_uid = rustix::process::getuid().as_raw();
+    if !may_send(meta.nlink(), meta.uid(), agent_uid, own_uid) {
         return Err(OutboundError::NotOwned);
     }
     if meta.len() > ATTACH_OUT_FILE_MAX {
@@ -132,4 +144,22 @@ pub async fn send_file(
     .await
     .map_err(|_| OutboundError::Closed)?;
     Ok(upload_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (FIX-297) The two-uid cases need a root supervisor to meet for real.
+    #[test]
+    fn what_may_be_sent_depends_on_whether_there_are_two_uids() {
+        // One uid: the agent's own files, however many names they have.
+        assert!(may_send(1, 1000, 1000, 1000));
+        assert!(may_send(3, 1000, 1000, 1000));
+        assert!(!may_send(1, 0, 1000, 1000), "another user's file");
+        // A root supervisor.
+        assert!(may_send(1, 1000, 1000, 0));
+        assert!(!may_send(2, 1000, 1000, 0), "a hard link");
+        assert!(!may_send(1, 0, 1000, 0), "root's file");
+    }
 }

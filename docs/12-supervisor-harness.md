@@ -1460,9 +1460,10 @@ treats both identically.
 `ATTACH_OUT_FILE_MAX`, then uploads in `file.part` chunks (≤ 144 KiB (S-06)) with a
 final `file.commit`; the API enforces per-turn and per-conversation caps.
 (FIX-297, SEC-173) It opens the file along the resolved path from the home's
-descriptor, and sends it only when the open file is the agent uid's and has one
-name (no other hard link): a root supervisor reads more than the agent may. The
-tool's error tells the agent to send a copy.
+descriptor, and sends it only when the open file is the agent uid's. When the
+supervisor runs as another uid (root mode) the file must also have one name (no
+other hard link), since the supervisor reads more than the agent may; with one
+uid, hard links are sent. The tool's error tells the agent to send a copy.
 
 ## Logging
 
