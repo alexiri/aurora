@@ -1068,6 +1068,29 @@ async fn ask_mail_facts(
     })
 }
 
+/// (FIX-252 review, D-178) The approver's name is a detail: `named` only for a conversation
+/// that is one person's own, `plain` (the fact alone) for every other. With a channel thread,
+/// the thread must be `direct`; without one, the conversation itself must be a `direct` chat: a
+/// task conversation, an automation's thread or an API conversation is read by others.
+async fn line_for<'a>(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+    plain: &'a str,
+    named: Option<&'a str>,
+) -> Result<&'a str, ApiError> {
+    let Some(named) = named else {
+        return Ok(plain);
+    };
+    let own =
+        match aurora_db::repo::channel_cards::latest_thread_link(&mut *conn, conversation).await? {
+            Some(link) => link.kind == "direct",
+            None => convs::get(&mut *conn, conversation)
+                .await?
+                .is_some_and(|c| c.kind == "direct"),
+        };
+    Ok(if own { named } else { plain })
+}
+
 /// (FIX-252) The origin side of an approval raised in a task conversation, called from the
 /// approval transcript writers (`approvals/transcript.rs`) so the decision transaction, the bus
 /// listener and the sweeps all reach it without duplicating: a `peer_waiting_for_approval`
@@ -1113,6 +1136,8 @@ pub async fn approval_notice(
     // The target workspace, so the web card asks the API whether its reader may decide there
     // (never inferred client-side) and can name it.
     let mut extra = json!({"approval_id": row.id, "workspace_id": row.workspace_id});
+    // The outcome line with the approver's name, for a conversation that may carry it.
+    let mut named = None;
     let (code, line) = match row.status.as_str() {
         "pending" => {
             let asker = agent(conn, task.from_agent_id).await?;
@@ -1128,20 +1153,14 @@ pub async fn approval_notice(
         }
         "approved" | "denied" => {
             extra["outcome"] = json!(row.status);
-            // (FIX-252 review, D-178 Q-R5-9) The approver's name is a detail: a shared origin
-            // space (the thread link is not `direct`) gets the fact only, the name stays in a
-            // direct conversation — the same redaction the origin card follows. No thread link
-            // (a web chat) is the requester's own conversation.
-            let shared = aurora_db::repo::channel_cards::latest_thread_link(&mut *conn, home)
-                .await?
-                .is_some_and(|l| l.kind != "direct");
-            let by = match row.decided_by_name.as_deref() {
-                Some(n) if !shared => format!(" by {}", sanitize::one_line(n, 120)),
-                _ => String::new(),
-            };
+            named = row.decided_by_name.as_deref().map(|n| {
+                let by = sanitize::one_line(n, 120);
+                let line = format!("The approval to {action} was {} by {by}.", row.status);
+                sanitize::one_line(&line, 240)
+            });
             (
                 "peer_approval_decided",
-                format!("The approval to {action} was {}{by}.", row.status),
+                format!("The approval to {action} was {}.", row.status),
             )
         }
         _ => {
@@ -1212,8 +1231,8 @@ pub async fn approval_notice(
             repo::lock_chain_links(conn, task.id).await?;
         }
         // The notice first: it is what marks this delivery done.
-        post_notice(conn, home, &task, code, &line, Some(extra)).await?;
-        let text = format!("Peer task update: {line}");
+        let said = line_for(conn, home, &line, named.as_deref()).await?;
+        post_notice(conn, home, &task, code, said, Some(extra)).await?;
         let source = format!("approval:{}", row.id);
         let delegators = repo::delegating_conversations(&mut *conn, task.id, home).await?;
         for (level, conversation) in delegators.into_iter().enumerate() {
@@ -1227,6 +1246,8 @@ pub async fn approval_notice(
             {
                 continue;
             }
+            let said = line_for(conn, conversation, &line, named.as_deref()).await?;
+            let text = format!("Peer task update: {said}");
             follow_up(
                 conn,
                 conversation,

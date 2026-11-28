@@ -1138,6 +1138,16 @@ async fn an_approval_in_the_task_conversation_reports_waiting_to_the_origin_once
 #[tokio::test]
 async fn deciding_the_approval_reports_the_outcome_and_wakes_the_delegating_agent() {
     let d = duo().await;
+    // The person's own chat: the one place the approver is named (D-178).
+    sqlx::query(
+        "UPDATE conversations SET kind = 'direct', direct_user_id = $2,
+            external_ref = 'user:' || $2 WHERE id = $1",
+    )
+    .bind(d.conv)
+    .bind(d.rig.p.id)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
     let task = Rig::id(&d.send("do it").await["peer_task_id"]);
     let id = d.approval(task).await;
     d.report_approval(id).await;
@@ -3634,6 +3644,68 @@ async fn the_walk_stops_where_the_requester_changes() {
     assert!(x.d.system_turns(x.d.conv).await.is_empty(), "A is not told");
     assert_eq!(x.d.system_turns(x.pcb).await.len(), 1, "B's follow-up");
     assert_eq!(x.d.rig.task_status(x.top).await, "open", "B was woken");
+}
+
+/// (FIX-288, D-178) The approver's name is a detail: it appears only where the conversation is
+/// one person's own. A task conversation is not (everyone who can use its workspace reads it),
+/// also without a channel thread: not as the card's home after a change of requester, and not in
+/// the follow-up of a delegating agent in between.
+#[tokio::test]
+async fn the_approvers_name_stays_out_of_conversations_that_others_read() {
+    // The home is B's task conversation (somebody else asked there).
+    let d = duo().await;
+    let other = d.rig.q.id;
+    d.rig.h.bind_ws(d.rig.ws1, other, "approver").await;
+    let x = chain_from(d, Some(other)).await;
+    let id = x.pending_at_c().await;
+    x.d.answer(id, "approved").await;
+    x.d.report_approval(id).await;
+    let decided = x.d.rig.notices(x.pcb, "peer_approval_decided").await;
+    let text = decided[0]["text"].as_str().unwrap();
+    assert!(text.ends_with("was approved."), "{text}");
+    for turn in x.d.system_turns(x.pcb).await {
+        assert!(!turn.contains("approved by"), "{turn}");
+    }
+
+    // The home is the person's direct chat (named there), the one in between is not.
+    let d = duo().await;
+    sqlx::query(
+        "UPDATE conversations SET kind = 'direct', direct_user_id = $2,
+            external_ref = 'user:' || $2 WHERE id = $1",
+    )
+    .bind(d.conv)
+    .bind(d.rig.p.id)
+    .execute(d.rig.h.pool())
+    .await
+    .unwrap();
+    let x = chain_from(d, None).await;
+    let id = x.pending_at_c().await;
+    x.d.answer(id, "approved").await;
+    x.d.report_approval(id).await;
+    let decided = x.d.rig.notices(x.d.conv, "peer_approval_decided").await;
+    assert!(
+        decided[0]["text"].as_str().unwrap().contains("approved by "),
+        "{}",
+        decided[0]
+    );
+    assert!(
+        x.d.system_turns(x.d.conv).await[0].contains("approved by "),
+        "the person's own chat"
+    );
+    let between = x.d.system_turns(x.pcb).await;
+    assert!(!between[0].contains("approved by"), "{between:?}");
+
+    // A first conversation that is nobody's own (an API caller's) gets no name either.
+    let x = chain().await;
+    let id = x.pending_at_c().await;
+    x.d.answer(id, "approved").await;
+    x.d.report_approval(id).await;
+    let decided = x.d.rig.notices(x.d.conv, "peer_approval_decided").await;
+    assert!(
+        !decided[0]["text"].as_str().unwrap().contains("approved by"),
+        "{}",
+        decided[0]
+    );
 }
 
 /// (FIX-288) A chain whose first conversation is an automation's thread (a person wrote in it)
