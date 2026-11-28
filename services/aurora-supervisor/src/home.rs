@@ -1014,9 +1014,10 @@ fn set_dirs(home: &Path, rel: &Path, mode: u32) {
     }
 }
 
-/// Whether the lock may change a file's mode: it has this one name and is the agent's. A hard
-/// link may be another user's file (`fs.protected_hardlinks=0`).
-fn may_lock(links: u64, owner: u32, agent: u32) -> bool {
+/// Whether a file may be treated as the agent's (the lock changes its mode, `send_file` reads
+/// it): it has this one name and is the agent's. A hard link may be another user's file
+/// (`fs.protected_hardlinks=0`).
+pub(crate) fn may_lock(links: u64, owner: u32, agent: u32) -> bool {
     links <= 1 && owner == agent
 }
 

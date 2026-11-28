@@ -254,11 +254,13 @@ impl Supervisor {
             )),
         });
         // (FIX-258) The same rule as for its processes: a root supervisor runs them as this uid.
-        if rustix::process::getuid().is_root()
-            && let Some(uid) = cfg.process.uid
-        {
-            projector.set_agent_uid(uid);
-        }
+        let own_uid = rustix::process::getuid();
+        let agent_uid = cfg
+            .process
+            .uid
+            .filter(|_| own_uid.is_root())
+            .unwrap_or_else(|| own_uid.as_raw());
+        projector.set_agent_uid(agent_uid);
         let home = Arc::new(StdMutex::new(HomeCtl {
             projector,
             harvester: Harvester::new(&cfg.working_dir),
@@ -276,6 +278,7 @@ impl Supervisor {
         let procs = ProcessManager::new(process, out.clone());
         let mut tools = cfg.tools.clone();
         tools.home = cfg.working_dir.clone();
+        tools.agent_uid = agent_uid;
         let hub = ToolHub::new(
             tools,
             cfg.working_dir.join(".aurora/tools.json"),

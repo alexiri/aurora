@@ -1,6 +1,7 @@
 //! Outbound files (`docs/12-supervisor-harness.md` §Outbound files): validate the path, split into
 //! `file.part` chunks (<= 144 KiB decoded) and finish with `file.commit` (sha256 + size).
 
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::ATTACH_OUT_FILE_MAX;
@@ -13,6 +14,7 @@ use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use crate::channel::ChannelSender;
+use crate::home::may_lock;
 use crate::nofollow;
 
 #[derive(Debug, thiserror::Error)]
@@ -22,6 +24,9 @@ pub enum OutboundError {
     /// Inside the platform-managed `.aurora/` directory (tool cache, inbox, projections).
     #[error("path is inside the platform directory .aurora/")]
     Reserved,
+    /// Another user's file, or one with another name (a hard link).
+    #[error("the file is not the agent's own, or has more than one hard link")]
+    NotOwned,
     #[error("file larger than {0} bytes")]
     TooLarge(u64),
     #[error("io: {0}")]
@@ -46,6 +51,7 @@ pub const RESERVED_DIR: &str = ".aurora";
 pub async fn send_file(
     out: &ChannelSender,
     home: &Path,
+    agent_uid: u32,
     req: OutboundFile,
 ) -> Result<String, OutboundError> {
     let root = tokio::fs::canonicalize(home).await?;
@@ -65,7 +71,13 @@ pub async fn send_file(
         .strip_prefix(&root)
         .map_err(|_| OutboundError::BadPath)?;
     let file = nofollow::open_regular_beneath(&root, rel).map_err(|_| OutboundError::BadPath)?;
-    if file.metadata()?.len() > ATTACH_OUT_FILE_MAX {
+    // The supervisor may read with more rights than the agent has: it sends only what is the
+    // agent's own, judged on the file it holds open.
+    let meta = file.metadata()?;
+    if !may_lock(meta.nlink(), meta.uid(), agent_uid) {
+        return Err(OutboundError::NotOwned);
+    }
+    if meta.len() > ATTACH_OUT_FILE_MAX {
         return Err(OutboundError::TooLarge(ATTACH_OUT_FILE_MAX));
     }
     let filename: String = real

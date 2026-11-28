@@ -434,6 +434,7 @@ async fn outbound_file_is_split_with_correct_sha256() {
     let id = send_file(
         &out,
         d.path(),
+        me(),
         OutboundFile {
             path: "out.bin".into(),
             conversation_id: conv,
@@ -469,6 +470,40 @@ async fn outbound_file_is_split_with_correct_sha256() {
     assert_eq!((commit.conversation_id, commit.turn_id), (conv, turn));
 }
 
+fn me() -> u32 {
+    rustix::process::getuid().as_raw()
+}
+
+/// (FIX-297) The supervisor may read with more rights than the agent has: it sends only a file
+/// that is the agent's and has this one name (a hard link may be anyone's file).
+#[tokio::test]
+async fn outbound_sends_only_the_agents_own_singly_named_files() {
+    let d = TempDir::new();
+    let outside = TempDir::new();
+    fs::write(outside.path().join("s.txt"), "secret").unwrap();
+    fs::hard_link(outside.path().join("s.txt"), d.path().join("linked")).unwrap();
+    fs::write(d.path().join("own"), "own").unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let out = ChannelSender::from_mpsc(tx);
+    // `own` belongs to the test's user, which is not the agent the second case names.
+    for (path, agent) in [("linked", me()), ("own", me() + 1)] {
+        let r = send_file(
+            &out,
+            d.path(),
+            agent,
+            OutboundFile {
+                path: path.into(),
+                conversation_id: Uuid::now_v7(),
+                turn_id: Uuid::now_v7(),
+                caption: None,
+            },
+        )
+        .await;
+        assert!(r.is_err(), "{path} was sent");
+        assert!(rx.try_recv().is_err(), "{path}: bytes left the sandbox");
+    }
+}
+
 #[tokio::test]
 async fn outbound_refuses_paths_outside_home() {
     let d = TempDir::new();
@@ -486,6 +521,7 @@ async fn outbound_refuses_paths_outside_home() {
         let r = send_file(
             &out,
             d.path(),
+            me(),
             OutboundFile {
                 path,
                 conversation_id: Uuid::now_v7(),
@@ -519,6 +555,7 @@ async fn outbound_refuses_platform_dir() {
         let r = send_file(
             &out,
             d.path(),
+            me(),
             OutboundFile {
                 path,
                 conversation_id: Uuid::now_v7(),

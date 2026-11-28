@@ -65,6 +65,8 @@ pub struct ToolsConfig {
     pub probe_interval: Duration,
     /// Workspace root: `send_file` reads only below it.
     pub home: PathBuf,
+    /// The uid the agent runs as: `send_file` sends only its files.
+    pub agent_uid: u32,
     /// How long `send_file` waits for the runner's `file.result` after the last chunk.
     pub file_timeout: Duration,
     /// (FIX-114) Tool calls in flight per socket connection; above it `tools_unavailable`.
@@ -83,6 +85,7 @@ impl Default for ToolsConfig {
             max_failures: limits::TOOL_CONSECUTIVE_FAILURES,
             probe_interval: Duration::from_secs(5),
             home: PathBuf::from("/workspace"),
+            agent_uid: rustix::process::getuid().as_raw(),
             file_timeout: FILE_RESULT_TIMEOUT,
             registry: None,
         }
@@ -381,6 +384,7 @@ impl ToolHub {
         let upload_id = send_file(
             &self.out,
             &self.cfg.home,
+            self.cfg.agent_uid,
             OutboundFile {
                 path: PathBuf::from(path),
                 conversation_id,
@@ -395,6 +399,11 @@ impl ToolHub {
             }
             OutboundError::Reserved => {
                 "files under .aurora/ are platform-managed and cannot be sent".to_owned()
+            }
+            OutboundError::NotOwned => {
+                "only a file you own, with no other hard link, can be sent; copy it and send the \
+                 copy"
+                    .to_owned()
             }
             OutboundError::TooLarge(max) => format!("file is larger than {max} bytes"),
             OutboundError::Io(e) => format!("cannot read the file: {}", e.kind()),
