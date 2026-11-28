@@ -100,6 +100,14 @@ fn a_whole_number_not_written_as_an_integer_is_unknown() {
             "{n}"
         );
     }
+    for n in ["-0", "-0.0"] {
+        let body = format!(r#"{{"amount":{n}}}"#);
+        assert_eq!(
+            eval(ConditionOp::Equals, "/amount", "0", &body),
+            Tri::Unknown,
+            "{n}"
+        );
+    }
     let body = r#"{"a":{"amount":1e2}}"#;
     assert_eq!(eval(ConditionOp::Contains, "/a", "100", body), Tri::Unknown);
     // Integers and true fractions keep their one reading.
@@ -121,8 +129,42 @@ fn unicode_escapes_are_one_spelling() {
     assert_eq!(eval(ConditionOp::Equals, "/a", "delete", body), Tri::True);
 }
 
+/// Some servers let the URL's `query`, `operationName` or `extensions` override the body: with
+/// one of them in the URL, what the body says does not decide.
+#[test]
+fn a_graphql_parameter_in_the_url_is_a_mutation() {
+    let kind = |query: &str| {
+        let mut facts: RequestFacts = serde_json::from_value(serde_json::json!({
+            "host": "ghe.example.com", "port": 443, "path": "/api/graphql", "method": "POST",
+            "identity": serde_json::to_value(RequestIdentity::default()).unwrap(),
+            "tool_tags": {"graphql": true},
+        }))
+        .unwrap();
+        facts.body_prefix = br#"{"query":"{ viewer { login } }"}"#.to_vec();
+        facts.query = Some(query.to_owned());
+        facts.graphql_kind()
+    };
+    for query in [
+        "query=mutation%20%7B%20deleteRepository%20%7D",
+        "a=1&query=x",
+        "operationName=M",
+        "extensions=%7B%7D",
+        "%71uery=x",
+        "Query=x",
+        "query[a]=x",
+        "a=1;query=x",
+        "query",
+        "bad%zz=1",
+    ] {
+        assert_eq!(kind(query), Some(GraphqlKind::Mutation), "{query}");
+    }
+    for query in ["", "per_page=10", "q=query&x=operationName"] {
+        assert_eq!(kind(query), Some(GraphqlKind::Query), "{query}");
+    }
+}
+
 fn gql(body: &str) -> GraphqlKind {
-    classify(body.as_bytes(), false)
+    classify(body.as_bytes(), false, None)
 }
 
 #[test]

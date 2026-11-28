@@ -348,7 +348,7 @@ pub fn identify_tool_in<'a>(
     headers: &[(&str, &str)],
     connect_method: Option<&str>,
 ) -> Option<&'a ToolItem> {
-    let gql = graphql::classify(body_prefix, truncated);
+    let gql = graphql::classify(body_prefix, truncated, query);
     let git = aurora_policy::git::classify(path, query);
     let params = aurora_policy::ParamInput {
         query,

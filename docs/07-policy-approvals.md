@@ -133,7 +133,10 @@ present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
   body (`{query, operationName}` or a batch array) and the GraphQL document
   (`graphql-parser`). Result is `query` only if every operation that could
   execute is a query; **missing, truncated or unparsable body, subscriptions,
-  or any doubt ⇒ `mutation`**. A block on mutations always holds on doubt; an
+  or any doubt ⇒ `mutation`**. So is a URL that carries `query`,
+  `operationName` or `extensions` (some servers let the URL override the body;
+  names are decoded and compared without case, and one that cannot be decoded
+  counts). A block on mutations always holds on doubt; an
   allow on queries never admits a mutation.
 - **Git operations** (tools tagged `git: push|fetch`): `…/git-receive-pack` and
   `…/info/refs?service=git-receive-pack` are `push`; `…/git-upload-pack` and
