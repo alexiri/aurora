@@ -800,6 +800,53 @@ async fn a_restart_takes_every_turns_conversations_before_any_link() {
     assert_eq!((link, status), (Ok(()), 202), "{body}");
 }
 
+/// Deleting a connection revokes for it and for each connection derived from it in one
+/// transaction: every conversation is locked before the first row is ended.
+#[tokio::test]
+async fn a_connection_delete_locks_every_conversation_before_the_first_row() {
+    let rig = rig().await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    p_owns_the_workspace(&rig).await;
+    let (older, _) = rig.person_turn(b, rig.p.id).await;
+    let (newer, _) = rig.person_turn(b, rig.p.id).await;
+    let pool = rig.h.pool();
+    let ws = rig.agent_ws(b).await;
+    let (parent, child) = (Uuid::now_v7(), Uuid::now_v7());
+    for (id, source, label) in [(parent, None, "Main"), (child, Some(parent), "Derived")] {
+        sqlx::query(
+            "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id,
+                app_version, label, status, credentials_ref, source_connection_id)
+             VALUES ($1,$2,$3,'acme_app','acme','1.0.0',$4,'active','x',$5)",
+        )
+        .bind(id)
+        .bind(rig.org)
+        .bind(ws)
+        .bind(label)
+        .bind(source)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    for (conversation, connection) in [(older, parent), (newer, child)] {
+        let approval = pending_approval(&rig, b, conversation, None).await;
+        sqlx::query("UPDATE approvals SET connection_id = $2 WHERE id = $1")
+            .bind(approval)
+            .bind(connection)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    let uri = format!("/v1/connections/{parent}");
+    let delete = async {
+        let headers = [("cookie", rig.p.cookie.as_str()), ("origin", ORIGIN)];
+        let (status, _, body) = rig.h.send(http::Method::DELETE, &uri, &headers, None).await;
+        (status.as_u16(), body)
+    };
+    let ((status, body), writer) =
+        works_beside_a_newest_first_writer(pool, newer, older, delete).await;
+    assert_eq!((writer, status < 300), (Ok(true), true), "{status} {body}");
+}
+
 async fn a_close_that_holds_the_link(
     h: &Held,
     decide: impl Future<Output = (u16, serde_json::Value)>,

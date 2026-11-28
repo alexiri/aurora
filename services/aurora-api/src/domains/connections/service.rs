@@ -319,6 +319,7 @@ pub async fn delete(
     repo::delete_derived_rules(&mut tx, &ids).await?;
     let refs = repo::credential_refs(&mut tx, &ids).await?;
     repo::delete_many(&mut tx, &ids).await?;
+    approvals::lock_connection_revocations(&mut tx, &ids).await?;
     for id in &ids {
         // (FIX-084) Held requests that would use the deleted credential must not be released.
         let ended = approvals::abandon_pending_depending_on(

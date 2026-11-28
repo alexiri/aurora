@@ -17,7 +17,10 @@
 //! - The revocations ([`end_parked_of`], [`abandon_pending_depending_on`]): the conversations
 //!   of every pending row and ready grant they select, by [`lock_conversations`]. Held rows
 //!   too, though they get no notice: a caller may revoke again in the same transaction, and the
-//!   later call locks conversations for its notices.
+//!   later call locks conversations for its notices. A caller that revokes in a loop (deleting
+//!   a connection and those derived from it, lowering an account's limit, a plugin activation's
+//!   converted grants) locks all of them once before it
+//!   ([`lock_connection_revocations`]).
 //! - A freeze: before its first row, `lock_for_writes_in` over the conversations of every row
 //!   it ends and of every turn it ends (`repo::freeze::conversations_a_freeze_writes`), since
 //!   ending a turn takes task origins, links and tasks. `abandon_pending_approvals` then locks
@@ -857,6 +860,17 @@ pub(super) async fn lock_conversations(
     };
     q.fetch_all(&mut *tx).await?;
     Ok(())
+}
+
+/// For a caller that revokes one connection after another in one transaction: locks, once and
+/// before the first, the conversations of every row those revocations may end. Without it each
+/// round would lock conversations while it holds the rows of the rounds before.
+pub async fn lock_connection_revocations(
+    tx: &mut sqlx::PgConnection,
+    connection_ids: &[Uuid],
+) -> Result<(), DbError> {
+    let pred = format!("connection_id = ANY($1) AND {ENDABLE}");
+    lock_conversations(tx, &pred, LockBind::List(connection_ids)).await
 }
 
 /// `ready` grants matching `pred` -> `revoked` (C-826: same predicate as the pending rows).
