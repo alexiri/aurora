@@ -20,7 +20,8 @@ export function CardGrid({
 }) {
   return (
     <div className="@container">
-      <ul {...rest} className={cn("grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3 @7xl:grid-cols-4", className)}>
+      {/* grid-cols-1: without a template the one column is as wide as a card's longest word, past the page's edge. */}
+      <ul {...rest} className={cn("grid grid-cols-1 gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3 @7xl:grid-cols-4", className)}>
         {children}
       </ul>
     </div>
