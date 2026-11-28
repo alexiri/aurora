@@ -31,6 +31,10 @@ async fn fill(r: &Rig, agent: Option<Uuid>, ws: Option<Uuid>, chars: usize) -> U
 async fn fix291_each_tiers_own_skills_have_a_byte_budget() {
     let r = rig().await;
     let a = r.agent("a1").await;
+    // The organization's skills are written by its admins.
+    let admin = r.h.user("orgadmin@x.io", false).await;
+    r.h.member(r.org, admin, "admin", "active").await;
+    let org_admin = cookie(&r.h.good_session(admin).await.1);
     for (agent, ws, uri, budget) in [
         (Some(a), None, format!("/v1/agents/{a}/skills"), 4 * MIB),
         (
@@ -45,7 +49,11 @@ async fn fix291_each_tiers_own_skills_have_a_byte_budget() {
         let new = |name: &str, body: usize| {
             Some(json!({"name": name, "description": "d", "body": "b".repeat(body)}))
         };
-        let (s, v) = r.user(Method::POST, &uri, new("over", 101)).await;
+        let who = match (agent, ws) {
+            (None, None) => &org_admin,
+            _ => &r.cookie,
+        };
+        let (s, v) = r.call(who, Method::POST, &uri, new("over", 101)).await;
         assert_eq!(
             (s, code(&v)),
             (422, Some("own_skill_budget_exceeded")),
@@ -54,21 +62,22 @@ async fn fix291_each_tiers_own_skills_have_a_byte_budget() {
         assert_eq!(v["error"]["details"]["bytes_limit"], budget, "{v}");
         let msg = v["error"]["message"].as_str().unwrap();
         assert!(msg.contains(&budget.to_string()), "{msg}");
-        let (s, v) = r.user(Method::POST, &uri, new("fits", 60)).await;
+        let (s, v) = r.call(who, Method::POST, &uri, new("fits", 60)).await;
         assert_eq!(s, 201, "{uri}: {v}");
         let id = v["id"].as_str().unwrap().to_owned();
         // Files and edits count like the instructions: 40 characters are left.
         let file = format!("/v1/skills/{id}/files/a.txt");
-        let (s, v) = r.raw_put(&r.cookie, &file, &[b'a'; 41]).await;
+        let (s, v) = r.raw_put(who, &file, &[b'a'; 41]).await;
         assert_eq!(
             (s, code(&v)),
             (422, Some("own_skill_budget_exceeded")),
             "{uri}: {v}"
         );
-        let (s, v) = r.raw_put(&r.cookie, &file, &[b'a'; 40]).await;
+        let (s, v) = r.raw_put(who, &file, &[b'a'; 40]).await;
         assert_eq!(s, 200, "{uri}: {v}");
         let (s, v) = r
-            .user(
+            .call(
+                who,
                 Method::PATCH,
                 &format!("/v1/skills/{id}"),
                 Some(json!({"body": "b".repeat(61)})),

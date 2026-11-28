@@ -244,7 +244,7 @@ fn skill_md_frontmatter_rules() {
         ["app_skill_frontmatter"],
         "anchors"
     );
-    let long = "d".repeat(501);
+    let long = "d".repeat(1_025);
     assert_eq!(
         bad(&format!("---\ndescription: {long}\n---\n\nb\n")),
         ["app_skill_frontmatter"]
