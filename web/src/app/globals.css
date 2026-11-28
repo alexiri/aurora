@@ -307,15 +307,39 @@
   /* The pane fills the tab column and scrolls internally (no page-level horizontal scroll). */
   width: 100%;
   max-width: 100%;
-  /* (FIX-138) A bounded height: `autoResize` derives a fixed grid from it, so output scrolls inside the pane's
-     scrollback instead of growing the page (at least ~16 rows). On phones a fixed share of the viewport. */
-  height: max(18rem, calc(100dvh - 25rem));
   overflow-y: auto;
 }
 
+/* (FIX-138) A bounded height: `autoResize` derives a fixed grid from it, so output scrolls inside the pane's scrollback
+   instead of growing the page. From 768 px the tab's pane is a full-height pane (below); on phones a fixed share of
+   the viewport. */
 @media (max-width: 767px) {
   .wterm.term-pane {
     height: 60dvh;
+  }
+}
+
+/*
+ * The full-height pane (docs/14 §Full-height panes). A page marks one element `data-fill-pane`; from 768 px `main` and
+ * every box from there down to the pane become a flex column at least as tall as the viewport, and the pane takes
+ * exactly the room that the header, the tab rows and whatever sits under it leave. Nothing here knows how tall any of
+ * those are. The pane declares its own smallest height (`min-height`) and scrolls inside itself; on a window too short
+ * for that smallest height the page scrolls. Every box between `main` and a pane must be one that can be a column.
+ */
+@media (min-width: 768px) {
+  main:has([data-fill-pane]) {
+    display: flex;
+    flex-direction: column;
+    min-height: 100dvh;
+  }
+  main :has([data-fill-pane]) {
+    display: flex;
+    flex-direction: column;
+    flex: 1 0 auto;
+  }
+  main [data-fill-pane] {
+    flex: 1 1 0px;
+    height: auto;
   }
 }
 

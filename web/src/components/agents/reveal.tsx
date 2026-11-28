@@ -39,6 +39,9 @@ export function AgentRevealDialog({
         <div className="space-y-2">
           <p className="text-sm font-medium text-ink">Container config</p>
           <pre
+            tabIndex={0}
+            role="region"
+            aria-label="New token's container config"
             data-testid="revealed-config"
             className="max-h-48 overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink"
           >

@@ -295,7 +295,8 @@ function FilesBrowser({ agentId, agentName, onOpenInstructions }: { agentId: str
               const target = dest();
               void fromDataTransfer(dt, target).then(startUploads);
             }}
-            className="min-h-32">
+            fillPane
+            className="min-h-32 md:min-h-72">
             {list.isPending && !listError ? (
               waking ? (
                 <Notice tone="pending" role="status">

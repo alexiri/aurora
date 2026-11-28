@@ -19,6 +19,7 @@ export function DropZone({
   icon,
   disabled = false,
   className,
+  fillPane = false,
   children,
 }: {
   onFiles?: (files: File[]) => void;
@@ -33,13 +34,19 @@ export function DropZone({
   icon?: ReactNode;
   disabled?: boolean;
   className?: string;
+  /**
+   * From 768 px the zone is the page's full-height pane (`data-fill-pane`): its content scrolls inside it and the drop
+   * overlay stays over the part in view. Give it a `md:min-h-*` for its smallest height.
+   */
+  fillPane?: boolean;
   children: ReactNode;
 }) {
   const [over, setOver] = useState(false);
   const depth = useRef(0);
   return (
     <div
-      className={cn("relative", className)}
+      className={cn("relative", fillPane && "md:flex md:flex-col", className)}
+      data-fill-pane={fillPane ? "" : undefined}
       data-dropping={over || undefined}
       onDragEnter={(e) => {
         if (disabled || !hasFiles(e)) return;
@@ -68,7 +75,7 @@ export function DropZone({
         const files = Array.from(e.dataTransfer.files);
         if (files.length > 0) onFiles?.(files);
       }}>
-      {children}
+      {fillPane ? <div className="md:min-h-0 md:flex-1 md:overflow-y-auto">{children}</div> : children}
       {over ? (
         <div
           data-testid="drop-overlay"
