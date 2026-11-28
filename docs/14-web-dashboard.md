@@ -356,10 +356,45 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   (a link, a new tab) it goes to the workspace used last — in Manage, last in
   that organization — and with none it is hidden. A workspace an administrator
   only manages (and is redirected from) is never recorded.
-- (FIX-235, D-477) The picker lists only the workspaces the person is in in
-  their own right (`my_role` set); an administrator who is not one of a
-  workspace's people reaches it through Manage <org> › Workspaces or Agents.
-  "All N in <Org>" counts the listed workspaces.
+- **The place picker** (P5-NAV-3, D-508(f); design nav-3a;
+  `components/nav/place-picker.tsx`, data `lib/nav/places.ts`) opens from the
+  place card in **every** place (Administration's and Your account's cards too;
+  there it is about the organization you came from, else your last one). It
+  lists only places the person can enter, in this order, each group only when it
+  holds something:
+  1. **Find a workspace or organization**, with more than six places (workspaces,
+     Manage entries and Administration counted). It searches across
+     organizations; results are grouped by organization ("Workspace · <Role>",
+     **Manage <org>** where they may open it, the organization itself where they
+     may not, and **Administration** for instance admins), the field shows
+     "<n> workspaces, <m> organizations" (from 640 px), and the foot reads
+     "↑↓ to move · ⏎ to open · Esc to close"; the highlighted row has "↵".
+  2. **Workspaces in <Org>**: the 5 used last, each "<Role> · <Org>", ✓ on the
+     current one; **All n workspaces…**: for owners, admins and instance admins
+     every workspace of the organization, on Manage <org> › Workspaces; for a
+     member their own, shown in the picker.
+  3. **Organization** (owners, admins, instance admins): **Manage <org>**,
+     "People, apps, AI models, data", the role and the count.
+  4. **Administration** (instance admins): "Settings for everyone on this
+     Aurora", with its count.
+  5. **Other organizations**: up to 3, "<Role> · opens your last workspace
+     there" (with no workspace and the right to manage it, "opens Manage
+     <org>"); **All n organizations**. One with nothing to open is not listed.
+  6. **New workspace in <Org>**, **New organization**, where allowed.
+  Keys: the focus starts in the search field, else on the first row; arrows
+  move (with a query they move the highlight), Enter opens, typing goes to the
+  field, Escape closes and the focus returns to the card. With nothing else to
+  open and nothing to make, the card has no menu.
+- (FIX-235, D-477; FIX-277) A workspace is listed only when the person is in it
+  in their own right (`my_role` set); an administrator who is not one of its
+  people reaches it through Manage <org> › Workspaces or Agents. The one
+  exception: the workspace on screen that its own answer says they read under
+  their open emergency grant (`isEmergencyReader`), labelled "Emergency read
+  access"; once the grant ends it is gone.
+- **The rail's foot** (D-508(g)): **Manage <org>** (the organization of the
+  place, or the one you came from) with its count, above **Administration**, for
+  owners, admins and instance admins; not inside Manage, where the menu is it.
+  Members never see it. The place card itself carries no badge.
 - The active item uses `subtle` background, 600 weight and an `accent` icon,
   and sets `aria-current="page"`.
 - The workspace nav has no **Members** item (FIX-027): it linked to the
@@ -370,9 +405,13 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   only where RFE-012 allows the approvals page.
 - The nav lists only real destinations. There are no "coming soon"
   placeholders.
-- Below 768 px the sidebar collapses into a top bar with a menu button that
-  opens the same nav in a dialog from the right, under the button (focus
-  trapped, Esc closes).
+- Below 768 px the sidebar collapses into a top bar (nav-3d): a menu button,
+  then the **place card in short** ("<name> · <kind>"). The button opens the
+  current place's menu, with its back line, in a drawer from its side (focus
+  trapped, Esc closes). The card opens the same picker as a **sheet** from the
+  foot of the screen (`BottomSheetContent`, `ui/dialog.tsx`: grab handle,
+  Escape, a tap outside or its close button; the focus returns to the card);
+  with nothing else to open it is plain text. No native select.
 - Frozen-entity banners (RFE-006) and the version banner render above the page
   content, inside the shell.
 - **Page header** on every shell page: breadcrumb (org/workspace/section
@@ -1551,7 +1590,7 @@ guides keep working.
   succeeds (`useRefreshAttentionOnMutation`), so the count drops without a reload. A failed fetch, a zero, or `null`
   (everyone who is not an instance admin) shows no badge and never an error.
 - (P5-REFINE-17 item 17, G3, C-1082) For an organization's owners and admins the same badge sits on the switcher's
-  **Manage <org>** row, on the closed switcher in a workspace (current organization) and in Manage's menu in the rail
+  **Manage <org>** row, on the rail's foot entry (P5-NAV-3) and in Manage's menu in the rail
   (Overview = total, a topic = its own part: Apps & accounts, Chat platforms, AI models; the phone's drawer shows the
   same menu). It counts the organization's open requests (C-1080 `organization`); nobody else sees one.
 - The org switcher lists organizations only; "All organizations" is gone.
@@ -1735,14 +1774,14 @@ structure for every level". Members don't see Manage, D-508(e).)
   Settings (`ORG_RAIL_GROUPS`, `visibleTopics("org", …)`). Counts (C-1082): the total on Overview, a part per entry.
   The page has no second menu; on a phone the drawer shows the same menu with the back line. Page titles name the
   scope (D-508(i)): "Agents in <org>", "People in <org>", "Skills in <org>", "Workspaces in <org>" …; the leads are
-  unchanged. The switcher's **Manage <org>** row opens the Overview; its "All n in <org>" opens Workspaces; its last
+  unchanged. The picker's **Manage <org>** row opens the Overview; its "All n workspaces…" opens Workspaces; its last
   row **New organization** opens a dialog (shown where sign-up lets the person create one). Every old address keeps
   working (C-960).
 - **Members** (D-508(e), C-1178): every Manage address (`/o/<org>`, `/o/<org>/<topic>…`) redirects a member (no owner
   or admin role there, not an instance admin) to the workspace they used last in that organization, else their
   first, else `/` (`ManageGate`); nothing of Manage is drawn on the way. It is navigation only: every API route keeps
-  its own authorization. No link sends a member to Manage: the switcher's "All n" opens the whole list in the menu,
-  Ctrl K has no organization entry for them, and a fix or rule that lives in Manage is said without a link (an
+  its own authorization. No link sends a member to Manage: the picker's "All n workspaces…" opens the whole list in
+  the picker, Ctrl K has no Manage entry for them, and a fix or rule that lives in Manage is said without a link (an
   organization rule links to the workspace's Internet access). `/` never lands a member on an organization's address:
   a member in no workspace reads "You are not in a workspace yet".
 - **Overview** (`/o/<org>`, nav-3b): the title is the organization, the lead "Everything <org>'s workspaces share";
@@ -2723,11 +2762,14 @@ controls**, except the *nouns* in the palette. Each verb and each key does what 
 
 **Command palette (⌘K / Ctrl K).** One dialog (`components/palette/command-palette.tsx`, mounted once in the app shell),
 opened with `⌘K` (macOS) or `Ctrl K`, and from **Search · ⌘K** in the rail's footer. Top-anchored, a search field
-(`role="combobox"`), a `role="listbox"` of results under group headings (Actions, Workspaces, Organizations, Agents,
+(`role="combobox"`), a `role="listbox"` of results under group headings (Actions, Workspaces, Places, Agents,
 Pages, Agent pages, Account), arrow keys, Enter to choose, Escape to close, a hint line, full width at 390 px. Matching is
 case-insensitive, by whole-label start, word start or substring; ties go by recency (`readRecent`, the switcher's list).
 No match: "Nothing matches “text”."; a skeleton row while the session loads.
-- **Nouns, for everyone:** workspaces and organizations (the switcher's index, D-389), the agents of the current
+- **Nouns, for everyone:** the places the picker lists (P5-NAV-3, D-508(f)): every workspace by name (as the person
+  reads it, found by its stored name too; with an emergency reader's while their grant is open) and, under
+  **Places**, **Manage <org>** for those who may open it (never a member) and **Administration** for instance admins;
+  then the agents of the current
   workspace, the topics the viewer's `visibleTopics` lists, the open agent's pages the navigation lists, and the person's
   account pages.
 - **Verbs, altitude Expert (`palette.verbs`):** *New chat with <Agent>*, *Give <Agent> an app* (goes to Apps & access),

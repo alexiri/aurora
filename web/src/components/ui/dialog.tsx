@@ -31,6 +31,36 @@ const SHEET =
   "max-sm:left-0 max-sm:top-0 max-sm:h-dvh max-sm:max-h-none max-sm:w-screen max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0";
 
 /**
+ * (P5-NAV-3, nav-3d) A sheet from the foot of a phone's screen for a list of places: a grab handle, then the content,
+ * which scrolls. `title` names it for assistive technology; Escape, a tap outside and the close button (shown on
+ * keyboard focus, there for screen readers) close it, and the focus returns to what opened it.
+ */
+export function BottomSheetContent({ title, children, className, ...props }: { title: string } & ComponentProps<typeof DialogPrimitive.Content>) {
+  return (
+    <DialogPrimitive.Portal>
+      <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
+      <DialogPrimitive.Content
+        aria-describedby={undefined}
+        className={cn(
+          "fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col rounded-t-card border-t border-line bg-surface text-ink shadow-pop outline-none",
+          className,
+        )}
+        {...props}
+      >
+        <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
+        <span aria-hidden="true" className="mx-auto mt-2 mb-1 h-1 w-9 shrink-0 rounded-full bg-line-strong" />
+        <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">{children}</div>
+        <DialogPrimitive.Close asChild>
+          <button type="button" className="sr-only focus-visible:not-sr-only focus-visible:m-2 focus-visible:min-h-11 focus-visible:rounded-control">
+            Close
+          </button>
+        </DialogPrimitive.Close>
+      </DialogPrimitive.Content>
+    </DialogPrimitive.Portal>
+  );
+}
+
+/**
  * (P5-POLISH-1, D-393) Three rows in a flex column that never scrolls as a whole: a header (title, description, the
  * optional `header` slot such as a stepper, and the close button), a body (the only element that scrolls) and an
  * optional `footer` with a top border. `fixedHeight` ("600px") pins the height on desktop so multi-step dialogs do not

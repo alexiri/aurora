@@ -29,14 +29,20 @@ describe("palette items", () => {
     const items = paletteItems({ ...base, verbs: false });
     expect(items.some((i) => i.group === "Actions")).toBe(false);
     const names = labels(items);
-    for (const n of ["Operations", "Labs", "Main", "Acme", "Daneel", "Giskard", "Overview", "Approvals", "Chat", "Instructions", "Your account", "API keys", "SSH keys"]) {
+    for (const n of ["Operations", "Labs", "Main", "Manage Acme", "Daneel","Giskard", "Overview", "Approvals", "Chat", "Instructions", "Your account", "API keys", "SSH keys"]) {
       expect(names).toContain(n);
     }
   });
 
-  it("(D-508(e)) offers no organization entry where the viewer is only a member, except to an instance admin", () => {
-    expect(labels(paletteItems(base))).not.toContain("Globex");
-    expect(labels(paletteItems({ ...base, instanceAdmin: true }))).toContain("Globex");
+  it("(D-508(e), (f)) offers Manage only where the viewer may open it, and Administration to instance admins only", () => {
+    expect(labels(paletteItems(base))).not.toContain("Manage Globex");
+    expect(labels(paletteItems(base))).not.toContain("Administration");
+    const admin = paletteItems({ ...base, instanceAdmin: true });
+    expect(labels(admin)).toContain("Manage Globex");
+    expect(admin.find((i) => i.label === "Administration")).toMatchObject({ group: "Places", href: "/admin" });
+    // A role that is not known yet offers nothing: only an owner or admin has Manage.
+    const unknown = { ...base, memberships: [{ slug: "acme", name: "Acme", workspaces: [] }] };
+    expect(labels(paletteItems(unknown))).not.toContain("Manage Acme");
   });
 
   it("leaves SSH keys out when the instance has no SSH", () => {

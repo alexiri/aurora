@@ -125,10 +125,15 @@ describe("the palette with Show more controls off", () => {
     const hits = await screen.findAllByRole("option", { name: /Globex/ });
     expect(hits.map((h) => h.textContent)).toEqual(["MainGlobex"]);
     expect(hits[0]).toHaveAttribute("aria-selected", "true");
-    // The organization Ada owns is found itself.
+    // Ada owns Acme: its Manage is a place (D-508(f)). She is not an instance admin: no Administration.
     await userEvent.clear(field);
-    await userEvent.type(field, "acme");
-    await waitFor(() => expect(screen.getAllByRole("option").map((h) => h.textContent)).toContain("Acme"));
+    await userEvent.type(field, "manage");
+    // ("manage" also finds the open agent's Manage page.)
+    await waitFor(() => expect(screen.getAllByRole("option").map((h) => h.textContent)).toContain("Manage Acme"));
+    expect(screen.queryByRole("option", { name: /Manage Globex/ })).toBeNull();
+    await userEvent.clear(field);
+    await userEvent.type(field, "administration");
+    expect(await screen.findByText(/Nothing matches/)).toBeInTheDocument();
     await userEvent.clear(field);
     await userEvent.type(field, "o");
     await waitFor(() => expect(screen.getAllByRole("option").length).toBeGreaterThan(1));

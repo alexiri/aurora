@@ -70,22 +70,22 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(search).toBeInViewport();
       // D4: a personal workspace's avatar is its owner's initial, not the "Y" of "Your workspace".
       await expect(page.getByRole("link", { name: /Your workspace/ }).first()).toContainText("A");
-      await expect(page.getByRole("link", { name: "All 8 in Acme Labs" })).toHaveAttribute("href", "/o/acme/workspaces");
-      await expect(page.getByRole("button", { name: "Northwind · 4 workspaces" })).toBeVisible();
+      const picker = page.getByRole("dialog", { name: "Switch workspace or organization" });
+      await expect(picker.getByRole("link", { name: "All 8 workspaces…" })).toHaveAttribute("href", "/o/acme/workspaces");
+      await expect(picker.getByRole("link", { name: /Northwind .*opens your last workspace there/ })).toBeVisible();
       const { violations } = await new AxeBuilder({ page }).analyze();
       expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
       // Switch to another workspace.
-      await page.getByRole("link", { name: /Team 3/ }).click();
+      await picker.getByRole("link", { name: /Team 3/ }).click();
       await expect(page).toHaveURL(/\/o\/acme\/w\/team-3$/);
       await expect(sw).toContainText("Team 3");
-      // Search for an organization, open its workspaces, go back.
+      // Search crosses organizations; Escape closes and the card has the focus again.
       await sw.getByRole("button").click();
       await page.getByPlaceholder("Find a workspace or organization").fill("north");
-      await page.getByRole("button", { name: /Northwind/ }).click();
-      await expect(page.getByRole("link", { name: /North 2/ })).toHaveAttribute("href", "/o/northwind/w/n-2");
-      await page.getByRole("button", { name: "Northwind", exact: true }).click();
-      await expect(page.getByRole("link", { name: "All 8 in Acme Labs" })).toBeVisible();
+      await expect(picker.getByRole("option", { name: /North 2/ })).toHaveAttribute("href", "/o/northwind/w/n-2");
       await page.keyboard.press("Escape");
+      await expect(picker).toHaveCount(0);
+      await expect(sw.getByRole("button")).toBeFocused();
       expect(await overflow(page)).toBeLessThanOrEqual(0);
       expect(errors).toEqual([]);
     });
@@ -96,7 +96,6 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(page).toHaveURL(/\/admin$/, { timeout: 30_000 });
       const sidebar = page.getByRole("complementary", { name: "Sidebar" });
       await expect(sidebar.getByTestId("place-card")).toHaveText(/Administration\s+This Aurora/);
-      await expect(sidebar.getByTestId("scope-switcher")).toHaveCount(0);
       await expect(page.getByText("Select organization")).toHaveCount(0);
       await expect(page.getByTestId("level-badge")).toHaveCount(0);
       // (P5-REFINE-20 batch 4) Inside Administration the rail's place card names it once: the sidebar's own
