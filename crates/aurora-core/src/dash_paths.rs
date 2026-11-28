@@ -81,6 +81,24 @@ pub fn org_apps(org: &str, tab: &str) -> String {
     format!("/o/{org}/apps?tab={tab}")
 }
 
+/// The organization's accounts list.
+#[must_use]
+pub fn org_accounts(org: &str) -> String {
+    org_apps(org, "accounts")
+}
+
+/// The Reconnect dialog of one organization account on that list (C-842, C-937).
+#[must_use]
+pub fn org_reconnect(org: &str, connection: &str) -> String {
+    format!("{}&reconnect={connection}", org_accounts(org))
+}
+
+/// The organization's Skills page, where waiting library updates are reviewed.
+#[must_use]
+pub fn org_skills(org: &str) -> String {
+    format!("/o/{org}/skills")
+}
+
 #[must_use]
 pub fn org_oauth_clients(org: &str) -> String {
     org_apps(org, "oauth-clients")
@@ -228,6 +246,12 @@ mod tests {
             "/o/acme/w/main/approvals?focus=r1"
         );
         assert_eq!(admin_chat_platforms(), "/admin/chat-platforms");
+        assert_eq!(org_accounts("acme"), "/o/acme/apps?tab=accounts");
+        assert_eq!(
+            org_reconnect("acme", "c1"),
+            "/o/acme/apps?tab=accounts&reconnect=c1"
+        );
+        assert_eq!(org_skills("acme"), "/o/acme/skills");
         assert_eq!(org_chat_platforms("acme"), "/o/acme/chat-platforms");
         assert_eq!(
             template_version_review("nightmanager", "1.4.0"),
@@ -262,6 +286,9 @@ mod tests {
             org_internet_access("acme"),
             org_settings("acme", "secret-stores"),
             org_chat_platforms("acme"),
+            org_accounts("acme"),
+            org_reconnect("acme", "c1"),
+            org_skills("acme"),
             ws_overview("acme", "main"),
             ws_agents("acme", "main"),
             ws_agent_access("acme", "main", "a1"),

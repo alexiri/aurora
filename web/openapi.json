@@ -29829,7 +29829,7 @@
         "tags": [
           "attention"
         ],
-        "summary": "(C-1080) The requests the organization's owners and admins can resolve. Owners and admins; 404 for a\nnon-member, 403 for a member.",
+        "summary": "(C-1080) What the organization's owners and admins can act on: setup requests, skill library\nupdates to organization skills (signed-in sessions only) and organization accounts that stopped\nworking; `state=done` lists requests. Owners and admins; 404 for a non-member, 403 for a member.",
         "operationId": "orgAttention",
         "parameters": [
           {
@@ -50660,6 +50660,8 @@
           "app_request",
           "chat_platform_request",
           "ai_key_request",
+          "library_update",
+          "org_account_broken",
           "approval",
           "access_request",
           "broken_account",
@@ -60708,9 +60710,14 @@
           "role",
           "status",
           "sources",
-          "workspaces"
+          "workspaces",
+          "can_create_workspaces"
         ],
         "properties": {
+          "can_create_workspaces": {
+            "type": "boolean",
+            "description": "(C-1179) The caller may create a workspace in this organization: owners and admins, and\nmembers while `members_can_create_workspaces` is on; `false` while suspended. A hint for\nwhat to offer: `POST /v1/orgs/{org}/workspaces` checks it again."
+          },
           "effective_role": {
             "oneOf": [
               {

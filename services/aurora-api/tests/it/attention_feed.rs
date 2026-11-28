@@ -640,3 +640,383 @@ async fn the_workspace_feed_for_a_member_and_an_owner() {
         json!({"administration": null, "organization": null, "workspace": null})
     );
 }
+
+// ---- the organization's library updates and broken accounts ------------------------------------
+
+/// A library of `org` (`None` = the instance's).
+async fn library(w: &W, org: Option<Uuid>, label: &str, status: &str) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO skill_libraries (id, org_id, label, url, repo, status) VALUES ($1,$2,$3,$4,'git.example/x/y',$5)",
+    )
+    .bind(id)
+    .bind(org)
+    .bind(label)
+    .bind(format!("https://git.example/x/{id}"))
+    .bind(status)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    id
+}
+
+/// A skill of `org` added from `lib` (`ws` = a workspace skill, else the organization's), with one
+/// proposed update in `update_status`. Returns the update's id.
+async fn library_update(
+    w: &W,
+    org: Uuid,
+    ws: Option<Uuid>,
+    lib: Uuid,
+    name: &str,
+    update_status: &str,
+) -> Uuid {
+    let skill = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO skills (id, org_id, workspace_id, name, description, body, enabled, created_by_kind,
+            library_id, library_label, library_repo, library_path, library_commit_sha, library_blobs,
+            library_content_sha256, library_pinned_at)
+         VALUES ($1,$2,$3,$4,'d','b',true,'user',$5,'l','x/y',$4,repeat('a',40),'{}'::jsonb,'\\x00',now())",
+    )
+    .bind(skill)
+    .bind(org)
+    .bind(ws)
+    .bind(name)
+    .bind(lib)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    let update = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO skill_library_updates (id, skill_id, library_id, kind, status, commit_sha, content_sha256, bytes)
+         VALUES ($1,$2,$3,'removed',$4,'x','\\x00',1)",
+    )
+    .bind(update)
+    .bind(skill)
+    .bind(lib)
+    .bind(update_status)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    update
+}
+
+/// A token secret of `org` (`ws` = a workspace's) whose last call was refused (`broken`) or worked.
+async fn token_secret(w: &W, org: Uuid, ws: Option<Uuid>, name: &str, broken: bool) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO secrets (id, org_id, workspace_id, name, kind, host_pattern, injection, value_source, value_ref,
+            last_ok_at, last_error_at, last_error)
+         VALUES ($1,$2,$3,$4,'generic','api.weather.example','{}','managed','x',
+            CASE WHEN $5 THEN NULL ELSE now() END, CASE WHEN $5 THEN now() END, CASE WHEN $5 THEN 'rejected' END)",
+    )
+    .bind(id)
+    .bind(org)
+    .bind(ws)
+    .bind(name)
+    .bind(broken)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    id
+}
+
+async fn connection(w: &W, org: Uuid, ws: Option<Uuid>, label: &str, status: &str) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id, app_version, label, status, credentials_ref)
+         VALUES ($1,$2,$3,'ghlike','multi','1.0.0',$4,$5,'x')",
+    )
+    .bind(id)
+    .bind(org)
+    .bind(ws)
+    .bind(label)
+    .bind(status)
+    .execute(w.h.pool())
+    .await
+    .unwrap();
+    id
+}
+
+async fn org_names(w: &W) -> String {
+    sqlx::query_scalar("UPDATE organizations SET name = 'Acme' WHERE id = $1 RETURNING slug")
+        .bind(w.org)
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap()
+}
+
+impl W {
+    /// The organization feed's count is the rail's, and the topics add up to it.
+    async fn org_counts_match(&self, who: &str, topics: Value) {
+        let feed = self.feed(who, &self.org_feed("open")).await;
+        let (_, c) = self.call(who, Method::GET, &self.counts_uri(), None).await;
+        assert_eq!(c["organization"]["count"], feed["count"], "{c} {feed}");
+        assert_eq!(c["organization"]["topics"], topics, "{c}");
+    }
+
+    /// A viewer who may not act for the organization: no feed, no count.
+    async fn sees_no_org_items(&self, who: &str) {
+        let (s, v) = self
+            .call(who, Method::GET, &self.org_feed("open"), None)
+            .await;
+        assert_eq!(s, 403, "{v}");
+        assert!(v.get("items").is_none(), "{v}");
+        let (_, c) = self.call(who, Method::GET, &self.counts_uri(), None).await;
+        assert_eq!(c["organization"], Value::Null, "{c}");
+    }
+}
+
+/// An organization owner or admin sees one `library_update` item per library with updates to
+/// organization skills, and it is counted. A member (a workspace owner too) sees neither. Workspace
+/// skills' updates, decided updates and paused libraries (nothing can be approved there) add nothing.
+#[tokio::test]
+async fn a_library_update_waits_for_who_may_decide_it() {
+    let w = world().await;
+    let slug = org_names(&w).await;
+    let lib = library(&w, Some(w.org), "Anthropic skills", "active").await;
+    let first = library_update(&w, w.org, None, lib, "pdf", "pending").await;
+    // None of these is the organization's to decide now.
+    library_update(&w, w.org, None, lib, "decided", "rejected").await;
+    let theirs = library(&w, Some(w.org), "Team skills", "active").await;
+    library_update(&w, w.org, Some(w.ws), theirs, "ws-only", "pending").await;
+    let paused = library(&w, Some(w.org), "Paused skills", "paused").await;
+    library_update(&w, w.org, None, paused, "held", "pending").await;
+
+    let org = w.feed(&w.org_admin, &w.org_feed("open")).await;
+    assert_eq!(kinds(&org), ["library_update"], "{org}");
+    assert_eq!(org["count"], 1);
+    let i = &org["items"][0];
+    assert_eq!(i["id"], format!("library_update:{lib}"));
+    assert_eq!(i["subject_id"], lib.to_string());
+    assert_eq!(i["level"], "organization");
+    assert_eq!(i["topic"], "skills");
+    assert_eq!(i["title"], "Anthropic skills has an update to review");
+    assert_eq!(i["detail"], "Shared with every workspace in Acme.");
+    assert_eq!(i["href"], format!("/o/{slug}/skills"));
+    assert_eq!(
+        i["action"],
+        json!({"label": "Review", "href": format!("/o/{slug}/skills")})
+    );
+    assert_eq!(
+        (
+            i["decision"].as_bool(),
+            i["own"].as_bool(),
+            i["can_decline"].as_bool(),
+            i["state"].as_str()
+        ),
+        (Some(true), Some(false), Some(false), Some("open"))
+    );
+    w.org_counts_match(&w.org_admin, json!({"skills": 1})).await;
+    w.sees_no_org_items(&w.member).await;
+    w.sees_no_org_items(&w.ws_owner).await;
+    // Neither of the other levels' feeds lists it.
+    for uri in [w.ws_feed("open"), "/v1/admin/attention".to_owned()] {
+        let who = if uri.contains("admin") {
+            &w.root
+        } else {
+            &w.org_admin
+        };
+        let v = w.feed(who, &uri).await;
+        assert!(of_kind(&v, "library_update").is_empty(), "{v}");
+    }
+
+    // A second skill with an update, in an instance library too: one item per library, with how many.
+    library_update(&w, w.org, None, lib, "docx", "pending").await;
+    let shared = library(&w, None, "House skills", "error").await;
+    library_update(&w, w.org, None, shared, "house", "pending").await;
+    let org = w.feed(&w.org_admin, &w.org_feed("open")).await;
+    let titles: Vec<&str> = org["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "Anthropic skills has 2 updates to review",
+            "House skills has an update to review"
+        ],
+        "{org}"
+    );
+    w.org_counts_match(&w.org_admin, json!({"skills": 2})).await;
+    // `done` lists no library updates; a decided one leaves the open list.
+    let done = w.feed(&w.org_admin, &w.org_feed("done")).await;
+    assert!(of_kind(&done, "library_update").is_empty(), "{done}");
+    sqlx::query("UPDATE skill_library_updates SET status = 'applied', decided_at = now() WHERE id = $1 OR library_id = $2")
+        .bind(first)
+        .bind(lib)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let org = w.feed(&w.org_admin, &w.org_feed("open")).await;
+    assert_eq!(org["count"], 1, "{org}");
+}
+
+/// Deciding a library update needs a signed-in session, so an API key (even an organization
+/// admin's) is not told of one; with skill libraries switched off nobody can decide, so nobody is.
+#[tokio::test]
+async fn a_library_update_is_not_shown_to_who_cannot_decide_at_all() {
+    let w = world().await;
+    let lib = library(&w, Some(w.org), "Anthropic skills", "active").await;
+    library_update(&w, w.org, None, lib, "pdf", "pending").await;
+    token_secret(&w, w.org, None, "Weather token", true).await;
+    let adam: Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = 'adam@x.io'")
+        .fetch_one(w.h.pool())
+        .await
+        .unwrap();
+    let (_, key) = w.h.api_key(adam, w.org, None, false).await;
+    let auth = bearer(&key);
+    for uri in [w.org_feed("open"), w.counts_uri()] {
+        let (s, _, v) =
+            w.h.send(Method::GET, &uri, &[("authorization", auth.as_str())], None)
+                .await;
+        assert_eq!(s, 200, "{uri}: {v}");
+        let count = if uri.contains("counts") {
+            &v["organization"]["count"]
+        } else {
+            assert_eq!(kinds(&v), ["org_account_broken"], "{v}");
+            &v["count"]
+        };
+        assert_eq!(count, 1, "{uri}: {v}");
+    }
+
+    let off = world_with(|c| c.skills_library.enabled = false).await;
+    let lib = library(&off, Some(off.org), "Anthropic skills", "active").await;
+    library_update(&off, off.org, None, lib, "pdf", "pending").await;
+    token_secret(&off, off.org, None, "Weather token", true).await;
+    let v = off.feed(&off.org_admin, &off.org_feed("open")).await;
+    assert_eq!(kinds(&v), ["org_account_broken"], "{v}");
+    off.org_counts_match(&off.org_admin, json!({"apps": 1}))
+        .await;
+}
+
+/// An organization account that is failing or must sign in again is the owners' and admins' to fix:
+/// listed and counted for them, never for a member. A workspace's account, a working one and a
+/// switched-off one are not the organization's items.
+#[tokio::test]
+async fn a_broken_organization_account_waits_for_who_may_fix_it() {
+    let w = world().await;
+    let slug = org_names(&w).await;
+    let secret = token_secret(&w, w.org, None, "Weather token", true).await;
+    let conn = connection(&w, w.org, None, "GitHub", "reauth_required").await;
+    token_secret(&w, w.org, Some(w.ws), "Team token", true).await;
+    token_secret(&w, w.org, None, "Healthy token", false).await;
+    connection(&w, w.org, Some(w.ws), "Team GitHub", "reauth_required").await;
+    connection(&w, w.org, None, "Off GitHub", "disabled").await;
+    connection(&w, w.org, None, "Good GitHub", "active").await;
+
+    let org = w.feed(&w.org_admin, &w.org_feed("open")).await;
+    let items = of_kind(&org, "org_account_broken");
+    assert_eq!(
+        (items.len(), kinds(&org).len(), org["count"].as_i64()),
+        (2, 2, Some(2)),
+        "{org}"
+    );
+    let by = |subject: Uuid| {
+        items
+            .iter()
+            .find(|i| i["subject_id"] == subject.to_string())
+            .unwrap_or_else(|| panic!("{subject}: {org}"))
+    };
+    let s = by(secret);
+    assert_eq!(s["id"], format!("org_account_broken:{secret}"));
+    assert_eq!(
+        (s["level"].as_str(), s["topic"].as_str()),
+        (Some("organization"), Some("apps"))
+    );
+    assert_eq!(
+        s["title"],
+        "The Weather token account for Acme stopped working"
+    );
+    assert_eq!(
+        s["detail"],
+        "It no longer accepts the saved credentials. Workspaces that use it stop until it is fixed."
+    );
+    assert_eq!(
+        s["action"],
+        json!({"label": "Fix", "href": format!("/o/{slug}/apps?tab=accounts")})
+    );
+    assert_eq!(
+        (s["decision"].as_bool(), s["can_decline"].as_bool()),
+        (Some(false), Some(false))
+    );
+    let c = by(conn);
+    assert_eq!(
+        c["title"],
+        "The GitHub account for Acme needs someone to sign in again"
+    );
+    assert_eq!(
+        c["detail"],
+        "The sign-in expired. Workspaces that use it stop until it is renewed."
+    );
+    assert_eq!(
+        c["action"],
+        json!({"label": "Sign in again",
+            "href": format!("/o/{slug}/apps?tab=accounts&reconnect={conn}")})
+    );
+    w.org_counts_match(&w.org_admin, json!({"apps": 2})).await;
+    w.sees_no_org_items(&w.member).await;
+    w.sees_no_org_items(&w.ws_owner).await;
+
+    // A call that worked since: nothing to do.
+    sqlx::query("UPDATE secrets SET last_ok_at = now() + interval '1 second' WHERE id = $1")
+        .bind(secret)
+        .execute(w.h.pool())
+        .await
+        .unwrap();
+    let org = w.feed(&w.org_admin, &w.org_feed("open")).await;
+    assert_eq!(org["count"], 1, "{org}");
+}
+
+/// Another organization's library updates and broken accounts never appear: not its own library's,
+/// and not its skills' updates from a library the whole instance shares.
+#[tokio::test]
+async fn another_organizations_items_never_appear() {
+    let w = world().await;
+    let other = w.h.org().await;
+    let other_ws = w.h.workspace(other).await;
+    let theirs = library(&w, Some(other), "Their skills", "active").await;
+    library_update(&w, other, None, theirs, "theirs", "pending").await;
+    let shared = library(&w, None, "House skills", "active").await;
+    library_update(&w, other, None, shared, "house", "pending").await;
+    token_secret(&w, other, None, "Their token", true).await;
+    connection(&w, other, None, "Their GitHub", "reauth_required").await;
+    token_secret(&w, other, Some(other_ws), "Their team token", true).await;
+
+    let org = w.feed(&w.org_admin, &w.org_feed("open")).await;
+    assert_eq!(
+        (kinds(&org).len(), org["count"].as_i64()),
+        (0, Some(0)),
+        "{org}"
+    );
+    w.org_counts_match(&w.org_admin, json!({})).await;
+    // This organization's admin cannot ask about the other one: 404, and a null count.
+    let (s, v) = w
+        .call(
+            &w.org_admin,
+            Method::GET,
+            &format!("/v1/orgs/{other}/attention?state=open"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 404, "{v}");
+    let (_, c) = w
+        .call(
+            &w.org_admin,
+            Method::GET,
+            &format!("/v1/attention/counts?org={other}"),
+            None,
+        )
+        .await;
+    assert_eq!(c["organization"], Value::Null, "{c}");
+
+    // The shared library's item counts this organization's skills only.
+    library_update(&w, w.org, None, shared, "house-here", "pending").await;
+    let org = w.feed(&w.org_admin, &w.org_feed("open")).await;
+    assert_eq!(kinds(&org), ["library_update"], "{org}");
+    assert_eq!(
+        org["items"][0]["title"],
+        "House skills has an update to review"
+    );
+}

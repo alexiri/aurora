@@ -28,6 +28,10 @@ pub struct MeMembership {
     pub sources: Vec<MeRoleSource>,
     /// Workspaces the user can use; empty while the membership is suspended.
     pub workspaces: Vec<MeWorkspace>,
+    /// (C-1179) The caller may create a workspace in this organization: owners and admins, and
+    /// members while `members_can_create_workspaces` is on; `false` while suspended. A hint for
+    /// what to offer: `POST /v1/orgs/{org}/workspaces` checks it again.
+    pub can_create_workspaces: bool,
 }
 
 #[derive(Serialize, ToSchema)]

@@ -2175,10 +2175,10 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
 
 - C-1080 **One attention feed per level** (P5-REFINE-8, D-417, D-407; extends C-1022). The same item shape and the same word *attention* at three levels. Each route returns only what the caller can act on at that level (plus, for the asker, their own waiting requests, never counted).
   - `GET /v1/workspaces/{ws}/attention?state=open|done` (any active member of `ws`; 404 for a non-member). Kinds: `approval` (a pending gateway or action approval the caller may decide, `can_approve`), `access_request` (an agent asked for an app or website, open, `can_use`/`can_own` as C-981's access-request list), `broken_account` (an account that agents of this workspace use and that is `failing` or `sign_in_expired`, D-383, that the caller can fix; else, for everyone else with `can_use`, the same item with `action: null` and the sentence "Ask <role>"), and **`my_request`** (the caller's own open setup request, `own: true`, never counted: "Waiting for an admin since Tuesday"). A viewer who cannot decide approvals sees none.
-  - `GET /v1/orgs/{org}/attention?state=open|done` (organization owners and admins; others 404/403 as the org routes). Kinds: `app_request`, `chat_platform_request`, `ai_key_request` whose resolving level is `organization` (below), plus `ownerless_org` is **not** here (it stays in Administration).
+  - `GET /v1/orgs/{org}/attention?state=open|done` (organization owners and admins; others 404/403 as the org routes). Kinds: `app_request`, `chat_platform_request`, `ai_key_request` whose resolving level is `organization` (below), plus `ownerless_org` is **not** here (it stays in Administration). **Amended by C-1179:** also `library_update` and `org_account_broken` (open only).
   - `GET /v1/admin/attention?state=open|done` (instance admins; 403 otherwise; amends C-1022). The six kinds of C-1022 are unchanged, plus `app_request` and `chat_platform_request` whose resolving level is `administration`.
   - **Item** `AttentionItem` (the C-1022 fields are kept, so today's Administration page and badge read it unchanged): `{ id: string, kind, level: "workspace" | "organization" | "administration", topic: string, subject_id: string, title: string, detail: string, since: string (date-time), href: string, decision: boolean, actors: { user_id: string, display_name: string }[] (at most 5 askers, oldest first), actors_total: integer, reason: string | null, own: boolean, action: { label: string, href: string } | null, can_decline: boolean, state: "open" | "done" | "declined", closed_at: string | null, message: string | null, closed_by_role: "org_admin" | "instance_admin" | "system" | null, closed_by: { display_name: string } | null }`.
-    - `id` is stable: the request id for request kinds, `<kind>:<subject_id>` for the rest. `topic` names the page of the level's rail that resolves the item (`chat-platforms`, `apps`, `ai-models`, `people`, `approvals`, `accounts`), so a rail can badge a topic.
+    - `id` is stable: the request id for request kinds, `<kind>:<subject_id>` for the rest. `topic` names the page of the level's rail that resolves the item (`chat-platforms`, `apps`, `ai-models`, `people`, `approvals`, `accounts`), so a rail can badge a topic. **Amended by C-1179:** for the organization level a topic is a Manage rail entry id (it adds `skills`).
     - `title` and `detail` are the fixed sentences of `14 §9` filled with display names and subject names only (SEC-135). Text that points to an administrator names the **role** ("Ask an admin", D-407). `title` for requests: "Bob Builder wants Jira", "Bob Builder and Carol Member want a chat platform", "Bob Builder, Carol Member and 2 others want an AI key".
     - `reason` is the **first asker's** reason (C-1081) or null; the other askers' reasons are on the request (C-1081). `own` is true only on `my_request`.
     - `action` is the one primary action: `{ label: "Set up", href }`, `"Connect a chat platform"`, `"Add an AI key"`, `"Review"` (approvals: opens the conversation), `"Sign in again"` / `"Fix"` (accounts). `href` is the existing field and equals `action.href` when `action` is set. `can_decline` is true on request kinds the caller may decline (C-1081).
@@ -3054,6 +3054,42 @@ and copy them into `14`.
   memberships (or was read under their own emergency grant). The Workspaces page uses existing routes only:
   `GET /v1/orgs/{org}/workspaces`, `GET /v1/orgs/{org}/agents`, and `GET /v1/workspaces/{ws}` for each team
   workspace's `audience.owners` (the list carries no owners).
+
+- C-1179 **The organization's feed holds what needs an owner or admin; memberships say who may create a workspace**
+  (P5-NAV-5 pass 1, FIX-282, within D-508; amends C-1080 and C-1082, extends `Me`). No new route.
+  - **`GET /v1/orgs/{org}/attention?state=open`** adds two `AttentionItem` kinds, `level: "organization"`, counted
+    (`own: false`) in the feed's `count` and in `GET /v1/attention/counts` `organization.count` and `.topics`. The route's
+    authorization is unchanged (owners and admins by effective role; 404 for a non-member, 403 for a member; the counts
+    answer `null`). Both are open only: `state=done` still lists requests. Neither can be declined, neither has
+    `actors` or a `reason`. The workspace and Administration feeds do not list them. In the organization's feed and
+    counts a `topic` is the id of a **Manage rail entry** (`apps`, `chat-platforms`, `ai-models`, `skills`): the rail
+    badges an entry with `topics[<its id>]`, so an organization account is `apps`, not the workspace level's
+    `accounts`.
+    - **`library_update`**: one item per skill library with a `pending` update to an **organization-tier** skill of
+      `{org}` (no workspace and no agent; those are decided at their own level). The organization is the skill's, so an
+      instance library counts this organization's skills only. "Can decide" is the library pages' rule for the
+      decision routes (`POST /v1/skills/{id}/library/updates/{uid}/approve|reject`): an owner or admin **with a
+      session** (an API key is not told of one) while `skills.library.enabled`. A `paused` library adds nothing
+      (nothing of it can be approved, `409 library_paused`). `id` `library_update:<library id>`, `subject_id` the
+      library id, `topic` `skills`, `decision: true`, `since` the oldest waiting proposal. `title` "<Library> has an
+      update to review" / "<Library> has <n> updates to review" (`n` = skills with a waiting update), `detail` "Shared
+      with every workspace in <Organization>.", `action` `{ "Review", /o/<org>/skills }`. Not e-mailed or pushed.
+    - **`org_account_broken`**: one item per account of the organization itself (`workspace_id` null: app
+      connections and active secrets, AI keys included) whose health is `failing` or `sign_in_expired` (the
+      `broken_account` rule; `disabled` and `orphaned` are not listed). Who may fix it is the accounts list's
+      `can.manage` for an organization account: owners and admins. `id` `org_account_broken:<account id>`,
+      `subject_id` the account id, `topic` `apps`, `decision: false`. `title` "The <Account> account for
+      <Organization> stopped working" / "… needs someone to sign in again"; `detail` the reason ("It no longer accepts
+      the saved credentials.", "It could not be reached.", "The sign-in expired.", "It gave an unexpected answer.")
+      then "Workspaces that use it stop until it is fixed." ("… renewed." for an expired sign-in); `action` "Sign in again" (an expired connection:
+      `/o/<org>/apps?tab=accounts&reconnect=<id>`) or "Fix" (`/o/<org>/apps?tab=accounts`).
+    - People waiting to join are **not** counted (open question to the owner).
+  - **C-1082 stays cheap:** the organization's counts read the same three bounded queries as its feed (at most 200 rows
+    each), with no sentences or names.
+  - **`GET /v1/me` (and `PATCH`)**: `memberships[].can_create_workspaces: bool` (required). `true` for an effective
+    `owner` or `admin`, and for a member while the organization's `members_can_create_workspaces` is on (the default);
+    `false` for a suspended membership. It is the rule `POST /v1/orgs/{org}/workspaces` enforces, which still checks it
+    on every create.
 
 ## Shared schemas
 

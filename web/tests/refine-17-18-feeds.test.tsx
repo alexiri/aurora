@@ -129,7 +129,7 @@ describe("Manage › Overview: Needs you from the organization feed (#16, C-1080
       action: { label: "Review", href: "/o/acme/skills?tab=libraries" },
     };
     const broken = {
-      ...common, id: "org_account_broken:c1", kind: "org_account_broken", topic: "accounts", subject_id: "c1", since: SINCE,
+      ...common, id: "org_account_broken:c1", kind: "org_account_broken", topic: "apps", subject_id: "c1", since: SINCE,
       title: "The GitHub account for Acme failed to refresh its token", detail: "Workspaces that use it stop until it is renewed",
       href: "/o/acme/apps?tab=accounts", decision: true, actors: [], actors_total: 0, can_decline: false,
       action: { label: "Fix", href: "/o/acme/apps?tab=accounts" },

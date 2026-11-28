@@ -1,4 +1,4 @@
-//! (P5-REFINE-8, D-417, C-1080, C-1082) The workspace feed's account source: the accounts of a
+//! (P5-REFINE-8, D-417, C-1080, C-1082) The attention feeds' sources. The workspace feed's account source: the accounts of a
 //! workspace's accounts list (its own and the organization's, `GET /v1/workspaces/{ws}/accounts`) whose
 //! health may be `failing` or `sign_in_expired`, in one bounded query. The API decides the state with
 //! the same function the accounts list uses (`accounts::health::state_of`); this query only narrows the
@@ -28,6 +28,41 @@ pub struct AccountHealthRow {
     pub last_error: Option<String>,
     /// When it started needing attention: the failure, or the status change.
     pub since: DateTime<Utc>,
+}
+
+/// A library with proposed updates to an organization's own skills.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct LibraryUpdatesRow {
+    pub library_id: Uuid,
+    pub label: String,
+    /// How many of the organization's skills have an update waiting.
+    pub updates: i64,
+    /// The oldest waiting proposal.
+    pub since: DateTime<Utc>,
+}
+
+/// One row per library with pending updates to **organization-tier** skills of `org`: the updates
+/// its owners and admins decide (a workspace's or an agent's skills are decided there). The
+/// organization is the skill's, so a library shared by the whole instance counts only this
+/// organization's skills. A paused library is left out: nothing of it can be approved.
+pub async fn org_library_updates<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    limit: i64,
+) -> Result<Vec<LibraryUpdatesRow>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT l.id AS library_id, l.label, count(*) AS updates, min(u.created_at) AS since \
+         FROM skill_library_updates u \
+         JOIN skills s ON s.id = u.skill_id \
+         JOIN skill_libraries l ON l.id = s.library_id \
+         WHERE s.org_id = $1 AND s.workspace_id IS NULL AND s.agent_id IS NULL \
+           AND u.status = 'pending' AND l.status <> 'paused' \
+         GROUP BY l.id, l.label ORDER BY since, l.id LIMIT $2",
+    )
+    .bind(org)
+    .bind(limit)
+    .fetch_all(exec)
+    .await?)
 }
 
 /// An agent's access request with the agent's name and a website's host, for the workspace feed. The
@@ -129,6 +164,25 @@ pub async fn accounts_needing_attention<'e, E: PgExecutor<'e>>(
     exec: E,
     org: Uuid,
     workspace: Uuid,
+    limit: i64,
+) -> Result<Vec<AccountHealthRow>, DbError> {
+    candidates(exec, org, Some(workspace), limit).await
+}
+
+/// The same candidates among the organization's own accounts only (no workspace's).
+pub async fn org_accounts_needing_attention<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    limit: i64,
+) -> Result<Vec<AccountHealthRow>, DbError> {
+    candidates(exec, org, None, limit).await
+}
+
+/// `workspace = None` matches no workspace row (`= NULL` is never true).
+async fn candidates<'e, E: PgExecutor<'e>>(
+    exec: E,
+    org: Uuid,
+    workspace: Option<Uuid>,
     limit: i64,
 ) -> Result<Vec<AccountHealthRow>, DbError> {
     Ok(sqlx::query_as(

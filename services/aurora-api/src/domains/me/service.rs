@@ -1,6 +1,8 @@
 use super::dto::*;
 use crate::app::AppState;
-use crate::domains::tenancy::dto::{OrgSummary, parse_org_role, parse_status, parse_ws_role};
+use crate::domains::tenancy::dto::{
+    OrgSettings, OrgSummary, parse_org_role, parse_status, parse_ws_role,
+};
 use crate::domains::tenancy::service::WorkspaceDeletion;
 use aurora_core::ApiError;
 use aurora_db::DbError;
@@ -23,10 +25,14 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
     let memberships = rows
         .into_iter()
         .map(|m| {
-            let effective_role = eff
-                .iter()
-                .find(|(o, _)| *o == m.org_id)
-                .map(|(_, r)| parse_org_role(r));
+            let effective = eff.iter().find(|(o, _)| *o == m.org_id);
+            let effective_role = effective.map(|(_, r)| parse_org_role(r));
+            // The rule `POST /v1/orgs/{org}/workspaces` enforces; no effective role (a
+            // suspended membership) means no.
+            let settings = OrgSettings::from_json(&m.settings);
+            let can_create_workspaces = effective
+                .and_then(|(_, r)| aurora_db::authz::OrgRole::parse(r))
+                .is_some_and(|r| settings.may_create_workspace(r));
             let mut sources = vec![MeRoleSource {
                 kind: "direct".into(),
                 group: None,
@@ -65,6 +71,7 @@ pub async fn load_me(state: &AppState, user_id: Uuid) -> Result<Me, ApiError> {
                 effective_role,
                 sources,
                 workspaces,
+                can_create_workspaces,
             }
         })
         .collect();

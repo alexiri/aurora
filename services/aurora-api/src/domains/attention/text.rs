@@ -164,21 +164,63 @@ pub fn broken_text(
             "Agents can't use it until someone signs in again.",
         )
     } else {
-        (
-            format!("{n} stopped working"),
-            match last_error {
-                Some("unreachable") => "It could not be reached.",
-                Some("expired") => "The sign-in expired.",
-                Some("unexpected") => "It gave an unexpected answer.",
-                _ => "It no longer accepts the saved credentials.",
-            },
-        )
+        (format!("{n} stopped working"), failure_words(last_error))
     };
     let detail = match fixer {
         Some(role) => format!("{why} Ask {role}."),
         None => why.to_owned(),
     };
     (title, detail)
+}
+
+/// "Anthropic skills has an update to review" / "… has 3 updates to review".
+pub fn library_update_text(library: &str, updates: i64, org: &str) -> (String, String) {
+    let n = name(library);
+    let title = if updates == 1 {
+        format!("{n} has an update to review")
+    } else {
+        format!("{n} has {updates} updates to review")
+    };
+    (
+        title,
+        format!("Shared with every workspace in {}.", name(org)),
+    )
+}
+
+/// An organization account that stopped working, for an owner or admin (who can fix it).
+pub fn org_account_text(
+    account: &str,
+    org: &str,
+    sign_in_expired: bool,
+    last_error: Option<&str>,
+) -> (String, String) {
+    let who = format!("The {} account for {}", name(account), name(org));
+    let (title, why, until) = if sign_in_expired {
+        (
+            format!("{who} needs someone to sign in again"),
+            "The sign-in expired.",
+            "renewed",
+        )
+    } else {
+        (
+            format!("{who} stopped working"),
+            failure_words(last_error),
+            "fixed",
+        )
+    };
+    (
+        title,
+        format!("{why} Workspaces that use it stop until it is {until}."),
+    )
+}
+
+fn failure_words(last_error: Option<&str>) -> &'static str {
+    match last_error {
+        Some("unreachable") => "It could not be reached.",
+        Some("expired") => "The sign-in expired.",
+        Some("unexpected") => "It gave an unexpected answer.",
+        _ => "It no longer accepts the saved credentials.",
+    }
 }
 
 /// (C-1080 `agent_cannot_answer`, D-408) "Daneel can't answer: no AI key" and what fixes it. `reason` is

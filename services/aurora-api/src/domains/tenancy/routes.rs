@@ -483,7 +483,7 @@ async fn create_workspace(
     let auth = c.org(&s, org).await?;
     if !auth.role.is_admin() {
         let o = load_org(&s, org, c.user_id).await?;
-        if !o.settings.members_can_create_workspaces {
+        if !o.settings.may_create_workspace(auth.role) {
             return Err(ApiError::forbidden(
                 "Creating workspaces is restricted to organization owners and admins.",
             ));
