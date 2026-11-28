@@ -5110,8 +5110,9 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * (C-1080) The requests the organization's owners and admins can resolve. Owners and admins; 404 for a
-         *     non-member, 403 for a member.
+         * (C-1080) What the organization's owners and admins can act on: setup requests, skill library
+         *     updates to organization skills (signed-in sessions only) and organization accounts that stopped
+         *     working; `state=done` lists requests. Owners and admins; 404 for a non-member, 403 for a member.
          */
         get: operations["orgAttention"];
         put?: never;
@@ -9021,7 +9022,7 @@ export interface components {
          * @description (FIX-167 Part B, C-1022) What an item of `GET /v1/admin/attention` is about.
          * @enum {string}
          */
-        AttentionKind: "connector_approval" | "package_approval" | "agent_template_version" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "approval" | "access_request" | "broken_account" | "agent_cannot_answer" | "my_request" | "template_update";
+        AttentionKind: "connector_approval" | "package_approval" | "agent_template_version" | "addon_key_changed" | "host_claim_conflict" | "connector_down" | "ownerless_org" | "app_request" | "chat_platform_request" | "ai_key_request" | "library_update" | "org_account_broken" | "approval" | "access_request" | "broken_account" | "agent_cannot_answer" | "my_request" | "template_update";
         /**
          * @description (C-1080) The level an item belongs to.
          * @enum {string}
@@ -12213,6 +12214,12 @@ export interface components {
             name: string;
         };
         MeMembership: {
+            /**
+             * @description (C-1179) The caller may create a workspace in this organization: owners and admins, and
+             *     members while `members_can_create_workspaces` is on; `false` while suspended. A hint for
+             *     what to offer: `POST /v1/orgs/{org}/workspaces` checks it again.
+             */
+            can_create_workspaces: boolean;
             effective_role?: components["schemas"]["OrgRole"] | null;
             org: components["schemas"]["OrgSummary"];
             role: components["schemas"]["OrgRole"];

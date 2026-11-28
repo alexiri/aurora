@@ -246,6 +246,12 @@ mod tests {
             "/o/acme/w/main/approvals?focus=r1"
         );
         assert_eq!(admin_chat_platforms(), "/admin/chat-platforms");
+        assert_eq!(org_accounts("acme"), "/o/acme/apps?tab=accounts");
+        assert_eq!(
+            org_reconnect("acme", "c1"),
+            "/o/acme/apps?tab=accounts&reconnect=c1"
+        );
+        assert_eq!(org_skills("acme"), "/o/acme/skills");
         assert_eq!(org_chat_platforms("acme"), "/o/acme/chat-platforms");
         assert_eq!(
             template_version_review("nightmanager", "1.4.0"),
@@ -280,6 +286,9 @@ mod tests {
             org_internet_access("acme"),
             org_settings("acme", "secret-stores"),
             org_chat_platforms("acme"),
+            org_accounts("acme"),
+            org_reconnect("acme", "c1"),
+            org_skills("acme"),
             ws_overview("acme", "main"),
             ws_agents("acme", "main"),
             ws_agent_access("acme", "main", "a1"),

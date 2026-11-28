@@ -925,7 +925,10 @@ async fn a_broken_organization_account_waits_for_who_may_fix_it() {
         (s["level"].as_str(), s["topic"].as_str()),
         (Some("organization"), Some("apps"))
     );
-    assert_eq!(s["title"], "Weather token for Acme stopped working");
+    assert_eq!(
+        s["title"],
+        "The Weather token account for Acme stopped working"
+    );
     assert_eq!(
         s["detail"],
         "It no longer accepts the saved credentials. Workspaces that use it stop until it is fixed."
@@ -939,10 +942,13 @@ async fn a_broken_organization_account_waits_for_who_may_fix_it() {
         (Some(false), Some(false))
     );
     let c = by(conn);
-    assert_eq!(c["title"], "GitHub for Acme needs someone to sign in again");
+    assert_eq!(
+        c["title"],
+        "The GitHub account for Acme needs someone to sign in again"
+    );
     assert_eq!(
         c["detail"],
-        "The sign-in expired. Workspaces that use it stop until it is fixed."
+        "The sign-in expired. Workspaces that use it stop until it is renewed."
     );
     assert_eq!(
         c["action"],

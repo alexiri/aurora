@@ -7,10 +7,8 @@ import { api } from "./client";
 import type { components } from "./schema";
 import { unwrap } from "./unwrap";
 
-type SchemaItem = components["schemas"]["AttentionItem"];
-// FIX-282 contract, typed here until `schema.d.ts` is regenerated after it merges.
-export type AttentionItem = Omit<SchemaItem, "kind"> & { kind: SchemaItem["kind"] | "library_update" | "org_account_broken" };
-export type AttentionList = Omit<components["schemas"]["AttentionList"], "items"> & { items: AttentionItem[] };
+export type AttentionItem = components["schemas"]["AttentionItem"];
+export type AttentionList = components["schemas"]["AttentionList"];
 export type AttentionCounts = components["schemas"]["AttentionCounts"];
 
 /** (P5-REFINE-8, C-1080/C-1082) The feeds and the counts share the `["attention"]` prefix: one invalidation refreshes both. */

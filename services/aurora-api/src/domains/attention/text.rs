@@ -194,18 +194,23 @@ pub fn org_account_text(
     sign_in_expired: bool,
     last_error: Option<&str>,
 ) -> (String, String) {
-    let who = format!("{} for {}", name(account), name(org));
-    let (title, why) = if sign_in_expired {
+    let who = format!("The {} account for {}", name(account), name(org));
+    let (title, why, until) = if sign_in_expired {
         (
             format!("{who} needs someone to sign in again"),
             "The sign-in expired.",
+            "renewed",
         )
     } else {
-        (format!("{who} stopped working"), failure_words(last_error))
+        (
+            format!("{who} stopped working"),
+            failure_words(last_error),
+            "fixed",
+        )
     };
     (
         title,
-        format!("{why} Workspaces that use it stop until it is fixed."),
+        format!("{why} Workspaces that use it stop until it is {until}."),
     )
 }
 

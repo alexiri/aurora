@@ -3,6 +3,7 @@
  * A place comes only from what this person may read: their session's memberships, the open organization's workspace list
  * (only the rows that are their own), and, while their own emergency grant is open, the workspace on screen.
  */
+import type { components } from "@/lib/api/schema";
 import { isEmergencyReader } from "@/lib/emergency";
 import { lastWorkspace } from "@/lib/nav/manage-return";
 import type { ScopeMembership } from "@/lib/nav/recent-scopes";
@@ -52,8 +53,7 @@ interface Membership {
   role?: string;
   effective_role?: string | null;
   status?: string;
-  // FIX-282 contract, typed here until `schema.d.ts` is regenerated after it merges.
-  can_create_workspaces?: boolean;
+  can_create_workspaces?: components["schemas"]["MeMembership"]["can_create_workspaces"];
   workspaces: { id?: string; slug: string; name?: string; my_role?: string; personal?: boolean }[];
 }
 

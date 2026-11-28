@@ -3075,10 +3075,10 @@ and copy them into `14`.
       connections and active secrets, AI keys included) whose health is `failing` or `sign_in_expired` (the
       `broken_account` rule; `disabled` and `orphaned` are not listed). Who may fix it is the accounts list's
       `can.manage` for an organization account: owners and admins. `id` `org_account_broken:<account id>`,
-      `subject_id` the account id, `topic` `apps`, `decision: false`. `title` "<Account> for <Organization> stopped
-      working" / "… needs someone to sign in again"; `detail` the reason ("It no longer accepts the saved
-      credentials.", "It could not be reached.", "The sign-in expired.", "It gave an unexpected answer.") then
-      "Workspaces that use it stop until it is fixed."; `action` "Sign in again" (an expired connection:
+      `subject_id` the account id, `topic` `apps`, `decision: false`. `title` "The <Account> account for
+      <Organization> stopped working" / "… needs someone to sign in again"; `detail` the reason ("It no longer accepts
+      the saved credentials.", "It could not be reached.", "The sign-in expired.", "It gave an unexpected answer.")
+      then "Workspaces that use it stop until it is fixed." ("… renewed." for an expired sign-in); `action` "Sign in again" (an expired connection:
       `/o/<org>/apps?tab=accounts&reconnect=<id>`) or "Fix" (`/o/<org>/apps?tab=accounts`).
     - People waiting to join are **not** counted (open question to the owner).
   - **C-1082 stays cheap:** the organization's counts read the same three bounded queries as its feed (at most 200 rows
