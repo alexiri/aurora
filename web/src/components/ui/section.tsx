@@ -83,19 +83,24 @@ export function ItemList({ className, ...props }: HTMLAttributes<HTMLUListElemen
   );
 }
 
-/** One list row: wraps on narrow screens; `actions` stay on the right (or below when tight). */
+/**
+ * One list row: wraps on narrow screens; `actions` stay on the right (or below when tight). `wideText`: a row of running
+ * text beside several buttons; the text keeps at least 16 rem, and the buttons go below it when that doesn't fit.
+ */
 export function ListRow({
   children,
   actions,
   className,
+  wideText = false,
 }: {
   children: ReactNode;
   actions?: ReactNode;
   className?: string;
+  wideText?: boolean;
 }) {
   return (
     <li className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 p-3 sm:px-4", className)}>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">{children}</div>
+      <div className={cn("flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1", wideText ? "grow basis-64" : "flex-1")}>{children}</div>
       {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </li>
   );

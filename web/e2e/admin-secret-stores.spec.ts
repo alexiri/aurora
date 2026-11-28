@@ -27,6 +27,19 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(list.getByRole("button", { name: "Edit team-vault" })).toBeVisible();
         await expect(list.getByRole("button", { name: "Edit vault" })).toHaveCount(0);
         await expect(page.getByText("Not answering")).toBeVisible();
+        // (FIX-286) A dashboard store's three buttons don't squeeze its text into a narrow column: the text keeps at
+        // least three quarters of the row, and at 390 px the buttons go below it.
+        const row = list.getByRole("listitem").filter({ has: page.getByRole("button", { name: "Edit team-vault" }) });
+        const rowBox = (await row.boundingBox())!;
+        const textBox = (await row.locator(":scope > div").first().boundingBox())!;
+        const buttonBox = (await row.getByRole("button", { name: "Edit team-vault" }).boundingBox())!;
+        if (width === 390) {
+          expect(textBox.width).toBeGreaterThanOrEqual(rowBox.width * 0.75);
+          expect(buttonBox.y).toBeGreaterThanOrEqual(textBox.y + textBox.height);
+        } else {
+          expect(textBox.width).toBeGreaterThanOrEqual(256);
+          expect(buttonBox.x).toBeGreaterThan(textBox.x + textBox.width - 1);
+        }
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });

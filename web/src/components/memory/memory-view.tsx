@@ -130,6 +130,8 @@ export function MemoryView({
     </Menu>
   );
   const name = memoryName(memory);
+  // An untitled memory is named by its text's first line, which is right below: the heading is then for screen readers.
+  const untitled = !memory.title?.trim();
   const locked = lockedWords(memory);
 
   const article = (
@@ -137,7 +139,7 @@ export function MemoryView({
       <div className={cn("space-y-2", narrow ? "" : "border-b border-line p-5")}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1 space-y-1">
-            <h3 className="break-words font-display text-lg font-semibold leading-6 text-ink">{name}</h3>
+            <h3 className={untitled ? "sr-only" : "break-words font-display text-lg font-semibold leading-6 text-ink"}>{name}</h3>
             {memory.description?.trim() ? <p className="break-words text-sm text-ink-2">{memory.description.trim()}</p> : null}
           </div>
           {!readOnly && !narrow ? (

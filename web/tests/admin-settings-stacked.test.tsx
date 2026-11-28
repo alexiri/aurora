@@ -22,7 +22,9 @@ function mockFetch(routes: Record<string, Handler>) {
     vi.fn(async (input: Request | string | URL) => {
       const req = typeof input === "string" ? new Request(new URL(input, "http://localhost")) : (input as Request);
       const url = new URL(req.url, "http://localhost");
-      const h = routes[`${req.method} ${url.pathname}`];
+      // The viewer of Administration is an instance administrator, who sees the Technical details folds.
+      const admin = url.pathname === "/v1/me" ? () => json(200, { user: { id: "u1", display_name: "Root", email: "root@x.io", is_instance_admin: true } }) : undefined;
+      const h = routes[`${req.method} ${url.pathname}`] ?? admin;
       return h ? h(req) : json(404, { error: { code: "not_found", message: "nf" } });
     }),
   );
@@ -151,7 +153,8 @@ describe("Administration › What agents may do › Defaults: stacked settings s
     fireEvent.change(document.getElementById("previews.shares_per_agent-c")!, { target: { value: "20" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain("more shares per agent");
+    // The server's reason is in the dialog's Technical details, which needs the viewer's role (`GET /v1/me`).
+    await waitFor(() => expect(dialog.textContent).toContain("more shares per agent"));
     expect(puts).toEqual([]);
     fireEvent.click(within(dialog).getByRole("button", { name: "Yes, save" }));
     await waitFor(() => expect(puts).toEqual(["terminal", "previews"]));
@@ -179,7 +182,7 @@ describe("Administration › What agents may do › Defaults: stacked settings s
     const field = await screen.findByText(/Enter a number from 60 to 86400/);
     expect(field.textContent).not.toMatch(/APPROVAL_TIMEOUT|approvals\.timeout_secs/);
     expect(screen.getByText("1 field needs fixing")).toBeTruthy();
-    expect(screen.getAllByText("Technical details").length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Technical details")).length).toBeGreaterThan(0);
   });
 
   it("says beside the terminal switch what people see when it is off, neutrally (P5-REFINE-18 #10, admin-9)", async () => {

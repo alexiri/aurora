@@ -9,6 +9,7 @@ import { ResponsiveTable } from "@/components/ui/responsive-table";
 import { cn } from "@/lib/utils";
 import { When } from "@/components/ui/when";
 import { EmptyState, ErrorState, Loading } from "@/components/states";
+import { Altitude } from "@/components/ui/altitude";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, Td, Th } from "@/components/ui/data-table";
@@ -251,9 +252,12 @@ function SentenceList({
         },
       ]}
       actions={(e) => (
-        <Button variant="ghost" size="sm" aria-expanded={open === e.id} onClick={() => setOpen(open === e.id ? null : e.id)}>
-          Details
-        </Button>
+        // Details opens only the Technical details fold, so it is shown to the same people.
+        <Altitude id="tech.details" level="setup">
+          <Button variant="ghost" size="sm" aria-expanded={open === e.id} onClick={() => setOpen(open === e.id ? null : e.id)}>
+            Details
+          </Button>
+        </Altitude>
       )}
     />
   );

@@ -1,11 +1,28 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeftIcon, LockIcon, UsersIcon } from "@/components/ui/icons";
 import { InfoTip } from "@/components/ui/popover";
 import { useMediaQuery } from "@/lib/use-media-query";
+
+type Segment = string | { text: string; className?: string };
+const textOf = (s: Segment) => (typeof s === "string" ? s : s.text);
+const classOf = (s: Segment) => (typeof s === "string" ? undefined : s.className);
+const NO_BREAK_SPACE = String.fromCharCode(0xa0);
+
+/**
+ * The dot after a meta segment, held to it by a no-break space: where the line wraps, no row starts with a dot. It takes
+ * the class of the segment it leads to, so it hides with it.
+ */
+function Separator({ className }: { className?: string }) {
+  return (
+    <span aria-hidden="true" className={className}>
+      {`${NO_BREAK_SPACE}·`}
+    </span>
+  );
+}
 
 /**
  * The thread header: a 44 px back button on phones, the title, one muted meta line (visibility, kind, archived date,
@@ -38,7 +55,7 @@ export function ThreadHeader({
   retention?: string;
   /** The other meta segments (kind, archived date, retention). A segment may carry a class —
    * the retention one hides at xl to keep the 64 px header (agent-page-p5 pins that height). */
-  segments: (string | { text: string; className?: string })[];
+  segments: Segment[];
   /** `true` Live, `false` Reconnecting…, `null` no pill (loading or failed). */
   live: boolean | null;
   onBack?: () => void;
@@ -91,25 +108,30 @@ export function ThreadHeader({
                   <LockIcon aria-hidden="true" width={12} height={12} className="mt-0.5 shrink-0 xl:inline" />
                 )}
                 {" "}
-                {retention && xl ? (
-                  // (retention-tooltip) The line itself carries the note: focus or tap it and the retention
-                  // window shows as its tooltip (its accessible description), Escape or blur closes.
-                  <InfoTip note={retention} testId="retention-tip">
-                    {visibility}
-                  </InfoTip>
-                ) : (
-                  <span>{visibility}</span>
-                )}
+                <span>
+                  {retention && xl ? (
+                    // (retention-tooltip) The line itself carries the note: focus or tap it and the retention
+                    // window shows as its tooltip (its accessible description), Escape or blur closes.
+                    <InfoTip note={retention} testId="retention-tip">
+                      {visibility}
+                    </InfoTip>
+                  ) : (
+                    visibility
+                  )}
+                  {segments.length > 0 ? <Separator className={classOf(segments[0]!)} /> : null}
+                </span>
               </span>
             ) : null}
-            {visibility ? " " : null}
             {segments.map((seg, i) => {
-              const text = typeof seg === "string" ? seg : seg.text;
+              const next = segments[i + 1];
               return (
-                <span key={text} className={typeof seg === "string" ? undefined : seg.className}>
-                  {visibility || i > 0 ? <span aria-hidden="true">· </span> : null}
-                  {text}
-                </span>
+                <Fragment key={textOf(seg)}>
+                  {visibility || i > 0 ? " " : null}
+                  <span className={classOf(seg)}>
+                    {textOf(seg)}
+                    {next !== undefined ? <Separator className={classOf(next)} /> : null}
+                  </span>
+                </Fragment>
               );
             })}
           </p>

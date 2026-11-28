@@ -32,9 +32,12 @@ export function MarkdownEditor({
   hint = MARKDOWN_HINT,
   className,
   images = true,
+  reading = false,
 }: {
   /** `false` when the text came from outside (`Markdown`'s own option): the preview fetches nothing. */
   images?: boolean;
+  /** The preview of a document read at length (`Markdown`'s `reading`): drawn as its reading view draws it. */
+  reading?: boolean;
   id: string;
   label: string;
   value: string;
@@ -90,9 +93,9 @@ export function MarkdownEditor({
           aria-labelledby={tabId(base, "preview")}
           hidden={mode !== "preview"}
           tabIndex={0}
-          className="min-h-100 px-3 py-3"
+          className={cn("min-h-100 px-3 py-3", reading && "md-reading")}
         >
-          {mode !== "preview" ? null : value.trim() ? <Markdown source={value} images={images} /> : <p className="text-sm text-muted">Nothing to preview yet.</p>}
+          {mode !== "preview" ? null : value.trim() ? <Markdown source={value} images={images} reading={reading} /> : <p className="text-sm text-muted">Nothing to preview yet.</p>}
         </div>
       </div>
       {error ? (

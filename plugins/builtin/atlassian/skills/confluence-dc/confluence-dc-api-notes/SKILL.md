@@ -5,8 +5,9 @@ description: "How to find and read Confluence Data Center pages, search, create 
 
 # Confluence Data Center API notes
 
-`$C` is the address shown with the account (for example `https://confluence.example.org`); the REST API is at
-`$C/rest/api`. Send every request to that address only. Aurora adds the credentials: send no token, no `-k`.
+`$C` is `https://<address>`, with the address shown with the account in `app.md` (it has no scheme, for
+example `confluence.example.org`); the REST API is at `$C/rest/api`. Send every request to that address only.
+Aurora adds the credentials: send no token, no `-k`.
 
 ## Find and read
 

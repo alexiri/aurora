@@ -146,16 +146,82 @@ describe("organization Libraries tab", () => {
     expect(facts(card(list, "Hex-like branch"))[0]).toBe("Branch 0123456789ab");
   });
 
+  /** An organization skill of a library, with an update waiting: what the Skills tab has a row to review for. */
+  const pendingOrgSkill = (id: string, lib: string, over: Record<string, unknown> = {}) => ({
+    id, name: id, tier: "org", source: { kind: "library", library_id: lib, commit_sha: SHA_A, detached: false, update_pending: true, ...over },
+  });
+
+  // `pending_updates` counts every level; the organization's Skills tab shows only the organization's own skills.
+  it("counts in the card's link only what the Skills tab shows, and says where the other updates wait", async () => {
+    withLibs(
+      [
+        library({ id: "m", label: "Mixed", pending_updates: 3 }),
+        library({ id: "o", label: "Others only", pending_updates: 2 }),
+        library({ id: "x", label: "One elsewhere", pending_updates: 1 }),
+        library({ id: "h", label: "Here only", pending_updates: 1 }),
+      ],
+      {
+        "GET /v1/orgs/o1/skills": () =>
+          json(200, { items: [pendingOrgSkill("a", "m"), pendingOrgSkill("b", "h"), pendingOrgSkill("c", "o", { update_pending: false }), pendingOrgSkill("d", "o", { detached: true })], next_cursor: null }),
+      },
+    );
+    wrap(<LibrariesTab />);
+    const list = await screen.findByRole("list", { name: "Your organization's libraries" });
+    const mixed = card(list, "Mixed");
+    expect((await within(mixed).findByRole("link", { name: /1 pending update of Mixed, review it/ })).getAttribute("href")).toBe("/o/acme/skills");
+    expect(within(mixed).getByText("2 more updates wait on skills of agents or workspaces. Whoever manages those skills reviews them on their Skills page.")).toBeTruthy();
+    const others = card(list, "Others only");
+    expect(within(others).getByText("Update available")).toBeTruthy();
+    expect(within(others).queryByRole("link")).toBeNull();
+    expect(within(others).getByText("2 updates wait on skills of agents or workspaces. Whoever manages those skills reviews them on their Skills page.")).toBeTruthy();
+    expect(within(card(list, "One elsewhere")).getByText("1 update waits on a skill of an agent or workspace. Whoever manages that skill reviews it on its Skills page.")).toBeTruthy();
+    const here = card(list, "Here only");
+    expect(within(here).getByRole("link", { name: /1 pending update of Here only/ })).toBeTruthy();
+    expect(within(here).queryByText(/wait/)).toBeNull();
+  });
+
+  // After a change of source the server has compared nothing yet (`last_head_sha` null): the card must not claim
+  // "Up to date" while the proposals are being made, and reads the list again until the check is done.
+  it("says a check is pending, never Up to date, until the new source is compared", async () => {
+    let compared = false;
+    withLibs([], {
+      "GET /v1/orgs/o1/skill-libraries": () =>
+        json(200, {
+          items: [
+            library({ id: "c", label: "Changed", pending_updates: 0, last_head_sha: compared ? SHA_B : null }),
+            library({ id: "n", label: "Never used", pending_updates: 0, last_head_sha: null, skill_counts: { agent: 0, workspace: 0, org: 0 } }),
+          ],
+        }),
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      wrap(<LibrariesTab />);
+      const list = await screen.findByRole("list", { name: "Your organization's libraries" });
+      expect(within(card(list, "Changed")).getByText("Check pending")).toBeTruthy();
+      expect(within(card(list, "Changed")).queryByText("Up to date")).toBeNull();
+      // No added skill: there is nothing to compare, and the server never would.
+      expect(within(card(list, "Never used")).getByText("Up to date")).toBeTruthy();
+      compared = true;
+      await vi.advanceTimersByTimeAsync(5_100);
+      await waitFor(() => expect(within(card(list, "Changed")).getByText("Up to date")).toBeTruthy());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows one state chip per card; an update links to the review on the Skills tab", async () => {
-    withLibs([
-      library({ id: "a", label: "A", pending_updates: 0 }),
-      library({ id: "u", label: "U", pending_updates: 1 }),
-      library({ id: "b", label: "B", status: "paused" }),
-      library({ id: "c", label: "C", status: "error", last_error: "The branch or tag was not found" }),
-      library({ id: "d", label: "D", status: "error", last_error: "git said: The repository needs an access token" }),
-      library({ id: "e", label: "E", status: "over_budget" }),
-      library({ id: "f", label: "F", status: "error", url: null, repo: null, last_error: "Enter the repository's git address" }),
-    ]);
+    withLibs(
+      [
+        library({ id: "a", label: "A", pending_updates: 0 }),
+        library({ id: "u", label: "U", pending_updates: 1 }),
+        library({ id: "b", label: "B", status: "paused" }),
+        library({ id: "c", label: "C", status: "error", last_error: "The branch or tag was not found" }),
+        library({ id: "d", label: "D", status: "error", last_error: "git said: The repository needs an access token" }),
+        library({ id: "e", label: "E", status: "over_budget" }),
+        library({ id: "f", label: "F", status: "error", url: null, repo: null, last_error: "Enter the repository's git address" }),
+      ],
+      { "GET /v1/orgs/o1/skills": () => json(200, { items: [pendingOrgSkill("s", "u")], next_cursor: null }) },
+    );
     wrap(<LibrariesTab />);
     const list = await screen.findByRole("list", { name: "Your organization's libraries" });
     expect(within(card(list, "A")).getByText("Up to date")).toBeTruthy();

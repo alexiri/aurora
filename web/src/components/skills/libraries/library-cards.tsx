@@ -53,6 +53,19 @@ function pinnedCommits(l: SkillLibrary, orgSkills: Skill[]): string[] {
   return [...new Set(orgSkills.flatMap((s) => (s.source && !s.source.detached && s.source.library_id === l.id && s.source.commit_sha ? [s.source.commit_sha] : [])))];
 }
 
+/** How many of a library's waiting updates are on the organization's own skills: the ones its Skills tab shows. */
+function waitingOnOrgSkills(l: SkillLibrary, orgSkills: Skill[]): number {
+  return orgSkills.filter((s) => s.source && !s.source.detached && s.source.library_id === l.id && s.source.update_pending).length;
+}
+
+/** Where the updates the organization's Skills tab doesn't show wait; `also`: some are shown there too. */
+function elsewhereWords(n: number, also: boolean): string {
+  const count = also ? `${n} more` : String(n);
+  return n === 1
+    ? `${count} update waits on a skill of an agent or workspace. Whoever manages that skill reviews it on its Skills page.`
+    : `${count} updates wait on skills of agents or workspaces. Whoever manages those skills reviews them on their Skills page.`;
+}
+
 /**
  * The libraries of one level as cards (D-450, D-506, C-1129; skill-6): the organization's own, the instance's own
  * (`orgName` undefined) or the instance libraries an organization sees (`canManage` false: read-only, with **Browse
@@ -65,7 +78,7 @@ export function LibraryCards({
   rows,
   canManage,
   label,
-  orgSkills = [],
+  orgSkills,
   reviewHref,
   onBrowse,
 }: {
@@ -76,7 +89,7 @@ export function LibraryCards({
   canManage: boolean;
   /** The accessible name of the list. */
   label: string;
-  /** The organization-level skills, for the "Pinned" commit. */
+  /** The organization-level skills, for the "Pinned" commit and the updates its Skills tab shows; leave it out until read. */
   orgSkills?: Skill[];
   /** Where waiting updates are reviewed. */
   reviewHref?: string;
@@ -98,11 +111,15 @@ export function LibraryCards({
         {rows.map((l) => {
           const paused = l.status === "paused";
           const reason = libraryReason(l);
-          const pins = pinnedCommits(l, orgSkills);
+          const pins = pinnedCommits(l, orgSkills ?? []);
           const checkId = `library-${l.id}-check`;
           const editId = `library-${l.id}-edit`;
+          // On an organization's page the link counts what its Skills tab shows; the card says where the rest wait.
+          const pending = l.pending_updates ?? 0;
+          const reviewable = instance ? pending : orgSkills ? waitingOnOrgSkills(l, orgSkills) : 0;
+          const elsewhere = !instance && orgSkills && !paused ? Math.max(pending - reviewable, 0) : 0;
           // What acts on the chip: the review link for an update, else Set address / Edit, else Check now.
-          const actionId = (l.pending_updates ?? 0) > 0 && l.status === "active" ? `library-${l.id}-review` : canManage ? editId : undefined;
+          const actionId = pending > 0 && reviewable > 0 && l.status === "active" ? `library-${l.id}-review` : canManage ? editId : undefined;
           return (
             <li key={l.id} className="min-w-0">
               <Card className="flex h-full flex-col gap-3">
@@ -116,7 +133,7 @@ export function LibraryCards({
                     {l.repo ? <p className="font-mono text-xs text-muted [overflow-wrap:anywhere]">{l.repo}</p> : null}
                   </div>
                   <div className="ml-auto flex items-center gap-2">
-                    <LibraryStateChip library={l} actionId={actionId} reviewHref={reviewHref} />
+                    <LibraryStateChip library={l} actionId={actionId} reviewHref={reviewHref} reviewable={reviewable} />
                     {canManage ? (
                       <Menu>
                         <MenuTrigger asChild>
@@ -170,6 +187,7 @@ export function LibraryCards({
                     <li>Pinned at {pins.length} commits</li>
                   ) : null}
                 </ul>
+                {elsewhere > 0 ? <p className="text-sm text-ink-2">{elsewhereWords(elsewhere, reviewable > 0)}</p> : null}
                 {reason ? <p className="text-sm text-danger-ink [overflow-wrap:anywhere]">{reason}</p> : null}
                 <div className="mt-auto flex flex-wrap gap-2">
                   {canManage ? (

@@ -31,6 +31,10 @@ const entry = (id: string, action: string, org: string | null) => ({
   created_at: "2026-11-08T10:00:00Z",
 });
 
+// The viewer of Administration is an instance administrator: Set up and above, so a row has its Details button
+// (it opens the Technical details fold).
+const ADMIN = { user: { id: "u1", display_name: "Root Admin", email: "root@x.io", is_instance_admin: true } };
+
 // (cleanup and unstubAllGlobals come from tests/setup.ts)
 afterEach(() => {
   nav.search = "tab=audit";
@@ -43,8 +47,9 @@ function stubAudit(seen: string[]) {
     vi.fn(async (input: Request | string | URL) => {
       const req = input instanceof Request ? input : null;
       const url = new URL(req ? req.url : String(input), "http://localhost");
+      if (url.pathname === "/v1/me") return new Response(JSON.stringify(ADMIN), { status: 200, headers: { "content-type": "application/json" } });
       const body = url.pathname.endsWith("/admin/orgs") ? { items: [] } : { items: [entry("1", "instance_settings.update", null)], next_cursor: null };
-      if (!url.pathname.endsWith("/admin/orgs")) seen.push(url.search);
+      if (url.pathname === "/v1/admin/audit") seen.push(url.search);
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     }),
   );
@@ -103,7 +108,7 @@ describe("AdminAuditView filters in the URL (FIX-171)", () => {
     stubAudit([]);
     view();
     await screen.findByText("Root changed the instance settings");
-    const btn = screen.getByRole("button", { name: "Details" });
+    const btn = await screen.findByRole("button", { name: "Details" });
     expect(btn).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(btn);
     expect(btn).toHaveAttribute("aria-expanded", "true");
@@ -125,7 +130,7 @@ describe("AdminAuditView (FIX-125)", () => {
         if (url.pathname.endsWith("/admin/orgs")) {
           body = { items: [{ id: "o1", name: "Acme", slug: "acme", created_at: "2026-11-01T00:00:00Z" }] };
         } else {
-          seen.push(url.search);
+          if (url.pathname === "/v1/admin/audit") seen.push(url.search);
           const all = url.searchParams.get("scope") === "all";
           body = {
             items: all ? [entry("1", "trusted_key.create", null), entry("2", "org.freeze", "acme")] : [entry("1", "trusted_key.create", null)],
@@ -170,6 +175,8 @@ describe("System events are hidden by the server, with its count (C-1088, admin-
         const req = input instanceof Request ? input : null;
         const url = new URL(req ? req.url : String(input), "http://localhost");
         if (url.pathname.endsWith("/admin/orgs")) return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } });
+        if (url.pathname === "/v1/me") return new Response(JSON.stringify(ADMIN), { status: 200, headers: { "content-type": "application/json" } });
+        if (url.pathname !== "/v1/admin/audit") return new Response(JSON.stringify({ error: { code: "not_found", message: "nf" } }), { status: 404, headers: { "content-type": "application/json" } });
         seen.push(url.search);
         const withSystem = url.searchParams.get("include_system") === "true";
         const items = [entry("1", "instance_settings.update", null), ...(withSystem ? [{ ...entry("2", "plugin.ingest", null), actor_kind: "system", actor_label: "system" }] : [])];
