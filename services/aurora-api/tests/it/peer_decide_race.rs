@@ -453,6 +453,54 @@ async fn the_resume_window_sweep_waits_for_a_conversation_before_it_ends_the_row
     assert_eq!((swept, revoked), (Ok(0), Ok(1)));
 }
 
+/// A batch over two task conversations of one agent takes every conversation before any link.
+/// The agent, working in the older task's conversation, messages the agent that delegated the
+/// newer one: it holds its conversation and takes that pair's link.
+#[tokio::test]
+async fn a_batch_takes_every_conversation_before_any_link() {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let c = rig.agent(rig.ws1, "charlie").await;
+    let mut tasks = Vec::new();
+    for requester in [a, c] {
+        let (origin, turn) = rig.person_turn(requester, rig.p.id).await;
+        let task = delegate(&rig, (requester, origin, turn), "@bravo").await;
+        let conversation = rig.peer_conversation(task).await;
+        pending_approval(&rig, b, conversation, Some("batch-3")).await;
+        tasks.push((task, conversation));
+    }
+    let (older, newer) = (tasks[0], tasks[1]);
+    let pool = rig.h.pool();
+    let mut message = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut message).await;
+    assert!(convs::lock(&mut message, older.1).await.unwrap());
+    let body = json!({"decision": "deny", "agent_id": b});
+    let decide = rig.post(&rig.p, "/v1/approvals/batches/batch-3/decision", Some(body));
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let link = sqlx::query(
+            "SELECT 1 FROM agent_links WHERE id = (SELECT link_id FROM peer_tasks WHERE id = $1)
+             FOR UPDATE",
+        )
+        .bind(newer.0)
+        .execute(&mut *message)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string());
+        if link.is_ok() {
+            message.commit().await.unwrap();
+        }
+        link
+    };
+    let ((status, body), link) = tokio::join!(decide, finish);
+    assert_eq!(
+        (link, status, &body["decided"]),
+        (Ok(()), 200, &json!(2)),
+        "{body}"
+    );
+}
+
 async fn a_close_that_holds_the_link(
     h: &Held,
     decide: impl Future<Output = (u16, serde_json::Value)>,

@@ -71,6 +71,7 @@ use aurora_db::repo::turns::{self, Created, TurnRow};
 use aurora_db::{DbError, PgPool, authz};
 use serde_json::{Value, json};
 use sqlx::PgConnection;
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use uuid::Uuid;
@@ -229,7 +230,7 @@ pub async fn send_message(
             && own.from_agent_id == target.id
         {
             lock_task_origins(conn, own.id).await?;
-            repo::lock_chain_links(conn, own.id).await?;
+            repo::lock_chain_links(conn, &[own.id]).await?;
         }
     }
     let (link, _) = links::get_or_create(&mut *conn, r.sender.id, target.id, initial).await?;
@@ -853,7 +854,7 @@ async fn close_task(
     own_act: bool,
 ) -> Result<Option<PeerTaskRow>, ApiError> {
     lock_task_origins(conn, task.id).await?;
-    repo::lock_chain_links(conn, task.id).await?;
+    repo::lock_chain_links(conn, &[task.id]).await?;
     let Some(cur) = repo::get_for_update(&mut *conn, task.id).await? else {
         return Ok(None);
     };
@@ -1210,7 +1211,7 @@ pub async fn approval_notice(
             .await?
             .is_some()
         {
-            repo::lock_chain_links(conn, task.id).await?;
+            repo::lock_chain_links(conn, &[task.id]).await?;
         }
         // Who hears from whom: the task reporting into each delegator's conversation, if it
         // still runs before this delivery wakes anything.
@@ -1620,42 +1621,69 @@ async fn lock_for_task_conversation(
 ) -> Result<Option<PeerTaskRow>, ApiError> {
     convs::lock(&mut *conn, found.task_conversation_id).await?;
     lock_task_origins(conn, found.id).await?;
-    repo::lock_chain_links(conn, found.id).await?;
+    repo::lock_chain_links(conn, &[found.id]).await?;
     Ok(repo::get_for_update(&mut *conn, found.id).await?)
 }
 
-/// Everything a decision on approvals raised in `conversations` may lock later, taken in one
-/// pass before it writes any approval row: for each task conversation what
-/// [`lock_for_task_conversation`] takes (so the decision's notices and wake turn find the
-/// locks held, as a cancel does before it abandons the rows), then the other conversations,
-/// which the module order puts after it. Newest first in each group, as every writer that
-/// locks several conversations does: ids are time-ordered, so a task conversation comes before
-/// the one it was opened from.
-pub async fn lock_for_decision(
+/// Locks `conversations`, newest first, as every writer that locks several does: ids are
+/// time-ordered, so a task conversation comes before the one it was opened from.
+async fn lock_newest_first(
     conn: &mut PgConnection,
-    conversations: &[Uuid],
+    conversations: &BTreeSet<Uuid>,
 ) -> Result<(), ApiError> {
-    let mut conversations = conversations.to_vec();
-    conversations.sort_unstable_by(|a, b| b.cmp(a));
-    conversations.dedup();
-    let mut others = Vec::new();
-    for conversation in conversations {
-        match repo::by_task_conversation(&mut *conn, conversation).await? {
-            Some(task) => {
-                lock_for_task_conversation(conn, &task).await?;
-            }
-            None => others.push(conversation),
-        }
-    }
-    for conversation in others {
-        convs::lock(&mut *conn, conversation).await?;
+    for conversation in conversations.iter().rev() {
+        convs::lock(&mut *conn, *conversation).await?;
     }
     Ok(())
 }
 
+/// What work on several tasks locks, **one pass per class over the whole set**: taking all of
+/// one task's locks and then the next task's would ask for a conversation while holding a link.
+/// The sets are gathered by `repo::task_origins` and `repo::lock_chain_links`, both over
+/// `repo::CLOSE_REACH` of all the tasks at once.
+///
+/// 1. the tasks' conversations and their task origins, newest first;
+/// 2. the chain links, in id order;
+/// 3. the tasks, in id order.
+async fn lock_tasks(conn: &mut PgConnection, tasks: &[PeerTaskRow]) -> Result<(), ApiError> {
+    let mut ids: Vec<Uuid> = tasks.iter().map(|t| t.id).collect();
+    ids.sort_unstable();
+    let mut conversations: BTreeSet<Uuid> = tasks.iter().map(|t| t.task_conversation_id).collect();
+    conversations.extend(repo::task_origins(&mut *conn, &ids).await?);
+    lock_newest_first(conn, &conversations).await?;
+    repo::lock_chain_links(conn, &ids).await?;
+    for id in ids {
+        repo::get_for_update(&mut *conn, id).await?;
+    }
+    Ok(())
+}
+
+/// Everything a decision on approvals raised in `conversations` may lock later, taken before it
+/// writes any approval row: for the task conversations among them what [`lock_tasks`] takes (so
+/// the decision's notices and wake turns find the locks held, as a cancel does before it
+/// abandons the rows), then the other conversations, which the module order puts after.
+pub async fn lock_for_decision(
+    conn: &mut PgConnection,
+    conversations: &[Uuid],
+) -> Result<(), ApiError> {
+    let (mut tasks, mut others) = (Vec::new(), BTreeSet::new());
+    for conversation in conversations.iter().copied().collect::<BTreeSet<_>>() {
+        match repo::by_task_conversation(&mut *conn, conversation).await? {
+            Some(task) => tasks.push(task),
+            None => {
+                others.insert(conversation);
+            }
+        }
+    }
+    if !tasks.is_empty() {
+        lock_tasks(conn, &tasks).await?;
+    }
+    lock_newest_first(conn, &others).await
+}
+
 /// (FIX-257) The task conversations a close of `task` may write into, locked before the link.
 async fn lock_task_origins(conn: &mut PgConnection, task: Uuid) -> Result<(), ApiError> {
-    for conversation in repo::task_origins(&mut *conn, task).await? {
+    for conversation in repo::task_origins(&mut *conn, &[task]).await? {
         convs::lock(&mut *conn, conversation).await?;
     }
     Ok(())
