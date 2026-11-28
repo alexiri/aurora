@@ -1,5 +1,6 @@
 //! Destination guard (06 step 2): SEC-06.
 
+use aurora_core::ranges::{AppHost, LogThrottle, RefusedRanges};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -37,7 +38,25 @@ pub struct Guard {
     own: Vec<(IpAddr, u16)>,
     /// (FIX-106) This host's own interface addresses, for a wildcard bind: with the default
     /// `0.0.0.0` bind the gateway's pod address is as much "own" as loopback is.
-    local: Vec<IpAddr>,
+    local: arc_swap::ArcSwap<Vec<IpAddr>>,
+    /// (FIX-290, D-511) Hosts of Aurora's other services, from this process's configuration. A
+    /// self-hosted app's host that resolves to any address of one of them gets no allowance.
+    services: arc_swap::ArcSwap<Vec<String>>,
+    /// (FIX-290) How often a service that does not resolve is logged.
+    unresolved_log: LogThrottle,
+    /// (FIX-290, SEC-170) `gateway.self_hosted_refused_ranges`: closed to every allowance.
+    refused_ranges: arc_swap::ArcSwap<RefusedRanges>,
+    /// Fixed answers for names (tests only; empty in a running gateway).
+    names: arc_swap::ArcSwap<StaticNames>,
+}
+
+type StaticNames = Vec<(String, Vec<SocketAddr>)>;
+
+struct AppBounds {
+    /// The addresses of the fully qualified name.
+    absolute: Vec<IpAddr>,
+    /// The addresses of Aurora's other services.
+    services: Vec<IpAddr>,
 }
 
 /// (FIX-106) The addresses of this host's network interfaces. Linux reads `/proc/net`; where it
@@ -168,7 +187,7 @@ fn cidr_contains(net: IpAddr, bits: u8, ip: IpAddr) -> bool {
 }
 
 // The refused-range table is shared with the API's probe guard: `aurora_core::ranges`.
-use aurora_core::ranges::{is_metadata, is_special};
+use aurora_core::ranges::{app_address_opens, is_metadata, is_special};
 
 impl Guard {
     /// `allowed` entries: CIDR, IP, hostname or `*.suffix`. A wildcard `own` address covers this
@@ -190,8 +209,49 @@ impl Guard {
             allow: arc_swap::ArcSwap::from_pointee(allow),
             derived: arc_swap::ArcSwap::from_pointee(Vec::new()),
             own,
-            local,
+            local: arc_swap::ArcSwap::from_pointee(local),
+            services: arc_swap::ArcSwap::from_pointee(Vec::new()),
+            names: arc_swap::ArcSwap::from_pointee(Vec::new()),
+            refused_ranges: arc_swap::ArcSwap::from_pointee(RefusedRanges::default()),
+            unresolved_log: LogThrottle::default(),
         })
+    }
+
+    /// (FIX-290, SEC-170) Set the ranges no self-hosted app's allowance reaches.
+    pub fn set_refused_ranges(&self, ranges: RefusedRanges) {
+        self.refused_ranges.store(Arc::new(ranges));
+    }
+
+    /// (FIX-290) Name Aurora's other services (host names or addresses).
+    pub fn set_own_services(&self, hosts: Vec<String>) {
+        self.services.store(Arc::new(hosts));
+    }
+
+    /// Answer these names with these addresses instead of the system resolver (tests only). A
+    /// name is matched exactly as asked, so a fully qualified `name.` is its own entry. An
+    /// address with a port is dialled on that port (a test server cannot listen on 443); it is
+    /// still judged for the port that was asked for.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_static_names(&self, names: StaticNames) {
+        self.names.store(Arc::new(names));
+    }
+
+    /// Replace this host's interface addresses (tests only: their upstream listens on one).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_local_addresses(&self, local: Vec<IpAddr>) {
+        self.local
+            .store(Arc::new(local.into_iter().map(canon).collect()));
+    }
+
+    async fn lookup(&self, name: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
+        if let Some((_, addrs)) = self.names.load().iter().find(|(n, _)| n == name) {
+            let mut addrs = addrs.clone();
+            for a in addrs.iter_mut().filter(|a| a.port() == 0) {
+                a.set_port(port);
+            }
+            return Ok(addrs);
+        }
+        Ok(tokio::net::lookup_host((name, port)).await?.collect())
     }
 
     /// Replace the operator's list (`gateway.allowed_private`, SET-5): applies to the next
@@ -213,7 +273,9 @@ impl Guard {
             oport == port
                 && (oip == ip
                     || (oip.is_unspecified()
-                        && (ip.is_loopback() || ip.is_unspecified() || self.local.contains(&ip))))
+                        && (ip.is_loopback()
+                            || ip.is_unspecified()
+                            || self.local.load().contains(&ip))))
         })
     }
 
@@ -287,13 +349,104 @@ impl Guard {
         // knows it) is left to the egress proxy: nothing was resolved here, so there is nothing to
         // judge, and a resolver that answers differently to the two lookups is the accepted
         // rebinding window anyway.
-        let Ok(addrs) = tokio::net::lookup_host((h.as_str(), port)).await else {
+        let Ok(addrs) = self.lookup(h.as_str(), port).await else {
             return Ok(());
         };
         for a in addrs {
             self.check_ip(a.ip(), host, port)?;
         }
         Ok(())
+    }
+
+    /// (FIX-290, D-511) [`Self::resolve`] for a request that carries a self-hosted app's
+    /// allowance: what [`Self::check_ip`] allows, plus the private addresses the allowance opens.
+    pub async fn resolve_app(&self, app: &AppHost) -> Result<Vec<SocketAddr>, DialError> {
+        let addrs = self
+            .lookup(app.host(), app.port())
+            .await
+            .map_err(|e| DialError::Resolution(e.to_string()))?;
+        let bounds = self.app_bounds(app).await;
+        let mut ok = Vec::new();
+        let mut refused = false;
+        for a in addrs {
+            match self.check_app_ip(a.ip(), app, &bounds) {
+                Ok(()) => ok.push(a),
+                Err(_) => refused = true,
+            }
+        }
+        if ok.is_empty() {
+            return Err(if refused {
+                DialError::Refused(app.host().to_owned())
+            } else {
+                DialError::Resolution("no addresses".into())
+            });
+        }
+        Ok(ok)
+    }
+
+    /// (FIX-290) [`Self::judge_name`] with a self-hosted app's allowance.
+    pub async fn judge_app_name(&self, app: &AppHost) -> Result<(), DialError> {
+        let Ok(addrs) = self.lookup(app.host(), app.port()).await else {
+            return Ok(());
+        };
+        let bounds = self.app_bounds(app).await;
+        for a in addrs {
+            self.check_app_ip(a.ip(), app, &bounds)?;
+        }
+        Ok(())
+    }
+
+    /// What the allowance for `app` is bounded by, looked up now.
+    async fn app_bounds(&self, app: &AppHost) -> AppBounds {
+        let ips = |addrs: Vec<SocketAddr>| addrs.into_iter().map(|a| canon(a.ip()));
+        // The fully qualified name: a name only a DNS search domain completes (in a cluster,
+        // `service.namespace`) has no address here.
+        let absolute = self
+            .lookup(&format!("{}.", app.host()), app.port())
+            .await
+            .map(|a| ips(a).collect())
+            .unwrap_or_default();
+        let mut services = Vec::new();
+        for s in self.services.load().iter() {
+            if let Ok(ip) = s.parse::<IpAddr>() {
+                services.push(canon(ip));
+                continue;
+            }
+            match self.lookup(s, app.port()).await {
+                Ok(a) => services.extend(ips(a)),
+                // Where that service is cannot be told apart from the app's address.
+                Err(error) => {
+                    if self.unresolved_log.allow(s) {
+                        tracing::warn!(service = %s, %error,
+                            "one of Aurora's own services did not resolve; self-hosted app hosts stay closed");
+                    }
+                    return AppBounds {
+                        absolute: Vec::new(),
+                        services: Vec::new(),
+                    };
+                }
+            }
+        }
+        AppBounds { absolute, services }
+    }
+
+    /// One resolved address of a request that carries `app`'s allowance. The ordinary judgement
+    /// comes first; the allowance only adds private unicast addresses that are not this
+    /// gateway's or another Aurora service's, and that the fully qualified name has too.
+    fn check_app_ip(&self, ip: IpAddr, app: &AppHost, b: &AppBounds) -> Result<(), DialError> {
+        if self.check_ip(ip, app.host(), app.port()).is_ok() {
+            return Ok(());
+        }
+        let ip = canon(ip);
+        let refused = self.refused_ranges.load();
+        let opened = app_address_opens(ip, &b.absolute, &b.services, &refused)
+            && !self.is_own(ip, app.port())
+            && !self.local.load().contains(&ip);
+        if opened {
+            Ok(())
+        } else {
+            Err(DialError::Refused(app.host().to_owned()))
+        }
     }
 
     /// Resolves through the guard; only checked addresses are returned, so the
@@ -304,7 +457,8 @@ impl Guard {
             self.check_ip(ip, host, port)?;
             return Ok(vec![SocketAddr::new(ip, port)]);
         }
-        let addrs = tokio::net::lookup_host((h.as_str(), port))
+        let addrs = self
+            .lookup(h.as_str(), port)
             .await
             .map_err(|e| DialError::Resolution(e.to_string()))?;
         let mut ok = Vec::new();

@@ -536,6 +536,7 @@ impl PolicyHandler {
             response_headers: HeaderMap::new(),
             retry: None,
             ldap: None,
+            app_host: None,
             link: Some(LinkFetch {
                 url,
                 connection_id: conn_id,

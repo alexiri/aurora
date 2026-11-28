@@ -1,8 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
+import { useAppInstances } from "@/lib/api/apps";
 import { formatExact } from "@/lib/format-date";
+import { adminRoutes } from "@/lib/routes";
 
 import { harnessChoices, harnessControls, harnessName, useMovedDefault } from "@/components/admin/settings/harness-controls";
 import {
@@ -445,6 +448,47 @@ export function ComputersView() {
   );
 }
 
+/**
+ * (FIX-290, D-511) The private hosts an administrator's own self-hosted app registrations open, each for that app
+ * only. Read-only: they follow the registrations, and are not entries of the allowed-private list above.
+ */
+function SelfHostedAppHosts() {
+  const q = useAppInstances({ kind: "instance" });
+  const hosts = (q.data?.items ?? []).filter((i) => !i.org_id && !i.builtin && i.status === "active");
+  return (
+    <SettingsCard
+      title="Private hosts opened by self-hosted apps"
+      description="A server you register for all organizations may be on a private address. Only that app can reach it, with an account connected to it, over HTTPS on port 443. Your network rules still apply."
+    >
+      {q.isPending ? (
+        <Loading />
+      ) : q.isError ? (
+        <ErrorState error={q.error} onRetry={() => void q.refetch()} />
+      ) : (
+        <>
+          {hosts.length === 0 ? (
+            <p className="py-4 text-sm text-ink-2">None. Registering a server for all organizations adds its host here.</p>
+          ) : (
+            hosts.map((i) => (
+              <div key={i.id} className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3">
+                <code className="min-w-0 break-all font-mono text-sm text-ink">{i.host}</code>
+                <span className="min-w-0 break-words text-sm text-ink-2">Allowed for {i.label} only</span>
+              </div>
+            ))
+          )}
+          <p className="py-3 text-sm text-ink-2">
+            {q.data.next_cursor ? "More servers are registered. " : "Add or remove servers in "}
+            <Link href={adminRoutes.selfHosted()} className="text-link underline">
+              Self-hosted apps
+            </Link>
+            .
+          </p>
+        </>
+      )}
+    </SettingsCard>
+  );
+}
+
 /** Admin › Settings › Limits (SET-5): rate limits with the keyed class list, and the gateway's address and size limits. */
 export function LimitsSettingsView() {
   return (
@@ -458,6 +502,7 @@ export function LimitsSettingsView() {
         </p>
       )}
       controls={{ "ratelimit.api.classes": (ctx) => <RateClassesControl ctx={ctx} /> }}
+      below={() => <SelfHostedAppHosts />}
     />
   );
 }

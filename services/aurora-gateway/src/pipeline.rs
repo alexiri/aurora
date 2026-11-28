@@ -72,6 +72,10 @@ pub struct PreparedRequest {
     /// host: answered by the secret-link lane (`seclink`), never forwarded as received. It carries
     /// its own request-log report, so `hook` is `None` for it.
     pub link: Option<crate::seclink::LinkFetch>,
+    /// (FIX-290, D-511) Set only for a request that won a granted connection of an
+    /// instance-registered self-hosted app and goes to that registration's host: this request
+    /// alone may reach the host on a private address.
+    pub app_host: Option<aurora_core::ranges::AppHost>,
 }
 
 /// Rebuilds a request with fresh credentials after the upstream answered with a
@@ -135,6 +139,7 @@ impl PipelineRequest {
             retry: None,
             ldap: None,
             link: None,
+            app_host: None,
         }
     }
 }

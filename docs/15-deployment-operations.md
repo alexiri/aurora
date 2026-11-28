@@ -313,7 +313,7 @@ NetworkPolicy and its key is a secret root.
 | `gateway.proxy_tls.names` | `[]` | gateway | (phase 1, RFE-002) extra DNS names/IPs for the CA-issued proxy certificate (LoadBalancer hostname, extra service names) |
 | `gateway.proxy_tls.cert_file`, `gateway.proxy_tls.key_file` | — | gateway | (phase 1, RFE-002) optional operator-supplied proxy certificate chain + key (both or neither); replaces the CA-issued leaf for the outer leg |
 | `governance.agent_tokens.max_age_days` | unset (never expire) | api | (phase 3, RFE-013) optional maximum age of BYO agent tokens (1…3 650 days); orgs may set a smaller value; applied at mint and, with a 7-day grace, to existing tokens when introduced or tightened (`08 §7`) |
-| `gateway.allowed_private` | `[]` | gateway (and the API, for app-instance probes and connect requests only, D-74) | private destinations allowed. (FIX-217) Proxy environment variables (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`) do not apply to the API's guarded clients; outbound proxying for apps is the gateway's `egress_proxy`. (FIX-200, D-437) The chart value `privateHosts.names` adds host names here and opens them, by name, in a Cilium policy for the gateway, API and hook host (`23 §NetworkPolicy`) |
+| `gateway.allowed_private` | `[]` | gateway (and the API, for app-instance probes and connect requests only, D-74) | private destinations allowed. (FIX-217) Proxy environment variables (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`) do not apply to the API's guarded clients; outbound proxying for apps is the gateway's `egress_proxy`. (FIX-200, D-437) The chart value `privateHosts.names` adds host names here and opens them, by name, in a Cilium policy for the gateway, API and hook host (`23 §NetworkPolicy`). (FIX-290, D-511) A self-hosted app server an instance administrator registers for all organizations needs no entry here: Aurora's own check lets that app's connected accounts reach it on port 443 (`06` §Destination guard). **The network does not follow:** with the chart's NetworkPolicies on (the default, Cilium included) the gateway and API still cannot send packets to a private address unless `privateHosts.names` or `networkPolicy.gatewayExtraEgress` and `apiExtraEgress` open it, so there the server stays unreachable until Helm says so. Hooks and a token the app mints through the hook host get no allowance |
 | `gateway.resolve_cache_ttl_secs` | 60 | gateway | resolution-cache TTL (`02 §Limits`); (phase 3, RFE-014: also the **outage tolerance** and the revocation-lag bound while the database or listener is down; above 300 the gateway logs a warning at start; `06 §Operation during a Postgres outage`) |
 | `gateway.trusted_proxies` | `[]` | gateway | (phase 2, RFE-025) CIDRs of layer-4 load balancers / NAT hops that send a PROXY protocol v1/v2 header on the proxy port; the client address for BYO source restriction is taken from that header only for peers in this list (`06 §BYO admission`). Not the same as `server.trusted_proxies` (API, `X-Forwarded-For`) |
 | `llm.dev_upstream_overrides` | `{}` | api, gateway | (phase 5, P4-LLM spec batch, D-260(e)) **Tests and development only.** A table from a fixed provider origin or mint endpoint (`https://api.openai.com`, `https://api.anthropic.com`, `https://oauth2.googleapis.com`, `https://login.microsoftonline.com`, `https://sts.<region>.amazonaws.com`, `https://bedrock.<region>.amazonaws.com`, `https://bedrock-runtime.<region>.amazonaws.com`, `https://<location>-aiplatform.googleapis.com`) to a loopback URL of a mock upstream. Accepted only when every target is a loopback URL **and** `gateway.insecure_loopback_injection` is `true`; refused otherwise naming the key. Not an instance setting (never in the registry, ignored in a stored row), never rendered by the chart (the `no-deployment-defaults` guard checks it), and the services refuse to start with it inside a Kubernetes cluster, like `insecure_loopback_injection` |
@@ -323,6 +323,7 @@ NetworkPolicy and its key is a secret root.
 | `byo.default_source_cidrs` | `[]` | api, gateway | (phase 2, RFE-025) default source CIDR list of every BYO agent without its own or an org list (e.g. corporate networks and CI runners); orgs and agents may only narrow it. Empty = unrestricted |
 | `byo.require_context_credentials` | `false` | api, gateway | (phase 2, RFE-025) when `true` every BYO agent must use context credentials for credentialed requests (`08 §11.9`) |
 | `gateway.egress_proxy` | — | gateway | upstream forward proxy |
+| `gateway.self_hosted_refused_ranges` | `[]` | gateway and API (restart to change) | (FIX-290, SEC-170) CIDRs that the automatic allowance of a self-hosted app's host (`06` §Destination guard) never reaches, whatever the host resolves to: set the cluster's pod and Service CIDRs and, on a managed cluster, the range of its private Kubernetes API endpoint. An entry that is no CIDR refuses to start. It does not narrow `allowed_private` |
 | `gateway.condition_body_bytes` | 262144 | gateway | 4 KiB–8 MiB |
 | `gateway.upstream_header_timeout_secs` | 300 | gateway | |
 | `gateway.ca_dir` | `/var/lib/aurora/ca` | gateway | `ca.pem`, `ca.key` |
@@ -635,6 +636,16 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
 - Migrations are forward-only and run before any new API replica serves;
   every migration MUST be compatible with the previous API and gateway version
   still running (expand → migrate → contract across two releases).
+- (FIX-290, D-511) **Self-hosted app hosts open on private addresses after this
+  upgrade.** Every instance-wide registration that already exists, including an
+  organization's registration that was promoted earlier, lets that app's
+  connected accounts reach its host on a private address (HTTPS, port 443),
+  with no `privateHosts` entry. **Check Administration › Apps & accounts ›
+  Self-hosted apps before or right after upgrading**, and remove or turn off any
+  you would not open (Administration › Limits then lists the ones that count). Set
+  `gateway.self_hosted_refused_ranges` to your pod and Service CIDRs. Package
+  presets and organizations' own registrations get nothing, and the
+  NetworkPolicies are unchanged. The chart's notes repeat this on `helm upgrade`.
 - (FIX-234, C-1163) **Run the access report before upgrading to a release with
   C-1160.** `aurora-api access-report` (JSON, or `--text`) lists, per
   organization, the workspaces with no active own-right owner, the schedules

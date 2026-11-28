@@ -2013,6 +2013,16 @@ impl PolicyHandler {
             if !ok {
                 return unavailable(self, ctx);
             }
+            // (FIX-290) This request won a granted connection: if an instance administrator's
+            // registration serves it and the connection is that registration's, it may reach the
+            // registered host on a private address.
+            let app_host = mechanisms::route::self_hosted_allowance(
+                inst.filter(|_| m.instance),
+                conn.instance_id,
+                scheme,
+                &up_host,
+                port,
+            );
             ctx.injected = 1;
             self.touch(conn.id);
             let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
@@ -2069,6 +2079,7 @@ impl PolicyHandler {
                     path: path.clone(),
                     query: q0,
                     headers: h0,
+                    app_host: app_host.clone(),
                 }) as Box<dyn Retry>),
                 _ => None,
             };
@@ -2091,6 +2102,7 @@ impl PolicyHandler {
                     .then(|| m.app.ldap.clone())
                     .flatten(),
                 link: None,
+                app_host,
             });
         }
         if let Some(Cand::Secret(c)) = &winner {
@@ -2231,6 +2243,7 @@ impl PolicyHandler {
                 retry: None,
                 ldap: None,
                 link: None,
+                app_host: None,
             });
         }
         let fb = self.fallback(&rv, app_match.as_ref(), &ungranted, &host);
@@ -2260,6 +2273,7 @@ impl PolicyHandler {
             retry: None,
             ldap: None,
             link: None,
+            app_host: None,
         })
     }
 }
@@ -3220,6 +3234,7 @@ struct StaleRetry {
     path: String,
     query: Option<String>,
     headers: HeaderMap,
+    app_host: Option<aurora_core::ranges::AppHost>,
 }
 
 #[async_trait::async_trait]
@@ -3270,6 +3285,7 @@ impl Retry for StaleRetry {
             retry: None,
             ldap: None,
             link: None,
+            app_host: s.app_host,
         })
     }
 }

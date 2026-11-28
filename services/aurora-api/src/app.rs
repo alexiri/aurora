@@ -189,6 +189,10 @@ impl AppState {
             &config.gateway_allowed_private,
             config.tls.extra_ca_bundle.as_deref(),
         )?);
+        connect.set_own_services(own_services(&config));
+        connect.set_refused_ranges(aurora_core::ranges::RefusedRanges::parse(
+            &config.gateway_self_hosted_refused_ranges,
+        )?);
         let card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests> =
             Arc::new(crate::domains::channels::cards::requests::CardsImpl::new(
                 derived.clone(),
@@ -584,6 +588,13 @@ impl AppState {
             self.config.tls.extra_ca_bundle.as_deref(),
         ) {
             let mut env = env;
+            env.set_own_services(own_services(&self.config));
+            // Validated at load: a list that does not parse never gets here.
+            if let Ok(r) = aurora_core::ranges::RefusedRanges::parse(
+                &self.config.gateway_self_hosted_refused_ranges,
+            ) {
+                env.set_refused_ranges(r);
+            }
             env.override_origin = reqwest::Url::parse(origin).ok();
             self.connect = Arc::new(env);
             // The live `allowed_private` follows the replaced client.
@@ -624,6 +635,22 @@ impl AppState {
         self.mailer = mailer;
         self
     }
+}
+
+/// (FIX-290) The other services of Aurora the API knows of: a self-hosted app's own allowance
+/// never opens their addresses. In a cluster the Kubernetes API is one of them.
+fn own_services(config: &ApiConfig) -> Vec<String> {
+    let kubernetes = std::env::var("KUBERNETES_SERVICE_HOST").unwrap_or_default();
+    aurora_config::own_service_hosts(
+        [
+            config.database_url.expose().as_str(),
+            config.hookhost_url.as_str(),
+            config.gateway_internal_url.as_str(),
+            kubernetes.as_str(),
+        ],
+        &config.secrets,
+        &config.counters,
+    )
 }
 
 /// All `/v1` domain routers merged. Add new domains here.

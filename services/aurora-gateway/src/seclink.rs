@@ -304,6 +304,7 @@ impl LinkFetch {
                     retry: None,
                     ldap: None,
                     link: None,
+                    app_host: None,
                 })
                 .await
                 .map_err(|e| {

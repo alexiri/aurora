@@ -20,6 +20,7 @@ use crate::domains::plugins::registry;
 use crate::domains::secrets::service as secrets;
 use crate::http::auth::Caller;
 use aurora_core::ApiError;
+use aurora_db::repo::app_instances;
 use aurora_db::repo::connections::{self as conn_repo, ConnectionRow};
 use aurora_db::repo::secrets as secret_repo;
 use aurora_registry::manifest::{Connect, TokenKind};
@@ -189,6 +190,11 @@ async fn run_probe(
             .as_ref()
             .and_then(|i| i.default_host.as_deref())
     });
+    // (FIX-290, D-511) The registration as it is now: a removed or disabled one opens nothing.
+    let registration = match row.instance_id {
+        Some(id) => app_instances::get(&state.pool, id).await.ok().flatten(),
+        None => None,
+    };
     let vars = Vars {
         credentials: &creds,
         metadata: &metadata,
@@ -197,6 +203,9 @@ async fn run_probe(
         instance_host,
         instance_base_path: row.instance_base_path.as_deref(),
         instance_registered: row.instance_id.is_some(),
+        app_host: registration
+            .as_ref()
+            .and_then(|i| state.connect.self_hosted(i)),
     };
     match probe::run(&state.connect, snap, app, p, &vars).await {
         Ok(_) => Checked::of(AccountTestResult::Ok),

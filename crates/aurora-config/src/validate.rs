@@ -229,6 +229,9 @@ pub struct ApiConfig {
     /// `gateway.allowed_private`: private destinations the operator opened. The API honours it
     /// for connect/probe requests to a registered app instance only (D-74).
     pub gateway_allowed_private: Vec<String>,
+    /// (FIX-290, SEC-170) `gateway.self_hosted_refused_ranges`: no self-hosted app's allowance
+    /// reaches these CIDRs.
+    pub gateway_self_hosted_refused_ranges: Vec<String>,
     /// (phase 1, RFE-002) `true` when `gateway.proxy_tls.cert_file` is set: the proxy listener
     /// presents an operator certificate, so BYO clients verify the outer leg with system roots.
     pub gateway_proxy_operator_cert: bool,
@@ -255,6 +258,30 @@ pub struct ApiConfig {
     pub counters: CountersConfig,
     pub tls: TlsSection,
     pub telemetry: TelemetrySection,
+}
+
+/// (FIX-290, D-511) The hosts of the other services a process's configuration names (`urls`,
+/// the configured secret stores and the counters Redis): a self-hosted app's host that resolves
+/// to one of their addresses is never opened by the app's own allowance.
+pub fn own_service_hosts<'a>(
+    urls: impl IntoIterator<Item = &'a str>,
+    secrets: &'a SecretsSection,
+    counters: &'a CountersConfig,
+) -> Vec<String> {
+    let stores = secrets
+        .stores
+        .iter()
+        .filter_map(|s| s.settings.expose().get("address")?.as_str());
+    let redis = counters.redis.iter().map(|r| r.address.as_str());
+    let mut hosts: Vec<String> = urls
+        .into_iter()
+        .chain(stores)
+        .chain(redis)
+        .filter_map(aurora_core::ranges::service_host)
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    hosts
 }
 
 /// Counter backend (`ratelimit.counters.backend`).
@@ -554,6 +581,7 @@ impl RawConfig {
             self.gateway.advertised_proxy_url.as_deref(),
         );
         check_sandbox_proxy_url(&mut c, self.gateway.sandbox_proxy_url.as_deref());
+        check_refused_ranges(&mut c, &self.gateway.self_hosted_refused_ranges);
         check_url(&mut c, "api.hookhost_url", Some(&self.api.hookhost_url));
         check_url(
             &mut c,
@@ -761,6 +789,7 @@ impl RawConfig {
             sandbox_proxy_url,
             gateway_ca_dir: self.gateway.ca_dir.clone(),
             gateway_allowed_private: self.gateway.allowed_private.clone(),
+            gateway_self_hosted_refused_ranges: self.gateway.self_hosted_refused_ranges.clone(),
             gateway_proxy_operator_cert: self.gateway.proxy_tls.cert_file.is_some(),
             hookhost_url: self.api.hookhost_url.clone(),
             gateway_internal_url: self.api.gateway_internal_url.clone(),
@@ -850,6 +879,7 @@ impl RawConfig {
             g.advertised_proxy_url.as_deref(),
         );
         check_sandbox_proxy_url(&mut c, g.sandbox_proxy_url.as_deref());
+        check_refused_ranges(&mut c, &g.self_hosted_refused_ranges);
         check_proxy_tls(&mut c, &g.proxy_tls);
         check_url(&mut c, "gateway.hookhost_url", Some(&g.hookhost_url));
         if let Some(p) = &g.egress_proxy {
@@ -2131,6 +2161,18 @@ fn check_ssh(
             .iter()
             .map(|l| l.trim().to_owned())
             .collect(),
+    }
+}
+
+/// (FIX-290, SEC-170) A typo must never leave a range open: every entry is a CIDR.
+fn check_refused_ranges(c: &mut Ctx, entries: &[String]) {
+    for (i, e) in entries.iter().enumerate() {
+        if aurora_core::ranges::RefusedRanges::parse(std::slice::from_ref(e)).is_err() {
+            c.err(
+                format!("gateway.self_hosted_refused_ranges[{i}]"),
+                format!("`{e}` is not a CIDR"),
+            );
+        }
     }
 }
 

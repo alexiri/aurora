@@ -305,6 +305,7 @@ fn prepared(req: http::Request<Vec<u8>>) -> Option<PreparedRequest> {
         retry: None,
         ldap: None,
         link: None,
+        app_host: None,
     })
 }
 

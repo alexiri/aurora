@@ -285,6 +285,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "async-trait",
+ "aurora-api",
  "aurora-channels",
  "aurora-config",
  "aurora-core",
@@ -713,6 +714,7 @@ dependencies = [
  "aurora-counters",
  "aurora-crypto",
  "aurora-db",
+ "aurora-gateway",
  "aurora-llm",
  "aurora-policy",
  "aurora-registry",

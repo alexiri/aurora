@@ -693,6 +693,13 @@ async fn the_admin_list_shows_every_registration_and_promote_makes_one_instance_
     .await
     .unwrap();
     assert_eq!((org_id, critical), (Some(w.org), true));
+    // (FIX-290, SEC-170) The event says what else the promotion opened.
+    let metadata: Value =
+        sqlx::query_scalar("SELECT metadata FROM audit_log WHERE action = 'app_instance.promote'")
+            .fetch_one(w.h.pool())
+            .await
+            .unwrap();
+    assert_eq!(metadata["allowance"], "self_hosted_private", "{metadata}");
 }
 
 // ---- D-231 / C-731: a base path ------------------------------------------------------------
@@ -1308,6 +1315,150 @@ async fn the_probe_goes_through_the_destination_guard() {
         .await
         .unwrap();
     assert_eq!(n, 0);
+}
+
+/// Fixed answers for `host`, as asked and fully qualified.
+fn point(w: &W, hosts: &[(&str, &str)]) {
+    let names = hosts
+        .iter()
+        .flat_map(|(h, ip)| {
+            let ips = vec![ip.parse().unwrap()];
+            [((*h).to_owned(), ips.clone()), (format!("{h}."), ips)]
+        })
+        .collect();
+    w.h.state.connect.set_static_names(names);
+    // The harness's configuration names a hook host that does not resolve, which keeps every
+    // allowance closed; a test names the services it means.
+    w.h.state.connect.set_own_services(Vec::new());
+}
+
+/// (FIX-290, D-511) An instance administrator's registration reaches its host on a private
+/// address through the guard (here nothing answers there, so the dial itself fails); an
+/// organization's registration of such a host, and a loopback or metadata address, stay refused.
+#[tokio::test]
+async fn an_admin_registration_may_reach_a_private_address_and_an_org_one_may_not() {
+    let mut w = world_with(false).await;
+    w.h.state =
+        w.h.state
+            .clone()
+            .with_probe_timeout(std::time::Duration::from_millis(300));
+    w.h.app = test_router(w.h.state.clone());
+    point(
+        &w,
+        &[
+            ("wiki.corp.example", "10.255.255.1"),
+            ("loop.corp.example", "127.0.0.1"),
+            ("meta.corp.example", "169.254.169.254"),
+        ],
+    );
+    let admin = |host: &str| json!({"app_id": "desk", "host": host, "label": "Wiki"});
+    let reason = |s: u16, v: &Value| {
+        assert_eq!(s, 422, "{v}");
+        assert_eq!(v["error"]["code"], "instance_probe_failed", "{v}");
+        v["error"]["details"]["reason"].as_str().unwrap().to_owned()
+    };
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::POST,
+            "/v1/admin/app-instances",
+            Some(admin("wiki.corp.example")),
+        )
+        .await;
+    let r = reason(s, &v);
+    assert!(r == "timeout" || r == "connect", "{r}: {v}");
+    let (s, v) = w
+        .register(&w.owner, w.org, "desk", "wiki.corp.example")
+        .await;
+    assert_eq!(reason(s, &v), "destination_refused");
+    // An instance administrator acting for an organization registers for that organization only.
+    let (s, v) = w
+        .register(&w.root, w.org, "desk", "wiki.corp.example")
+        .await;
+    if s == 422 {
+        assert_eq!(reason(s, &v), "destination_refused");
+    } else {
+        assert!(s == 403 || s == 404, "{s}: {v}");
+    }
+    for host in ["loop.corp.example", "meta.corp.example"] {
+        let (s, v) = w
+            .call(
+                &w.root,
+                Method::POST,
+                "/v1/admin/app-instances",
+                Some(admin(host)),
+            )
+            .await;
+        assert_eq!(reason(s, &v), "destination_refused", "{host}");
+    }
+    // One of Aurora's own services lives at the address: refused.
+    w.h.state
+        .connect
+        .set_own_services(vec!["10.255.255.1".to_owned()]);
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::POST,
+            "/v1/admin/app-instances",
+            Some(admin("wiki.corp.example")),
+        )
+        .await;
+    assert_eq!(reason(s, &v), "destination_refused");
+}
+
+/// (FIX-290, D-511) Connecting an account (the connect probe) follows the registration the
+/// account is for: an instance administrator's reaches a private address, an organization's
+/// does not.
+#[tokio::test]
+async fn connecting_follows_the_registration_the_account_is_for() {
+    let w = world_with(false).await;
+    point(
+        &w,
+        &[
+            ("wiki.corp.example", "10.255.255.1"),
+            ("team.corp.example", "10.255.255.2"),
+        ],
+    );
+    // `nodefault` has no registration probe, so both register.
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::POST,
+            "/v1/admin/app-instances",
+            Some(json!({"app_id": "nodefault", "host": "wiki.corp.example", "label": "Wiki"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let wide: Uuid = v["id"].as_str().unwrap().parse().unwrap();
+    let team = w.instance("nodefault", "team.corp.example").await;
+    let admitted = || w.h.state.connect.self_hosted_admissions();
+    let before = admitted();
+    let (s, _, v) = w
+        .connect(&w.owner, "nodefault", w.body("api_key", Some(team)))
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(admitted(), before, "an organization's registration");
+    let (s, _, v) = w
+        .connect(&w.owner, "nodefault", w.body("api_key", Some(wide)))
+        .await;
+    assert_eq!(s, 422, "{v}");
+    assert!(admitted() > before, "{v}");
+    // Disabled: the allowance is gone at once.
+    let (s, v) = w
+        .call(
+            &w.root,
+            Method::PATCH,
+            &format!("/v1/app-instances/{wide}"),
+            Some(json!({"status": "disabled"})),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let before = admitted();
+    let (s, _, v) = w
+        .connect(&w.owner, "nodefault", w.body("api_key", Some(wide)))
+        .await;
+    assert!(s >= 400, "{s}: {v}");
+    assert_eq!(admitted(), before, "a disabled registration");
 }
 
 #[tokio::test]

@@ -13,7 +13,10 @@
 //! address: IPv4-mapped `::ffff:0:0/96`, NAT64 `64:ff9b::/96` and 6to4 `2002::/16` (the embedded
 //! address is judged; one embedding a public IPv4 address is public).
 
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 /// The cloud metadata addresses.
 const METADATA_V4: Ipv4Addr = Ipv4Addr::new(169, 254, 169, 254);
@@ -82,6 +85,177 @@ pub fn is_metadata(ip: IpAddr) -> bool {
         IpAddr::V4(v4) => v4 == METADATA_V4,
         IpAddr::V6(v6) => v6 == METADATA_V6 || embedded_ipv4(v6) == Some(METADATA_V4),
     }
+}
+
+/// (FIX-290, D-511) Is `ip` in a range an instance-registered self-hosted app's host may resolve
+/// to without being listed in `gateway.allowed_private`? Only private unicast space: RFC 1918,
+/// `100.64.0.0/10` and IPv6 `fc00::/7`. Everything else [`is_special`] names (loopback,
+/// unspecified, link-local, multicast, reserved, and every translated form) is not, and neither is
+/// a cloud metadata service that lives inside those ranges.
+#[must_use]
+pub fn app_host_may_reach(ip: IpAddr) -> bool {
+    match canon(ip) {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            (v4.is_private() || (o[0] == 100 && (o[1] & 0xc0) == 64))
+                // Alibaba Cloud's metadata service.
+                && o != [100, 100, 100, 200]
+        }
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            (s[0] & 0xfe00) == 0xfc00
+                // AWS (`fd00:ec2::/32`: instance metadata, pod identity, DNS) and GCP
+                // (`fd20:ce::254`) metadata services.
+                && !(s[0] == 0xfd00 && s[1] == 0x0ec2)
+                && !(s[0] == 0xfd20 && s[1] == 0x00ce && s[2..7] == [0; 5] && s[7] == 0x0254)
+        }
+    }
+}
+
+/// How often [`LogThrottle`] lets one name through.
+const LOG_EVERY: Duration = Duration::from_secs(60);
+
+/// (FIX-290) One log line a minute per name, for a warning that would otherwise repeat on every
+/// dial. The names come from the configuration, so there are few of them.
+#[derive(Debug, Default)]
+pub struct LogThrottle(Mutex<HashMap<String, Instant>>);
+
+impl LogThrottle {
+    /// May a line about `name` be written now? Saying yes starts its minute.
+    pub fn allow(&self, name: &str) -> bool {
+        self.allow_at(name, Instant::now())
+    }
+
+    fn allow_at(&self, name: &str, now: Instant) -> bool {
+        let mut last = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let due = last
+            .get(name)
+            .is_none_or(|at| now.saturating_duration_since(*at) >= LOG_EVERY);
+        if due {
+            last.insert(name.to_owned(), now);
+        }
+        due
+    }
+}
+
+/// (FIX-290, SEC-170) `gateway.self_hosted_refused_ranges`: CIDRs no self-hosted app's
+/// allowance reaches, whatever the app's host resolves to (a cluster's pod and Service ranges).
+#[derive(Debug, Clone, Default)]
+pub struct RefusedRanges(Vec<(IpAddr, u8)>);
+
+impl RefusedRanges {
+    /// Every entry is a CIDR; anything else is an error, so a typo never leaves a range open.
+    pub fn parse(entries: &[String]) -> Result<Self, String> {
+        entries
+            .iter()
+            .map(|e| {
+                let e = e.trim();
+                let (ip, bits) = e.split_once('/')?;
+                let ip: IpAddr = ip.parse().ok()?;
+                let bits: u8 = bits.parse().ok()?;
+                let max = if ip.is_ipv4() { 32 } else { 128 };
+                // An IPv4-mapped network would be compared as IPv4 with an IPv6 prefix length.
+                (bits <= max && canon(ip).is_ipv4() == ip.is_ipv4()).then_some((ip, bits))
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Self)
+            .ok_or_else(|| format!("not a list of CIDRs: {entries:?}"))
+    }
+
+    #[must_use]
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        let ip = canon(ip);
+        self.0.iter().any(|(n, b)| cidr_contains(*n, *b, ip))
+    }
+}
+
+/// (FIX-290, D-511) Does a self-hosted app's allowance open `ip`, one resolved address of its
+/// host? It must be [`app_host_may_reach`], be an address of the fully qualified name too
+/// (`absolute`: a name that only a DNS search domain completes has none there), not belong
+/// to another of Aurora's services (`services`) and lie in none of the operator's `refused`
+/// ranges. Shared by the gateway and the API.
+#[must_use]
+pub fn app_address_opens(
+    ip: IpAddr,
+    absolute: &[IpAddr],
+    services: &[IpAddr],
+    refused: &RefusedRanges,
+) -> bool {
+    let ip = canon(ip);
+    let has = |list: &[IpAddr]| list.iter().any(|a| canon(*a) == ip);
+    app_host_may_reach(ip) && has(absolute) && !has(services) && !refused.contains(ip)
+}
+
+/// (FIX-290, D-511) The one host and port an instance-registered self-hosted app may reach on a
+/// private address. It is built per request from the registration that serves it and handed to
+/// the destination guard with that request only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppHost {
+    host: String,
+    port: u16,
+}
+
+impl AppHost {
+    /// The same name rules as the chart's `privateHosts.names`, without wildcards: lower case, at
+    /// least two labels, never an address. Names of the cluster's own services and of this
+    /// machine are refused too.
+    #[must_use]
+    pub fn new(host: &str, port: u16) -> Option<Self> {
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        let labels: Vec<&str> = host.split('.').collect();
+        let label_ok = |l: &str| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        };
+        let tld_is_name = labels
+            .last()
+            .is_some_and(|l| l.starts_with(|c: char| c.is_ascii_lowercase()));
+        if labels.len() < 2 || !labels.iter().all(|l| label_ok(l)) || !tld_is_name {
+            return None;
+        }
+        const OWN: [&str; 4] = [".svc", ".cluster.local", ".localhost", ".aurora.internal"];
+        if OWN.iter().any(|s| host.ends_with(s)) || host == "aurora.internal" {
+            return None;
+        }
+        Some(Self { host, port })
+    }
+
+    #[must_use]
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    #[must_use]
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Is `host:port` the name and port this allowance is for?
+    #[must_use]
+    pub fn covers(&self, host: &str, port: u16) -> bool {
+        port == self.port && host.trim_end_matches('.').eq_ignore_ascii_case(&self.host)
+    }
+}
+
+/// The host name (or literal address) a service URL, `host:port` or bare host names; `None` when
+/// there is none. For listing Aurora's own services out of its configuration.
+#[must_use]
+pub fn service_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if let Some(v6) = authority.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else if authority.matches(':').count() == 1 {
+        authority.split(':').next().unwrap_or("")
+    } else {
+        authority
+    };
+    (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
 /// `gateway.allowed_private` as the API's connect/probe flows and the dashboard Vault stores
@@ -197,6 +371,168 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
+    }
+
+    /// (FIX-290, D-511) Only private unicast space is open to a self-hosted app's host: never
+    /// loopback, link-local, a metadata service or a translated form.
+    #[test]
+    fn an_app_host_may_reach_private_space_only() {
+        for p in [
+            "10.1.2.3",
+            "172.16.0.1",
+            "172.31.255.254",
+            "192.168.0.9",
+            "100.64.0.1",
+            "fd12::1",
+            "fc00::5",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(app_host_may_reach(ip(p)), "{p}");
+        }
+        for p in [
+            "127.0.0.1",
+            "127.9.9.9",
+            "::1",
+            "0.0.0.0",
+            "::",
+            "169.254.169.254",
+            "169.254.170.2",
+            "169.254.1.1",
+            "fe80::1",
+            "fd00:ec2::254",
+            "fd00:ec2::23",
+            "fd20:ce::254",
+            "100.100.100.200",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+            "64:ff9b::a00:1",
+            "64:ff9b::a9fe:a9fe",
+            "2002:a00:1::1",
+            "::10.0.0.1",
+            "fec0::1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "192.0.0.192",
+            "198.18.0.1",
+            "240.0.0.1",
+            "93.184.216.34",
+        ] {
+            assert!(!app_host_may_reach(ip(p)), "{p}");
+        }
+    }
+
+    #[test]
+    fn an_allowance_opens_a_private_address_of_the_qualified_name_that_is_no_service_of_ours() {
+        let a = ip("10.1.2.3");
+        let none = RefusedRanges::default();
+        let opens = |ip, absolute: &[IpAddr], services: &[IpAddr]| {
+            app_address_opens(ip, absolute, services, &none)
+        };
+        assert!(opens(a, &[a], &[]));
+        assert!(opens(ip("::ffff:10.1.2.3"), &[a], &[]));
+        assert!(!opens(a, &[], &[]));
+        assert!(!opens(a, &[ip("10.1.2.4")], &[]));
+        assert!(!opens(a, &[a], &[ip("::ffff:10.1.2.3")]));
+        let loopback = ip("127.0.0.1");
+        assert!(!opens(loopback, &[loopback], &[]));
+    }
+
+    #[test]
+    fn a_throttled_log_lets_each_name_through_once_a_minute() {
+        let t = LogThrottle::default();
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+        assert!(t.allow_at("db", at(0)));
+        assert!(!t.allow_at("db", at(1)));
+        assert!(!t.allow_at("db", at(59)));
+        assert!(
+            t.allow_at("vault", at(1)),
+            "another name has its own minute"
+        );
+        assert!(t.allow_at("db", at(60)));
+        assert!(!t.allow_at("db", at(61)));
+    }
+
+    /// (FIX-290, SEC-170) The operator's refused ranges close what the allowance would open.
+    #[test]
+    fn an_allowance_opens_nothing_in_a_refused_range() {
+        let refused =
+            RefusedRanges::parse(&["10.244.0.0/16".into(), "fd00:10::/64".into()]).unwrap();
+        for p in [
+            "10.244.0.1",
+            "10.244.255.254",
+            "::ffff:10.244.3.4",
+            "fd00:10::9",
+        ] {
+            assert!(refused.contains(ip(p)), "{p}");
+            assert!(!app_address_opens(ip(p), &[ip(p)], &[], &refused), "{p}");
+        }
+        for p in ["10.245.0.1", "192.168.0.9", "fd00:11::9"] {
+            assert!(app_address_opens(ip(p), &[ip(p)], &[], &refused), "{p}");
+        }
+        for bad in [
+            "10.0.0.1",
+            "10.0.0.0/33",
+            "fd00::/129",
+            "svc.cluster.local",
+            "",
+            "::ffff:10.0.0.0/104",
+        ] {
+            assert!(RefusedRanges::parse(&[bad.into()]).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_app_host_is_a_plain_name_with_two_labels_outside_the_cluster() {
+        let h = AppHost::new("Wiki.Corp.Example.", 443).unwrap();
+        assert_eq!((h.host(), h.port()), ("wiki.corp.example", 443));
+        assert!(h.covers("WIKI.corp.example", 443));
+        assert!(!h.covers("wiki.corp.example", 8443));
+        assert!(!h.covers("a.wiki.corp.example", 443));
+        assert!(!h.covers("corp.example", 443));
+        for bad in [
+            "wiki",
+            "localhost",
+            "10.0.0.1",
+            "169.254.169.254",
+            "127.1",
+            "::1",
+            "[fd12::1]",
+            "*.corp.example",
+            "10.0.0.0/8",
+            "wiki.corp.example:443",
+            "wiki.corp.example/x",
+            "a@wiki.corp.example",
+            "wiki..example",
+            "api.aurora.svc",
+            "api.aurora.svc.cluster.local",
+            "api.aurora.svc.cluster.local.",
+            "x.localhost",
+            "aurora.internal",
+            "link.aurora.internal",
+            "",
+        ] {
+            assert!(AppHost::new(bad, 443).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn service_hosts_are_read_from_urls_and_host_ports() {
+        for (url, host) in [
+            ("http://rel-api:4101", "rel-api"),
+            (
+                "postgres://u:p@DB.corp.example:5432/aurora?sslmode=require",
+                "db.corp.example",
+            ),
+            ("redis://:pw@10.0.0.5:6379/0", "10.0.0.5"),
+            ("https://vault.corp.example", "vault.corp.example"),
+            ("proxy.corp.example:3128", "proxy.corp.example"),
+            ("http://[fd12::1]:8080/x", "fd12::1"),
+            ("kubernetes.default.svc", "kubernetes.default.svc"),
+        ] {
+            assert_eq!(service_host(url).as_deref(), Some(host), "{url}");
+        }
+        assert_eq!(service_host(""), None);
     }
 
     #[test]

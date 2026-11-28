@@ -76,7 +76,13 @@ metrics = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 
+[features]
+# (FIX-290) The connect client's test-only seams (fixed name answers, the admission counter).
+# Never on in a build of the binary: only the dev-dependency below turns it on.
+test-hooks = []
+
 [dev-dependencies]
+aurora-api = { path = ".", features = ["test-hooks"] }
 proptest = { workspace = true }
 aurora-config = { workspace = true, features = ["test-registry"] }
 aurora-secrets = { workspace = true, features = ["memory-store"] }

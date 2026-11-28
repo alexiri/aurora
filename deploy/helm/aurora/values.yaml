@@ -156,6 +156,13 @@ config:
   # ingress to gateway :4103 and runner :4106 (the startup overlap warning is expected).
   gateway:
     internal_bind: 0.0.0.0
+    # (SEC-170) A self-hosted app server that an instance administrator registers for all organizations
+    # may be reached on a private address by that app's connected accounts, with no entry in
+    # `privateHosts`. List here the CIDRs that must never be reached that way, whatever such a host name
+    # resolves to: your cluster's pod and Service CIDRs (and, on a managed cluster, the range of its
+    # private Kubernetes API endpoint). Read by the gateway and the API. Empty by default. It does not
+    # narrow `allowed_private`, and it opens nothing: the NetworkPolicies below still apply. Example:
+    # self_hosted_refused_ranges: ["10.244.0.0/16", "10.96.0.0/12"]
   runner:
     ops_bind: 0.0.0.0
   telemetry:
