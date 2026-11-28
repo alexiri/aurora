@@ -8,6 +8,8 @@
 //! edit is never uploaded — the file is restored (0444) and the agent is told the change was undone.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::os::fd::AsFd as _;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::MEMORY_CONTENT_MAX;
@@ -21,11 +23,22 @@ pub const MEMORY_FILE_READ_MAX: u64 = 4 * MEMORY_CONTENT_MAX as u64;
 /// Read at most `max` bytes of `path`: `Ok(None)` when the file is larger (never read whole).
 /// Only a regular file is read: a link or a FIFO at `path` is an error.
 pub fn read_bounded(path: &std::path::Path, max: u64) -> std::io::Result<Option<Vec<u8>>> {
+    read_capped(crate::nofollow::open_regular(path)?, max)
+}
+
+/// [`read_bounded`] of `rel` below `home`: no component of `rel` may be a link either.
+pub fn read_bounded_beneath(
+    home: &std::path::Path,
+    rel: &std::path::Path,
+    max: u64,
+) -> std::io::Result<Option<Vec<u8>>> {
+    read_capped(crate::nofollow::open_regular_beneath(home, rel)?, max)
+}
+
+fn read_capped(file: std::fs::File, max: u64) -> std::io::Result<Option<Vec<u8>>> {
     use std::io::Read as _;
     let mut buf = Vec::new();
-    crate::nofollow::open_regular(path)?
-        .take(max + 1)
-        .read_to_end(&mut buf)?;
+    file.take(max + 1).read_to_end(&mut buf)?;
     Ok((buf.len() as u64 <= max).then_some(buf))
 }
 use aurora_protocol::common::Validate;
@@ -41,6 +54,11 @@ const KEY_MAX: usize = 128;
 
 fn sha_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+pub(crate) fn tests_sha_hex(bytes: &[u8]) -> String {
+    sha_hex(bytes)
 }
 
 /// Appends the checksum trailer to projected memory `content`.
@@ -164,6 +182,8 @@ pub fn valid_key(key: &str) -> bool {
 /// once per changed digest.
 #[derive(Debug)]
 pub struct Harvester {
+    root: PathBuf,
+    /// `memory/` in the root, to list it; its files are opened from the root's descriptor.
     dir: PathBuf,
     uploaded: HashMap<String, String>,
     notices: Vec<String>,
@@ -172,6 +192,7 @@ pub struct Harvester {
 impl Harvester {
     pub fn new(root: &Path) -> Self {
         Self {
+            root: root.to_path_buf(),
             dir: root.join(MEMORY_DIR),
             uploaded: HashMap::new(),
             notices: Vec::new(),
@@ -203,6 +224,15 @@ impl Harvester {
             .is_ok()
     }
 
+    /// The memory file `name`, bounded; a link at `memory/` or at the file is not followed.
+    fn read_memory(&self, name: &str) -> std::io::Result<Option<Vec<u8>>> {
+        read_bounded_beneath(
+            &self.root,
+            &Path::new(MEMORY_DIR).join(name),
+            MEMORY_FILE_READ_MAX,
+        )
+    }
+
     pub fn scan(&mut self, locked: &HashMap<String, Vec<u8>>) -> Vec<MemoryWrite> {
         if !self.real_memory_dir(!locked.is_empty()) {
             return Vec::new();
@@ -223,15 +253,13 @@ impl Harvester {
             if let Some(recorded) = locked.get(key) {
                 // (P6-MEMLOCK, C-1149) Never uploaded: the recorded install is the truth. A file
                 // that is gone or oversized counts as changed and is restored from the bytes.
-                let current = read_bounded(&self.dir.join(name), MEMORY_FILE_READ_MAX)
-                    .ok()
-                    .flatten();
+                let current = self.read_memory(name).ok().flatten();
                 self.guard_locked(key, name, recorded, current.as_deref());
                 continue;
             }
             // (FIX-114) The agent writes these files: never read one whole before checking its
             // size (a multi-gigabyte file would kill the supervisor on the memory limit).
-            let text = match read_bounded(&self.dir.join(name), MEMORY_FILE_READ_MAX) {
+            let text = match self.read_memory(name) {
                 Ok(Some(b)) => match String::from_utf8(b) {
                     Ok(t) => t,
                     Err(_) => continue,
@@ -301,11 +329,12 @@ impl Harvester {
     /// anything else (an edit, a deleted file) is restored from the recorded bytes with a notice
     /// per changed digest.
     fn guard_locked(&mut self, key: &str, name: &str, recorded: &[u8], current: Option<&[u8]>) {
-        let path = self.dir.join(name);
         match current {
             // The unmodified projection (the recorded bytes verify by construction).
             Some(b) if b == recorded => {
-                let _ = nofollow::open_regular(&path).and_then(|f| nofollow::set_mode(&f, 0o444));
+                let _ =
+                    nofollow::open_regular_beneath(&self.root, &Path::new(MEMORY_DIR).join(name))
+                        .and_then(|f| nofollow::set_mode(&f, 0o444));
                 self.uploaded.remove(name);
             }
             current => {
@@ -324,7 +353,11 @@ impl Harvester {
 
     /// Rewrites a locked memory file from its recorded (sealed) bytes, 0444.
     fn restore_locked(&self, name: &str, recorded: &[u8]) {
-        if let Err(e) = nofollow::write_atomic(&self.dir.join(name), recorded, 0o444) {
+        let written =
+            nofollow::open_dir_beneath(&self.root, Path::new(MEMORY_DIR)).and_then(|dir| {
+                nofollow::write_atomic_at(dir.as_fd(), OsStr::new(name), recorded, 0o444)
+            });
+        if let Err(e) = written {
             tracing::warn!(name = %name, error = %e, "locked memory file not restored");
         }
     }

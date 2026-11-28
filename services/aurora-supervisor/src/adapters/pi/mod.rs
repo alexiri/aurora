@@ -83,12 +83,14 @@ impl PiAdapter {
 fn render_config(opts: &SessionOptions) -> Result<std::path::PathBuf, HarnessError> {
     let dir = render::config_dir(&opts.working_dir, ID);
     let files = config::render_files(opts)?;
-    render::render_dir(&dir, &files, &config::CREDENTIAL_FILES).map_err(|e| {
-        HarnessError::new(
-            "harness_failed",
-            format!("cannot render pi's configuration: {e}"),
-        )
-    })?;
+    render::render_dir(&opts.working_dir, &dir, &files, &config::CREDENTIAL_FILES).map_err(
+        |e| {
+            HarnessError::new(
+                "harness_failed",
+                format!("cannot render pi's configuration: {e}"),
+            )
+        },
+    )?;
     Ok(dir)
 }
 
@@ -164,8 +166,9 @@ impl HarnessAdapter for PiAdapter {
                 "unsafe session reference",
             ));
         }
+        let home = working_dir.to_path_buf();
         let dir = render::session_dir(working_dir, ID, session_ref);
-        tokio::task::spawn_blocking(move || render::remove_any(&dir))
+        tokio::task::spawn_blocking(move || render::remove_any(&home, &dir))
             .await
             .map_err(|e| HarnessError::new("purge_failed", e.to_string()))?
             .map_err(|e| HarnessError::new("purge_failed", e.to_string()))
@@ -233,7 +236,7 @@ impl PiSession {
         }
         let sessions = render::harness_dir(&self.opts.working_dir, ID).join("sessions");
         let dir = sessions.join(&self.ref_id);
-        render::ensure_dir(&dir).map_err(|e| {
+        render::ensure_dir(&self.opts.working_dir, &dir).map_err(|e| {
             HarnessError::new("harness_failed", format!("cannot prepare pi's state: {e}"))
         })?;
         let spec = config::launch_spec(&self.opts, &config_dir, &dir, &self.ref_id);

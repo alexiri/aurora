@@ -6,8 +6,13 @@
 //! and `.aurora/harness/<id>/sessions/<session ref>/` (the harness's own state of one conversation;
 //! purging a session removes exactly this directory).
 
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
+use std::os::fd::AsFd as _;
 use std::path::{Path, PathBuf};
+
+use rustix::fs::{Mode, OFlags};
+
+use crate::nofollow;
 
 /// `<home>/.aurora/harness/<id>`.
 pub fn harness_dir(home: &Path, id: &str) -> PathBuf {
@@ -31,33 +36,46 @@ pub fn safe_ref(r: &str) -> bool {
     crate::harness::is_safe_session_ref(r) && !r.starts_with('-')
 }
 
-/// Removes a file, a link or a directory tree; a missing path is success.
-pub fn remove_any(p: &Path) -> std::io::Result<()> {
-    let r = match std::fs::symlink_metadata(p) {
-        Ok(m) if m.is_dir() => std::fs::remove_dir_all(p),
-        Ok(_) => std::fs::remove_file(p),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e),
-    };
-    match r {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
+/// `path` relative to `home`. Everything below the home is the agent's: the functions here work
+/// from the home's descriptor and follow no link on the way.
+fn below<'a>(home: &Path, path: &'a Path) -> std::io::Result<&'a Path> {
+    path.strip_prefix(home)
+        .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))
 }
 
-/// Writes `content` to `path`, replacing whatever is there (a read-only file, a link, a
-/// directory), creating the new file exclusively so a link planted in between is not followed, and
-/// reads it back: a file that is not exactly what was rendered is an error (SEC-66, SEC-133).
-pub fn write_exclusive(path: &Path, content: &str) -> std::io::Result<()> {
-    remove_any(path)?;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
+/// Removes a file, a link or a directory tree at `path` below `home`; a missing path is success,
+/// and so is one whose folder is not there (a link in its place is not a folder).
+pub fn remove_any(home: &Path, path: &Path) -> std::io::Result<()> {
+    nofollow::remove_tree_beneath(home, below(home, path)?)
+}
+
+/// Writes `content` to `path` below `home`, replacing whatever is there (a read-only file, a
+/// link, a directory), creating the new file exclusively so a link planted in between is not
+/// followed, and reads it back: a file that is not exactly what was rendered is an error (SEC-66,
+/// SEC-133). The folder must exist ([`ensure_dir`]).
+pub fn write_exclusive(home: &Path, path: &Path, content: &str) -> std::io::Result<()> {
+    let rel = below(home, path)?;
+    let (parent, name) = rel
+        .parent()
+        .zip(rel.file_name())
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    nofollow::remove_tree_beneath(home, rel)?;
+    let dir = nofollow::open_dir_beneath(home, parent)?;
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let mut f = std::fs::File::from(rustix::fs::openat(
+        &dir,
+        name,
+        flags,
+        Mode::from_raw_mode(0o666),
+    )?);
     f.write_all(content.as_bytes())?;
     f.sync_all()?;
     drop(f);
-    if std::fs::read_to_string(path)? != content {
+    let mut back = Vec::new();
+    nofollow::open_regular_at(dir.as_fd(), name)?
+        .take(content.len() as u64 + 1)
+        .read_to_end(&mut back)?;
+    if back != content.as_bytes() {
         return Err(std::io::Error::other(format!(
             "{} changed while written",
             path.display()
@@ -66,38 +84,31 @@ pub fn write_exclusive(path: &Path, content: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Creates `dir` (and parents) if it is a directory or missing; anything else in its place
-/// (a file or link planted by the agent) is replaced by a directory.
-pub fn ensure_dir(dir: &Path) -> std::io::Result<()> {
-    match std::fs::symlink_metadata(dir) {
-        Ok(m) if m.is_dir() => Ok(()),
-        Ok(_) => {
-            remove_any(dir)?;
-            std::fs::create_dir_all(dir)
-        }
-        Err(_) => std::fs::create_dir_all(dir),
-    }
+/// Makes the folder `dir` below `home` (and its parents); anything but a directory in the place
+/// of one of them (a file or link planted by the agent) is replaced by a directory.
+pub fn ensure_dir(home: &Path, dir: &Path) -> std::io::Result<()> {
+    nofollow::replace_dir_beneath(home, below(home, dir)?).map(drop)
 }
 
-/// Renders every `(relative path, content)` of `files` into `dir` (creating the directories in
-/// between), then removes each relative path in `forbidden` (the harness's credential stores).
-pub fn render_dir(dir: &Path, files: &[(&str, String)], forbidden: &[&str]) -> std::io::Result<()> {
-    ensure_dir(dir)?;
+/// Renders every `(relative path, content)` of `files` into `dir` below `home` (creating the
+/// directories in between), then removes each relative path in `forbidden` (the harness's
+/// credential stores).
+pub fn render_dir(
+    home: &Path,
+    dir: &Path,
+    files: &[(&str, String)],
+    forbidden: &[&str],
+) -> std::io::Result<()> {
+    ensure_dir(home, dir)?;
     for (name, content) in files {
         let path = dir.join(name);
-        // Every directory on the way is checked one by one: a link planted at `data` must not
-        // redirect the write below it.
-        let mut at = dir.to_path_buf();
-        if let Some(parent) = Path::new(name).parent() {
-            for part in parent.components() {
-                at.push(part);
-                ensure_dir(&at)?;
-            }
+        if let Some(parent) = path.parent() {
+            ensure_dir(home, parent)?;
         }
-        write_exclusive(&path, content)?;
+        write_exclusive(home, &path, content)?;
     }
     for name in forbidden {
-        remove_any(&dir.join(name))?;
+        remove_any(home, &dir.join(name))?;
     }
     Ok(())
 }
@@ -125,6 +136,7 @@ mod tests {
         std::fs::create_dir_all(cfg.join("b.json")).unwrap();
         std::fs::write(cfg.join("auth.json"), r#"{"key":"sk-planted"}"#).unwrap();
         render_dir(
+            &d,
             &cfg,
             &[("a.json", "{\"a\":1}".into()), ("b.json", "{}".into())],
             &["auth.json"],
@@ -147,7 +159,7 @@ mod tests {
     fn a_directory_replaced_by_a_file_is_recreated_and_refs_are_checked() {
         let d = tmp("dir");
         std::fs::write(d.join("cfg"), "not a dir").unwrap();
-        ensure_dir(&d.join("cfg")).unwrap();
+        ensure_dir(&d, &d.join("cfg")).unwrap();
         assert!(d.join("cfg").is_dir());
         assert!(safe_ref("0192f3a0-aaaa-7bbb-8ccc-ddddeeeeffff"));
         for bad in ["", "-x", "../x", "a/b", "a b"] {

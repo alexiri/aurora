@@ -25,6 +25,7 @@ use aurora_protocol::runner::{
 };
 
 use crate::adapters::claude_code::config::PLACEHOLDER;
+use crate::nofollow;
 
 /// Where the file lives (tmpfs `/run/aurora`; agent-writable at one uid, so agent code can rewrite it — the
 /// wrappers parse it as data and the terminal is the agent's environment, see `17`).
@@ -284,15 +285,17 @@ pub const TERMINAL_STATE_DIRS: [&str; 5] = ["claude", "codex", "pi", "goose", "o
 /// itself belongs to the supervisor. A terminal harness never reads or changes the agent
 /// harness's own state (FIX-095). Best effort: a failure is the caller's warning.
 pub fn ensure_state_dirs(home: &Path, uid: u32, gid: u32) -> std::io::Result<()> {
-    let base = home.join(".aurora/terminal");
+    let base = Path::new(".aurora/terminal");
     // One directory per terminal harness (`claude`, `codex`, `pi`, `goose`, `opencode`; C-1015).
     let dirs =
-        std::iter::once(base.clone()).chain(TERMINAL_STATE_DIRS.iter().map(|d| base.join(d)));
+        std::iter::once(base.to_path_buf()).chain(TERMINAL_STATE_DIRS.iter().map(|d| base.join(d)));
     for d in dirs {
-        std::fs::create_dir_all(&d)?;
-        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755))?;
+        // The home is the agent's and outlives a boot: each folder is reached from its
+        // descriptor, following no link, and its mode and owner are set on the folder held.
+        let dir = nofollow::ensure_dir_beneath(home, &d)?;
+        rustix::fs::fchmod(&dir, rustix::fs::Mode::from_raw_mode(0o755))?;
         // Not root (tests): the directories are already ours.
-        let _ = std::os::unix::fs::chown(&d, Some(uid), Some(gid));
+        let _ = std::os::unix::fs::fchown(&dir, Some(uid), Some(gid));
     }
     Ok(())
 }

@@ -37,6 +37,7 @@ use async_trait::async_trait;
 use aurora_protocol::runner::SendNowOutcome;
 use tokio::sync::{Notify, mpsc};
 
+use crate::adapters::render;
 use crate::harness::{
     HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEvent, HarnessEventStream,
     HarnessSession, SessionOptions, SteerAck, SteerInput, TurnInput,
@@ -95,30 +96,14 @@ fn safe_ref(r: &str) -> bool {
 /// removes any `auth.json`: Aurora never offers sign-in and a planted file must not win over the
 /// API key.
 fn write_home(home: &Path, config_toml: &str) -> std::io::Result<()> {
-    use std::io::Write as _;
-    std::fs::create_dir_all(home)?;
-    let path = home.join("config.toml");
-    // Replace whatever is there (a read-only file, a symlink, a directory) and create the new
-    // file exclusively so a link planted in between is not followed.
-    match std::fs::symlink_metadata(&path) {
-        Ok(m) if m.is_dir() => std::fs::remove_dir_all(&path)?,
-        Ok(_) => std::fs::remove_file(&path)?,
-        Err(_) => {}
-    }
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)?;
-    f.write_all(config_toml.as_bytes())?;
-    f.sync_all()?;
-    drop(f);
-    if std::fs::read_to_string(&path)? != config_toml {
-        return Err(std::io::Error::other("config.toml changed while written"));
-    }
-    match std::fs::remove_file(home.join("auth.json")) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
+    // The folder `CODEX_HOME` is in is the sandbox home: nothing below it is followed. The
+    // write replaces whatever is there, creates the file exclusively and reads it back.
+    let base = home
+        .parent()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    render::ensure_dir(base, home)?;
+    render::write_exclusive(base, &home.join("config.toml"), config_toml)?;
+    render::remove_any(base, &home.join("auth.json"))
 }
 
 #[async_trait]

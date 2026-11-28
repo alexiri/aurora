@@ -8,6 +8,7 @@
 //! starts never blocks the turn; the model is told in a notice instead.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::{ATTACH_IN_COUNT, ATTACH_IN_FILE_MAX};
@@ -15,9 +16,12 @@ use aurora_protocol::common::Validate as _;
 use aurora_protocol::runner::AttachmentRef;
 use aurora_protocol::supervisor::FileIn;
 use base64::Engine as _;
+use rustix::fs::{AtFlags, Mode, OFlags};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt as _;
 use uuid::Uuid;
+
+use crate::nofollow;
 
 /// Longest sanitized filename.
 pub const MAX_NAME: usize = 128;
@@ -78,9 +82,21 @@ fn dedupe(name: &str, taken: impl Fn(&str) -> bool) -> String {
     format!("{FALLBACK_NAME}-{}", Uuid::now_v7().simple())
 }
 
+/// A partial file, by the folder it was made in (held open) and its name there.
+struct Part {
+    dir: OwnedFd,
+    name: String,
+}
+
+impl Part {
+    fn remove(&self) {
+        let _ = rustix::fs::unlinkat(&self.dir, self.name.as_str(), AtFlags::empty());
+    }
+}
+
 struct Receiving {
     file: tokio::fs::File,
-    tmp: PathBuf,
+    tmp: Part,
     filename: String,
     size: u64,
     sha256: String,
@@ -113,7 +129,11 @@ pub struct Resolved {
     pub notices: Vec<String>,
 }
 
+/// Where attachments land, relative to the workspace.
+const INBOX_DIR: &str = ".aurora/inbox";
+
 pub struct Inbox {
+    /// The workspace: the agent's, so every folder below it is reached from its descriptor.
     root: PathBuf,
     turns: HashMap<Uuid, TurnInbox>,
     order: VecDeque<Uuid>,
@@ -123,14 +143,10 @@ impl Inbox {
     /// `workspace` is the working directory (`/workspace`).
     pub fn new(workspace: &Path) -> Self {
         Self {
-            root: workspace.join(".aurora/inbox"),
+            root: workspace.to_path_buf(),
             turns: HashMap::new(),
             order: VecDeque::new(),
         }
-    }
-
-    fn turn_dir(&self, turn_id: Uuid) -> PathBuf {
-        self.root.join(turn_id.to_string())
     }
 
     /// Applies one `file.in` frame. Failures are remembered per attachment and reported by
@@ -144,12 +160,14 @@ impl Inbox {
             if self.order.len() >= MAX_TRACKED_TURNS
                 && let Some(old) = self.order.pop_front()
             {
-                self.drop_turn(old).await;
+                self.drop_turn(old);
             }
             self.turns.insert(f.turn_id, TurnInbox::default());
             self.order.push_back(f.turn_id);
         }
-        let dir = self.turn_dir(f.turn_id);
+        let rel = Path::new(INBOX_DIR).join(f.turn_id.to_string());
+        let dir = self.root.join(&rel);
+        let root = self.root.clone();
         let Some(turn) = self.turns.get_mut(&f.turn_id) else {
             return;
         };
@@ -161,7 +179,7 @@ impl Inbox {
                     tracing::warn!(turn_id = %f.turn_id, "too many inbound attachments; frame dropped");
                     return;
                 }
-                match begin(turn, &dir, &f).await {
+                match begin(turn, &root, &rel, &f) {
                     Ok(r) => append(r, &f).await,
                     Err(why) => Step::Settled(Entry::Failed(why)),
                 }
@@ -198,7 +216,7 @@ impl Inbox {
                 }
                 Some(Entry::Failed(why)) => why,
                 Some(Entry::Receiving(r)) => {
-                    let _ = tokio::fs::remove_file(&r.tmp).await;
+                    r.tmp.remove();
                     "the transfer was incomplete"
                 }
                 None => "it was not received",
@@ -211,17 +229,17 @@ impl Inbox {
         }
         for (_, e) in turn.files {
             if let Entry::Receiving(r) = e {
-                let _ = tokio::fs::remove_file(&r.tmp).await;
+                r.tmp.remove();
             }
         }
         out
     }
 
-    async fn drop_turn(&mut self, turn_id: Uuid) {
+    fn drop_turn(&mut self, turn_id: Uuid) {
         if let Some(t) = self.turns.remove(&turn_id) {
             for (_, e) in t.files {
                 if let Entry::Receiving(r) = e {
-                    let _ = tokio::fs::remove_file(&r.tmp).await;
+                    r.tmp.remove();
                 }
             }
         }
@@ -234,20 +252,31 @@ enum Step {
     Settled(Entry),
 }
 
+/// A new file `name` in the folder `rel` of the workspace: no link is followed, and what is
+/// already at `name` is removed, never opened.
+fn create_part(root: &Path, rel: &Path, name: String) -> std::io::Result<(Part, tokio::fs::File)> {
+    let dir = nofollow::ensure_dir_beneath(root, rel)?;
+    let _ = rustix::fs::unlinkat(&dir, name.as_str(), AtFlags::empty());
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let file = rustix::fs::openat(&dir, name.as_str(), flags, Mode::from_raw_mode(0o666))?;
+    let file = tokio::fs::File::from_std(std::fs::File::from(file));
+    Ok((Part { dir, name }, file))
+}
+
 /// First chunk: checks the quota and opens the temporary file.
-async fn begin(turn: &mut TurnInbox, dir: &Path, f: &FileIn) -> Result<Receiving, &'static str> {
+fn begin(
+    turn: &mut TurnInbox,
+    root: &Path,
+    rel: &Path,
+    f: &FileIn,
+) -> Result<Receiving, &'static str> {
     if f.index != 0 {
         return Err("its first chunk was lost");
     }
     if f.size > ATTACH_IN_FILE_MAX || turn.reserved.saturating_add(f.size) > TURN_QUOTA {
         return Err("it exceeds the inbound size limit");
     }
-    tokio::fs::create_dir_all(dir)
-        .await
-        .map_err(|_| "the workspace is not writable")?;
-    let tmp = dir.join(format!(".part-{}", f.attachment_id));
-    let file = tokio::fs::File::create(&tmp)
-        .await
+    let (tmp, file) = create_part(root, rel, format!(".part-{}", f.attachment_id))
         .map_err(|_| "the workspace is not writable")?;
     turn.reserved += f.size;
     Ok(Receiving {
@@ -265,7 +294,7 @@ async fn begin(turn: &mut TurnInbox, dir: &Path, f: &FileIn) -> Result<Receiving
 /// Removes the partial file and records why the attachment is lost.
 async fn discard(r: Receiving, why: &'static str) -> Step {
     drop(r.file);
-    let _ = tokio::fs::remove_file(&r.tmp).await;
+    r.tmp.remove();
     Step::Settled(Entry::Failed(why))
 }
 
@@ -295,33 +324,31 @@ async fn append(mut r: Receiving, f: &FileIn) -> Step {
 
 /// Last chunk: verify size and sha256, then atomically move to the final name.
 async fn finish(turn: &mut TurnInbox, dir: &Path, mut r: Receiving) -> Entry {
-    let lost = |tmp: PathBuf, why| async move {
-        let _ = tokio::fs::remove_file(tmp).await;
+    let lost = |tmp: Part, why| {
+        tmp.remove();
         Entry::Failed(why)
     };
     if r.file.flush().await.is_err() || r.file.sync_all().await.is_err() {
-        return lost(r.tmp, "the workspace is not writable").await;
+        return lost(r.tmp, "the workspace is not writable");
     }
     drop(r.file);
     if r.written != r.size {
-        return lost(r.tmp, "its size did not match").await;
+        return lost(r.tmp, "its size did not match");
     }
     if hex::encode(r.hasher.finalize()) != r.sha256 {
-        return lost(r.tmp, "its checksum did not match").await;
+        return lost(r.tmp, "its checksum did not match");
     }
     let base = sanitize_filename(&r.filename);
     let mut name = dedupe(&base, |n| turn.names.contains(n));
     // A name may also exist from an earlier delivery of the same turn.
-    while tokio::fs::try_exists(dir.join(&name))
-        .await
-        .unwrap_or(false)
-    {
+    while rustix::fs::statat(&r.tmp.dir, name.as_str(), AtFlags::SYMLINK_NOFOLLOW).is_ok() {
         turn.names.insert(name.clone());
         name = dedupe(&base, |n| turn.names.contains(n));
     }
     let dest = dir.join(&name);
-    if tokio::fs::rename(&r.tmp, &dest).await.is_err() {
-        return lost(r.tmp, "the workspace is not writable").await;
+    let part = r.tmp.name.as_str();
+    if rustix::fs::renameat(&r.tmp.dir, part, &r.tmp.dir, name.as_str()).is_err() {
+        return lost(r.tmp, "the workspace is not writable");
     }
     turn.names.insert(name);
     Entry::Ready(dest)

@@ -1071,6 +1071,25 @@ The home (`/workspace`) holds:
   generations (each as sent) until the resend. A commit that stops for any reason
   after its first check locks the managed trees again, and the harvest protects
   the memories as they were installed, a newly locked one included.
+- (FIX-297, SEC-173) The supervisor may run as root while the agent owns the
+  home, so nothing it writes or removes under `.aurora/` (the staging area, the
+  `.aurora` documents, the app and helper roots, `pg/`, `links.json`,
+  `servers.json`, `inbox/`, `terminal/` with its owner and mode, and
+  `harness/`) is reached by a joined path. Links on the way are removed (from
+  the parent's descriptor, never followed), every folder is opened from its
+  parent's descriptor with no-follow, and files are created, renamed and removed
+  relative to those descriptors. A link at `.aurora` before part 0 is removed
+  and the generation installs into a real `.aurora`; one planted while a
+  generation is staged loses the staged files, so the generation is refused and
+  sent again. Nothing is read back from the home to decide anything: the
+  database relay, the bridge's core-only mode and the catalogue digest come from
+  the bytes this process installed (a generation without render inputs renders
+  the last ones again). The digest is empty until the process has committed a
+  generation. The one read of an earlier process's `render_inputs.json`, at
+  boot, is bounded and follows no link; a link, a FIFO or a larger file counts
+  as none (no databases). The other reads of files in the home (memory harvest,
+  tool catalogue, outbound files, boot files kept unless managed) follow no link
+  in the last component and never wait on a FIFO.
 - (FIX-258) The skills and helpers roots are pruned **before** the staged files
   are installed, so a path may turn from a file into a folder, or back, between
   two generations. A skill file the home cannot hold (a file where a folder is

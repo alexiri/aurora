@@ -6,14 +6,13 @@
 //! here (or in the sync that feeds it) carries it. The file is `0600` and removed when the list is
 //! empty.
 
-use std::fs;
-use std::io::Write as _;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
+
+use crate::nofollow;
 
 /// The file, relative to the home.
 pub const LINKS_FILE: &str = ".aurora/links.json";
@@ -76,31 +75,22 @@ pub fn render(links: &[LinkInput]) -> String {
     text
 }
 
-/// Writes `root/.aurora/links.json` (`0600`) or, with no links, removes it.
+/// Writes `root/.aurora/links.json` (`0600`) or, with no links, removes it; no link in the
+/// home is followed.
 pub fn write(root: &Path, links: &[LinkInput]) -> std::io::Result<()> {
-    let path = root.join(LINKS_FILE);
+    let path = Path::new(LINKS_FILE);
     if links.is_empty() {
-        return match fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        };
+        return nofollow::remove_file_beneath(root, path);
     }
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    let _ = fs::remove_file(&tmp);
-    let mut f = fs::File::create(&tmp)?;
-    f.write_all(render(links).as_bytes())?;
-    f.set_permissions(fs::Permissions::from_mode(0o600))?;
-    f.sync_all()?;
-    fs::rename(&tmp, &path)
+    nofollow::write_beneath(root, path, render(links).as_bytes(), 0o600)
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
 
     fn link(name: &str, id: Uuid) -> LinkInput {
         LinkInput {

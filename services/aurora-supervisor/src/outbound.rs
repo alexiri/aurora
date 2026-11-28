@@ -13,6 +13,7 @@ use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use crate::channel::ChannelSender;
+use crate::nofollow;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OutboundError {
@@ -58,11 +59,13 @@ pub async fn send_file(
     if real.starts_with(root.join(RESERVED_DIR)) {
         return Err(OutboundError::Reserved);
     }
-    let meta = tokio::fs::metadata(&real).await?;
-    if !meta.is_file() {
-        return Err(OutboundError::BadPath);
-    }
-    if meta.len() > ATTACH_OUT_FILE_MAX {
+    // The agent can change the path after the checks: the file is opened from the home's
+    // descriptor along the checked path, so no link is followed and no FIFO waited on.
+    let rel = real
+        .strip_prefix(&root)
+        .map_err(|_| OutboundError::BadPath)?;
+    let file = nofollow::open_regular_beneath(&root, rel).map_err(|_| OutboundError::BadPath)?;
+    if file.metadata()?.len() > ATTACH_OUT_FILE_MAX {
         return Err(OutboundError::TooLarge(ATTACH_OUT_FILE_MAX));
     }
     let filename: String = real
@@ -70,7 +73,7 @@ pub async fn send_file(
         .map(|n| n.to_string_lossy().chars().take(255).collect())
         .ok_or(OutboundError::BadPath)?;
     let upload_id = Uuid::now_v7().to_string();
-    let mut file = tokio::fs::File::open(&real).await?;
+    let mut file = tokio::fs::File::from_std(file);
     let mut hasher = Sha256::new();
     let mut size = 0u64;
     let mut index = 0u32;

@@ -275,10 +275,7 @@ pub fn write_boot_files_in(
         let content = base64::engine::general_purpose::STANDARD
             .decode(&f.content_b64)
             .map_err(BootError::Base64)?;
-        if f.only_if_absent_or_sentinel
-            && let Ok(existing) = std::fs::read(&f.path)
-            && !contains(&existing, SENTINEL.as_bytes())
-        {
+        if f.only_if_absent_or_sentinel && !replaceable(&f.path) {
             skipped.push(f.path.clone());
             continue;
         }
@@ -290,6 +287,19 @@ pub fn write_boot_files_in(
         write_file(&f.path, &content, mode)?;
     }
     Ok(skipped)
+}
+
+/// Largest file read to look for the sentinel.
+const MANAGED_READ_MAX: u64 = 4 * 1024 * 1024;
+
+/// A file that is not there, or one that carries the sentinel. The home outlives a boot and is
+/// the agent's: a FIFO, a link or a larger file is left as it is, and never waited on.
+fn replaceable(path: &Path) -> bool {
+    match crate::harvest::read_bounded(path, MANAGED_READ_MAX) {
+        Ok(Some(existing)) => contains(&existing, SENTINEL.as_bytes()),
+        Ok(None) => false,
+        Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+    }
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {

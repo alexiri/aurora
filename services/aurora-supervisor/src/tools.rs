@@ -322,8 +322,14 @@ impl ToolHub {
     /// Remote tools from `.aurora/tools.json` (the API catalogue never holds `process_*`).
     fn remote_catalogue(&self) -> Vec<ToolDescriptor> {
         // (FIX-114) The agent can write this file: bounded read, an oversized one is ignored.
-        let Ok(Some(bytes)) = crate::harvest::read_bounded(&self.catalogue, CATALOGUE_READ_MAX)
-        else {
+        // Below the home no folder on the way may be a link either.
+        let read = match self.catalogue.strip_prefix(&self.cfg.home) {
+            Ok(rel) => {
+                crate::harvest::read_bounded_beneath(&self.cfg.home, rel, CATALOGUE_READ_MAX)
+            }
+            Err(_) => crate::harvest::read_bounded(&self.catalogue, CATALOGUE_READ_MAX),
+        };
+        let Ok(Some(bytes)) = read else {
             return Vec::new();
         };
         let Ok(Value::Array(items)) = serde_json::from_slice::<Value>(&bytes) else {

@@ -8,14 +8,15 @@
 //! verifies the gateway's TLS itself, so nothing in the sandbox's files or environment is a
 //! credential. A `pgpass` or `root.crt` left by an earlier version is removed on the next sync.
 
+use std::ffi::OsStr;
 use std::fmt::Write as _;
-use std::fs;
-use std::io::Write as _;
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::fd::AsFd as _;
 use std::path::Path;
 
 use serde::Deserialize;
 use uuid::Uuid;
+
+use crate::nofollow;
 
 /// Directory of the files, relative to the home.
 pub const PG_DIR: &str = ".aurora/pg";
@@ -60,30 +61,21 @@ pub fn render_service(relay_port: u16, dbs: &[PgDatabase]) -> String {
     service
 }
 
-fn write_file(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    let _ = fs::remove_file(&tmp);
-    let mut f = fs::File::create(&tmp)?;
-    f.write_all(bytes)?;
-    f.set_permissions(fs::Permissions::from_mode(mode))?;
-    f.sync_all()?;
-    fs::rename(&tmp, path)
-}
-
-/// Writes (or, without databases, removes) the service file under `root/.aurora/pg`.
+/// Writes (or, without databases, removes) the service file under `root/.aurora/pg`. The agent's
+/// uid owns the home: everything is done from its descriptor, following no link.
 pub fn write(root: &Path, relay_port: u16, dbs: &[PgDatabase]) -> std::io::Result<()> {
-    let dir = root.join(PG_DIR);
     if dbs.is_empty() {
-        let _ = fs::remove_dir_all(&dir);
+        let _ = nofollow::remove_tree_beneath(root, Path::new(PG_DIR));
         return Ok(());
     }
-    fs::create_dir_all(&dir)?;
-    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755))?;
+    let dir = nofollow::ensure_dir_beneath(root, Path::new(PG_DIR))?;
+    rustix::fs::fchmod(&dir, rustix::fs::Mode::from_raw_mode(0o755))?;
     for f in STALE_FILES {
-        let _ = fs::remove_file(dir.join(f));
+        let _ = rustix::fs::unlinkat(&dir, f, rustix::fs::AtFlags::empty());
     }
-    write_file(
-        &dir.join(SERVICE_FILE),
+    nofollow::write_atomic_at(
+        dir.as_fd(),
+        OsStr::new(SERVICE_FILE),
         render_service(relay_port, dbs).as_bytes(),
         0o644,
     )
@@ -101,6 +93,8 @@ pub fn env(root: &Path) -> Vec<(String, String)> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
     fn renders_the_loopback_service_and_no_secret() {

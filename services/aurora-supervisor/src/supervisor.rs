@@ -321,10 +321,8 @@ impl Supervisor {
     /// when none remain (boot and after every committed sync).
     async fn sync_db_relay(&mut self) {
         let Some(port) = self.cfg.pg else { return };
-        let path = self.cfg.working_dir.join(".aurora/render_inputs.json");
-        let any = std::fs::read(path)
-            .map(|b| !crate::home::installed_databases(&b).is_empty())
-            .unwrap_or(false);
+        // From the bytes the projector rendered: nothing in the home is read here.
+        let any = self.home.lock().is_ok_and(|h| h.projector.has_databases());
         if !any {
             self.db_relay = None;
         } else if self.db_relay.is_none() {
@@ -376,7 +374,7 @@ impl Supervisor {
         // Instruction files are a projection re-rendered on every boot.
         let home = self.home.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            if let Ok(h) = home.lock()
+            if let Ok(mut h) = home.lock()
                 && let Err(e) = h.projector.render_installed()
             {
                 tracing::warn!(error = %e, "boot render of instruction files failed");
