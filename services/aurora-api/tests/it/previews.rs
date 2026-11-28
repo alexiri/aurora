@@ -704,10 +704,15 @@ async fn start_requires_active_share_with_command_and_is_rate_limited() {
     }
     let (s, v) = r.start(good).await;
     assert_eq!((s, code(&v)), (429, "preview_wake_limited"), "{v}");
-    // The audit rows never carry the command text.
+    // The audit rows never carry the command text. Every accepted start writes one best-effort
+    // row, so wait for all of this share's before reading.
+    r.h.wait_audit_rows("preview.share.start", Some(good), cap)
+        .await;
     let rows: Vec<(String, Value)> = sqlx::query_as(
-        "SELECT action, metadata FROM audit_log WHERE action LIKE 'preview.%' ORDER BY created_at",
+        "SELECT action, metadata FROM audit_log WHERE action LIKE 'preview.%'
+          AND target_id = ANY($1) ORDER BY created_at",
     )
+    .bind([no_cmd, paused, good].map(|i| i.to_string()).to_vec())
     .fetch_all(r.h.pool())
     .await
     .unwrap();

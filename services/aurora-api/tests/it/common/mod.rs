@@ -475,6 +475,32 @@ impl Harness {
         id
     }
 
+    /// How many audit rows `action` has; only those on `target` (`target_id`) when one is given.
+    pub async fn audit_rows(&self, action: &str, target: Option<Uuid>) -> i64 {
+        sqlx::query_scalar(
+            "SELECT count(*) FROM audit_log WHERE action = $1
+              AND ($2::text IS NULL OR target_id = $2)",
+        )
+        .bind(action)
+        .bind(target.map(|t| t.to_string()))
+        .fetch_one(self.pool())
+        .await
+        .unwrap()
+    }
+
+    /// A best-effort audit row (`audit::record`) is written by a spawned task, so it can land
+    /// after the answer: wait, bounded, until `n` rows exist. A security-critical row commits
+    /// with its change and needs no wait.
+    pub async fn wait_audit_rows(&self, action: &str, target: Option<Uuid>, n: i64) {
+        for _ in 0..100 {
+            if self.audit_rows(action, target).await >= n {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("{action} on {target:?}: fewer than {n} audit rows");
+    }
+
     pub async fn bind_ws(&self, ws: Uuid, user: Uuid, role: &str) {
         sqlx::query("INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,$3)")
             .bind(ws)

@@ -3473,12 +3473,10 @@ async fn dashboard_binding_requires_membership_and_the_bot() {
     assert_eq!(v["space_label"], "general");
     assert_eq!(v["bound_by"]["id"], json!(w.users.wsowner));
     assert!(ops.iter().any(|o| o["kind"] == "message.post"), "announced");
-    let audits: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action='space_binding.create'")
-            .fetch_one(w.h.pool())
-            .await
-            .unwrap();
-    assert_eq!(audits, 1);
+    // The row's target is the bound agent; the refused attempts above wrote none.
+    w.h.wait_audit_rows("space_binding.create", Some(agent), 1)
+        .await;
+    assert_eq!(w.h.audit_rows("space_binding.create", Some(agent)).await, 1);
     // Again: already bound.
     let ((s, v), _) = tokio::join!(
         w.call(&w.wsowner, Method::POST, &url, Some(body("C1"))),
