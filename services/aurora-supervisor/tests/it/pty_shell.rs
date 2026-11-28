@@ -74,7 +74,10 @@ async fn shell_zsh_runs_the_zsh_binary_as_a_login_shell() {
     assert!(!out.contains("STANDIN_BASH"), "{out}");
     // The one image PATH, set by the supervisor for both shells.
     assert!(
-        out.contains("/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin"),
+        out.contains(
+            "STANDIN_ZSH_PATH=/workspace/.local/bin:/workspace/.local/share/gem/bin:\
+             /opt/aurora/bin:/usr/local/bin:/usr/bin:/bin"
+        ),
         "{out}"
     );
 }

@@ -3,4 +3,4 @@
 # No first-run wizard: the agent's home has no startup files by design, and an interactive zsh would otherwise
 # open zsh-newuser-install and wait for a keypress. A function of that name defined here replaces it.
 zsh-newuser-install() { :; }
-export PATH=/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin
+export PATH=/workspace/.local/bin:/workspace/.local/share/gem/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin

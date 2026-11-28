@@ -422,7 +422,8 @@ require_key_origin = true
 [governance.egress]
 minimum_posture = "credentialed_only"
 baseline_allowlist = [ { host = "pypi.org" }, { host = "files.pythonhosted.org" },
-                       { host = "registry.npmjs.org" }, { host = "github.com" },
+                       { host = "registry.npmjs.org" }, { host = "rubygems.org" },
+                       { host = "index.rubygems.org" }, { host = "github.com" },
                        { host = "codeload.github.com" }, { host = "*.githubusercontent.com" } ]
 ```
 

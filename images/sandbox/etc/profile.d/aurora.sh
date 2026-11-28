@@ -1,7 +1,7 @@
 # Aurora sandbox image (FIX-138): the one PATH, and the interactive defaults of the web terminal.
 # Read by bash login shells through /etc/profile: the web terminal and SSH `shell` both start one.
 # Keep PATH identical to the image's ENV PATH, /etc/zshenv and the supervisor's spawn::IMAGE_PATH.
-PATH=/workspace/.local/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin
+PATH=/workspace/.local/bin:/workspace/.local/share/gem/bin:/opt/aurora/bin:/usr/local/bin:/usr/bin:/bin
 export PATH
 
 # Everything below is for interactive shells only: agent turns (non-interactive) never see it.
