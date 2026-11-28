@@ -299,7 +299,10 @@ array of exactly `len` entries there (one metric, one bucket: a second one would
 any card field showing it), and `entry_max_len: { key: [{ at, member, max, optional? }] }`
 wants a string of 1 to `max` characters there; `max` is at most the 200 characters an approval
 card shows of a value, so a value held to it is shown in full, and a value that is not a
-string (which the card would leave out) is refused. With `optional`, only the last member may
+string (which the card would leave out) is refused. The string must also be one the card's
+text cleaning leaves unchanged: no control or invisible format characters, no whitespace but
+a plain space, and no space at either end or two together (the card drops or folds these, so
+the approver would read something other than what runs). With `optional`, only the last member may
 be absent. `entry_greater: { key: [{ at, member, key, than }] }` wants an object there whose
 `key` and `than` are whole numbers (0 or more) with `key` the larger (a time range in seconds
 before now that is neither empty nor inverted). Last, `one_of: [check, …]` (at most 4) declares further shapes: the body must pass

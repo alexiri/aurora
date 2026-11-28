@@ -72,8 +72,10 @@ pub struct BodyCheck {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub entry_len: BTreeMap<String, Vec<EntryLen>>,
     /// A key the body must carry as an array whose entry at `at` holds, along the `member`
-    /// path, a string of 1 to `max` characters (a value an approval card shows in full: a
-    /// longer one would be cut, and one that is not a string would be left off the card).
+    /// path, a string of 1 to `max` characters that the card's text cleaning leaves as it is
+    /// (a value an approval card shows in full and as it runs: a longer one would be cut,
+    /// one with invisible characters or unusual spacing would read differently, and one
+    /// that is not a string would be left off the card).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub entry_max_len: BTreeMap<String, Vec<EntryMaxLen>>,
     /// A key the body must carry as an array whose entry at `at` holds, along the `member`
@@ -653,10 +655,18 @@ impl BodyCheck {
                     return Some(format!("{place}/{last} must be a string"));
                 };
                 let n = text.chars().count();
-                if n == 0 || n > usize::try_from(l.max).unwrap_or(0) {
+                let max = usize::try_from(l.max).unwrap_or(0);
+                if n == 0 || n > max {
                     return Some(format!(
                         "{place}/{last} has {n} characters, this tool sends 1 to {} characters there",
                         l.max
+                    ));
+                }
+                // A card cleans what it shows with this function. A text it changes would
+                // run as something other than what the approver reads.
+                if aurora_core::sanitize::one_line(text, max) != text {
+                    return Some(format!(
+                        "{place}/{last} holds text a card would show differently: use single plain spaces, none at either end, and no control or invisible characters"
                     ));
                 }
             }
@@ -1614,6 +1624,40 @@ mod tests {
             assert!(w.contains(want), "{m}: {w}");
         }
         assert!(why(&c, &json!({})).is_some());
+    }
+
+    #[test]
+    fn entry_max_len_refuses_text_a_card_would_show_differently() {
+        // A card cleans what it shows: it drops control and format characters, turns every
+        // run of whitespace into one space and trims. What runs must be what is read.
+        let c: BodyCheck = serde_json::from_value(json!({
+            "entry_max_len": { "data": [ { "at": 0, "member": "model/query", "max": 200 } ] }
+        }))
+        .unwrap();
+        let said = |q: &str| why(&c, &model(json!({ "query": q })));
+        assert_eq!(said("level:error AND message:\"timed out\" é 漢"), None);
+        for q in [
+            // A zero-width space: shown as `level:error`, matches nothing.
+            "level:err\u{200B}or",
+            // No-break and ideographic spaces: shown as an operator, run as one term.
+            "NOT\u{00A0}x",
+            "a\u{3000}OR b",
+            // Nothing but spaces: cleans to empty, and the card drops the row.
+            "   ",
+            " level:error",
+            "level:error ",
+            "message:\"a  b\"",
+            "a\tb",
+            "a\nb",
+            "a\u{2028}b",
+            "a\u{0000}b",
+            "a\u{007F}b",
+            "a\u{202E}b",
+            "a\u{FEFF}",
+        ] {
+            let w = said(q).unwrap_or_default();
+            assert!(w.contains("a card would show differently"), "{q:?}: {w}");
+        }
     }
 
     #[test]
