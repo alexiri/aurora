@@ -90,7 +90,8 @@ fn pack(kind: HomeSyncKind, entries: Vec<Value>, out: &mut Vec<HomeSyncPart>) {
         let n = e.to_string().len() + 1;
         if n > PACK_MAX {
             // Unreachable for validated content (S-13: memory writes are bounded by
-            // MEMORY_CONTENT_JSON_MAX, skills by SKILL_TOTAL_MAX); loud if it ever happens.
+            // MEMORY_CONTENT_JSON_MAX, skill texts by SKILL_ENTRY_JSON_MAX); loud if it ever
+            // happens.
             tracing::error!(kind = %kind.as_str(), "home sync entry exceeds the part size; skipped");
             continue;
         }
@@ -749,12 +750,8 @@ pub async fn render(
         hosted::skills(conn, inputs.org_id, inputs.workspace_id, claim.agent_id).await?;
     for s in &db_skills {
         let path = format!("{skills_root}/{}/SKILL.md", s.name);
-        let content = format!(
-            "---\nname: {}\ndescription: {}\n---\n\n{}",
-            s.name,
-            yaml_str(&s.description),
-            s.body
-        );
+        let content =
+            aurora_registry::skill_format::projected_skill_md(&s.name, &s.description, &s.body);
         manifest.push(json!({"path": path}));
         skill_entries.push(json!({"path": path, "content": content}));
         for f in hosted::skill_files(conn, s.id).await? {

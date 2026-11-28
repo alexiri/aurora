@@ -567,11 +567,11 @@ impl RawConfig {
             );
         }
         if self.skills.library.bytes_per_agent == 0
-            || self.skills.library.bytes_per_agent > 1024 * 1024
+            || self.skills.library.bytes_per_agent > 4 * 1024 * 1024
         {
             c.err(
                 "skills.library.bytes_per_agent",
-                "must be between 1 and 1048576 (an operator may only lower LIBRARY_BYTES_PER_AGENT)",
+                "must be between 1 and 4194304 (an operator may only lower LIBRARY_BYTES_PER_AGENT)",
             );
         }
         // (P4-GRP-2, D-132) SCIM limits; domains are validated for every service that reads

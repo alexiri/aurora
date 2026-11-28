@@ -315,7 +315,7 @@ pub fn archive_rules(
             }
         };
         if let Err(e) =
-            skill_format::check_content(&description, &body, &ok_files, LIBRARY_FILE_MAX)
+            skill_format::check_content(name, &description, &body, &ok_files, LIBRARY_FILE_MAX)
         {
             out.push(Violation::new(code_of(e.kind), at.clone(), e.message));
         }

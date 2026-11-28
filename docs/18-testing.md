@@ -816,7 +816,7 @@ The tests that replace the guide ones:
   **unchanged** and are the proof the API's behaviour did not move.
 - **Registry** (`tests/it/app_skills_lint.rs`): one case per `app_skill_*` / `app_skills_*` code
   (unknown app, name and prefix, the longest matching app id, frontmatter, body, total, path
-  grammar with `Skill.md` as a file name and depth 5, not text with NUL / BOM, file size 64 KiB + 1,
+  grammar with `Skill.md` as a file name and depth 5, not text with NUL / BOM, file size `LIBRARY_FILE_MAX` + 1,
   51 files, 17 skills, per-app size), a legacy `agent.guide` package that is valid with exactly one
   `agent_guide_ignored` warning, the operations-file codes, archive paths. `tests/it/app_skills_package.rs`:
   the digest of a package without `skills/` equals the value recorded on master, an executable

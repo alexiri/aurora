@@ -830,7 +830,7 @@ pub static FIELDS: &[FieldMeta] = &[
         "Most library content one agent receives",
         "Larger libraries are cut to this size per agent.",
         K::Int,
-        "1 MiB",
+        "4 MiB",
         Some("bytes"),
         SKILLS,
     ),

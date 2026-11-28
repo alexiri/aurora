@@ -141,19 +141,40 @@ fn files_limit() -> ApiError {
 }
 
 /// The limits of an edit, applied to a whole skill composed elsewhere (a template merge's
-/// result, FIX-251): the description's and body's own rules, the file count and the total —
-/// refused with the same errors.
+/// result, FIX-251): the description's and body's own rules, the file count, the total and each
+/// text's home-sync entry — refused with the same errors. `files` are `(path, content)`.
 pub(crate) fn check_composed(
+    name: &str,
     description: &str,
     body: &str,
-    files: &[&[u8]],
+    files: &[(&str, &[u8])],
 ) -> Result<(), ApiError> {
     validate_description(description)?;
     validate_body(body)?;
     if files.len() as i64 > limits::SKILL_FILES_MAX {
         return Err(files_limit());
     }
-    check_total(body, files.iter().copied())
+    check_total(body, files.iter().map(|(_, c)| *c))?;
+    check_skill_md_entry(name, description, body)?;
+    for (path, content) in files {
+        skill_format::check_file_entry(path, content).map_err(entry_too_large)?;
+    }
+    Ok(())
+}
+
+/// (D-513) 422 `file_too_large`: a text that would not fit one home-sync entry would be stored
+/// and then missing from the agent's home.
+fn entry_too_large(e: skill_format::SkillError) -> ApiError {
+    let mut message = e.message;
+    if let Some(first) = message.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    ApiError::unprocessable("file_too_large", format!("{message}."))
+}
+
+fn check_skill_md_entry(name: &str, description: &str, body: &str) -> Result<(), ApiError> {
+    let md = skill_format::projected_skill_md(name, description, body);
+    skill_format::check_entry("SKILL.md", &md).map_err(entry_too_large)
 }
 
 fn check_total<'a>(body: &str, files: impl Iterator<Item = &'a [u8]>) -> Result<(), ApiError> {
@@ -522,6 +543,7 @@ pub(crate) async fn create_in_tx(
             ));
         }
     }
+    check_skill_md_entry(n.name, n.description, n.body)?;
     let title = clean_title(n.title)?;
     let row = repo::insert(
         tx,
@@ -582,6 +604,9 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
         let files = repo::files(&mut tx, &[id]).await?;
         check_total(body, files.iter().map(|f| f.content.as_slice()))?;
     }
+    if p.body.is_some() || p.description.is_some() {
+        check_skill_md_entry(&cur.name, p.description.unwrap_or(&cur.description), body)?;
+    }
     let row = repo::update(
         &mut tx,
         id,
@@ -633,6 +658,7 @@ pub async fn put_file(
         executable: false,
     });
     check_total(&cur.body, files.iter().map(|f| f.content.as_slice()))?;
+    skill_format::check_file_entry(path, content).map_err(entry_too_large)?;
     repo::upsert_file(&mut tx, id, path, content, executable).await?;
     repo::touch(&mut tx, id).await?;
     bump(&mut tx, &cur).await?;

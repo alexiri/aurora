@@ -296,7 +296,7 @@ once across all of them:
   and optionally `title` (the name people see, one line of at most 80
   characters; without it the folder name is shown). An update keeps a name the
   person gave the skill and takes the template's only when the skill has none.
-  Then the body. The library's file rules apply: 64 KiB per file, at most 50
+  Then the body. The library's file rules apply: 160 KiB per file, at most 50
   files per skill, depth ≤ 4.
 - **Library references** (`library:` in `template.yaml`): a git address (the
   same rules as the skill library's — a page URL is accepted and normalized),

@@ -176,8 +176,9 @@ validate` and the API's library reader all call (so the two cannot drift):
   (`app_skill_body_too_large`); body plus files at most `SKILL_TOTAL_MAX` (`app_skill_too_large`).
 - Files: paths of `[A-Za-z0-9._/-]`, at most 4 segments and 200 characters, no empty, `.` or
   `..` segment, and no segment named `skill.md` in any case (`app_skill_path`); at most
-  `SKILL_FILES_MAX` files per skill (`app_skill_too_many_files`); each at most 64 KiB
-  (`app_skill_file_too_large`).
+  `SKILL_FILES_MAX` files per skill (`app_skill_too_many_files`); each at most
+  `LIBRARY_FILE_MAX` (160 KiB), and `SKILL.md` and each text at most `SKILL_ENTRY_JSON_MAX`
+  as JSON (`app_skill_file_too_large`).
 - **Files are UTF-8 text** (valid UTF-8, no NUL, no byte-order mark; `app_skill_not_text`): the
   home projection sends text only. A script is a text file.
 - Per app at most `APP_SKILLS_MAX` skills (`app_skills_too_many`) and `APP_SKILLS_APP_MAX` bytes
@@ -603,7 +604,7 @@ files) does not change the instruction file, so idle sessions are **not** releas
 | `APP_SKILLS_MAX` | 16 | skills per app (D-453) |
 | `APP_SKILLS_APP_MAX` | 256 KiB | `SKILL.md` and files of all skills of one app (UTF-8 bytes) |
 | `APP_SKILLS_SYNC_MAX` | 2 MiB | app skills projected into one agent's home |
-| `SKILL_*` (`SKILL_NAME_MAX`, `SKILL_DESCRIPTION_MAX`, `SKILL_BODY_MAX`, `SKILL_TOTAL_MAX`, `SKILL_FILES_MAX`) | as `10 §Skills` | the same limits as any skill; each file at most 64 KiB |
+| `SKILL_*` (`SKILL_NAME_MAX`, `SKILL_DESCRIPTION_MAX`, `SKILL_BODY_MAX`, `SKILL_TOTAL_MAX`, `SKILL_FILES_MAX`) | as `10 §Skills` | the same limits as any skill; each file at most `LIBRARY_FILE_MAX` |
 | `AGENT_OPERATIONS_MAX` | 2 000 | operations in one operations file (P5-GUIDE-6) |
 | `AGENT_OPERATIONS_FILE_MAX` | 512 KiB | one operations file (P5-GUIDE-6) |
 | `AGENT_API_JSON_MAX` | 512 KiB | one rendered `api.json` (P5-GUIDE-6) |

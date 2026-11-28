@@ -209,8 +209,16 @@ pub const MEMORY_SNIPPET_MIN_SCORE: f32 = 0.1;
 pub const MEMORY_SEARCH_HITS: u32 = 8;
 pub const SKILL_NAME_MAX: usize = 64;
 pub const SKILL_DESCRIPTION_MAX: usize = 500;
-pub const SKILL_BODY_MAX: usize = 24_000;
-pub const SKILL_TOTAL_MAX: usize = 32_000;
+/// (D-513) Characters of a skill's instructions, and of instructions and files together (binary
+/// files counted as base64 length). Chosen to hold the public skills measured then, with at
+/// least 25 % headroom.
+pub const SKILL_BODY_MAX: usize = 48_000;
+pub const SKILL_TOTAL_MAX: usize = 300_000;
+/// (FIX-291, D-513) The most one projected text of a skill (`SKILL.md` with its front matter, or
+/// a text file) may take written as a JSON string: it travels as one home-sync entry, which must
+/// fit one part (`HOME_SYNC_PART_MAX`) with its path. A bigger one is refused when written,
+/// never silently left out of the agent's home. Binary files are not projected.
+pub const SKILL_ENTRY_JSON_MAX: usize = 190 * KIB;
 /// (FIX-110, docs/02 §Limits) Own (non-library) skills per agent and files per skill: a looping
 /// `skill_create` cannot grow what every home sync projects without bound.
 pub const SKILL_PER_AGENT_MAX: i64 = 50;
@@ -227,13 +235,14 @@ pub const PEER_TASK_QUEUE_MAX: i64 = 10;
 // Git skill library (phase 4, P4-GSL, D-148, D-149; docs/02 §Limits).
 pub const LIBRARIES_PER_ORG: usize = 10;
 /// Library-sourced bytes (body + files, binary as base64 length) and skill counts per tier.
-pub const LIBRARY_BYTES_PER_AGENT: usize = MIB;
+pub const LIBRARY_BYTES_PER_AGENT: usize = 4 * MIB;
 pub const LIBRARY_SKILLS_PER_AGENT: usize = 25;
-pub const LIBRARY_BYTES_PER_WORKSPACE: usize = 2 * MIB;
+pub const LIBRARY_BYTES_PER_WORKSPACE: usize = 8 * MIB;
 pub const LIBRARY_SKILLS_PER_WORKSPACE: usize = 50;
-pub const LIBRARY_BYTES_PER_ORG: usize = 4 * MIB;
+pub const LIBRARY_BYTES_PER_ORG: usize = 16 * MIB;
 pub const LIBRARY_SKILLS_PER_ORG: usize = 100;
-pub const LIBRARY_FILE_MAX: usize = 64 * KIB;
+/// Bytes of one skill file (D-513). A text file is also held to `SKILL_ENTRY_JSON_MAX`.
+pub const LIBRARY_FILE_MAX: usize = 160 * KIB;
 pub const LIBRARY_TREE_MAX: usize = 20_000;
 /// (SEC-148, review send-back; docs/02 §Limits) Folder depth below the library's folder that a
 /// tree read follows: one more than a skill's own path depth (4); deeper folders are not read
@@ -834,7 +843,12 @@ mod tests {
         assert_eq!(SESSION_ABSOLUTE, Duration::from_secs(2_592_000));
         assert_eq!(ATTACH_OUT_DAILY_PER_CONVERSATION, 209_715_200);
         assert_eq!(CONDITION_BODY_BUFFER, 262_144);
-        assert_eq!(SKILL_TOTAL_MAX, 32_000);
+        assert_eq!(SKILL_BODY_MAX, 48_000);
+        assert_eq!(SKILL_TOTAL_MAX, 300_000);
+        assert_eq!(LIBRARY_FILE_MAX, 163_840);
+        // One projected skill text, its path (200 characters) and the entry's keys fit what a
+        // home-sync part holds after its envelope (2 KiB).
+        const { assert!(SKILL_ENTRY_JSON_MAX + 1024 <= HOME_SYNC_PART_MAX - 2048) };
         assert_eq!(WEBHOOK_PAYLOAD_MAX, 1_048_576);
         assert_eq!(SCIM_RATE, 600);
         assert_eq!(SCIM_BODY_MAX, 1_048_576);

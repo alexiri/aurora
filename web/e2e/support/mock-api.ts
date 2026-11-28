@@ -551,7 +551,7 @@ export async function mockApi(
         return sec("skills", "Skill libraries", [
           { ...k, key: "skills.library.enabled", value: true, default: true, schema: sch("bool") },
           { ...k, key: "skills.library.refresh_interval_secs", value: 900, default: 900, schema: sch("int") },
-          { ...k, key: "skills.library.bytes_per_agent", value: 1048576, default: 1048576, schema: sch("int") },
+          { ...k, key: "skills.library.bytes_per_agent", value: 4194304, default: 4194304, schema: sch("int") },
         ], null);
       }
       if (p.endsWith("/terminal")) {

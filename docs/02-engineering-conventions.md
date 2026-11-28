@@ -268,7 +268,8 @@ overridden by the named configuration key (`15`).
 | `MEMORY_SNIPPETS` | 3 × 800 chars, score ≥ 0.1 | — | 10 |
 | `MEMORY_SEARCH_HITS` | 8 | — | 10 |
 | `SKILL_NAME_MAX` / `SKILL_DESCRIPTION_MAX` | 64 / 500 chars | — | 10 |
-| `SKILL_BODY_MAX` / `SKILL_TOTAL_MAX` | 24 000 / 32 000 chars | — | 10 |
+| `SKILL_BODY_MAX` / `SKILL_TOTAL_MAX` | 48 000 / 300 000 chars (D-513) | — | 10 |
+| `SKILL_ENTRY_JSON_MAX` | 190 KiB: `SKILL.md` with its front matter, and each text file of a skill, as a JSON string. Each travels as one home-sync entry, which must fit a part (`HOME_SYNC_PART_MAX`); a bigger one is refused when written (422 `file_too_large`; a library skill is not addable, `file_too_large`). Binary files are not projected and not held to it (D-513) | — | 10, 12 |
 | `SKILL_PER_AGENT_MAX` / `SKILL_FILES_MAX` | 50 own skills per agent / 50 files per skill (409 `skill_limit_reached`, `skill_files_limit_reached`; checked under the agent / skill row lock; FIX-110). The other per-agent caps: 50 schedules, 20 webhooks, 100 memories | — | 10 |
 | `SKILL_TITLE_MAX` | 80 chars: a skill's display name, one line of plain text (400 on `/title`; P5-SKILLS-1, C-1173) | — | 10 |
 | `SKILL_USE_RETENTION_DAYS` / `SKILL_USE_WEEK_DAYS` / `SKILL_USED_BY_DAYS` | 90 / 7 / 30 days: how long a skill use is kept (pruned by the daily retention pass), the window of an agent's weekly count, and of a skill's "used by N agents" (P5-SKILLS-1, C-1175) | — | 10 |
@@ -330,7 +331,7 @@ overridden by the named configuration key (`15`).
 | `PACKAGE_MAX` | 20 MiB archive, decompressed ≤ 4 × `PACKAGE_MAX`, `plugin.yaml` ≤ 256 KiB (`PACKAGE_MANIFEST_MAX`, FIX-107), icon PNG ≤ 256 KiB, setup guide ≤ 64 KiB | — | 09 |
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
 | `AGENT_SUMMARY_MAX` | (phase 5, P5-GUIDE-1) 160 chars, one line (`agent.summary`) | — | 24 |
-| `APP_SKILLS_MAX` / `APP_SKILLS_APP_MAX` | (phase 5, P5-APPSKILL-1, C-1130; replace the three guide-file limits of P5-GUIDE-1) 16 skills per app / 256 KiB of `SKILL.md` and files per app (UTF-8 bytes); each skill is also held to `SKILL_*` and each file to 64 KiB | — | 24 |
+| `APP_SKILLS_MAX` / `APP_SKILLS_APP_MAX` | (phase 5, P5-APPSKILL-1, C-1130; replace the three guide-file limits of P5-GUIDE-1) 16 skills per app / 256 KiB of `SKILL.md` and files per app (UTF-8 bytes); each skill is also held to `SKILL_*` and each file to `LIBRARY_FILE_MAX` | — | 24 |
 | `APP_SKILLS_SYNC_MAX` | (phase 5, P5-APPSKILL-1/2; replaces the guide-file sync limit of P5-GUIDE-2) 2 MiB of app skills projected into one agent's home per sync; the generated `app.md`, `tools.md` and `api.json` are never dropped | — | 24, 12 |
 | `AGENT_OPERATIONS_MAX` / `AGENT_OPERATIONS_FILE_MAX` | (phase 5, P5-GUIDE-6, D-296) 2 000 operations / 512 KiB per operations file | — | 24 |
 | `AGENT_API_JSON_MAX` | (phase 5, P5-GUIDE-6) 512 KiB per rendered `api.json` | — | 24 |
@@ -438,8 +439,8 @@ overridden by the named configuration key (`15`).
 | `PREVIEW_API_RATE` | (phase 4, P4-PRV-2) 100 relay-plane requests/s per relay replica, burst 200 | — | 16 |
 | `PREVIEW_GRANT_RATE` | (phase 4, P4-PRV-2) 30 grant redemptions per minute per client address (and 10 per minute per share) at the relay, per replica, fixed window (429 `grant_rate_limited`; FIX-072, C-636) | — | 04 |
 | `LIBRARIES_PER_ORG` | (phase 4, P4-GSL) 10 skill libraries | — | 10, 05 |
-| `LIBRARY_BYTES_PER_AGENT` / `_SKILLS_PER_AGENT` | (phase 4, P4-GSL) 1 MiB / 25 library-sourced skills at the agent tier (workspace tier 2 MiB / 50, org tier 4 MiB / 100: `LIBRARY_BYTES_PER_WORKSPACE`, `LIBRARY_SKILLS_PER_WORKSPACE`, `LIBRARY_BYTES_PER_ORG`, `LIBRARY_SKILLS_PER_ORG`) | `skills.library.bytes_per_agent` (lower only) | 10 |
-| `LIBRARY_FILE_MAX` / `LIBRARY_TREE_MAX` / `LIBRARY_BROWSE_MAX` | (phase 4, P4-GSL; D-154: also at most 50 files per skill directory) 64 KiB per file / 20 000 tree entries (a truncated or longer tree is `library_tree_too_large`: narrow `path`) / 200 listed skills | — | 09, 10 |
+| `LIBRARY_BYTES_PER_AGENT` / `_SKILLS_PER_AGENT` | (phase 4, P4-GSL; D-513) 4 MiB / 25 library-sourced skills at the agent tier (workspace tier 8 MiB / 50, org tier 16 MiB / 100: `LIBRARY_BYTES_PER_WORKSPACE`, `LIBRARY_SKILLS_PER_WORKSPACE`, `LIBRARY_BYTES_PER_ORG`, `LIBRARY_SKILLS_PER_ORG`) | `skills.library.bytes_per_agent` (lower only) | 10 |
+| `LIBRARY_FILE_MAX` / `LIBRARY_TREE_MAX` / `LIBRARY_BROWSE_MAX` | (phase 4, P4-GSL; D-154: also at most 50 files per skill directory; D-513) 160 KiB per file / 20 000 tree entries (a truncated or longer tree is `library_tree_too_large`: narrow `path`) / 200 listed skills | — | 09, 10 |
 | `LIBRARY_PENDING_BYTES_PER_ORG` | (phase 4, P4-GSL) 4 MiB of open proposed updates per org | — | 10 |
 | `LIBRARY_REFRESH_INTERVAL` / `LIBRARY_LEASE` / `LIBRARY_REFRESH_CONCURRENCY` | (phase 4, P4-GSL) 15 min (minimum 5 min) per library / 5 min lease / 4 refreshes per API replica | `skills.library.refresh_interval_secs` (≥ 300) | 05, 10 |
 | `LIBRARY_CHECK_NOW_INTERVAL` | (phase 4, P4-GSL) 60 s per library | — | 05 |

@@ -4172,7 +4172,8 @@ async fn upd_watch_body(u: &Upd) -> String {
 #[tokio::test]
 async fn a_merged_skill_over_the_total_limit_is_refused_like_an_edit() {
     let u = upd_world().await;
-    upd_own_skill_file(&u, "own.md", &"o".repeat(13_000)).await;
+    upd_own_skill_file(&u, "own.md", &"o".repeat(140_000)).await;
+    upd_own_skill_file(&u, "own2.md", &"o".repeat(141_000)).await;
     upd_advance(&u, "2.0.0").await;
     let (s, v) = upd_take_merged(
         &u,
@@ -4188,7 +4189,7 @@ async fn a_merged_skill_over_the_total_limit_is_refused_like_an_edit() {
         v["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("32000 characters"),
+            .contains("300000 characters"),
         "{v}"
     );
     assert_eq!(upd_watch_body(&u).await, "Watch body: mine.");
@@ -6831,7 +6832,7 @@ async fn a_create_refuses_a_skill_that_rendering_pushes_over_a_limit() {
         "acme/tpl",
         "t",
         "1.0.0",
-        &long_skill_files("t", "1.0.0", 23_900),
+        &long_skill_files("t", "1.0.0", 47_900),
     )
     .await;
     let plan = w.plan(ws, &owner, "t").await;
@@ -6839,8 +6840,8 @@ async fn a_create_refuses_a_skill_that_rendering_pushes_over_a_limit() {
     for (inputs, limit) in [
         // The description passes 500 characters.
         (json!({"zone": long, "team": long, "service": long}), "500"),
-        // Only the body passes 24 000.
-        (json!({"team": long}), "24000"),
+        // Only the body passes 48 000.
+        (json!({"team": long}), "48000"),
     ] {
         let (s, v) = w
             .create_body(

@@ -70,7 +70,7 @@ describe("skill paths", () => {
 describe("skill files", () => {
   const skill = {
     id: "s1", scope: "agent", tier: "agent", agent_id: "a1", org_id: "o1", name: "demo", description: "d", body: "b", enabled: true,
-    files: [{ path: "big.txt", size: 39_999, executable: false }], total_size: 40_000, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    files: [{ path: "big.txt", size: 399_999, executable: false }], total_size: 400_000, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
   };
   // (P5-SKILLS-3) The path rules and the executable bit of the Add file dialog are in `skill-form.test.tsx`.
   it("says in the editor when the instructions and files are over the total, and saves nothing", async () => {
@@ -81,7 +81,7 @@ describe("skill files", () => {
     wrap(<SkillsTab agentId="a1" agentName="Dani" />);
     fireEvent.click(await screen.findByRole("button", { name: "demo" }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-    expect(await screen.findByText("A skill's instructions and files can total at most 32,000 characters.")).toBeTruthy();
+    expect(await screen.findByText("A skill's instructions and files can total at most 300,000 characters.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Demo two" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     // `/v1/me` is fetched by its path; everything else is a Request.

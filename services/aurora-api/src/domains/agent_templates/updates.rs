@@ -1874,8 +1874,11 @@ fn resolve_parts(
                 let body = resolved_text(&plan.units[bi], &per_unit[bi])?;
                 let files = resolved_files(&plan.units[2..], &per_unit[2..], &plan.own_files)?;
                 // The merged skill keeps the limits of an edit, with the same errors.
-                let contents: Vec<&[u8]> = files.iter().map(|f| f.bytes.as_slice()).collect();
-                skills_domain::service::check_composed(&description, &body, &contents)?;
+                let contents: Vec<(&str, &[u8])> = files
+                    .iter()
+                    .map(|f| (f.path.as_str(), f.bytes.as_slice()))
+                    .collect();
+                skills_domain::service::check_composed(&k.1, &description, &body, &contents)?;
                 ResolvedPart::Skill {
                     description,
                     body,

@@ -1178,7 +1178,7 @@ if any of:
   apps and the ids given with `--other-app-id`), a `SKILL.md` without valid frontmatter (`app_skill_frontmatter`), a
   body or a skill over its size limit (`app_skill_body_too_large`, `app_skill_too_large`), a file
   path outside the grammar, too deep, or with a `skill.md` segment (`app_skill_path`), too many
-  files or a file over 64 KiB (`app_skill_too_many_files`, `app_skill_file_too_large`), a file
+  files, a file over `LIBRARY_FILE_MAX` or a text over `SKILL_ENTRY_JSON_MAX` as JSON (`app_skill_too_many_files`, `app_skill_file_too_large`), a file
   that is not UTF-8 text without NUL or byte-order mark (`app_skill_not_text`), more than
   `APP_SKILLS_MAX` skills or `APP_SKILLS_APP_MAX` bytes per app (`app_skills_too_many`,
   `app_skills_app_too_large`). **Warning, never an error:** `agent.guide` or a file under

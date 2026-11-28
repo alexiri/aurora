@@ -3097,7 +3097,7 @@ agent's, the workspace's and the organization's pages.
   name: kebab-case, at most 64 characters, `aurora-` names become `my-aurora-…`, unique by suffix, one retry on a 409;
   fixed after the first save), "When should <Agent> use it?" ("agents" on the level pages) with "Finish “Use it to …”.
   Example: *write the Friday status report from Jira and GitHub*.", **Instructions** in `ui/markdown-editor.tsx` with
-  "Markdown · n of 24,000 characters", the files folded to one line ("Files · n  SKILL.md, …  **Add file**"), and the
+  "Markdown · n of 48,000 characters", the files folded to one line ("Files · n  SKILL.md, …  **Add file**"), and the
   shared `SaveBar`; leaving with unsaved changes asks first. Opened, each file is read and edited in place (a text edit
   is saved with the form; a file that isn't text offers **Replace**), **Delete** asks first. **Add file** is a dialog:
   File name ("Relative to the skill’s folder."; the server's rules: `[A-Za-z0-9._/-]`, at most 4 levels and 200
