@@ -29,9 +29,14 @@ describe("palette items", () => {
     const items = paletteItems({ ...base, verbs: false });
     expect(items.some((i) => i.group === "Actions")).toBe(false);
     const names = labels(items);
-    for (const n of ["Operations", "Labs", "Main", "Acme", "Globex", "Daneel", "Giskard", "Overview", "Approvals", "Chat", "Instructions", "Your account", "API keys", "SSH keys"]) {
+    for (const n of ["Operations", "Labs", "Main", "Acme", "Daneel", "Giskard", "Overview", "Approvals", "Chat", "Instructions", "Your account", "API keys", "SSH keys"]) {
       expect(names).toContain(n);
     }
+  });
+
+  it("(D-508(e)) offers no organization entry where the viewer is only a member, except to an instance admin", () => {
+    expect(labels(paletteItems(base))).not.toContain("Globex");
+    expect(labels(paletteItems({ ...base, instanceAdmin: true }))).toContain("Globex");
   });
 
   it("leaves SSH keys out when the instance has no SSH", () => {

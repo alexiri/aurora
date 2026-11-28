@@ -7,7 +7,8 @@ import { tintFor } from "@/components/agent-avatar";
 import { CountBadge } from "@/components/attention/count-badge";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { useOrgBadge } from "@/lib/api/attention";
-import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, ChevronsUpDownIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
+import { PLACE_CARD_CLASS, PlaceText } from "@/components/nav/place-card";
+import { ArrowLeftIcon, ArrowRightIcon, CheckIcon, ChevronDownIcon, PlusIcon, SearchIcon } from "@/components/ui/icons";
 import { inputClass } from "@/components/ui/field";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CreateOrgDialog } from "@/components/create-org-dialog";
@@ -47,16 +48,18 @@ const roleLabel =(r: string) => (r ? r.charAt(0).toUpperCase() + r.slice(1) : ""
 
 /* Last-used order, per person, in this browser only (the API has no "recently used"): `lib/nav/recent-scopes`. */
 
-function Chip({ name, tintKey, square }: { name: string; tintKey?: string; square?: boolean }) {
+/** A row's mark: an organization's two letters (`org`: square in the list, `round` on the place card), else one initial. */
+function Chip({ name, tintKey, org, round = !org }: { name: string; tintKey?: string; org?: boolean; round?: boolean }) {
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center justify-center font-semibold uppercase",
-        square ? "size-7 rounded-md text-label" : "size-7 rounded-full text-xs",
+        "inline-flex size-7 shrink-0 items-center justify-center font-semibold uppercase",
+        round ? "rounded-full" : "rounded-md",
+        org ? "text-label" : "text-xs",
         tintFor(tintKey ?? name),
       )}
     >
-      {square ? name.trim().slice(0, 2) || "?" : name.trim().charAt(0) || "?"}
+      {org ? name.trim().slice(0, 2) || "?" : name.trim().charAt(0) || "?"}
     </span>
   );
 }
@@ -85,6 +88,7 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>({ kind: "root" });
   const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [creatingOrg, setCreatingOrg] = useState(false);
   const instance = useInstance();
@@ -169,6 +173,7 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
     if (!next) {
       setView({ kind: "root" });
       setQuery("");
+      setExpanded(null);
     }
   }
 
@@ -220,7 +225,7 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
   const orgRow = (o: OrgItem) => (
     <li key={o.slug}>
       <button type="button" data-scope-row onClick={() => { setView({ kind: "org", slug: o.slug }); setQuery(""); }} className={rowClass}>
-        <Chip name={o.name} tintKey={o.slug} square />
+        <Chip name={o.name} tintKey={o.slug} org />
         <span className="min-w-0 flex-1 truncate">
           <span className="font-semibold">{o.name}</span>
           <span className="text-muted"> · {o.workspaces.length} {o.workspaces.length === 1 ? "workspace" : "workspaces"}</span>
@@ -234,11 +239,18 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
     const sorted = byRecent(o);
     return (
       <>
-        <ul>{sorted.slice(0, RECENT_LIMIT).map((w) => wsRow(o, w))}</ul>
-        {sorted.length > RECENT_LIMIT ? (
-          <Link href={orgRoutes(o.slug).home()} data-scope-row onClick={close} className={cn(rowClass, "pl-11")}>
-            All {sorted.length} in {o.name}
-          </Link>
+        <ul>{sorted.slice(0, expanded === o.slug ? sorted.length : RECENT_LIMIT).map((w) => wsRow(o, w))}</ul>
+        {sorted.length > RECENT_LIMIT && expanded !== o.slug ? (
+          // (D-508(e)) Owners and admins go to Manage › Workspaces; a member gets the whole list here (never a Manage page).
+          canSeeSettings(o) ? (
+            <Link href={orgRoutes(o.slug).workspaces()} data-scope-row onClick={close} className={cn(rowClass, "pl-11")}>
+              All {sorted.length} in {o.name}
+            </Link>
+          ) : (
+            <button type="button" data-scope-row onClick={() => setExpanded(o.slug)} className={cn(rowClass, "pl-11")}>
+              All {sorted.length} in {o.name}
+            </button>
+          )
         ) : null}
         {canSeeSettings(o) ? (
           <Link href={topicHref("org", "overview", o.slug)} data-scope-row onClick={close} className={cn(rowClass, "pl-11 text-ink-2")}>
@@ -346,17 +358,15 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
         <Chip
           name={onWorkspace && currentWs ? chipName(currentWs) : first}
           tintKey={onWorkspace ? wsSlug : (last?.wsSlug ?? chipSlug)}
-          square={!onWorkspace && !last?.wsSlug}
+          org={!onWorkspace && !last?.wsSlug}
+          round
         />
       ) : null}
       {first && chipSlug ? " " : null}
-      <span className="min-w-0 flex-1 text-left">
-        <span className="block truncate text-sm font-semibold text-ink">{first}</span>
-        {second ? <span className="block truncate text-xs text-muted">{second}</span> : null}
-      </span>
+      <PlaceText name={first} kind={second} />
     </>
   );
-  const frame = "flex min-h-11 w-full items-center gap-2.5 rounded-control border border-line bg-surface px-2.5 py-1.5";
+  const frame = PLACE_CARD_CLASS;
 
   // (firstday-2) While the session loads the card is plainly not ready: muted, no hover, no chevron, busy. Loaded, it always opens its
   // list, even with one workspace, except for the one member who can neither switch nor create anything (below).
@@ -384,9 +394,10 @@ export function ScopeSwitcher({ orgSlug, wsSlug }: { orgSlug?: string; wsSlug?: 
         <PopoverTrigger asChild>
           <button type="button" className={cn(frame, "hover:bg-subtle")}>
             {face}
-            {/* The closed switcher says there is something to do under Manage (owners and admins of the current organization). */}
-            {current && canSeeSettings(current) ? <ManageBadge orgId={current.id} testId="switcher-attention-badge" /> : null}
-            <ChevronsUpDownIcon className="size-4 shrink-0 text-muted" />
+            {/* The closed switcher says there is something to do under Manage (owners and admins of the current
+                organization); inside Manage the menu below carries the count. */}
+            {onWorkspace && current && canSeeSettings(current) ? <ManageBadge orgId={current.id} testId="switcher-attention-badge" /> : null}
+            <ChevronDownIcon className="size-4 shrink-0 text-muted" />
           </button>
         </PopoverTrigger>
         <PopoverContent

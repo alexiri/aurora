@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { id, mockApi, org, ws } from "./support/mock-api";
+import { id, mockApi, org, user, ws } from "./support/mock-api";
 import { overflow } from "./support/open";
 import { serious } from "./support/axe";
 
@@ -37,11 +37,29 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("a member who opens People by its address reads who can open it, not that the network is down", async ({ page }) => {
-        await open(page, "/o/acme/people", scheme, "member");
-        const alert = page.getByRole("alert").filter({ hasText: "Only organization owners and admins can open this page." });
-        await expect(alert).toBeVisible();
-        await expect(alert.getByText("Ask an organization admin.")).toBeVisible();
+      // (D-508(e), C-1178) A member doesn't see Manage: the address no longer ends in a refusal.
+      test("a member who opens People by its address lands in their workspace, not on a refusal or a network error", async ({ page }) => {
+        await mockApi(page);
+        await page.route("**/v1/me", (route) =>
+          route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              user: { ...user, is_instance_admin: false },
+              memberships: [{ org, role: "member", status: "active", workspaces: [{ ...ws, my_role: "member", personal: false }] }],
+              default_org_id: org.id,
+              client_address: "203.0.113.7",
+            }),
+          }),
+        );
+        await page.route(`**/v1/orgs/${id(1)}`, (route) =>
+          route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...org, my_role: "member", contacts: { owners: [{ name: "Grace Hopper" }], admins } }) }),
+        );
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.goto("/o/acme/people");
+        await expect(page).toHaveURL(/\/o\/acme\/w\/main$/);
+        await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+        await expect(page.getByText("Only organization owners and admins can open this page.")).toHaveCount(0);
         await expect(page.getByText("Could not reach the server")).toHaveCount(0);
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await serious(page)).toEqual([]);

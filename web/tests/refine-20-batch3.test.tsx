@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { personalWorkspaceSentence } from "@/components/org/invite-dialog";
 import { OrgSkills } from "@/components/skills/org-skills";
-import { pickRailWorkspace } from "@/lib/nav/manage-return";
+import { lastWorkspace } from "@/lib/nav/manage-return";
 import { lastScope, writeRecent } from "@/lib/nav/recent-scopes";
 import { json } from "./support/api";
 import { wrap } from "./support/render";
@@ -31,8 +31,8 @@ describe("P5-REFINE-20 batch 3 (workspace-7: one personal-workspace name)", () =
   const memberships = [{ org: { slug: "acme", name: "Acme" }, status: "active", workspaces: [{ slug: "team", name: "Team" }, { slug: "alice", name: "Alice's workspace", personal: true }] }];
 
   it("the Manage back link and the last scope call your personal workspace 'Your workspace', as the switcher does", () => {
-    expect(pickRailWorkspace("acme", null, memberships)).toEqual({ wsSlug: "alice", wsName: "Your workspace" });
     window.localStorage.clear();
+    expect(lastWorkspace("u1", memberships, "acme")).toEqual({ orgSlug: "acme", wsSlug: "alice", wsName: "Your workspace" });
     writeRecent("u1", "acme/alice");
     expect(lastScope("u1", memberships)?.wsName).toBe("Your workspace");
     writeRecent("u1", "acme/team");
@@ -53,7 +53,7 @@ describe("P5-REFINE-20 batch 3 (organization words)", () => {
       "GET /v1/orgs/o1/skills": () => json(200, { items: [], next_cursor: null }),
     });
     wrap(<OrgSkills />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Skills" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Skills in Acme" })).toBeTruthy();
     const fold = await screen.findByTestId("skills-combine");
     // (P5-SKILLS-3) The link under the list opens the explanation; it is closed to start with.
     expect(within(fold).getByRole("button", { name: "How skills combine" })).toHaveAttribute("aria-expanded", "false");
@@ -61,7 +61,7 @@ describe("P5-REFINE-20 batch 3 (organization words)", () => {
     // The paragraph is not a notice under the heading any more.
     for (const n of screen.queryAllByRole("status")) expect(n.textContent ?? "").not.toMatch(/with the same name overrides/);
     // The fold comes after the list, not before it.
-    const heading = screen.getByRole("heading", { level: 1, name: "Skills" });
+    const heading = screen.getByRole("heading", { level: 1, name: "Skills in Acme" });
     expect(heading.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(within(fold).getByRole("button", { name: "How skills combine" }));
     expect(within(fold).getByRole("button", { name: "How skills combine" })).toHaveAttribute("aria-expanded", "true");

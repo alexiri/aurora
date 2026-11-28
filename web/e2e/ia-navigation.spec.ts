@@ -34,22 +34,29 @@ const labels = (nav: Locator) => navLabels(nav);
 
 for (const scheme of ["light", "dark"] as const) {
   test.describe(`navigation by role (${scheme})`, () => {
-    // (P5-REFINE-17, rec 8) The organization is the "Manage Acme Labs" area; the rail stays a workspace rail.
-    test("a member's Manage area lists exactly Overview, AI models and Internet access", async ({ page }) => {
-      await openWith(page, "/o/acme", scheme, meAs(member, "member", "member"));
-      const nav = page.getByRole("navigation", { name: "Manage Acme Labs" });
-      await expect.poll(() => labels(nav)).toEqual(["Overview", "AI models", "Internet access"]);
+    // (D-508(e), C-1178) Members don't see Manage: its addresses send them to their workspace.
+    test("a member who opens a Manage address lands in their workspace, with no Manage anywhere", async ({ page }) => {
+      await mockApi(page, meAs(member, "member", "member"));
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.goto("/o/acme/people");
+      await expect(page).toHaveURL(/\/o\/acme\/w\/main$/);
+      const sidebar = page.getByRole("complementary", { name: "Sidebar" });
+      await expect(sidebar.getByRole("navigation", { name: "Workspace" })).toBeVisible();
+      await expect(page.getByRole("navigation", { name: "Manage Acme Labs" })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: /^Manage / })).toHaveCount(0);
       await expect(page.getByRole("link", { name: "Administration" })).toHaveCount(0);
-      await expect(page.getByRole("complementary", { name: "Sidebar" }).getByRole("navigation", { name: "Organization" })).toHaveCount(0);
     });
 
-    test("an organization owner's Manage area lists every organization topic", async ({ page }) => {
+    // (D-508(b)) Manage <org> replaces the rail with the organization's grouped menu.
+    test("an organization owner's rail in Manage lists every organization topic, with the way back", async ({ page }) => {
       await openWith(page, "/o/acme", scheme, meAs(member, "owner", "owner"));
-      const nav = page.getByRole("navigation", { name: "Manage Acme Labs" });
+      const sidebar = page.getByRole("complementary", { name: "Sidebar" });
+      const nav = sidebar.getByRole("navigation", { name: "Manage Acme Labs" });
       await expect.poll(() => labels(nav)).toEqual([
-        "Overview", "Agents", "Skills", "People", "Apps & accounts", "Chat platforms", "AI models", "Internet access", "Data", "Settings",
+        "Overview", "Workspaces", "People", "AI models", "Apps & accounts", "Chat platforms", "Internet access", "Skills", "Agents", "Data", "Settings",
       ]);
-      await expect(page.getByRole("link", { name: /^Back to / })).toBeVisible();
+      await expect(sidebar.getByRole("navigation", { name: "Workspace" })).toHaveCount(0);
+      await expect(sidebar.getByRole("link", { name: /^Back to / })).toBeVisible();
     });
 
     test("a workspace member sees no Approvals, People or Settings", async ({ page }) => {
@@ -68,11 +75,11 @@ for (const scheme of ["light", "dark"] as const) {
       ]);
     });
 
-    // D-389: the rail says where you are (the switcher, or Administration's header); no header carries a level pill.
+    // D-389, D-508(a): the rail's place card says where you are; no header carries a level pill.
     test("the rail names the level and no page header carries a pill", async ({ page }) => {
       const sidebar = page.getByRole("complementary", { name: "Sidebar" });
       await openRoute(page, "/admin/data", scheme);
-      await expect(sidebar.getByText("You're in")).toBeVisible();
+      await expect(sidebar.getByTestId("place-card")).toHaveText(/Administration\s+This Aurora/);
       await expect(page.getByTestId("level-badge")).toHaveCount(0);
       await openRoute(page, "/o/acme/data", scheme);
       await expect(sidebar.getByTestId("scope-switcher")).toContainText("Acme Labs");

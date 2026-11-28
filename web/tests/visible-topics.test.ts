@@ -10,12 +10,12 @@ describe("visibleTopics (C-961)", () => {
     expect(visibleTopics("admin", { instanceAdmin: false })).toEqual([]);
   });
 
-  it("gives an organization member Overview, AI models and Internet access (the Manage area's sub-nav)", () => {
-    expect(visibleTopics("org", { instanceAdmin: false, org: "member" })).toEqual(["overview", "ai-models", "internet-access"]);
+  it("gives an organization member nothing: members don't see Manage (D-508(e))", () => {
+    expect(visibleTopics("org", { instanceAdmin: false, org: "member" })).toEqual([]);
   });
 
-  it("gives organization owners and admins every organization topic, in the Manage area's order", () => {
-    const all = ["overview", "agents", "skills", "people", "apps", "chat-platforms", "ai-models", "internet-access", "data", "settings"];
+  it("gives organization owners and admins every organization topic, in the rail's order", () => {
+    const all = ["overview", "workspaces", "people", "ai-models", "apps", "chat-platforms", "internet-access", "skills", "agents", "data", "settings"];
     expect(visibleTopics("org", { instanceAdmin: false, org: "owner" })).toEqual(all);
     expect(visibleTopics("org", { instanceAdmin: false, org: "admin" })).toEqual(all);
   });
@@ -25,8 +25,8 @@ describe("visibleTopics (C-961)", () => {
 
   it("lists the organization's Skills to its owners and admins at Use, and never to its members", () => {
     for (const org of ["owner", "admin"] as const) expect(visibleTopics("org", { instanceAdmin: false, org }, use)).toEqual(["overview", "skills"]);
-    expect(visibleTopics("org", { instanceAdmin: false, org: "member" }, use)).toEqual(["overview"]);
-    expect(visibleTopics("org", { instanceAdmin: false, org: "member" }, { floor: "use", more: true })).not.toContain("skills");
+    expect(visibleTopics("org", { instanceAdmin: false, org: "member" }, use)).toEqual([]);
+    expect(visibleTopics("org", { instanceAdmin: false, org: "member" }, { floor: "use", more: true })).toEqual([]);
   });
 
   it.each([false, true])("lists the workspace's Skills to its owner at Use (personal: %s)", (personalWorkspace) => {

@@ -47,6 +47,7 @@ import { useSecrets } from "@/lib/api/secrets";
 import { useWhoCan } from "@/lib/api/who-can";
 import { internetAccessOf, internetSummary } from "@/lib/summary/internet";
 import { limitsFromAbove, ruleIsPending } from "@/lib/internet-access";
+import { useOrgMemberOnly } from "@/lib/nav/org-member";
 import { orgRoutes, wsRoutes } from "@/lib/routes";
 import { whoCanFromContacts, type WhoCanValue } from "@/lib/who-can";
 import { personName } from "@/lib/workspace-name";
@@ -199,6 +200,8 @@ function PolicyDefaults({ state, edit, workspace, orgSlug }: { state: DraftState
   const [host, setHost] = useState("");
   const [path, setPath] = useState("");
   const list = state.uncredentialed_allowlist;
+  // (D-508(e)) AI models is a Manage page: a member (a workspace's owner may be one) reads its name without a link.
+  const member = useOrgMemberOnly(orgSlug);
   return (
     <div className="space-y-4">
       <div className="max-w-md">
@@ -212,9 +215,13 @@ function PolicyDefaults({ state, edit, workspace, orgSlug }: { state: DraftState
               title="Agents call their model with an Aurora-injected key on every turn, so a default of Block would stop every agent. AI model traffic is controlled by the AI models rules instead. An explicit block rule that names an AI host still applies."
             >
               Does not affect AI endpoints. See{" "}
-              <Link href={orgRoutes(orgSlug).aiModels()} className="font-medium text-link underline">
-                AI models
-              </Link>
+              {member ? (
+                "AI models"
+              ) : (
+                <Link href={orgRoutes(orgSlug).aiModels()} className="font-medium text-link underline">
+                  AI models
+                </Link>
+              )}
               . An explicit block rule that names an AI host still applies.
             </span>
           }
@@ -341,7 +348,9 @@ export function InternetLevel(p: InternetLevelProps) {
   const limits = limitsFromAbove(p.level, p.eff, who);
   const note = minimumNote(p.eff);
 
-  const header = (description: ReactNode, actions?: ReactNode) => <PageHeader title="Internet access" description={description} className="mb-2" actions={actions} />;
+  // (D-508(i)) A Manage page's title names its scope.
+  const title = !workspace && p.orgName ? `Internet access in ${p.orgName}` : "Internet access";
+  const header = (description: ReactNode, actions?: ReactNode) => <PageHeader title={title} description={description} className="mb-2" actions={actions} />;
 
   if (!p.canEdit) {
     // (FIX-164, D-365) A workspace's members read its published rules: the summary and the rules as text, no controls.

@@ -62,7 +62,7 @@ export function usePaletteContext(): PaletteContext {
       memberships: (me.data?.memberships ?? []).map((m) => ({
         slug: m.org.slug,
         name: m.org.name ?? m.org.slug,
-        role: m.role,
+        role: m.effective_role ?? m.role,
         workspaces: m.workspaces.map((w) => ({ slug: w.slug, name: w.name ?? w.slug })),
       })),
       topics: wsId ? visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") }, altitude) : [],

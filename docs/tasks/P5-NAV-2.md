@@ -135,3 +135,88 @@ Sonnet `nextjs-developer` (app shell, routing and permissions in the UI, several
 
 Commits; screenshots (1256 dark/light, 390) beside `after/nav-3b*`, `after/nav-4*`; remaining differences with reasons;
 the links fixed for members; tests changed; commands and results.
+
+### Report (2026-11-28, branch `alexiri/p5-nav-2`)
+
+**Built.** The rail shows one place (`app-shell.tsx`): `components/nav/place-card.tsx` (card and back line),
+`OrgNavList` (the grouped menu, `ORG_RAIL_GROUPS`, today's counts), Administration and Your account cards.
+`manage-frame.tsx` is deleted (column and phone select); `org/manage-gate.tsx` redirects members. New
+`/o/<org>/workspaces` (`org-workspaces.tsx`); the Overview is `org-overview.tsx` (summary `StatLink`s, Needs you).
+`lib/nav/manage-return.ts` is the one back-line helper (key `aurora.place-return`; C-1178 as built). Manage titles
+name the scope (`TopicPage` got `tabsName`, so tab bars keep their names).
+
+**Not in the API (no route added).** `GET /v1/orgs/{org}/workspaces` carries no owners: a team workspace's owners are
+read per workspace from `GET /v1/workspaces/{ws}` (`audience.owners`; N requests for N team workspaces). A list field
+would remove them.
+
+**Links fixed for members** (none dead-ends; the gate catches typed and mailed addresses):
+- switcher "All n in <Org>": owners and admins → `/o/<org>/workspaces`; a member's button opens the whole list in the menu;
+- Ctrl K: no organization entry where the person is only a member;
+- an approval asked by an organization rule, and the app-access "Internet access" link → the workspace's Internet access;
+- Internet access "Default rule" hint ("AI models") and an agent's model-readiness fix (organization key, AI model
+  rules): words without a link;
+- deleting a workspace → `/` for a member (was the organization's page);
+- `/` never lands a member on `/o/<org>`: another of their workspaces, else "You are not in a workspace yet" (without
+  this, Manage → `/` → Manage would loop).
+- Unchanged because only owners, admins or instance admins see them: "Add a key" (`add_key`), chat-platform connect
+  buttons, setup-request rows, Administration's "Open <org>'s Chat platforms".
+
+**Bugs found in my own work, each with a test seen failing first.** (1) `ManageGate` mounted a Manage page for a
+member when the organization answered before `/v1/me`, and threw `TypeError` when `/v1/me` failed. (2) The manage
+page's route has a `ws` parameter, so the shell drew a workspace menu there; only `/w/` addresses are a workspace
+place now.
+
+**Emergency reader (FIX-277).** The workspace layout, the manage page and `lib/emergency.ts` are unchanged. A reader
+is an organization owner, so the gate lets them through. A reader's workspace pages are recorded for the back line
+(flag `reader`, because that workspace is not among their memberships); a workspace an administrator is only
+redirected from is not recorded. `fix-235`, `fix-236`, `fix-277` and `fix-277-reader` pass.
+
+**Security notes.** The redirect is navigation only; no API, authorization or route changed on the server. The back
+line follows a stored path only for the same user id and only inside `/o/<org>/w/<ws>` (tests reject schemes, `//`,
+backslashes, dot segments plain and encoded, sibling prefixes), and never reads it from a URL.
+
+**Mockup comparison** (`e2e/places.spec.ts` screenshots at 1256 and 390 px, both themes, beside `after/nav-3b*` and
+`after/nav-4*`; sample data differs). Fixed after the first comparison: the lead sat on the cards, People used the
+two-person icon, a Needs you row's arrow wrapped at 390 px, the Workspaces table sat on its lead. Kept:
+- no teal ring on the place card: it marks the new element in `nav-3b`/`nav-3`; `nav-4`, the card's own mockup, and
+  `nav-1` have none;
+- count badges on the menu entries as well as in Needs you: Scope 3 keeps today's badges;
+- the rail's foot (rule above it, theme switch, "Instance admin" under the name, no Manage entry) is P5-NAV-3's. Because
+  that foot is taller than the mockup's, at 783 px high the Manage and Administration menus scroll inside the rail
+  (Agents, Data and Settings below the fold); the drawer does the same on a phone;
+- Needs you shows the item's own action button ("Review", "Fix") where the mockup draws a status chip: it is the
+  action the feed offers (and **Decline** on requests, which would otherwise be lost); the row and arrow open the page;
+- waiting invitations (an uncounted row) and the History fold stay under Needs you: existing functions of this page;
+- "Needs you" uses the app's section heading size, a step smaller than drawn;
+- Workspaces has no mockup; it uses `ResponsiveTable`.
+
+**Side effect of the width.** Without the 192 px column, Manage pages are wider. Library cards would have gone two per
+row at 1256 px against D-506, so their second column now starts at 1024 px of content (`library-cards.tsx`, `14`).
+
+**Left for later.** The member variants inside Manage pages (Agents, Chat platforms, AI models, Internet access) can no
+longer be reached through the routes; their components and unit tests are unchanged.
+
+**Tests changed** (why):
+- new `tests/places.test.tsx`, `e2e/places.spec.ts`: this brief;
+- `context-switcher`: back line and place cards replace "Back to <Org>"/"You're in"; "All n" per role; Account has no switcher;
+- `visible-topics`, `roles`: new order with Workspaces; members get nothing;
+- `refine-17-org`, `refine-20-batch3`: `pickRailWorkspace` → `lastWorkspace`; `peopleLine` went with the People card;
+- `refine-17-18-feeds`, `refine-20-org-not-found`: `ManageFrame` → `OrgNavList`/`ManageGate`; no phone select;
+- `org-manage`: the FIX-235 rows are on Workspaces;
+- `palette-registry`, `command-palette`: no organization entry for a member;
+- `internet-pages`, `skill-libraries-ui`: scope titles;
+- e2e `ia-navigation`, `org-pages`, `who-can`: members are redirected (these replace the member-view journeys);
+  `who-can`'s "member" was in fact an instance admin and is now a real member;
+- e2e `p5-polish-8-switcher`, `fix-027-shots`, `fix-235`, `altitude`, `skill-libraries`: place cards, back line,
+  Workspaces, scope titles; `support/mock-api.ts`: the new route in `ROUTES`.
+
+**Commands and results** (all through `test.sh` / `heavy.sh`):
+- vitest, every test file touching a changed module plus the four drift guards: 106 files, 1512 tests pass (before the
+  two later fixes); after them, the 7 files of the gate fix (62) and the 7 shell files (93) pass;
+- Playwright (mocked): `places`, `fix-235`, `fix-236`, `fix-277`, `fix-277-reader`, `org-pages`, `who-can` 91 pass on
+  the final code; `ia-navigation`, `p5-polish-8-switcher`, `altitude`, `ia-3`, `ia-4`, `skill-libraries` pass, and the
+  `org-` routes of `stage4-axe` (64) and `org-`/account routes of `stage4-routes` (52). The whole `stage4-axe` did not
+  finish within one 10-minute command (242 passed, none failed, when stopped);
+- `pnpm typecheck` and eslint on touched files: pass; `scripts/guards/run-all.sh`, `extract-schema.py --check`,
+  `cargo fmt --all --check`: pass. No Rust, OpenAPI, schema or migration change.
+FLAKE_AND_FAILFIRST

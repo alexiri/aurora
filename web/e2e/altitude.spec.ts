@@ -117,7 +117,7 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("the organization's owner reaches Manage › Skills with the switch off", async ({ page }) => {
         await open(page, "/o/acme/skills", scheme, "owner", "member", false);
-        await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Skills in Acme Labs", level: 1 })).toBeVisible();
         if (width >= 768) {
           const nav = page.getByRole("navigation", { name: "Manage Acme Labs" });
           await expect.poll(() => navLabels(nav)).toContain("Skills");

@@ -1,14 +1,26 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { mockApi, org } from "./support/mock-api";
+import { mockApi, org, user, ws } from "./support/mock-api";
 import { serious } from "./support/axe";
 import { openRoute, overflow } from "./support/open";
 
-// P5-POLISH-9 (D-390, E1–E3, D6): a member reads summaries instead of the owners' forms; the organization's Apps is one
-// table whose switch saves when you flip it; People has no menu on your own row. Both themes at 1280 px and 390 px.
+// P5-POLISH-9 (E3, D6): the organization's Apps is one table whose switch saves when you flip it; People has no menu on
+// your own row. D-508(e): a member doesn't see Manage. Both themes at 1280 px and 390 px.
 
-/** The viewer is a plain member of the organization (the owner's forms must not render). */
+/** The viewer is a plain member of the organization, not an instance admin (Manage must not render). */
 async function asMember(page: Page) {
+  await page.route("**/v1/me", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        user: { ...user, is_instance_admin: false },
+        memberships: [{ org, role: "member", status: "active", workspaces: [{ ...ws, my_role: "member", personal: false }] }],
+        default_org_id: org.id,
+        client_address: "203.0.113.7",
+      }),
+    }),
+  );
   await page.route(`**/v1/orgs/${org.id}`, async (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...org, my_role: "member" }) });
@@ -20,43 +32,21 @@ for (const scheme of ["light", "dark"] as const) {
     test.describe(`${scheme} theme, ${width} px`, () => {
       test.use({ viewport: { width, height: width === 1280 ? 900 : 844 } });
 
-      test("a member sees the AI models summary, never a disabled form", async ({ page }) => {
-        // The member override is registered after the shared mock (a later `page.route` wins), so open the page by hand.
-        await mockApi(page);
-        await asMember(page);
-        // A member may not read the organization's accounts (403); the shared key comes from the workspace's list.
-        await page.route("**/v1/orgs/*/accounts", (route) => route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: { code: "forbidden", message: "no" } }) }));
-        await page.route("**/v1/workspaces/*/accounts", (route) =>
-          route.fulfill({
-            status: 200,
-            contentType: "application/json",
-            body: JSON.stringify({ items: [{ ref: { type: "secret", id: "00000000-0000-4000-8000-000000000062" }, kind: "ai_key", name: "Users AI gateway", scope: "organization", levels: [], health: { state: "not_used" }, agents: [], can: { give_access: false, change_access: false, manage: false } }], next_cursor: null }),
-          }),
-        );
-        await page.emulateMedia({ colorScheme: scheme });
-        await page.goto("/o/acme/ai-models");
-        await expect(page.getByTestId("member-ai-models")).toBeVisible();
-        await expect(page.getByText("Users AI gateway", { exact: true })).toBeVisible();
-        await expect(page.getByText("The organization has no key of its own.")).toHaveCount(0);
-        await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
-        await expect(page.getByLabel("Allowed models")).toHaveCount(0);
-        expect(await overflow(page)).toBeLessThanOrEqual(0);
-        expect(await serious(page)).toEqual([]);
-      });
-
-      test("a member's Agents page is a sentence, not a refusal", async ({ page }) => {
-        await mockApi(page);
-        await asMember(page);
-        await page.emulateMedia({ colorScheme: scheme });
-        await page.goto("/o/acme/agents");
-        await expect(page.getByTestId("member-org-agents")).toBeVisible();
-        // (P6-TPL-4, C-1115) The templates' sentence and who turns one off, in words.
-        await expect(page.getByTestId("member-org-templates")).toContainText("Workspace members can create agents from these templates");
-        await expect(page.getByTestId("member-org-templates")).toContainText("Only organization owners and admins can change this");
-        await expect(page.getByText("Only organization owners and admins can open this page")).toHaveCount(0);
-        expect(await overflow(page)).toBeLessThanOrEqual(0);
-        expect(await serious(page)).toEqual([]);
-      });
+      for (const path of ["/o/acme/ai-models", "/o/acme/agents"]) {
+        test(`a member who opens ${path} lands in their workspace, not on Manage or a refusal`, async ({ page }) => {
+          // The member override is registered after the shared mock (a later `page.route` wins), so open the page by hand.
+          await mockApi(page);
+          await asMember(page);
+          await page.emulateMedia({ colorScheme: scheme });
+          await page.goto(path);
+          await expect(page).toHaveURL(/\/o\/acme\/w\/main$/);
+          await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+          await expect(page.getByRole("navigation", { name: /^Manage / })).toHaveCount(0);
+          await expect(page.getByText("Only organization owners and admins can open this page")).toHaveCount(0);
+          expect(await overflow(page)).toBeLessThanOrEqual(0);
+          expect(await serious(page)).toEqual([]);
+        });
+      }
 
       test("Apps is one table: switch an app off and on, saved at once", async ({ page }) => {
         await openRoute(page, "/o/acme/apps?tab=apps", scheme);

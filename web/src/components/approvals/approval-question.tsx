@@ -12,6 +12,7 @@ import { Avatar } from "@/components/agent-avatar";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { countdown, type Approval, type Decision } from "@/lib/api/approvals";
+import { useOrgMemberOnly } from "@/lib/nav/org-member";
 import { wsRoutes, orgRoutes } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { orList } from "@/lib/who-can";
@@ -32,9 +33,19 @@ export function Sentence({ a }: { a: Approval }) {
   );
 }
 
-/** Where a rule-asked question's rule is edited: the workspace's or the organization's Internet access. */
-function ruleHref(a: Approval, org: string, ws: string): string {
-  return a.asked_by?.kind === "rule" && a.asked_by.scope === "organization" ? orgRoutes(org).internetAccess() : wsRoutes(org, ws).internetAccess();
+const RULE_LINK_CLASS = "font-medium text-link underline";
+
+/**
+ * Where an organization rule is edited: the organization's Internet access; for a member, who doesn't see Manage
+ * (D-508(e)), the workspace's, which shows what applies from above.
+ */
+function OrgRuleLink({ org, ws, name }: { org: string; ws: string; name: string }) {
+  const member = useOrgMemberOnly(org);
+  return (
+    <Link href={member ? wsRoutes(org, ws).internetAccess() : orgRoutes(org).internetAccess()} className={RULE_LINK_CLASS}>
+      {name}
+    </Link>
+  );
 }
 
 export interface ApprovalQuestionProps {
@@ -106,9 +117,13 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
       {a.asked_by?.kind === "rule" ? (
         <p className="text-sm text-ink-2" data-testid="asked-by-rule">
           Asked by the rule{" "}
-          <Link href={ruleHref(a, org, ws)} className="font-medium text-link underline">
-            {a.asked_by.rule_name}
-          </Link>
+          {a.asked_by.scope === "organization" ? (
+            <OrgRuleLink org={org} ws={ws} name={a.asked_by.rule_name} />
+          ) : (
+            <Link href={wsRoutes(org, ws).internetAccess()} className={RULE_LINK_CLASS}>
+              {a.asked_by.rule_name}
+            </Link>
+          )}
           .
         </p>
       ) : null}

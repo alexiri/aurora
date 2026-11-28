@@ -16,7 +16,7 @@ const NOW = new Date().toISOString();
 /** `my_role: null` everywhere the viewer's own access is read: the session, the resolve, the workspace, the org list. */
 const managed = { ...ws, my_role: null, administers: true, audience: { people: 2, owners: [{ id: id(99), display_name: "Ada Lovelace" }], owners_total: 1, emergency: null } };
 
-/** The Overview's workspace row (the org agents' row links to the manage page too). */
+/** The workspace's row on Manage › Workspaces (D-508(c): the list moved there from the Overview). */
 const row = (page: Page) => page.getByRole("link", { name: "Main workspace Manage" });
 
 async function adminMock(page: Page) {
@@ -29,9 +29,9 @@ async function adminMock(page: Page) {
 }
 
 test.describe("the admin's journey (FIX-235, D-477)", () => {
-  test("Overview → Manage → pause an agent, without ever opening the agent", async ({ page }) => {
+  test("Workspaces → Manage → pause an agent, without ever opening the agent", async ({ page }) => {
     await adminMock(page);
-    await openThemed(page, "/o/acme", "light");
+    await openThemed(page, "/o/acme/workspaces", "light");
     // The workspace is not the viewer's own: the row links to the manage page with the quiet label.
     const link = row(page);
     await expect(link).toBeVisible();
@@ -109,9 +109,9 @@ test.describe("390 px (FIX-235)", () => {
     expect(await overflow(page), "no sideways scroll").toBe(0);
   });
 
-  test("the org Overview holds: the manage row visible, no sideways scroll", async ({ page }) => {
+  test("Manage › Workspaces holds: the manage row visible, no sideways scroll", async ({ page }) => {
     await adminMock(page);
-    await openThemed(page, "/o/acme", "light");
+    await openThemed(page, "/o/acme/workspaces", "light");
     const link = row(page);
     await expect(link).toBeVisible();
     await expect(link.getByTestId("manage-row")).toHaveText("Manage");

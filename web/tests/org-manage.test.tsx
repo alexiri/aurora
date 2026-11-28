@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import WorkspaceRedirect from "@/app/o/[org]/w/[ws]/layout";
-import OrgPage from "@/app/o/[org]/page";
+import OrgWorkspacesPage from "@/app/o/[org]/workspaces/page";
 import { useWorkspace } from "@/lib/api/queries";
 import { wrap } from "./support/render";
 import { json, type Handler } from "./support/api";
@@ -58,11 +58,12 @@ beforeEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("org Overview rows (FIX-235)", () => {
-  it("a member's own workspace links into the workspace, a managed one to the manage page", async () => {
+// (D-508(c)) The list moved from the Overview to Manage <org> › Workspaces.
+describe("Manage › Workspaces rows (FIX-235)", () => {
+  it("one of this person's own workspaces links into the workspace, a managed one to the manage page", async () => {
     serve({
       "GET /v1/resolve": () => json(200, { org: { id: "o1", slug: "acme", name: "Acme" } }),
-      "GET /v1/orgs/o1": () => json(200, { id: "o1", slug: "acme", name: "Acme", my_role: "member" }),
+      "GET /v1/orgs/o1": () => json(200, { id: "o1", slug: "acme", name: "Acme", my_role: "admin" }),
       "GET /v1/me": () => json(200, { user: { id: "me", display_name: "Ada", email: "ada@x.io", is_instance_admin: false }, memberships: [], default_org_id: null }),
       "GET /v1/orgs/o1/workspaces": () =>
         json(200, {
@@ -74,13 +75,13 @@ describe("org Overview rows (FIX-235)", () => {
           next_cursor: null,
         }),
     });
-    wrap(<OrgPage />);
+    wrap(<OrgWorkspacesPage />);
     const own = await screen.findByRole("link", { name: "My team" });
     expect(own).toHaveAttribute("href", "/o/acme/w/mine");
     const managed = screen.getByRole("link", { name: /Ops/ });
     expect(managed).toHaveAttribute("href", "/o/acme/workspaces/other");
     expect(within(managed).getByTestId("manage-row")).toHaveTextContent("Manage");
-    const personal = screen.getByRole("link", { name: /Bob's workspace Bob/ });
+    const personal = screen.getByRole("link", { name: "Bob's workspace Manage" });
     expect(personal).toHaveAttribute("href", "/o/acme/workspaces/bob");
     expect(within(personal).getByTestId("manage-row")).toBeInTheDocument();
   });

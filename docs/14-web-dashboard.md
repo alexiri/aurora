@@ -212,7 +212,8 @@ to do its own way. A page uses these; a new page never invents its own. (Mock-up
   loading shows `SkeletonRows`, not "Loading…".
 - **Not found and context.** An unknown organization, workspace or path is a `NotFoundState` inside the
   app shell, with the viewer's real organization in the rail; the shell never takes an unknown slug as the
-  current organization. Account pages keep the last visited workspace in the switcher. A link that goes to
+  current organization (it shows a workspace of the viewer's, never a Manage menu). Account pages have the person's
+  place card, and the last visited workspace is where their back line goes. A link that goes to
   another page and back carries `?from=<same-origin /o/… path>` and the target shows "← Back to <name>".
 - **Copy system.** `lib/labels.ts` is the only map from an enumeration the API returns to words (`label()`
   gives "?" for an unknown key, never the key). `copy-guard.test.ts` fails on a snake_case word, a UUID or a
@@ -330,27 +331,35 @@ padding. Cards are `surface` with a 1 px `line` border and at most a 1 px
 shadow. No gradient fills, no left-border accent cards, no emoji.
 
 **Shell.**
-- A left **sidebar** replaces the top header and context nav. It holds the
-  horizontal Aurora logo (`AuroraLogo`); two stacked **context selectors**
-  (FIX-027): the **Organization** select (caption above a one-line control with
-  org avatar, name and chevron) listing the person's organizations and — for
-  instance admins only — a separated **"All organizations"** entry to `/admin`;
-  and, below it, aligned with it (same left edge and width; the nesting is
-  conveyed by order and caption, not indentation), the **Workspace** select for
-  the active organization's workspaces with a pinned **"All workspaces…"**
-  entry, rendered only where an organization is active (never on `/admin/*` or
-  `/account/*`). (FIX-235, D-477) The workspace list shows only the workspaces
-  the person is in in their own right (`my_role` set); an administrator who is
-  not one of a workspace's people reaches it through the organization's
-  Overview or agents list, not the switcher. "All N in <Org>" counts the
-  listed workspaces.
-  On `/admin/*` the organization trigger reads "All organizations"; on
-  `/account/*` it shows the "Select organization" placeholder. The selectors
-  are the only path to the admin area: the account menu has no Admin item and
-  there is no separate sidebar link (FIX-026's is superseded). Below them the
-  nav for the current context (workspace, organization, account or instance
-  admin) with a 16 px stroke icon per item; the **theme switch**; and the
-  **account menu** at the bottom (name, role, Account, Sign out).
+- A left **sidebar** (the rail) replaces the top header and context nav: the
+  horizontal Aurora logo (`AuroraLogo`), the **place card** and, outside a
+  workspace, its **back line**; the current place's menu with a 16 px stroke
+  icon per item; then the foot (Administration for instance admins, Search,
+  the **theme switch** and the **account menu**).
+- **Places** (P5-NAV-2, D-508; design `docs/design/navigation/` nav-3b,
+  nav-4). Aurora has four places, and the rail shows **exactly one**:
+  - a **workspace**: the card is the picker, "<workspace> · <org>"; no back
+    line (a workspace is home); the workspace menu;
+  - its **organization**, Manage <org> (`/o/<org>/…` not under `/w/`): the card
+    is the picker, "<org> · Organization"; the organization's grouped menu
+    (§Organization);
+  - **Administration** (`/admin/…`, instance admins): the card "Administration ·
+    This Aurora"; Administration's grouped menu;
+  - **Your account** (`/account/…`): the card "<person> · Your account"; the
+    account menu.
+  Every card has the same box, padding and position (`components/nav/
+  place-card.tsx`). The **back line** ("‹ <workspace>", read as "Back to
+  <workspace>") returns to the workspace **and page** you came from: while a
+  person is on a workspace page its address (with its query) is kept in the
+  tab's session storage, per person (`lib/nav/manage-return.ts`, never in a
+  URL; read back only if it is a path inside that workspace). Without a record
+  (a link, a new tab) it goes to the workspace used last — in Manage, last in
+  that organization — and with none it is hidden. A workspace an administrator
+  only manages (and is redirected from) is never recorded.
+- (FIX-235, D-477) The picker lists only the workspaces the person is in in
+  their own right (`my_role` set); an administrator who is not one of a
+  workspace's people reaches it through Manage <org> › Workspaces or Agents.
+  "All N in <Org>" counts the listed workspaces.
 - The active item uses `subtle` background, 600 weight and an `accent` icon,
   and sets `aria-current="page"`.
 - The workspace nav has no **Members** item (FIX-027): it linked to the
@@ -1496,8 +1505,7 @@ Every old route redirects to its new place with its tab (C-960). Deep links in m
 guides keep working.
 
 **Who sees what** (C-961):
-- **Org members** see Workspaces, plus **AI models** and **Internet access** read-only, so they can see
-  why a model or a website is refused.
+- **Org members** don't see Manage <org> (D-508(e)); what the organization provides is shown where they use it.
 - **Org owners and admins** see every org topic.
 - **Workspace members** see Overview, Agents, Skills, Activity, and Approvals if they may approve. They
   also see Apps & accounts and Internet access, read-only.
@@ -1505,10 +1513,10 @@ guides keep working.
 - **Administration** is shown only to instance admins.
 - (P5-REFINE-3, D-406) **Altitude** narrows these lists at Use: a workspace member, an approver and the
   owner of a personal workspace see Overview, Agents and Approvals (where they may approve); an
-  organization member sees Workspaces. The rest needs Set up (§Altitudes). A direct link to a hidden topic
-  still opens it. (D-506(b), P5-SKILLS-2) **Skills is the exception for the people who own it:** a workspace's
+  organization member doesn't see Manage (D-508(e)). The rest needs Set up (§Altitudes). A direct link to a hidden
+  topic still opens it. (D-506(b), P5-SKILLS-2) **Skills is the exception for the people who own it:** a workspace's
   owner (team or personal) has **Skills** in the rail at Use, and an organization's owners and admins have
-  **Skills** in the Manage area's sub-nav at every altitude. Members and approvers keep the view above.
+  **Skills** in Manage's menu at every altitude. Members and approvers keep the view above.
 
 **What a person sees of something they cannot do** (C-961, one rule for every page):
 - The page's **main action** (for example **Give <Agent> an app**, **Add**, **Add rule**, **Add people**)
@@ -1531,9 +1539,9 @@ guides keep working.
   succeeds (`useRefreshAttentionOnMutation`), so the count drops without a reload. A failed fetch, a zero, or `null`
   (everyone who is not an instance admin) shows no badge and never an error.
 - (P5-REFINE-17 item 17, G3, C-1082) For an organization's owners and admins the same badge sits on the switcher's
-  **Manage <org>** row, on the closed switcher (current organization) and in the Manage area's sub-nav (Overview =
-  total, a topic = its own part: Apps & accounts, Chat platforms, AI models; on a phone the select reads "Chat
-  platforms (2)"). It counts the organization's open requests (C-1080 `organization`); nobody else sees one.
+  **Manage <org>** row, on the closed switcher in a workspace (current organization) and in Manage's menu in the rail
+  (Overview = total, a topic = its own part: Apps & accounts, Chat platforms, AI models; the phone's drawer shows the
+  same menu). It counts the organization's open requests (C-1080 `organization`); nobody else sees one.
 - The org switcher lists organizations only; "All organizations" is gone.
 - Every page header carries a level badge: **Administration**, **<org>** or **<org> › <workspace>**.
 - An instance admin acting in an org sees the org's pages exactly as its owner would.
@@ -1636,6 +1644,8 @@ connects), `/setup-error` (missing required configuration reported by
 `/v1/instance`).
 
 ### Account (`/account/*`)
+(P5-NAV-2, D-508(a)) Your account is a place: the rail's top is the back line and the card "<person> · Your account"
+(§Shell › Places), with no workspace switcher.
 (phase 5, P5-REFINE-16, account-1..5) **Rail:** Profile · Security · **Notifications** · **SSH keys** (only while
 `features.ssh` is on) · API keys · Chat platforms · Delete account. **Notifications** (`/account/notifications`) holds
 "Approval notifications" ("How you hear about approvals that need a decision."): the e-mail switch, the browser
@@ -1703,29 +1713,40 @@ address, opened, last activity, with **Disconnect** (`DELETE /v1/ssh-sessions/{i
 sessions → the section is hidden. Mobile (390 px): the tables collapse to stacked rows (the shared
 `ResourceTable` pattern), the fingerprint wraps.
 
-### Organization (`/o/<org>/*`) — owners/admins unless noted
+### Organization (`/o/<org>/*`) — owners, admins and instance admins
 (Phase 5, P5-IA-1, D-338, C-961: navigation and page names follow §Information architecture › "One
-structure for every level". An org member sees Overview and read-only AI models and Internet access;
-every other topic is owners/admins and is not listed for a member.)
-- **Manage <org>, an area, not a second rail** (P5-REFINE-17, rec 8). On `/o/<org>/…` (not `/w/…`) the rail stays the
-  **workspace rail** of the workspace the person was in (remembered per browser tab; else their personal workspace; else
-  the first). The page area carries a **← Back to <workspace>** link, the **Manage <org>** header (the only place the
-  organization is named) and a sub-nav: Overview · Agents · Skills · People · Apps & accounts · Chat platforms · AI models ·
-  Internet access · Data · Settings (a column on a desktop, a select on a phone; filtered by role with
-  `visibleTopics("org", …)`: a member keeps Overview, AI models and Internet access). The switcher's **Manage <org>** row
-  (was "Organization settings") opens the Overview; its last row **New organization** opens a dialog (shown where sign-up
-  lets the person create one). Every old address keeps working (C-960).
-- **Overview** (`/o/<org>`): **Needs you** (the organization's attention feed, `GET /v1/orgs/{org}/attention`: requests
-  for apps, chat platforms and AI keys an admin can resolve, in the one row shape of every level, the asker's avatar,
-  title, detail, their reason in quotes, the primary action and **Decline**, with a count chip; the invitations waiting
-  follow as an uncounted line; a **History** fold lists what closed in 30 days), **People** (count, invitations waiting, **Invite**), **Workspaces** (team first, personal
-  below, **New workspace**), **Agents** (the five most recently changed, **All agents**) and the two rules that apply
-  (AI models, Internet access). Members see Workspaces and the two rules only.
-  (FIX-235, D-477) In Workspaces and Agents, a workspace the viewer is in in
-  their own right (`my_role` set) links as before; the others link to the
-  workspace's **manage page** with a quiet "Manage" label, and in Agents the
-  agent's name is not a link — the row carries the Pause/Resume action and the
-  workspace name links to the manage page.
+structure for every level". Members don't see Manage, D-508(e).)
+- **Manage <org> is a place** (P5-NAV-2, D-508(b), C-1178; design `docs/design/navigation/` nav-3b). On `/o/<org>/…`
+  (not `/w/…`) the rail **is the organization's menu** (§Shell › Places): the back line, the place card (the picker,
+  "<org> · Organization") and, grouped as Administration's rail is: Overview · Workspaces · People; **What agents can
+  use**: AI models · Apps & accounts · Chat platforms · Internet access · Skills; **Oversight**: Agents · Data; then
+  Settings (`ORG_RAIL_GROUPS`, `visibleTopics("org", …)`). Counts (C-1082): the total on Overview, a part per entry.
+  The page has no second menu; on a phone the drawer shows the same menu with the back line. Page titles name the
+  scope (D-508(i)): "Agents in <org>", "People in <org>", "Skills in <org>", "Workspaces in <org>" …; the leads are
+  unchanged. The switcher's **Manage <org>** row opens the Overview; its "All n in <org>" opens Workspaces; its last
+  row **New organization** opens a dialog (shown where sign-up lets the person create one). Every old address keeps
+  working (C-960).
+- **Members** (D-508(e), C-1178): every Manage address (`/o/<org>`, `/o/<org>/<topic>…`) redirects a member (no owner
+  or admin role there, not an instance admin) to the workspace they used last in that organization, else their
+  first, else `/` (`ManageGate`); nothing of Manage is drawn on the way. It is navigation only: every API route keeps
+  its own authorization. No link sends a member to Manage: the switcher's "All n" opens the whole list in the menu,
+  Ctrl K has no organization entry for them, and a fix or rule that lives in Manage is said without a link (an
+  organization rule links to the workspace's Internet access). `/` never lands a member on an organization's address:
+  a member in no workspace reads "You are not in a workspace yet".
+- **Overview** (`/o/<org>`, nav-3b): the title is the organization, the lead "Everything <org>'s workspaces share";
+  four **summary cards**, each a link (`StatLink`): Workspaces, People, Agents, AI keys (the organization's `ai_key`
+  accounts); a figure not yet known reads "–". **Needs you** (`GET /v1/orgs/{org}/attention`: only what an owner or
+  admin can act on, D-508(j)) with the feed's count: one row each, a mark (danger when something stopped working), the
+  title, "<page> · <detail>" (and the asker's reason), the item's action, **Decline** on a request, and an arrow; the
+  whole row opens the item's page. Invitations still waiting follow as an uncounted row; a **History** fold lists what
+  closed in 30 days.
+- **Workspaces** (`/o/<org>/workspaces`, C-1178): every workspace of the organization, team first (A to Z), then
+  personal ones by owner, with **New workspace**: Name, Kind (Team/Personal), Owners, Agents, Created (a
+  `ResponsiveTable`: stacked rows on a phone). The organization's list carries no owners, so a team workspace's are
+  read from the workspace itself (`audience`). (FIX-235, D-477) A workspace the viewer is in in their own right
+  (`my_role` set) opens as usual; the others open the workspace's **manage page** with a quiet "Manage" label. In
+  Agents, such an agent's name is not a link — the row carries the Pause/Resume action and the workspace name links to
+  the manage page.
 - **Workspace manage page** (`/o/<org>/workspaces/<ws>`, FIX-235): for an
   administrator who is not one of the workspace's people. The same tab
   structure as the workspace, reduced to what administering needs: **People**
@@ -1734,7 +1755,7 @@ every other topic is owners/admins and is not listed for a member.)
   (C-1161); a personal workspace refuses with `personal_workspace_owner_only`
   (D-480), said in words), **Agents** (name, handle, state, Pause/Resume; no
   link into the agent), **Pause workspace** and **Delete workspace** (the
-  existing controls). Any `/o/<org>/w/<ws>/…` address whose `Workspace` says
+  existing controls). It sits under **Workspaces** in the organization's menu. Any `/o/<org>/w/<ws>/…` address whose `Workspace` says
   `my_role: null` with `administers: true` redirects here — except while it
   says `emergency_reader: true` (FIX-277: the reader stays on the page they
   asked for, read-only) — and a 403 `workspace_access_required` from any
@@ -1862,7 +1883,7 @@ every other topic is owners/admins and is not listed for a member.)
   - **Libraries** tab (phase 4, P4-GSL, D-148; phase 5, P5-SKLIB-3, D-450, C-1129): "Libraries are git repositories
     of skills. Add one, then pick the skills <org> should use." with **Add a library**, then the organization's
     libraries as cards (`LibraryCards`, `components/skills/libraries/`, in the `CardGrid`: one per row below a
-    content width of 896 px, never a table and never a sideways scroll). A card: a tile, the label, the repository
+    content width of 1024 px, so at 1256 px too, never a table and never a sideways scroll). A card: a tile, the label, the repository
     (`host/path` in monospace, plain text, never a link), one **state chip** and the "…" menu; a facts line
     ("Branch <name>" or "Default branch"; "Checked <when>" or "Not checked yet"; "<n> skills · <m> used by <org>" or
     "· none used yet", where `n` is C-1176's `skills_offered` and is left out while the server does not send it, and
@@ -2400,6 +2421,10 @@ table view; durations "3 h 20 min", "45 min", "under 1 min"; dates as the dashbo
 "UTC" in the opening sentence only.
 
 ### Instance administration (`/admin/*`, instance admins only)
+(P5-NAV-2, D-508(a)) Administration is a place: the rail's top is the back line and the card **Administration · This
+Aurora** (§Shell › Places; it replaced "Back to <org>" and "You're in Administration"), and the foot has no
+Administration entry there.
+
 (phase 5, P5-REFINE-18, second part) **The rail in two halves** (`ADMIN_RAIL_GROUPS`, `lib/routes.ts`): **Overview**, then **POLICY FOR EVERYONE** (What agents may do = `/admin/internet-access`, Apps, Skills = `/admin/skills`, Chat platforms, People & sign-in, Data) and **THIS INSTALLATION** (Health & runners = `/admin/platform`, AI endpoints = `/admin/ai-models`, **Set in Helm**, All settings). (Page merge, lane B) **What agents may do is one page with five tabs**, `?tab=internet-access|ai-keys|byo|defaults|templates`: Internet access (the preset card first, then where organizations stand), AI keys and rules (the old AI models › Rules), Bring your own (the old Agents › BYO), Defaults (the old Agents › Defaults), and Agent templates (phase 6, P6-TPL-4, the paragraph below). (D-506(c), C-1177, P5-SKILLS-2) **Skills is its own Administration page, `/admin/skills`** (`adminRoutes.skills()`; instance admins, others get the admin guard's answer): the heading **Skills**; the section **Libraries** with "Libraries here are offered to every organization. People add skills from them with the same permissions as any skill, and each organization approves its own updates.", **Add a library** and the instance's libraries as the same cards and add/edit dialogs as the organization's (the facts line counts "used by <n> organizations", never which skills; no Browse skills, which needs an organization to browse as), "No libraries yet" with the button when there are none; then the **Library settings** group (libraries on or off, refresh interval, size cap) with the Save bar. All settings sends the `skills` section here, and `/admin/skill-libraries` and `/admin/agents?tab=skills` redirect here. **Health & runners** has `?tab=health|runners|computers|secret-stores|email|limits`: Health is Overview's health view on its own page, Computers the old Agents › Computers. **AI endpoints** is the endpoints alone. The old Agents topic is gone from the rail. Old addresses redirect (`legacy-routes.ts`, a `LegacyGate` on the three pages that kept a path): `/admin/agents` (no tab, `defaults`) → `…/internet-access?tab=defaults`, `?tab=skills` → `/admin/skills`, `?tab=byo` → `?tab=byo`, `?tab=computers` → `/admin/platform?tab=computers`; `/admin/ai-models?tab=rules` → `?tab=ai-keys`; `/admin/internet-access?tab=limits` → `?tab=internet-access`; `/admin/settings/<section>` follows the table above. **Set in Helm** (`/admin/set-in-helm`, `components/admin/set-in-helm-view.tsx`) lists every locked value from the settings index: the setting in words, its current value in words, "Set in your Helm values" with the key in `<code>`, and a link to where it is used; every "Set by the installation" pill (`LockPill`) links to its row (`#<key>`), the long "remove it from your values" text is gone from the pages, and the All settings notice is one line linking here.
 (phase 6, P6-TPL-4, C-1114, C-1115) **What agents may do › Agent templates** (`?tab=templates`, after Defaults; instance admins) has two sections. **Template repositories** lists the git addresses an instance admin added — repository (`repo`, "Default branch" or the branch or tag, folder), the last head as `sha7`, the schedule, last checked with its status, the template count — with **Check now**, **Edit** (schedule, branch, folder, and an access token that is replaced, never shown) and **Remove** ("Agents made from these templates keep working and do not change."). **Add a repository** is the skill library's two-step dialog (C-1129): Repository address, Branch or tag, Folder and the fold "This repository is private", then **Check** — a single read that stores nothing — and what Aurora found: the repository's name and description, the branch and `sha7`, and each template with its version and state, problems in words; **Add repository** stores it. **Templates** lists what the repositories hold: name and summary, source, offered version, the chips **Waiting for review** (with the count, linking to the review page), **Waiting for its package** (since when) and **Removed from the repository**, the apps and skill libraries it needs ("Not installed here" / "Not added here"), and **Withdraw** / **Offer again**; a head with problems shows "The repository's newest version has problems" with the list. **Review** of a waiting version is its own page: everything of the version in full, marked "Text from <source> at <sha7>. The package matches the repository at <sha7>." — first **About this template**, the README.md as its source text with a **Preview** toggle that renders it the way people will see it (C-1116: no raw HTML, images shown as their alt text, only `https:`/`mailto:` links — external, in a new tab, marked — relative links as plain text, headings shifted under the page's own), then instructions, skills with their files, helper files in full (executable marked), skills from libraries, memories ("Locked: <Agent> can read it but not change it."), automations, apps with their level or tools, and inputs. **What changed since <current version>** (FIX-247, FIX-250) is kept short: a one-line summary in words ("4 changes: Instructions, 1 skill, a new app, a new schedule."), then a **Look at these first** block (a labelled region) with the changes that widen what the agent can do or reach — a new or widened app, a new schedule or webhook, a new library skill reference, a new helper file, a changed input, an unlocked memory, a raised minimum Aurora version (compared in order: the first differing part of the version decides) — each entry linking to the section it belongs to. (FIX-271) Every change is visible in its section: removed skills, skill files and helper files follow the current ones, marked **Removed**; a new skill's body and Use it when read as added; a binary file that changed is said in words; locking or unlocking a memory is said beside it. While the comparison loads the block's place shows a loading line and **Approve** is disabled; if it fails an error with a retry takes its place and Approve stays disabled; if the offered version has no content the page says there is no comparison. With several versions waiting, the templates list says "N waiting:" and links each, oldest first. The diffs themselves sit inside the sections they belong to — *About this template*, *Instructions*, each *Skill* and each of its files, *Skills from libraries*, *Helper files*, *Memories*, *Apps*, *Automations*, *Inputs* — as the shared folded `DiffView` (§Visual design › Shared primitives): a changed part shows its diff first, with **Show the current text** for the full text of the version under review; a section or part nothing touched is collapsed to one line "Unchanged" that expands to the text. A first version says "This is the first version: nothing to compare with." and shows the sections as today; identical content says "Nothing changed: this version matches <current version>."; the current version itself shows no diff. The full content below is unchanged; "People keep using <current version> until you approve this one."; **Approve** sends the `content_sha256` the page showed (409 reloads the review and says the version changed), **Reject** asks to confirm. **Organization › Agents › Templates** (owners and admins; `?tab=templates`) says on top "Workspace members can create agents from these templates. Turning one off hides it; agents already made from it keep working." and lists every offered template with its summary and a switch **Offered in <org>**; a member reads the same sentence with who changes it, and the instance's kill switch (the org routes answer 404 `templates_disabled`) reads "Agent templates are turned off on this instance."
 (phase 5, P5-REFINE-18, second part) **Organization presets**: `OrgPolicyPresets` (`components/policy/org-policy-presets.tsx`) shows the same three cards on **organization AI models** (key posture, outside agents) and **organization Internet access** (posture, browser connections). Choosing one writes the organization's governance document (one PUT); a card looser than what the instance admin set is disabled with "Set by the instance admin". The checklist carries one line under its five rows, "What agents may do · Open · Change" (not counted), linking to the card (`/admin/internet-access#presets`).

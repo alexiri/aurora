@@ -11,7 +11,7 @@ vi.mock("next/navigation", () => ({
 
 import { ChannelsView } from "@/components/channels/channels-view";
 import { historySentence } from "@/components/internet/internet-level";
-import { ManageFrame } from "@/components/org/manage-frame";
+import { OrgNavList } from "@/components/app-shell";
 import { NeedsYouOrg } from "@/components/org/needs-you-org";
 import { err, json } from "./support/api";
 import { wrap } from "./support/render";
@@ -148,28 +148,28 @@ describe("the organization's count on the Manage area (#17, G3, C-1082)", () => 
 
   it("Overview carries the total and a topic only its own part; none at zero", async () => {
     mockFetch(routes({ org_id: "o1", count: 3, topics: { "chat-platforms": 2, apps: 1 } }));
-    wrap(<ManageFrame>page</ManageFrame>);
+    wrap(<OrgNavList orgSlug="acme" pathname="/o/acme" />);
     const total = await screen.findByTestId("manage-attention-badge-overview");
     expect(total).toHaveTextContent("3");
     expect(total).toHaveTextContent("3 need your attention");
     expect(screen.getByTestId("manage-attention-badge-chat-platforms")).toHaveTextContent("2");
     expect(screen.getByTestId("manage-attention-badge-apps")).toHaveTextContent("1");
     expect(screen.queryByTestId("manage-attention-badge-people")).toBeNull();
-    // On a phone the select says it in words.
-    expect(screen.getByRole("option", { name: "Chat platforms (2)" })).toBeInTheDocument();
+    // The same menu is the phone's drawer: the entry says its number in words.
+    expect(screen.getByRole("link", { name: "Chat platforms 2 need your attention" })).toBeInTheDocument();
   });
 
   it("no badge when the API answers null (not an owner or admin) or zero", async () => {
     const calls = mockFetch(routes(null));
-    wrap(<ManageFrame>page</ManageFrame>);
-    await screen.findByText("Manage Acme");
+    wrap(<OrgNavList orgSlug="acme" pathname="/o/acme" />);
+    await screen.findByRole("navigation", { name: "Manage Acme" });
     await waitFor(() => expect(calls.some((c) => c.key === "GET /v1/attention/counts")).toBe(true));
     await new Promise((r) => setTimeout(r, 30));
     expect(screen.queryByTestId("manage-attention-badge-overview")).toBeNull();
     cleanup();
     mockFetch(routes({ org_id: "o1", count: 0, topics: {} }));
-    wrap(<ManageFrame>page</ManageFrame>);
-    await screen.findByText("Manage Acme");
+    wrap(<OrgNavList orgSlug="acme" pathname="/o/acme" />);
+    await screen.findByRole("navigation", { name: "Manage Acme" });
     await new Promise((r) => setTimeout(r, 30));
     expect(screen.queryByTestId("manage-attention-badge-overview")).toBeNull();
   });

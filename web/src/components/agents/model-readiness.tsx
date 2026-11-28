@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Notice } from "@/components/ui/notice";
 import { ItemList, ListRow, Section } from "@/components/ui/section";
 import { useModelReadiness, type KeyReadiness } from "@/lib/api/credential-grants";
+import { useOrgMemberOnly } from "@/lib/nav/org-member";
 import type { components } from "@/lib/api/schema";
 import { droppedRoleWarning, ROLE_LABEL, ROLE_SOURCE_COPY, ROLES, roleWarning, subagentWarning, type Role } from "@/lib/model-roles";
 
@@ -41,8 +42,12 @@ const SOURCE_COPY: Record<string, string> = {
 
 function KeyRow({ k, base, orgBase }: { k: KeyReadiness; base: string; orgBase: string }) {
   const reason = k.reason ? (REASON_COPY[k.reason] ?? { text: k.reason, fix: "" }) : null;
+  // (D-508(e)) A member doesn't see Manage: a fix that lives there is said, not linked.
+  const member = useOrgMemberOnly(decodeURIComponent(orgBase.split("/")[2] ?? ""));
+  const ofOrg = reason?.where === "governance" || (reason?.where === "keys" && k.scope === "organization");
   const keysHref = `${k.scope === "organization" ? orgBase : base}/apps?tab=accounts&kind=ai-key`;
-  const href = reason?.where === "governance" ? `${orgBase}/ai-models` : reason?.where === "keys" ? keysHref : null;
+  const target = reason?.where === "governance" ? `${orgBase}/ai-models` : reason?.where === "keys" ? keysHref : null;
+  const href = member && ofOrg ? null : target;
   return (
     <ListRow actions={<Badge tone={k.usable ? "accent" : "danger"}>{k.usable ? "Ready" : "Not usable"}</Badge>}>
       <div className="min-w-0 space-y-0.5 text-sm">

@@ -1007,6 +1007,8 @@ const TOPIC_ROUTES: RouteEntry[] = [
   { name: "ws-app-setup", path: "/o/acme/w/main/apps/linear" },
   { name: "org-app-setup", path: "/o/acme/apps/aws-keys" },
   { name: "ws-internet-access", path: "/o/acme/w/main/internet-access" },
+  // (D-508(c)) Manage <org> › Workspaces (`org-workspaces` above is the organization's Overview, its older name).
+  { name: "org-workspace-list", path: "/o/acme/workspaces" },
   { name: "ws-people", path: "/o/acme/w/main/people" },
   ...tab("/o/acme/w/main/settings", ["general", "api-keys", "audit", "danger"], "ws-settings"),
 ];

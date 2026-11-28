@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
@@ -10,6 +11,7 @@ import { usePlacement } from "@/lib/api/placement";
 import { useCreateOrg, useOrgs, useSession, useWorkspaces } from "@/lib/api/queries";
 import { useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { homeTarget, landingPath } from "@/lib/nav/landing";
+import { accountRoutes } from "@/lib/routes";
 
 export default function Home() {
   useUnauthorizedRedirect();
@@ -71,6 +73,16 @@ export default function Home() {
     );
   } else if (workspaces.isError) {
     body = <ErrorState error={workspaces.error} onRetry={() => workspaces.refetch()} />;
+  } else if (decided && landing && !target) {
+    // (D-508(e)) A member of an organization with no workspace to open: there is no Manage page to send them to.
+    body = (
+      <EmptyState title="You are not in a workspace yet">
+        <p className="mb-4">Ask an owner or admin of {firstOrg?.name ?? "your organization"} to add you to one.</p>
+        <Link href={accountRoutes.profile} className="text-link underline">
+          Your account
+        </Link>
+      </EmptyState>
+    );
   } else body = <Loading label="Opening your workspace…" />;
 
   return (

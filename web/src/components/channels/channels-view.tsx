@@ -237,7 +237,7 @@ export function ChannelsView({ orgId }: { orgId: string }) {
   return (
     <div className="space-y-8">
       <PageHeader
-        title="Chat platforms"
+        title={org.data?.name ? `Chat platforms in ${org.data.name}` : "Chat platforms"}
         description={`Let people talk to agents from the chat tools ${org.data?.name ?? "your organization"} already uses.`}
         className="mb-6"
       />

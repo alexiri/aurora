@@ -21,7 +21,7 @@ export function landingPath(
 }
 
 interface MeLike {
-  memberships: readonly { org: SlugItem; status: string; workspaces: readonly (SlugItem & { personal?: boolean })[] }[];
+  memberships: readonly { org: SlugItem & { name?: string }; role?: string; status: string; workspaces: readonly (SlugItem & { personal?: boolean })[] }[];
 }
 
 /** The person's own personal workspace (D-140), as a path, when they have one in an active membership. */
@@ -30,6 +30,22 @@ export function personalWorkspacePath(me: MeLike | undefined): string | null {
     if (m.status !== "active") continue;
     const w = m.workspaces.find((x) => x.personal === true);
     if (w) return `/o/${m.org.slug}/w/${w.slug}`;
+  }
+  return null;
+}
+
+/**
+ * (D-508(e)) `/` must never send a member to Manage <org> (an organization's own address): Manage would send them
+ * straight back. A landing there becomes one of their workspaces; `null` when they have none anywhere.
+ */
+function openable(landing: string, me: MeLike | undefined, isInstanceAdmin: boolean): string | null {
+  const manage = landing.match(/^\/o\/([^/]+)$/);
+  if (!manage || isInstanceAdmin) return landing;
+  if (me?.memberships.find((m) => m.org.slug === manage[1])?.role !== "member") return landing;
+  const own = personalWorkspacePath(me);
+  if (own) return own;
+  for (const m of me.memberships) {
+    if (m.status === "active" && m.workspaces[0]) return `/o/${m.org.slug}/w/${m.workspaces[0].slug}`;
   }
   return null;
 }
@@ -46,8 +62,9 @@ export function homeTarget(args: {
   placementSaved: boolean | undefined;
   welcomeSeen: boolean | undefined;
 }): string | null {
-  const { landing, me, isInstanceAdmin, placementSaved, welcomeSeen } = args;
+  const { me, isInstanceAdmin, placementSaved, welcomeSeen } = args;
   if (isInstanceAdmin && placementSaved === false) return adminRoutes.home();
+  const landing = args.landing ? openable(args.landing, me, isInstanceAdmin) : null;
   if (!landing) return null;
   if (welcomeSeen === false) {
     const personal = personalWorkspacePath(me);

@@ -66,6 +66,8 @@ export function paletteItems(c: PaletteContext): PaletteItem[] {
     }
   }
   for (const m of c.memberships) {
+    // (D-508(e)) The entry opens Manage <org>, which members don't see; their workspaces are listed above.
+    if (m.role === "member" && !c.instanceAdmin) continue;
     out.push(link(`org:${m.slug}`, "Organizations", m.name, orgRoutes(m.slug).home(), { recentKey: m.slug }));
   }
   if (ws) {

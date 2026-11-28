@@ -131,6 +131,8 @@ export function orgRoutes(org: string) {
   return {
     base,
     home: () => base,
+    /** (D-508(c), C-1178) Manage <org> › Workspaces: every workspace of the organization. */
+    workspaces: () => `${base}/workspaces`,
     agents: (tab?: TabOf<"orgAgents">) => url(`${base}/agents`, { tab }),
     /** The manage page for a workspace an administrator is not in (FIX-235). */
     workspace: (ws: string) => `${base}/workspaces/${seg(ws)}`,
@@ -206,12 +208,13 @@ export type AdminTopic =
   | "platform"
   | "set-in-helm"
   | "settings";
-export type OrgTopic = "overview" | "agents" | "skills" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "settings";
+export type OrgTopic = "overview" | "workspaces" | "agents" | "skills" | "apps" | "ai-models" | "internet-access" | "people" | "chat-platforms" | "data" | "settings";
 export type WorkspaceTopic = "overview" | "agents" | "skills" | "apps" | "internet-access" | "approvals" | "activity" | "people" | "settings";
 
 /** The name of each topic in the interface (the vocabulary of `14`). */
 export const TOPIC_LABEL: Record<AdminTopic | OrgTopic | WorkspaceTopic, string> = {
   overview: "Overview",
+  workspaces: "Workspaces",
   agents: "Agents",
   skills: "Skills",
   apps: "Apps & accounts",
@@ -252,12 +255,20 @@ export const ADMIN_RAIL_GROUPS: { label: string | null; topics: AdminTopic[] }[]
   { label: "This installation", topics: ["platform", "ai-models", "set-in-helm", "settings"] },
 ];
 
+/** (D-508(b)) Manage <org>'s menu, grouped as Administration's is; a `null` label starts no group heading. */
+export const ORG_RAIL_GROUPS: { label: string | null; topics: OrgTopic[] }[] = [
+  { label: null, topics: ["overview", "workspaces", "people"] },
+  { label: "What agents can use", topics: ["ai-models", "apps", "chat-platforms", "internet-access", "skills"] },
+  { label: "Oversight", topics: ["agents", "data"] },
+  { label: null, topics: ["settings"] },
+];
+
 /** Where a topic's page is, per level. */
 export function topicHref(level: "admin", topic: AdminTopic): string;
 export function topicHref(level: "org", topic: OrgTopic, org: string): string;
 export function topicHref(level: "workspace", topic: WorkspaceTopic, org: string, ws: string): string;
 export function topicHref(level: Level, topic: string, org?: string, ws?: string): string {
-  const path = topic === "overview" || topic === "workspaces" ? "" : `/${topic}`;
+  const path = topic === "overview" ? "" : `/${topic}`;
   if (level === "admin") return `/admin${path}`;
   // `/o/<org>/apps` without a tab is the old catalogue address (C-960 redirects it), so the topic link names its tab.
   if (level === "org") return topic === "apps" ? orgRoutes(org ?? "").accounts() : `/o/${seg(org ?? "")}${path}`;

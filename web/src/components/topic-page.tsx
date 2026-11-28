@@ -29,9 +29,12 @@ export function TopicPage<T extends string>({
   idBase,
   actions,
   width = "",
+  tabsName = title,
   children,
 }: {
   title: string;
+  /** What the tab bar is named after, when the title says more than the topic ("People in Acme" → "People"). */
+  tabsName?: string;
   description?: ReactNode;
   level?: PageLevel;
   tabs: readonly TopicTab<T>[];
@@ -54,7 +57,7 @@ export function TopicPage<T extends string>({
           value={current?.id ?? ""}
           onValueChange={(v) => setTab(v as T)}
           variant="underline"
-          label={`${title} sections`}
+          label={`${tabsName} sections`}
           idBase={idBase}
         />
       ) : null}

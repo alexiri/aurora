@@ -504,12 +504,6 @@ function Invitations({ orgId, mailOn }: { orgId: string; mailOn: boolean }) {
   );
 }
 
-/** "3 people" / "1 person" and the invitations still waiting (the organization Overview's People card). */
-export function peopleLine(people: number, pending: number): string {
-  const p = `${people} ${people === 1 ? "person" : "people"}`;
-  return pending > 0 ? `${p} · ${pending} ${pending === 1 ? "invitation" : "invitations"} waiting` : p;
-}
-
 /** "in 6 days", "in 3 h", "today": when an invitation stops working. */
 export function expiresIn(iso: string, now: number): string {
   const secs = Math.round((new Date(iso).getTime() - now) / 1000);

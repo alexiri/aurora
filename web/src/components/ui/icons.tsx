@@ -96,4 +96,8 @@ export const ImageIcon = make(<><rect x="3" y="4" width="18" height="16" rx="2"/
 export const UploadIcon = make(<><path d="M12 16V5M7 9l5-5 5 5M5 20h14"/></>);
 export const LogOutIcon = make(<><path d="M10 4H5v16h5"/><path d="M9 12h11M16 8l4 4-4 4"/></>);
 export const ArrowRightIcon = make(<><path d="M5 12h14M13 6l6 6-6 6"/></>);
-export const ExternalLinkIcon = make(<><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></>);
+export const GridIcon = make(<><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></>);
+export const GlobeIcon = make(<><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18"/></>);
+export const DatabaseIcon = make(<><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></>);
+export const SparkIcon = make(<><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z"/></>);
+export const ExternalLinkIcon =make(<><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/></>);
