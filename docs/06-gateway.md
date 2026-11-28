@@ -711,7 +711,9 @@ minted.
    port 443, TLS verification of the registered name, and the NetworkPolicies. The
    operator closes whole networks with `gateway.self_hosted_refused_ranges` (CIDRs,
    gateway and API; the cluster's pod and Service ranges): an address in one is never
-   opened. The fully qualified name (`host.`)
+   opened. (FIX-296, D-515) The chart's NetworkPolicies still refuse private addresses unless
+   the operator opens them, for example with `networkPolicy.selfHostedPrivateEgress`
+   (off by default; `15 §Production: Helm`). The fully qualified name (`host.`)
    must resolve to the same address, so a short cluster name completed by a DNS
    search domain gets nothing. These requests use their own upstream connection
    pool, so no other request can reuse such a connection. Removing, disabling or

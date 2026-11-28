@@ -289,6 +289,119 @@ notes="$(notes_of)" || exit 1
 ! grep -q 'HTTPS_PROXY' <<<"$notes" || fail "NOTES.txt shows the proxy upgrade note on a fresh install"
 echo "chart-ops: upgrade notes ok"
 
+# --- (FIX-296, D-515) selfHostedPrivateEgress: off, nothing; on, exactly one more egress rule on the gateway's
+#     and the API's policies and no change to any other policy; the operator's refused ranges and the metadata
+#     addresses inside private space are carved out; only private space can be listed ---
+SH_ON=(--set networkPolicy.selfHostedPrivateEgress.enabled=true)
+# Every other optional policy is on too, so "no other policy changes" covers all of them.
+SH_ALL=(--set relay.enabled=true --set relay.domain=previews.guard.invalid "${SSH_ON[@]}"
+  --set networkPolicy.cilium.enabled=true --set 'privateHosts.names={asm.example.org}'
+  --set 'connectors[0].id=sh' --set 'connectors[0].image=guard.invalid/c:1'
+  --set 'connectors[0].tokenSecret.name=s' --set 'connectors[0].tokenSecret.key=k')
+# self_hosted_rule <want JSON of the added rule> <extra flags for both renders...> -- <flags of the "on" render...>
+self_hosted_rule() {
+  local want="$1" base=() with=(); shift
+  while [ "$1" != "--" ]; do base+=("$1"); shift; done
+  shift; with=("$@")
+  python3 -I -c '
+import json, subprocess, sys
+import yaml
+def fail(m): sys.exit("chart-ops: FAIL: selfHostedPrivateEgress: " + m)
+want = json.loads(sys.argv[1])
+cmd = sys.argv[2:]
+sep = cmd.index("--")
+def policies(c):
+    r = subprocess.run(c, capture_output=True, text=True)
+    if r.returncode != 0: fail("render failed: " + r.stderr)
+    return {(d["kind"], d["metadata"].get("namespace", ""), d["metadata"]["name"]): d
+            for d in yaml.safe_load_all(r.stdout) if d and d["kind"].endswith("NetworkPolicy")}
+off, on = policies(cmd[:sep]), policies(cmd[sep + 1:])
+if off.keys() != on.keys(): fail("the set of policies changed: %s" % sorted(off.keys() ^ on.keys()))
+changed = sorted(k[2] for k in off if off[k] != on[k])
+if [n.rsplit("-aurora-", 1)[-1] for n in changed] != ["api", "gateway"]:
+    fail("only the api and gateway policies may change, changed: %s" % changed)
+for k in off:
+    if k[2] not in changed: continue
+    a, b = off[k]["spec"], on[k]["spec"]
+    added = [r for r in b["egress"] if r not in a["egress"]]
+    if [r for r in b["egress"] if r not in added] != a["egress"]: fail("%s: an existing egress rule changed" % k[2])
+    if added != [want]: fail("%s: added egress %s, want %s" % (k[2], json.dumps(added), json.dumps([want])))
+    if {x: y for x, y in a.items() if x != "egress"} != {x: y for x, y in b.items() if x != "egress"}:
+        fail("%s: something else than egress changed" % k[2])
+' "$want" "${H[@]}" "${base[@]}" -- "${H[@]}" "${base[@]}" "${with[@]}"
+}
+META6='"except":["fd00:ec2::/32","fd20:ce::254/128"]'
+SH_DEFAULT='{"to":[{"ipBlock":{"cidr":"10.0.0.0/8"}},{"ipBlock":{"cidr":"172.16.0.0/12"}},{"ipBlock":{"cidr":"192.168.0.0/16"}},{"ipBlock":{"cidr":"fc00::/7",'"$META6"'}}],"ports":[{"protocol":"TCP","port":443}]}'
+# the default render carries no such rule (the values key defaults to off, and off equals absent)
+if "${H[@]}" | python3 -I -c '
+import sys, yaml
+for d in yaml.safe_load_all(sys.stdin):
+    if d and d["kind"] == "NetworkPolicy":
+        for r in d["spec"].get("egress") or []:
+            for t in r.get("to") or []:
+                if t.get("ipBlock", {}).get("cidr") in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"):
+                    sys.exit(1)
+'; then :; else fail "selfHostedPrivateEgress: the default render opens a private range"; fi
+[ "$("${H[@]}" "${SH_ALL[@]}")" = "$("${H[@]}" "${SH_ALL[@]}" --set networkPolicy.selfHostedPrivateEgress.enabled=false)" ] \
+  || fail "selfHostedPrivateEgress: enabled=false must equal the default render"
+self_hosted_rule "$SH_DEFAULT" -- "${SH_ON[@]}" || exit 1
+self_hosted_rule "$SH_DEFAULT" "${SH_ALL[@]}" -- "${SH_ON[@]}" || exit 1
+# the check bites: a wrong expectation must fail
+if self_hosted_rule "${SH_DEFAULT/443/8443}" -- "${SH_ON[@]}" >/dev/null 2>&1; then
+  fail "self-test: self_hosted_rule passed a wrong port"
+fi
+# ports and cidrs are the operator's; CGNAT is private space too and loses the metadata address inside it
+self_hosted_rule '{"to":[{"ipBlock":{"cidr":"10.20.0.0/16"}},{"ipBlock":{"cidr":"100.64.0.0/10","except":["100.100.100.200/32"]}},{"ipBlock":{"cidr":"fd12:3456::/32"}}],"ports":[{"protocol":"TCP","port":443},{"protocol":"TCP","port":8443}]}' \
+  -- "${SH_ON[@]}" --set 'networkPolicy.selfHostedPrivateEgress.ports={443,8443}' \
+  --set 'networkPolicy.selfHostedPrivateEgress.cidrs={10.20.0.0/16,100.64.0.0/10,fd12:3456::/32}' || exit 1
+# `except` and gateway.self_hosted_refused_ranges: each goes only to the ipBlock of its own family that strictly
+# contains it; a block that a range covers entirely (equal or wider) is not opened at all; a range outside every
+# block changes nothing; one listed twice appears once
+self_hosted_rule '{"to":[{"ipBlock":{"cidr":"10.0.0.0/8","except":["10.9.0.0/24","10.244.0.0/16","10.96.0.0/12"]}},{"ipBlock":{"cidr":"fc00::/7","except":["FD00:0010:0:0:0:0:0:0/64","fd00:ec2::/32","fd20:ce::254/128"]}}],"ports":[{"protocol":"TCP","port":443}]}' \
+  -- "${SH_ON[@]}" --set 'networkPolicy.selfHostedPrivateEgress.except={10.9.0.0/24,10.244.0.0/16}' \
+  --set 'config.gateway.self_hosted_refused_ranges={10.244.0.0/16,10.96.0.0/12,FD00:0010:0:0:0:0:0:0/64,192.168.0.0/16,172.0.0.0/8,203.0.113.0/24}' || exit 1
+# with the value off, the refused ranges and a listed link-local range render nothing and refuse nothing
+"${H[@]}" --set 'networkPolicy.selfHostedPrivateEgress.cidrs={169.254.0.0/16}' >/dev/null \
+  || fail "selfHostedPrivateEgress: off must not validate the unused cidrs"
+sh_must_fail() { # <what> <words the plain message must hold> <helm flags...>
+  local what="$1" words="$2" out; shift 2
+  if out="$("${H[@]}" "${SH_ON[@]}" "$@" 2>&1)"; then fail "selfHostedPrivateEgress: $what rendered but must refuse"; fi
+  grep -qF -- "$words" <<<"$out" || fail "selfHostedPrivateEgress: $what failed without the plain message '$words': $out"
+}
+# link-local, loopback, metadata and anything that reaches outside private space (so contains them) can't be listed
+for bad in 169.254.0.0/16 169.254.169.254/32 fe80::/10 fe80::1/128 127.0.0.0/8 127.0.0.1/32 ::1/128 \
+  0.0.0.0/0 ::/0 128.0.0.0/1 10.0.0.0/7 fc00::/6 8.8.8.0/24 2001:db8::/32 \
+  fd00:ec2::/32 fd00:ec2::254/128 fd20:ce::254/128 100.100.100.200/32; do
+  sh_must_fail "cidrs=$bad" "networkPolicy.selfHostedPrivateEgress.cidrs" \
+    --set "networkPolicy.selfHostedPrivateEgress.cidrs={10.0.0.0/8,$bad}"
+done
+for bad in 10.0.0.1 10.0.0.0/33 fc00::/129 10.0.0/8 010.0.0.0/8 10.0.0.256/32 fc00:::/7 fc00::1::/64 \
+  fc00:0:0:0:0:0:0:0:0/64 ::ffff:127.0.0.1/128 intranet.example.org/24; do
+  sh_must_fail "cidrs=$bad" "is not a CIDR" --set "networkPolicy.selfHostedPrivateEgress.cidrs={$bad}"
+done
+sh_must_fail "a malformed except" "is not a CIDR" --set 'networkPolicy.selfHostedPrivateEgress.except={10.9.0.0}'
+sh_must_fail "a malformed refused range" "is not a CIDR" --set 'config.gateway.self_hosted_refused_ranges={pods}'
+# an empty `to` means every destination, and empty `ports` every port: neither can render
+sh_must_fail "no cidrs" "cidrs is empty" --set-json 'networkPolicy.selfHostedPrivateEgress.cidrs=[]'
+sh_must_fail "no ports" "ports is empty" --set-json 'networkPolicy.selfHostedPrivateEgress.ports=[]'
+for bad in 0 65536 https; do
+  sh_must_fail "port $bad" "is not a port number" --set "networkPolicy.selfHostedPrivateEgress.ports={$bad}"
+done
+sh_must_fail "every cidr excluded" "nothing is left to open" \
+  --set 'networkPolicy.selfHostedPrivateEgress.cidrs={10.1.0.0/16}' \
+  --set 'config.gateway.self_hosted_refused_ranges={10.0.0.0/8}'
+# NOTES.txt says what is open while it is on, and nothing while it is off or there are no policies
+notes="$(notes_of "${SH_ON[@]}")" || exit 1
+for words in 'networkPolicy.selfHostedPrivateEgress is on' 'TCP 443' \
+  '10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7' 'main control' 'self_hosted_refused_ranges'; do
+  grep -qF -- "$words" <<<"$notes" || fail "selfHostedPrivateEgress: NOTES.txt must say '$words'"
+done
+for flags in "" "networkPolicy.enabled=false,networkPolicy.selfHostedPrivateEgress.enabled=true"; do
+  notes="$(notes_of ${flags:+--set "$flags"})" || exit 1
+  ! grep -qF 'selfHostedPrivateEgress' <<<"$notes" || fail "selfHostedPrivateEgress: NOTES.txt mentions it while it opens nothing"
+done
+echo "chart-ops: selfHostedPrivateEgress ok"
+
 # --- half-enabled switches fail the render ---
 must_fail() {
   local what="$1"; shift
