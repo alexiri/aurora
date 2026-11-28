@@ -2,6 +2,38 @@
 //! The gateway inserts `pending` rows (`repo::gateway`); this module lists and
 //! resolves them and runs the expiry/abandon sweeps. Every transition emits
 //! `aurora_approval` in the same transaction (delivered on commit).
+//!
+//! **Lock order, for every transaction that locks more than one of these: task conversation →
+//! link → task → other conversations → approval rows** (the order of
+//! `aurora-api` `domains/peer_tasks/service.rs`). Rows come last because a task's close
+//! abandons its pending ones while it holds everything else. So a writer of rows that will
+//! lock a conversation later in the same transaction (a notice, a follow-up turn, ending a
+//! turn) takes the conversation **first**:
+//!
+//! - A decision (`decide`, `decide_batch`, `approve_same_kind`, with `expire_if_overdue` and
+//!   `expire_overdue_of_batch`; the dashboard and the chat command): `lock_for_writes_in` of the
+//!   peer-task service, which also takes the tasks' origins, links and tasks. `revoke_ready`
+//!   and `set_resume_turn` follow under those locks.
+//! - The revocations ([`end_parked_of`], [`abandon_pending_depending_on`]): the conversations
+//!   of every pending row and ready grant they select, by [`lock_conversations`]. Held rows
+//!   too, though they get no notice: a caller may revoke again in the same transaction, and the
+//!   later call locks conversations for its notices. A caller that revokes in a loop (deleting
+//!   a connection and those derived from it, lowering an account's limit, a plugin activation's
+//!   converted grants) locks all of them once before it
+//!   ([`lock_connection_revocations`]).
+//! - A freeze: before its first row, `lock_for_writes_in` over the conversations of every row
+//!   it ends and of every turn it ends (`repo::freeze::conversations_a_freeze_writes`), since
+//!   ending a turn takes task origins, links and tasks. `abandon_pending_approvals` then locks
+//!   the rows' conversations again, held rows' too.
+//! - [`expire_resume_windows`]: the conversations of the grants it expires.
+//! - [`abandon_pending_of_conversation`] (a task's close): the close holds what the module
+//!   order puts before the rows.
+//! - Deleting a conversation: the caller holds its lock before the rows are touched.
+//!
+//! Single statements that lock nothing else need no conversation: `expire_overdue`,
+//! `abandon_unseen`, and the gateway's `expire_approval`, `abandon_approval`,
+//! `abandon_approvals` and `consume_grant` (`repo::gateway`); its inserts add rows nobody
+//! holds yet.
 
 use super::{After, split};
 use crate::DbError;
@@ -377,7 +409,8 @@ pub async fn expire_if_overdue(tx: &mut sqlx::PgConnection, id: Uuid) -> Result<
 }
 
 /// [`expire_if_overdue`] for the pending approvals of one batch of one agent that the user
-/// could decide. Returns how many it expired.
+/// could decide, in the conversations the caller has `locked` (or without one). Returns how many
+/// it expired.
 pub async fn expire_overdue_of_batch(
     tx: &mut sqlx::PgConnection,
     user: Uuid,
@@ -385,11 +418,13 @@ pub async fn expire_overdue_of_batch(
     ws: Option<Uuid>,
     agent: Uuid,
     batch_id: &str,
+    locked: &[Uuid],
 ) -> Result<usize, DbError> {
     let rows: Vec<(Uuid, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals a SET status = 'expired', decided_at = now(), resolved_at = now(), \
          updated_at = now() \
          WHERE a.status = 'pending' AND a.deadline <= now() AND a.batch_id = $5 \
+         AND (a.conversation_id IS NULL OR a.conversation_id = ANY($6)) \
          AND a.agent_id = $4 AND {} AND ($2::uuid IS NULL OR a.org_id = $2) \
          AND ($3::uuid IS NULL OR a.workspace_id = $3) \
          RETURNING a.id, a.workspace_id",
@@ -400,6 +435,7 @@ pub async fn expire_overdue_of_batch(
     .bind(ws)
     .bind(agent)
     .bind(batch_id)
+    .bind(locked)
     .fetch_all(&mut *tx)
     .await?;
     for (id, w) in &rows {
@@ -447,9 +483,46 @@ pub async fn decide(
     get(&mut *tx, id).await
 }
 
+/// The conversations of the pending approvals of one agent's batch: what a batch decision locks
+/// before it writes the rows.
+pub async fn pending_batch_conversations(
+    tx: &mut sqlx::PgConnection,
+    agent_id: Uuid,
+    batch_id: &str,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT DISTINCT conversation_id FROM approvals WHERE agent_id = $1 AND batch_id = $2 \
+         AND status = 'pending' AND conversation_id IS NOT NULL",
+    )
+    .bind(agent_id)
+    .bind(batch_id)
+    .fetch_all(&mut *tx)
+    .await?)
+}
+
+/// The same for what [`approve_same_kind`] may approve.
+pub async fn pending_same_kind_conversations(
+    tx: &mut sqlx::PgConnection,
+    agent_id: Uuid,
+    connection_id: Uuid,
+    tool_id: &str,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT DISTINCT conversation_id FROM approvals WHERE agent_id = $1 \
+         AND connection_id = $2 AND tool_id = $3 AND status = 'pending' \
+         AND conversation_id IS NOT NULL",
+    )
+    .bind(agent_id)
+    .bind(connection_id)
+    .bind(tool_id)
+    .fetch_all(&mut *tx)
+    .await?)
+}
+
 /// (P5-UX-16, C-982) Approves the other pending approvals of the same agent, account and tool, one
 /// by one with [`decide`] (so each notifies and starts its resume window), in the caller's
-/// transaction. Returns the rows it approved.
+/// transaction. Only those of the conversations the caller has `locked` (or without one): an
+/// approval raised since stays pending. Returns the rows it approved.
 #[allow(clippy::too_many_arguments)]
 pub async fn approve_same_kind(
     tx: &mut sqlx::PgConnection,
@@ -460,15 +533,18 @@ pub async fn approve_same_kind(
     user: Uuid,
     via: &str,
     resume_window_secs: u64,
+    locked: &[Uuid],
 ) -> Result<Vec<ApprovalRow>, DbError> {
     let ids: Vec<Uuid> = sqlx::query_scalar(
         "SELECT id FROM approvals WHERE agent_id = $1 AND connection_id = $2 AND tool_id = $3 \
-         AND status = 'pending' AND deadline > now() AND id <> $4 ORDER BY created_at, id",
+         AND status = 'pending' AND deadline > now() AND id <> $4 \
+         AND (conversation_id IS NULL OR conversation_id = ANY($5)) ORDER BY created_at, id",
     )
     .bind(agent_id)
     .bind(connection_id)
     .bind(tool_id)
     .bind(except)
+    .bind(locked)
     .fetch_all(&mut *tx)
     .await?;
     let mut out = Vec::new();
@@ -505,7 +581,9 @@ pub async fn batch_visible(
     .await?)
 }
 
-/// Decide every pending approval of the batch (same agent) the user may decide.
+/// Decide every pending approval of the batch (same agent) the user may decide. Only those of the
+/// conversations the caller has `locked` (or without one): a member raised since stays pending,
+/// as in [`approve_same_kind`].
 /// Returns `(id, workspace_id)` of the rows this call resolved.
 #[allow(clippy::too_many_arguments)]
 pub async fn decide_batch(
@@ -518,6 +596,7 @@ pub async fn decide_batch(
     approve: bool,
     via: &str,
     resume_window_secs: u64,
+    locked: &[Uuid],
 ) -> Result<Vec<(Uuid, Uuid, Uuid)>, DbError> {
     let rows: Vec<(Uuid, Uuid, Uuid)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals a SET status = $6, decided_by_user_id = $1, decided_via = $7, \
@@ -528,6 +607,7 @@ pub async fn decide_batch(
          WHERE a.status = 'pending' AND a.deadline > now() AND a.batch_id = $5 AND a.agent_id = $4 \
          AND {} \
          AND ($2::uuid IS NULL OR a.org_id = $2) AND ($3::uuid IS NULL OR a.workspace_id = $3) \
+         AND (a.conversation_id IS NULL OR a.conversation_id = ANY($9)) \
          RETURNING a.id, a.workspace_id, a.org_id",
         may_decide()
     )))
@@ -539,6 +619,7 @@ pub async fn decide_batch(
     .bind(if approve { "approved" } else { "denied" })
     .bind(via)
     .bind(resume_window_secs as f64)
+    .bind(locked)
     .fetch_all(&mut *tx)
     .await?;
     for (id, w, _) in &rows {
@@ -614,6 +695,12 @@ pub async fn end_parked_of(
         Scope::Conversation(c) => ("conversation_id", c),
         Scope::Agent(a) => ("agent_id", a),
     };
+    lock_conversations(
+        &mut *tx,
+        &format!("{col} = $1 AND {ENDABLE}"),
+        LockBind::Uuid(id),
+    )
+    .await?;
     let abandoned: Vec<EndedRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \
          updated_at = now() WHERE {col} = $1 AND status = 'pending' AND parked \
@@ -681,6 +768,12 @@ pub async fn has_pending_in_conversation<'e, E: sqlx::PgExecutor<'e>>(
 pub async fn expire_resume_windows(
     tx: &mut sqlx::PgConnection,
 ) -> Result<Vec<(Uuid, Uuid, Option<Uuid>)>, DbError> {
+    lock_conversations(
+        &mut *tx,
+        "resume_state = 'ready' AND resume_expires_at <= now()",
+        LockBind::None,
+    )
+    .await?;
     let rows: Vec<(Uuid, Uuid, Option<Uuid>)> = sqlx::query_as(
         "UPDATE approvals SET resume_state = 'expired', resolved_at = now(), updated_at = now() \
          WHERE resume_state = 'ready' AND resume_expires_at <= now() \
@@ -740,6 +833,55 @@ enum RevokeBind<'a> {
     Text(&'a str),
 }
 
+/// The rows a revocation may end: pending ones (held or parked) and ready grants.
+const ENDABLE: &str = "(status = 'pending' OR resume_state = 'ready')";
+
+/// What [`lock_conversations`] binds to its predicate's placeholders.
+pub(super) enum LockBind<'a> {
+    None,
+    Uuid(Uuid),
+    Uuids(Option<Uuid>, Option<Uuid>),
+    List(&'a [Uuid]),
+    Text(&'a str),
+}
+
+/// Locks the conversations of the approvals `pred` selects: the first step of a writer of rows
+/// that locks those conversations later (the module's lock order). In the order every writer of
+/// several takes them: task conversations first, then the others, newest first in each group
+/// (a task conversation is newer than the one it was opened from).
+pub(super) async fn lock_conversations(
+    tx: &mut sqlx::PgConnection,
+    pred: &str,
+    binds: LockBind<'_>,
+) -> Result<(), DbError> {
+    let sql = format!(
+        "SELECT id FROM conversations WHERE id IN \
+         (SELECT conversation_id FROM approvals WHERE {pred}) \
+         ORDER BY (kind = 'peer') DESC, id DESC FOR UPDATE"
+    );
+    let q = sqlx::query(sqlx::AssertSqlSafe(sql));
+    let q = match binds {
+        LockBind::None => q,
+        LockBind::Uuid(a) => q.bind(a),
+        LockBind::Uuids(a, b) => q.bind(a).bind(b),
+        LockBind::List(l) => q.bind(l),
+        LockBind::Text(t) => q.bind(t),
+    };
+    q.fetch_all(&mut *tx).await?;
+    Ok(())
+}
+
+/// For a caller that revokes one connection after another in one transaction: locks, once and
+/// before the first, the conversations of every row those revocations may end. Without it each
+/// round would lock conversations while it holds the rows of the rounds before.
+pub async fn lock_connection_revocations(
+    tx: &mut sqlx::PgConnection,
+    connection_ids: &[Uuid],
+) -> Result<(), DbError> {
+    let pred = format!("connection_id = ANY($1) AND {ENDABLE}");
+    lock_conversations(tx, &pred, LockBind::List(connection_ids)).await
+}
+
 /// `ready` grants matching `pred` -> `revoked` (C-826: same predicate as the pending rows).
 async fn revoke_ready_where(
     tx: &mut sqlx::PgConnection,
@@ -790,6 +932,8 @@ pub async fn abandon_pending_depending_on(
     };
     let (revoked, rows): (Vec<Ended>, Vec<EndedRow>) = if let Dependency::App { app_id } = dep {
         let pred = "connection_id IN (SELECT id FROM app_connections WHERE app_id = $1)";
+        let endable = format!("{pred} AND {ENDABLE}");
+        lock_conversations(&mut *tx, &endable, LockBind::Text(app_id)).await?;
         // (P4-011B-2, C-826) The `ready` grants that depend on the same thing are revoked in
         // the same transaction (they are not `pending`, so this runs first and apart).
         let revoked = revoke_ready_where(&mut *tx, pred, RevokeBind::Text(app_id)).await?;
@@ -803,6 +947,8 @@ pub async fn abandon_pending_depending_on(
         .await?;
         (revoked, rows)
     } else {
+        let endable = format!("{pred} AND {ENDABLE}");
+        lock_conversations(&mut *tx, &endable, LockBind::Uuids(b1, b2)).await?;
         let revoked = revoke_ready_where(&mut *tx, pred, RevokeBind::Uuids(b1, b2)).await?;
         let rows = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "UPDATE approvals SET status = 'abandoned', decided_at = now(), resolved_at = now(), \

@@ -923,7 +923,29 @@ upstreams on random ports keep working.
 1. Build the **approval summary** (`09 §Approval summaries`): manifest template
    for the tool → `approval.summarize` hook (only if declared; bounded call to
    the hook host with the body prefix ≤ `APPROVAL_BODY_PEEK`, no egress) →
-   generic redacting summarizer. Raw bodies are never stored.
+   generic redacting summarizer. Raw bodies are never stored. (FIX-284,
+   `07 §One reading of a JSON body`) When what a template field reads has two
+   readings, the card shows no value from the body and has a `Warning` field
+   saying so (the generic summary does the same for a repeated name anywhere,
+   naming it). A template field that reads JSON or GraphQL, directly or after
+   other decoders, adds a `Warning` when the body, or the part it decodes, cannot
+   be read or the body is longer than what was read; its values never just
+   vanish. A value that is only not there adds none. The hook gets JSON only when it has one reading,
+   whatever the content type says: a body the core reads as JSON must repeat no
+   name anywhere, also in another case; one it cannot read, a cut-off one
+   included, stays with the template when its content type says JSON or it
+   starts with `{` or `[` (behind white space or a byte order mark too; an empty
+   body has nothing to read). So does a request with two content types, with a
+   `content-encoding` other than `identity`, or whose multipart first part names
+   a transfer encoding other than `7bit`, `8bit` or `binary`: the core checks
+   bytes as they are. **A
+   hook sees only the first part of a multipart body** (a `multipart/` type, or
+   any mention of a boundary): the body is cut after that part and closed
+   again. It gets that only when the body starts at the delimiter, the part is
+   declared JSON and has one reading (in a cut-off body, only a part that a
+   delimiter in what was read closes), and every reader reads the same boundary:
+   one `;boundary=` parameter (no `boundary*=`, no space around `=`), a closed
+   quote, RFC 2046's characters and no backslash.
 2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
    gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
    effective timeout comes from the matching rules (`07 §Approval deadlines`,

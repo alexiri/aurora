@@ -43,7 +43,8 @@ async fn notify_origin(
     let Some(origin) = s.origin_conversation_id else {
         return Ok(());
     };
-    if !convs::lock(&mut *conn, origin).await? {
+    // A disabled schedule's origin is re-checked next, which takes a task's origins.
+    if !crate::domains::peer_tasks::service::lock_with_task_origins(conn, origin).await? {
         return Ok(());
     }
     // (P5-SCHED-ONCE, SEC-144) A schedule writes into a person's own chat only while it is that
@@ -448,8 +449,8 @@ pub async fn gate_result(
     if t.door.get("kind").and_then(|k| k.as_str()) != Some("schedule") {
         return Ok(GateApplied::Invalid("not_a_schedule_turn"));
     }
-    // Lock order: conversation, then run.
-    convs::lock(&mut *conn, t.conversation_id).await?;
+    // Lock order: conversation (a run may end the turn), then run.
+    crate::domains::peer_tasks::service::lock_with_task_origins(conn, t.conversation_id).await?;
     let Some(run) = repo::run_by_turn(conn, turn_id).await? else {
         return Ok(GateApplied::Duplicate);
     };

@@ -1370,6 +1370,8 @@ pub async fn set_limit_in_tx(
     connections::set_limit(&mut **tx, conn.id, limit.as_str()).await?;
     let tools = app_tools_of(tx, &conn.app_id).await?;
     let rows = grants::list_views_for_connection(&mut **tx, conn.id).await?;
+    // Each agent lowered below revokes for itself: every conversation first, once.
+    approvals::lock_connection_revocations(tx, &[conn.id]).await?;
     let mut events = Vec::new();
     for l in plan_lowering(rows, limit, &tools) {
         let agent = agents::get(&mut **tx, l.agent_id)

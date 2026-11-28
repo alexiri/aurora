@@ -2,6 +2,7 @@
 
 use crate::app::AppState;
 use crate::domains::conversations::service as conv;
+use crate::domains::peer_tasks::service as peers;
 use aurora_core::{ApiError, limits};
 use aurora_db::repo::credentials;
 use aurora_db::repo::hosted;
@@ -69,7 +70,9 @@ pub async fn drain_answer(
     turn: Uuid,
     ending: Ending<'_>,
 ) -> Result<Option<String>, ApiError> {
-    aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
+    // Every way a turn ends comes through here or through [`finish`], which takes the task
+    // origins of a task conversation: so its first lock takes them with it.
+    peers::lock_with_task_origins(conn, conversation).await?;
     let Some(Value::Array(msgs)) = hosted::answer_buffer_take(conn, turn).await? else {
         return Ok(None);
     };
@@ -124,6 +127,10 @@ pub async fn finish(
     error_message: Option<&str>,
     usage: Option<&Value>,
 ) -> Result<Option<TurnRow>, ApiError> {
+    // Before `finish_turn` locks the conversation alone: the hooks below take the task origins.
+    if let Some(t) = aurora_db::repo::turns::get(&mut *conn, turn).await? {
+        peers::lock_with_task_origins(conn, t.conversation_id).await?;
+    }
     let Some(row) = conv::finish_turn(conn, turn, status, error_code, error_message, usage).await?
     else {
         return Ok(None);
@@ -253,7 +260,7 @@ pub async fn fail_queued(
     code: &str,
     message: &str,
 ) -> Result<Option<TurnRow>, ApiError> {
-    aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
+    peers::lock_with_task_origins(conn, conversation).await?;
     fail_in(conn, turn, conversation, code, message, &["queued"]).await
 }
 
@@ -271,7 +278,7 @@ async fn fail_in(
     if t.role != "turn" || !from.contains(&t.status.as_str()) {
         return Ok(None);
     }
-    aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
+    peers::lock_with_task_origins(conn, conversation).await?;
     // (FIX-115) The answer text the agent had already written is kept, before the error;
     // (C-1076) the harness's own error line is the error's `detail`, not an answer.
     let dropped = drain_answer(conn, conversation, turn, Ending::Failed(message)).await?;

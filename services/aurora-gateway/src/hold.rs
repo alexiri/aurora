@@ -17,6 +17,7 @@ use aurora_db::repo::gateway::{self as repo, NewApproval};
 use aurora_summary::ApprovalSummary;
 use aurora_summary::template;
 use serde_json::json;
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -54,6 +55,7 @@ pub async fn build_summary_hooked(
     if let (Some(sz), Some(l), Some(m)) = (summarizer, l, app)
         && let Some(a) = tool_id.and_then(|t| m.app.approvals.get(t))
         && template::wants_hook(a)
+        && let Some(body) = hook_body(r)
     {
         let digest = l
             .snapshot
@@ -74,7 +76,7 @@ pub async fn build_summary_hooked(
                 query: r.query,
                 headers: r.headers,
                 injected_headers: &injected,
-                body_prefix: r.body_prefix,
+                body_prefix: &body,
                 truncated: r.truncated,
             };
             if let Some(s) = sz.summarize(call).await {
@@ -84,6 +86,165 @@ pub async fn build_summary_hooked(
         }
     }
     build_summary(l, app, tool_id, r)
+}
+
+/// `body` after any leading white space and byte order marks.
+fn past_space_and_bom(mut body: &[u8]) -> &[u8] {
+    loop {
+        body = body.trim_ascii_start();
+        match body.strip_prefix(b"\xef\xbb\xbf") {
+            Some(rest) => body = rest,
+            None => return body,
+        }
+    }
+}
+
+/// A hook reads the body with its own parser, which may read what the core's refuses, and the
+/// core cannot tell which names it reads. A receiver may read JSON whatever the content type
+/// says. So:
+///
+/// - a body the core reads as JSON goes to a hook only if it repeats no name anywhere, also in
+///   another case;
+/// - one the core cannot read is a guess when its content type says JSON, or it starts like an
+///   object or an array (behind white space or a byte order mark too); a cut-off body does not
+///   parse. An empty body has nothing to read;
+/// - of a multipart body (a `multipart/` type, or any mention of a boundary) a hook gets the
+///   first part only, which must be JSON with one reading: nothing it could read is unchecked;
+/// - the core checks bytes as they are, so an encoded body (any `content-encoding` but
+///   `identity`) or first part (a transfer encoding that changes bytes) is a guess too.
+///
+/// The body to give the hook, `None` when it would have to guess.
+fn hook_body<'a>(r: &SummaryRequest<'a>) -> Option<Cow<'a, [u8]>> {
+    let content_type = r.content_type.unwrap_or_default();
+    let lower = content_type.to_ascii_lowercase();
+    // Which of two content types a receiver follows is its own choice.
+    let content_types = r
+        .headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .count();
+    if content_types > 1 {
+        return None;
+    }
+    let encoded = r.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("content-encoding")
+            && value
+                .split(',')
+                .map(str::trim)
+                .any(|coding| !coding.is_empty() && !coding.eq_ignore_ascii_case("identity"))
+    });
+    if encoded {
+        return None;
+    }
+    let media = lower.split(';').next().unwrap_or_default().trim();
+    let guess = match aurora_policy::json::parse(r.body_prefix) {
+        Some(doc) => doc.has_colliding_names(),
+        None => {
+            let body = past_space_and_bom(r.body_prefix);
+            !body.is_empty()
+                && (media.contains("json") || matches!(body.first(), Some(b'{' | b'[')))
+        }
+    };
+    if guess {
+        return None;
+    }
+    if media.starts_with("multipart/") || lower.contains("boundary") {
+        return first_part_only(content_type, r.body_prefix, r.truncated).map(Cow::Owned);
+    }
+    Some(Cow::Borrowed(r.body_prefix))
+}
+
+/// The multipart boundary, when every reader reads the same one: the one mention of
+/// `boundary`, a plain `;boundary=` parameter (no `boundary*=`, no space around the `=`),
+/// quoted and closed or not, of RFC 2046's characters (so no backslash escape), not ending in
+/// a space.
+fn boundary_of(content_type: &str) -> Option<&str> {
+    const NAME: &str = "boundary";
+    let lower = content_type.to_ascii_lowercase();
+    let mut mentions = lower.match_indices(NAME);
+    let (at, _) = mentions.next()?;
+    if mentions.next().is_some() || !lower.get(..at)?.trim_end().ends_with(';') {
+        return None;
+    }
+    let raw = content_type.get(at + NAME.len()..)?.strip_prefix('=')?;
+    let (boundary, quoted) = match raw.strip_prefix('"') {
+        Some(rest) => {
+            let (value, after) = rest.split_once('"')?;
+            let after = after.trim_start();
+            if !after.is_empty() && !after.starts_with(';') {
+                return None;
+            }
+            (value, true)
+        }
+        None => (raw.split(';').next()?.trim_end(), false),
+    };
+    let allowed =
+        |c: char| c.is_ascii_alphanumeric() || "'()+_,-./:=?".contains(c) || (quoted && c == ' ');
+    ((1..=70).contains(&boundary.len())
+        && boundary.chars().all(allowed)
+        && !boundary.ends_with(' '))
+    .then_some(boundary)
+}
+
+/// Whether a part's (lowercased) headers leave its bytes as sent: every mention of
+/// `content-transfer-encoding` is a plain header line of its own, not continued on the next,
+/// naming `7bit`, `8bit` or `binary`. Readers differ on any other spelling.
+fn bytes_as_sent(headers: &str) -> bool {
+    const NAME: &str = "content-transfer-encoding";
+    headers.match_indices(NAME).all(|(at, _)| {
+        let (before, rest) = headers.split_at(at);
+        let Some(value) = rest.strip_prefix(NAME).and_then(|v| v.strip_prefix(':')) else {
+            return false;
+        };
+        let (value, next) = value.split_once('\n').unwrap_or((value, ""));
+        before.ends_with('\n')
+            && !next.starts_with([' ', '\t'])
+            && matches!(value.trim(), "7bit" | "8bit" | "binary")
+    })
+}
+
+/// A multipart body cut after its first part and closed again, when that part is the first for
+/// every reader (the body starts at the delimiter: a lenient reader takes the first place it
+/// occurs, a strict one only a line of its own), is declared JSON and has one reading. Of a
+/// cut-off body the part must be closed by a delimiter in what was read: else it may go on.
+fn first_part_only(content_type: &str, body: &[u8], truncated: bool) -> Option<Vec<u8>> {
+    let find = |needle: &[u8], from: usize| {
+        let rest = body.get(from..)?;
+        let at = rest.windows(needle.len()).position(|w| w == needle)?;
+        Some(from + at)
+    };
+    let delimiter = format!("--{}", boundary_of(content_type)?);
+    let after = body.strip_prefix(delimiter.as_bytes())?;
+    if !after.starts_with(b"\r\n") && !after.starts_with(b"\n") {
+        return None;
+    }
+    let start = delimiter.len();
+    let (headers_end, blank) = match (find(b"\r\n\r\n", start), find(b"\n\n", start)) {
+        (Some(a), Some(b)) if b < a => (b, 2),
+        (Some(a), _) => (a, 4),
+        (None, Some(b)) => (b, 2),
+        (None, None) => return None,
+    };
+    let headers = String::from_utf8_lossy(body.get(start..headers_end)?).to_ascii_lowercase();
+    if !headers.contains("json") || !bytes_as_sent(&headers) {
+        return None;
+    }
+    let part = headers_end + blank;
+    let end = [
+        find(format!("\r\n{delimiter}").as_bytes(), part),
+        find(format!("\n{delimiter}").as_bytes(), part),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .or_else(|| (!truncated).then_some(body.len()))?;
+    let one_reading =
+        aurora_policy::json::parse(body.get(part..end)?).is_some_and(|d| !d.has_colliding_names());
+    one_reading.then(|| {
+        let mut only = body.get(..end).unwrap_or_default().to_vec();
+        only.extend_from_slice(format!("\r\n{delimiter}--\r\n").as_bytes());
+        only
+    })
 }
 
 /// The one approval-summary entry point (live holds and `check-snapshot`): the tool's

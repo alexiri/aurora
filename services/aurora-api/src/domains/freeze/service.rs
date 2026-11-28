@@ -9,7 +9,6 @@ use crate::domains::conversations::service as conv;
 use crate::domains::hosted::lifecycle;
 use aurora_core::{ApiError, sanitize};
 use aurora_db::DbError;
-use aurora_db::repo::conversations as convs;
 use aurora_db::repo::credentials;
 use aurora_db::repo::freeze::{self as repo, Effective, Scope};
 use axum::http::StatusCode;
@@ -342,6 +341,10 @@ async fn apply_effects(
     if agents.is_empty() {
         return Ok(Vec::new());
     }
+    // Ending the turns takes task origins, chain links and tasks, which all come before
+    // approval rows in the lock order: everything the freeze will write in, once, first.
+    let conversations = repo::conversations_a_freeze_writes(tx, &agents).await?;
+    crate::domains::peer_tasks::service::lock_for_writes_in(tx, &conversations).await?;
     let ended = repo::abandon_pending_approvals(tx, &agents).await?;
     for e in &ended {
         aurora_db::bus::notify(
@@ -379,7 +382,7 @@ async fn end_turns(
 ) -> Result<usize, ApiError> {
     let mut n = 0;
     for (turn, conversation) in turns {
-        convs::lock(&mut *tx, conversation).await?;
+        crate::domains::peer_tasks::service::lock_with_task_origins(tx, conversation).await?;
         conv::append_event(
             tx,
             conversation,
@@ -414,6 +417,8 @@ pub async fn sweep_frozen_turns(
 ) -> Result<(), ApiError> {
     let turns = repo::active_turns_of_frozen(tx, 16).await?;
     if !turns.is_empty() {
+        let conversations: Vec<Uuid> = turns.iter().map(|(_, c)| *c).collect();
+        crate::domains::peer_tasks::service::lock_for_writes_in(tx, &conversations).await?;
         end_turns(tx, turns, flush).await?;
     }
     Ok(())

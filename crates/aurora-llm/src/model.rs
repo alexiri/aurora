@@ -1,5 +1,7 @@
 use crate::ModelRef;
+use aurora_policy::json::{Lookup, Node};
 use http::Method;
+use serde_json::Value;
 
 const MODEL_PATHS: &[&str] = &[
     "/v1/messages/count_tokens",
@@ -63,12 +65,20 @@ pub fn model_from_request(
     if truncated {
         return ModelRef::Unknown;
     }
-    match serde_json::from_slice::<serde_json::Value>(body_prefix) {
-        Ok(v) => match v.pointer("/model").and_then(|m| m.as_str()) {
-            Some(m) if !m.is_empty() => ModelRef::Model(m.to_string()),
-            _ => ModelRef::Unknown,
-        },
-        Err(_) => ModelRef::Unknown,
+    body_model(body_prefix)
+}
+
+/// The `model` member of a JSON body. The allow-list reads it here and the provider gets the
+/// bytes, so a name with more than one reading is no model.
+pub(crate) fn body_model(body: &[u8]) -> ModelRef {
+    let Some(doc) = aurora_policy::json::parse(body) else {
+        return ModelRef::Unknown;
+    };
+    match doc.get("model") {
+        Lookup::Found(Node::Scalar(Value::String(m))) if !m.is_empty() => {
+            ModelRef::Model(m.clone())
+        }
+        _ => ModelRef::Unknown,
     }
 }
 
@@ -79,6 +89,31 @@ mod tests {
     fn ok(m: &Method, p: &str, allowed: &[&str]) -> bool {
         let a: Vec<String> = allowed.iter().map(|s| (*s).to_owned()).collect();
         inference_path_permitted(m, p, &a)
+    }
+
+    /// The model allow-list reads the parsed body and the provider gets the bytes: a body that
+    /// two parsers may read differently names no model.
+    #[test]
+    fn a_model_with_two_readings_is_unknown() {
+        let read =
+            |body: &str| model_from_request(&Method::POST, "/v1/messages", body.as_bytes(), false);
+        assert_eq!(
+            read(r#"{"model":"small"}"#),
+            ModelRef::Model("small".into())
+        );
+        for body in [
+            r#"{"model":"large","model":"small"}"#,
+            r#"{"model":"small","Model":"large"}"#,
+            r#"{"MODEL":"small"}"#,
+            r#"{"$serde_json::private::RawValue":"{\"model\":\"small\"}"}"#,
+        ] {
+            assert_eq!(read(body), ModelRef::Unknown, "{body}");
+        }
+        // A repeat elsewhere says nothing about the model.
+        assert_eq!(
+            read(r#"{"model":"small","messages":[{"role":"a","role":"b"}]}"#),
+            ModelRef::Model("small".into())
+        );
     }
 
     #[test]

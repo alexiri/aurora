@@ -137,15 +137,7 @@ impl LlmProvider for VertexProvider {
         if truncated {
             return ModelRef::Unknown;
         }
-        match serde_json::from_slice::<serde_json::Value>(body_prefix)
-            .ok()
-            .as_ref()
-            .and_then(|v| v.pointer("/model"))
-            .and_then(|m| m.as_str())
-        {
-            Some(m) if !m.is_empty() => ModelRef::Model(m.to_owned()),
-            _ => ModelRef::Unknown,
-        }
+        crate::model::body_model(body_prefix)
     }
     async fn list_models(
         &self,
@@ -284,6 +276,22 @@ mod tests {
         let p = VertexProvider::with_overrides(o);
         assert_eq!(p.base_url(&ep("us-east5")), "http://127.0.0.1:9");
         assert_eq!(p.hosts(&ep("us-east5")), ["127.0.0.1:9"]);
+    }
+
+    #[test]
+    fn a_body_model_with_two_readings_is_unknown() {
+        let p = VertexProvider::default();
+        let e = ep("us-east5");
+        let path = "/v1/projects/proj-1/locations/us-east5/endpoints/openapi/chat/completions";
+        for body in [
+            br#"{"model":"large","model":"small"}"#.as_slice(),
+            br#"{"model":"small","Model":"large"}"#.as_slice(),
+        ] {
+            assert_eq!(
+                p.model_from_request(&e, &Method::POST, path, body, false),
+                ModelRef::Unknown
+            );
+        }
     }
 
     #[test]

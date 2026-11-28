@@ -94,6 +94,7 @@ mod onboarding;
 mod org_limit;
 mod org_role_admin;
 mod org_suspend_turns;
+mod peer_decide_race;
 mod peer_tasks;
 mod peers_rig;
 mod pending_access;

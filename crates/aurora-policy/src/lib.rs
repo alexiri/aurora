@@ -7,6 +7,7 @@ pub mod facts;
 pub mod git;
 pub mod graphql;
 pub mod host;
+pub mod json;
 pub mod methods;
 pub mod params;
 pub mod park;
