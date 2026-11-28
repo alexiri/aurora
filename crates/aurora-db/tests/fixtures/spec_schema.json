@@ -888,6 +888,12 @@
       "settings",
       "slug"
     ],
+    "peer_held_wakes": [
+      "about_task",
+      "source",
+      "task_id",
+      "text"
+    ],
     "peer_tasks": [
       "expires_at",
       "from_agent_id",
@@ -2637,6 +2643,12 @@
       "name": "text not null",
       "settings": "jsonb not null",
       "slug": "text not null"
+    },
+    "peer_held_wakes": {
+      "about_task": "uuid not null",
+      "source": "text not null",
+      "task_id": "uuid",
+      "text": "text not null"
     },
     "peer_tasks": {
       "expires_at": "timestamptz not null",

@@ -1049,7 +1049,13 @@ impl Duo {
         .unwrap();
         let id = Uuid::now_v7();
         let pc = self.rig.peer_conversation(task).await;
-        let ws = self.rig.agent_ws(self.b).await;
+        // The task's own receiving agent (agent `b` for a task of the pair).
+        let receiver: Uuid = sqlx::query_scalar("SELECT to_agent_id FROM peer_tasks WHERE id = $1")
+            .bind(task)
+            .fetch_one(p)
+            .await
+            .unwrap();
+        let ws = self.rig.agent_ws(receiver).await;
         let turn = self.rig.running_turn(pc).await;
         sqlx::query(
             "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, turn_id,
@@ -3398,4 +3404,656 @@ async fn approving_a_message_from_a_task_conversation_locks_it_before_the_link()
     let ((status, body), ()) = tokio::join!(decide, other);
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["status"], "executed");
+}
+
+// ------------------------------------------------- FIX-288: approvals further down a chain
+
+/// A → B → C: the person asked `alpha`, whose task `top` runs on `bravo`; a person (the same
+/// one, unless said otherwise) then spoke in that task's conversation and `bravo` opened `low`
+/// to `charlie`.
+struct Chain {
+    d: Duo,
+    c: Uuid,
+    top: Uuid,
+    pcb: Uuid,
+    low: Uuid,
+    pcc: Uuid,
+}
+
+impl Duo {
+    /// `user` speaks in the conversation of `task` (whose receiver is `agent`) and the agent
+    /// hands `handle` a task from there. `(the new task, the turn that asked)`; the turn is
+    /// still running.
+    async fn delegate_on(&self, task: Uuid, agent: Uuid, user: Uuid, handle: &str) -> (Uuid, Uuid) {
+        let pc = self.rig.peer_conversation(task).await;
+        if let Some(first) = self.rig.running_turn(pc).await {
+            self.rig.finish_turn(first).await;
+        }
+        let turn = self.rig.turn(pc, agent, "person", Some(user)).await;
+        let sent = self
+            .rig
+            .tool(
+                agent,
+                pc,
+                Some(turn),
+                "message_agent",
+                json!({"agent": format!("@{handle}"), "text": "go on"}),
+            )
+            .await;
+        (Rig::id(&Rig::ok(&sent)["peer_task_id"]), turn)
+    }
+
+    /// The texts of the platform's own turns (and follow-ups) in a conversation.
+    async fn system_turns(&self, conversation: Uuid) -> Vec<String> {
+        self.rig
+            .turns(conversation)
+            .await
+            .into_iter()
+            .filter(|t| t.2 == "system")
+            .map(|t| t.3)
+            .collect()
+    }
+
+    /// Answer approval `id` (or let it expire) without going through the decide route.
+    async fn answer(&self, id: Uuid, status: &str) {
+        sqlx::query(
+            "UPDATE approvals SET status = $2,
+                decided_by_user_id = CASE WHEN $2 = 'expired' THEN NULL ELSE $3 END,
+                decided_via = CASE WHEN $2 = 'expired' THEN NULL ELSE 'dashboard' END,
+                decided_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .bind(status)
+        .bind(self.rig.p.id)
+        .execute(self.rig.h.pool())
+        .await
+        .unwrap();
+    }
+}
+
+async fn chain_from(d: Duo, second: Option<Uuid>) -> Chain {
+    let c = d.rig.agent(d.rig.ws1, "charlie").await;
+    let top = Rig::id(&d.send("do it").await["peer_task_id"]);
+    d.rig.finish_turn(d.turn).await;
+    let user = second.unwrap_or(d.rig.p.id);
+    let (low, turn) = d.delegate_on(top, d.b, user, "charlie").await;
+    d.end_turn(turn, "done").await;
+    let pcb = d.rig.peer_conversation(top).await;
+    let pcc = d.rig.peer_conversation(low).await;
+    Chain {
+        d,
+        c,
+        top,
+        pcb,
+        low,
+        pcc,
+    }
+}
+
+async fn chain() -> Chain {
+    chain_from(duo().await, None).await
+}
+
+impl Chain {
+    /// An approval of `charlie`'s, reported as raised, and `charlie`'s turn over: its task waits.
+    async fn pending_at_c(&self) -> Uuid {
+        let id = self.d.approval(self.low).await;
+        self.d.report_approval(id).await;
+        self.d.finish_receiving_turn(self.low).await;
+        assert_eq!(self.d.rig.task_status(self.low).await, "waiting");
+        id
+    }
+}
+
+/// (FIX-288, D-509) C's approval travels past B's task conversation to the conversation the
+/// person asked in: one waiting notice there, none in between, and no follow-up turn for anyone.
+#[tokio::test]
+async fn an_approval_two_levels_down_is_reported_in_the_persons_conversation() {
+    let x = chain().await;
+    let id = x.pending_at_c().await;
+    let waiting = x.d.rig.notices(x.d.conv, "peer_waiting_for_approval").await;
+    assert_eq!(waiting.len(), 1, "{waiting:?}");
+    assert_eq!(waiting[0]["approval_id"], json!(id));
+    assert_eq!(waiting[0]["peer_task_id"], json!(x.low));
+    assert!(
+        waiting[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("(asked for by Agent bravo"),
+        "{}",
+        waiting[0]
+    );
+    assert_eq!(
+        x.d.rig
+            .notices(x.pcb, "peer_waiting_for_approval")
+            .await
+            .len(),
+        0,
+        "no card in the conversation in between"
+    );
+    assert!(x.d.system_turns(x.d.conv).await.is_empty());
+    assert!(x.d.system_turns(x.pcb).await.is_empty());
+}
+
+/// (FIX-288) Approved, denied and expired: the outcome is posted in the person's conversation,
+/// and B and A each get their follow-up turn, C its wake. B waits again at that turn's end (C
+/// still works), and C's report wakes it once more.
+#[tokio::test]
+async fn the_outcome_two_levels_down_reaches_the_person_and_both_delegating_agents() {
+    for (status, words) in [
+        ("approved", "was approved"),
+        ("denied", "was denied"),
+        ("expired", "expired without a decision"),
+    ] {
+        let x = chain().await;
+        let id = x.pending_at_c().await;
+        assert_eq!(x.d.rig.task_status(x.top).await, "waiting", "{status}");
+        x.d.answer(id, status).await;
+        x.d.report_approval(id).await;
+        let decided = x.d.rig.notices(x.d.conv, "peer_approval_decided").await;
+        assert_eq!(decided.len(), 1, "{status}: {decided:?}");
+        assert_eq!(decided[0]["outcome"], json!(status));
+        assert_eq!(
+            x.d.rig.notices(x.pcb, "peer_approval_decided").await.len(),
+            0
+        );
+        for (conv, who) in [(x.d.conv, "A"), (x.pcb, "B"), (x.pcc, "C")] {
+            let turns = x.d.system_turns(conv).await;
+            assert_eq!(turns.len(), 1, "{status} {who}: {turns:?}");
+            assert!(turns[0].contains(words), "{status} {who}: {turns:?}");
+        }
+        assert_eq!(x.d.rig.task_status(x.low).await, "open");
+        assert_eq!(x.d.rig.task_status(x.top).await, "open");
+
+        // B's follow-up turn ends without a report while C still works: B waits for C.
+        x.d.finish_receiving_turn(x.top).await;
+        assert_eq!(x.d.rig.task_status(x.top).await, "waiting", "{status}");
+        assert_eq!(
+            peers::sweep(x.d.rig.h.pool()).await.unwrap(),
+            0,
+            "{status}: nothing is cancelled"
+        );
+        assert_eq!(x.d.rig.task_status(x.top).await, "waiting", "{status}");
+
+        // C reports: B is woken for it.
+        let pcc_turn = x.d.rig.running_turn(x.pcc).await;
+        Rig::ok(
+            &x.d.rig
+                .tool(
+                    x.c,
+                    x.pcc,
+                    pcc_turn,
+                    "complete_task",
+                    json!({"report": "all done"}),
+                )
+                .await,
+        );
+        assert_eq!(x.d.rig.task_status(x.top).await, "open", "{status}");
+        let turns = x.d.system_turns(x.pcb).await;
+        assert_eq!(turns.len(), 2, "{status}: {turns:?}");
+        assert!(turns[1].contains("all done"), "{turns:?}");
+    }
+}
+
+/// (FIX-288, D-509) The walk stops where the person who asked changes: someone else typing in B's
+/// task conversation gets C's card there, and the first person is not told.
+#[tokio::test]
+async fn the_walk_stops_where_the_requester_changes() {
+    let d = duo().await;
+    let other = d.rig.q.id;
+    d.rig.h.bind_ws(d.rig.ws1, other, "approver").await;
+    let x = chain_from(d, Some(other)).await;
+    let id = x.pending_at_c().await;
+    assert_eq!(
+        x.d.rig
+            .notices(x.d.conv, "peer_waiting_for_approval")
+            .await
+            .len(),
+        0
+    );
+    assert_eq!(
+        x.d.rig
+            .notices(x.pcb, "peer_waiting_for_approval")
+            .await
+            .len(),
+        1
+    );
+    x.d.answer(id, "approved").await;
+    x.d.report_approval(id).await;
+    assert_eq!(
+        x.d.rig.notices(x.pcb, "peer_approval_decided").await.len(),
+        1
+    );
+    assert_eq!(
+        x.d.rig
+            .notices(x.d.conv, "peer_approval_decided")
+            .await
+            .len(),
+        0
+    );
+    assert!(x.d.system_turns(x.d.conv).await.is_empty(), "A is not told");
+    assert_eq!(x.d.system_turns(x.pcb).await.len(), 1, "B's follow-up");
+    assert_eq!(x.d.rig.task_status(x.top).await, "open", "B was woken");
+}
+
+/// (FIX-288) A chain whose first conversation is an automation's thread (a person wrote in it)
+/// gets the card there: the walk ends at the first conversation that is no task conversation.
+#[tokio::test]
+async fn a_chain_that_starts_in_an_automation_thread_reports_there() {
+    let d = duo().await;
+    sqlx::query("UPDATE conversations SET kind = 'schedule' WHERE id = $1")
+        .bind(d.conv)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+    let x = chain_from(d, None).await;
+    x.pending_at_c().await;
+    assert_eq!(
+        x.d.rig
+            .notices(x.d.conv, "peer_waiting_for_approval")
+            .await
+            .len(),
+        1
+    );
+}
+
+/// (FIX-288, D-509) Eight levels are allowed and the deepest one's approval still reaches the
+/// person; a ninth is refused with a plain line, before anything (also an approval) is created.
+#[tokio::test]
+async fn a_chain_at_the_depth_limit_delivers_and_a_ninth_level_is_refused() {
+    let d = duo().await;
+    let mut task = Rig::id(&d.send("do it").await["peer_task_id"]);
+    d.rig.finish_turn(d.turn).await;
+    let mut agent = d.b;
+    for level in 2..=8 {
+        let handle = format!("level{level}");
+        let next = d.rig.agent(d.rig.ws1, &handle).await;
+        let (sent, turn) = d.delegate_on(task, agent, d.rig.p.id, &handle).await;
+        d.rig.finish_turn(turn).await;
+        task = sent;
+        agent = next;
+    }
+    d.rig.agent(d.rig.ws1, "level9").await;
+    let pc = d.rig.peer_conversation(task).await;
+    let first = d.rig.running_turn(pc).await.unwrap();
+    d.rig.finish_turn(first).await;
+    let turn = d.rig.turn(pc, agent, "person", Some(d.rig.p.id)).await;
+    for policy in ["allow", "ask"] {
+        sqlx::query(
+            "INSERT INTO agent_links (id, agent_a_id, agent_b_id, policy_a, policy_b)
+             SELECT gen_random_uuid(), LEAST($1::uuid, a.id), GREATEST($1::uuid, a.id), $2, $2
+               FROM agents a WHERE a.handle = 'level9'
+             ON CONFLICT (agent_a_id, agent_b_id) DO UPDATE SET policy_a = $2, policy_b = $2",
+        )
+        .bind(agent)
+        .bind(policy)
+        .execute(d.rig.h.pool())
+        .await
+        .unwrap();
+        let r = d
+            .rig
+            .tool(
+                agent,
+                pc,
+                Some(turn),
+                "message_agent",
+                json!({"agent": "@level9", "text": "go on"}),
+            )
+            .await;
+        let line = Rig::err(&r);
+        assert!(line.contains("8 deep"), "{policy}: {line}");
+        for word in ["FIX", "D-5", "§", "docs"] {
+            assert!(!line.contains(word), "{line}");
+        }
+    }
+    let tasks: i64 = sqlx::query_scalar("SELECT count(*) FROM peer_tasks")
+        .fetch_one(d.rig.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(tasks, 8);
+    let asked: i64 = sqlx::query_scalar("SELECT count(*) FROM action_approvals")
+        .fetch_one(d.rig.h.pool())
+        .await
+        .unwrap();
+    assert_eq!(asked, 0, "no approval for a task that could never run");
+
+    d.rig.finish_turn(turn).await;
+    let id = d.approval(task).await;
+    d.report_approval(id).await;
+    let waiting = d.rig.notices(d.conv, "peer_waiting_for_approval").await;
+    assert_eq!(waiting.len(), 1, "{waiting:?}");
+    assert_eq!(waiting[0]["approval_id"], json!(id));
+}
+
+/// (FIX-288) The bus listener and the sweep bring one decision again and again: one card, one
+/// outcome notice, one follow-up turn each, and nothing left for the sweep to deliver.
+#[tokio::test]
+async fn a_chain_approval_delivered_twice_is_delivered_once() {
+    let x = chain().await;
+    let pool = x.d.rig.h.pool();
+    let id = x.pending_at_c().await;
+    x.d.report_approval(id).await;
+    assert_eq!(
+        x.d.rig
+            .notices(x.d.conv, "peer_waiting_for_approval")
+            .await
+            .len(),
+        1
+    );
+    x.d.answer(id, "approved").await;
+    x.d.report_approval(id).await;
+    x.d.report_approval(id).await;
+    for _ in 0..2 {
+        assert_eq!(peers::sweep(pool).await.unwrap(), 0);
+    }
+    assert_eq!(
+        x.d.rig
+            .notices(x.d.conv, "peer_approval_decided")
+            .await
+            .len(),
+        1
+    );
+    for conv in [x.d.conv, x.pcb, x.pcc] {
+        assert_eq!(x.d.system_turns(conv).await.len(), 1);
+    }
+    assert_eq!(x.d.budget_used(x.top).await, 2, "B charged once");
+    assert!(
+        aurora_db::repo::peer_tasks::held_decision_ids(pool, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// (FIX-288, D-509) A live onward task is a wake registration: B's turn end moves its task to
+/// `waiting` without a notice of its own, and the sweep leaves it alone.
+#[tokio::test]
+async fn a_live_onward_task_keeps_the_delegating_task_waiting() {
+    let x = chain().await;
+    let pool = x.d.rig.h.pool();
+    assert_eq!(x.d.rig.task_status(x.top).await, "waiting");
+    assert_eq!(
+        x.d.rig.notices(x.d.conv, "peer_task_waiting").await.len(),
+        0
+    );
+    assert!(
+        aurora_db::repo::peer_tasks::waiting_without_wake_ids(pool, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(peers::sweep(pool).await.unwrap(), 0);
+    assert_eq!(x.d.rig.task_status(x.top).await, "waiting");
+}
+
+/// (FIX-288) C's message to a waiting B wakes B's task, so B can answer it as its task's own
+/// turn.
+#[tokio::test]
+async fn a_message_from_the_onward_task_wakes_the_waiting_task() {
+    let x = chain().await;
+    assert_eq!(x.d.rig.task_status(x.top).await, "waiting");
+    let turn = x.d.rig.running_turn(x.pcc).await;
+    let sent =
+        x.d.rig
+            .tool(
+                x.c,
+                x.pcc,
+                turn,
+                "message_agent",
+                json!({"agent": "@bravo", "text": "which branch?"}),
+            )
+            .await;
+    assert_eq!(Rig::ok(&sent)["status"], "delivered");
+    assert_eq!(x.d.rig.task_status(x.top).await, "open");
+    assert_eq!(x.d.budget_used(x.top).await, 2, "the wake is charged");
+}
+
+/// (FIX-288) The wake of a delegating task re-checks the requester's rights: lost access cancels
+/// it with its close line to the person's conversation and starts no turn there.
+#[tokio::test]
+async fn waking_a_delegating_task_rechecks_the_requester() {
+    let x = chain().await;
+    let id = x.pending_at_c().await;
+    x.d.remove_requester_access().await;
+    x.d.answer(id, "approved").await;
+    x.d.report_approval(id).await;
+    assert_eq!(x.d.rig.task_status(x.top).await, "cancelled");
+    assert!(x.d.system_turns(x.pcb).await.is_empty(), "no turn for B");
+    let closed = x.d.rig.notices(x.d.conv, "peer_task_closed").await;
+    assert_eq!(closed.len(), 1, "{closed:?}");
+}
+
+/// (FIX-288, D-509) A frozen B holds its own wake only: C is woken and the person told at once;
+/// the sweep wakes B after the unfreeze, exactly once.
+#[tokio::test]
+async fn a_frozen_delegating_agent_gets_its_follow_up_after_the_unfreeze() {
+    let x = chain().await;
+    let pool = x.d.rig.h.pool();
+    let id = x.pending_at_c().await;
+    x.d.set_receiver_frozen(true).await; // bravo
+    x.d.answer(id, "approved").await;
+    x.d.report_approval(id).await;
+    assert_eq!(
+        x.d.rig
+            .notices(x.d.conv, "peer_approval_decided")
+            .await
+            .len(),
+        1
+    );
+    assert_eq!(x.d.system_turns(x.d.conv).await.len(), 1);
+    assert_eq!(x.d.system_turns(x.pcc).await.len(), 1);
+    assert_eq!(x.d.rig.task_status(x.low).await, "open");
+    for _ in 0..2 {
+        assert_eq!(peers::sweep(pool).await.unwrap(), 0);
+        assert!(x.d.system_turns(x.pcb).await.is_empty());
+        assert_eq!(x.d.rig.task_status(x.top).await, "waiting");
+    }
+    x.d.set_receiver_frozen(false).await;
+    for _ in 0..2 {
+        assert_eq!(peers::sweep(pool).await.unwrap(), 0);
+    }
+    let turns = x.d.system_turns(x.pcb).await;
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert!(turns[0].contains("was approved"), "{turns:?}");
+    assert_eq!(x.d.rig.task_status(x.top).await, "open");
+    assert_eq!(x.d.system_turns(x.d.conv).await.len(), 1);
+}
+
+/// (FIX-288) The same for C's report arriving while B is frozen: B keeps waiting and gets it
+/// after the unfreeze.
+#[tokio::test]
+async fn a_report_to_a_frozen_waiting_task_is_delivered_after_the_unfreeze() {
+    let x = chain().await;
+    let pool = x.d.rig.h.pool();
+    x.d.set_receiver_frozen(true).await;
+    let turn = x.d.rig.running_turn(x.pcc).await;
+    Rig::ok(
+        &x.d.rig
+            .tool(
+                x.c,
+                x.pcc,
+                turn,
+                "complete_task",
+                json!({"report": "all done"}),
+            )
+            .await,
+    );
+    for _ in 0..2 {
+        assert_eq!(peers::sweep(pool).await.unwrap(), 0);
+    }
+    assert_eq!(x.d.rig.task_status(x.top).await, "waiting");
+    assert!(x.d.system_turns(x.pcb).await.is_empty());
+    x.d.set_receiver_frozen(false).await;
+    for _ in 0..2 {
+        assert_eq!(peers::sweep(pool).await.unwrap(), 0);
+    }
+    let turns = x.d.system_turns(x.pcb).await;
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert!(turns[0].contains("all done"), "{turns:?}");
+    assert_eq!(x.d.rig.task_status(x.top).await, "open");
+}
+
+/// (FIX-288) Cancelling C's task, or its expiry, while its approval waits settles the card in
+/// the person's conversation, where the close report itself does not go.
+#[tokio::test]
+async fn closing_the_task_with_the_pending_approval_settles_the_persons_card() {
+    for expire in [false, true] {
+        let x = chain().await;
+        x.pending_at_c().await;
+        if expire {
+            sqlx::query("UPDATE peer_tasks SET expires_at = now() WHERE id = $1")
+                .bind(x.low)
+                .execute(x.d.rig.h.pool())
+                .await
+                .unwrap();
+            assert_eq!(peers::sweep(x.d.rig.h.pool()).await.unwrap(), 1);
+        } else {
+            let mut tx = x.d.rig.h.pool().begin().await.unwrap();
+            let out = peers::cancel_by_requester(&mut tx, x.d.rig.p.id, x.low)
+                .await
+                .unwrap();
+            assert!(matches!(out, peers::RequesterCancel::Done(_)));
+            tx.commit().await.unwrap();
+        }
+        let closed = x.d.rig.notices(x.d.conv, "peer_task_closed").await;
+        assert_eq!(closed.len(), 1, "expire={expire}: {closed:?}");
+        assert_eq!(closed[0]["peer_task_id"], json!(x.low));
+        assert_eq!(
+            x.d.rig.notices(x.pcb, "peer_task_closed").await.len(),
+            1,
+            "B's own report"
+        );
+        assert!(x.d.system_turns(x.d.conv).await.is_empty());
+    }
+}
+
+/// A → B → C → D (`top`, `mid`, `leaf`): a close or a decision at the bottom may wake every task
+/// above it.
+async fn three_levels() -> (Chain, Uuid, Uuid) {
+    let x = chain().await;
+    let echo = x.d.rig.agent(x.d.rig.ws1, "echo").await;
+    let (leaf, turn) = x.d.delegate_on(x.low, x.c, x.d.rig.p.id, "echo").await;
+    x.d.end_turn(turn, "done").await;
+    (x, echo, leaf)
+}
+
+/// (FIX-288) Lock order: closing a task takes every task conversation above it (here the
+/// grandparent's, which only the cascade of wake-ups writes into) before any link or task.
+#[tokio::test]
+async fn a_close_waits_for_every_task_conversation_above_it_before_any_link() {
+    use aurora_db::repo::conversations as convs;
+    let (x, echo, leaf) = three_levels().await;
+    let pool = x.d.rig.h.pool();
+    let pcd = x.d.rig.peer_conversation(leaf).await;
+    let mut turn_end = pool.begin().await.unwrap();
+    assert!(convs::lock(&mut turn_end, x.pcb).await.unwrap());
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let close = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        peers::complete(&mut tx, echo, pcd, "done")
+            .await
+            .unwrap()
+            .unwrap();
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        for task in [leaf, x.low, x.top] {
+            lock_link_then_task(&mut turn_end, task).await;
+        }
+        turn_end.commit().await.unwrap();
+    };
+    tokio::join!(close, other);
+    assert_eq!(x.d.rig.task_status(leaf).await, "completed");
+    assert_eq!(x.d.rig.task_status(x.low).await, "open", "woken");
+}
+
+/// (FIX-288) Lock order: a decision takes the links of the tasks it will wake before it writes
+/// into the person's conversation, also when the approval's own task is mid-turn. A close of the
+/// task above holds its link and then writes into that conversation.
+#[tokio::test]
+async fn a_decision_takes_the_links_before_it_writes_into_the_persons_conversation() {
+    use aurora_db::repo::conversations as convs;
+    let x = chain().await;
+    let pool = x.d.rig.h.pool();
+    let id = x.d.approval(x.low).await;
+    x.d.report_approval(id).await;
+    x.d.answer(id, "approved").await;
+    let row = aurora_db::repo::approvals::get(pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut close_of_b = pool.begin().await.unwrap();
+    lock_link_then_task(&mut close_of_b, x.top).await;
+    let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+    let deliver = async {
+        let mut tx = pool.begin().await.unwrap();
+        pid_tx.send(backend_pid(&mut tx).await).unwrap();
+        peers::approval_notice(&mut tx, &row).await.unwrap();
+        tx.commit().await.unwrap();
+    };
+    let other = async {
+        until_blocked(pool, pid_rx.await.unwrap()).await;
+        sqlx::query("SELECT 1 FROM conversations WHERE id = $1 FOR UPDATE NOWAIT")
+            .bind(x.d.conv)
+            .execute(&mut *close_of_b)
+            .await
+            .expect("the delivery holds no lock on the person's conversation");
+        assert!(convs::lock(&mut close_of_b, x.d.conv).await.unwrap());
+        close_of_b.commit().await.unwrap();
+    };
+    tokio::join!(deliver, other);
+    assert_eq!(
+        x.d.rig
+            .notices(x.d.conv, "peer_approval_decided")
+            .await
+            .len(),
+        1
+    );
+}
+
+/// (FIX-288) Lock order: delivering a decision takes the conversations above before any link or
+/// task, also when the approval's own task needs no wake.
+#[tokio::test]
+async fn a_decision_waits_for_every_task_conversation_above_before_any_link() {
+    use aurora_db::repo::conversations as convs;
+    for waiting in [true, false] {
+        let (x, _, leaf) = three_levels().await;
+        let pool = x.d.rig.h.pool();
+        let id = x.d.approval(leaf).await;
+        x.d.report_approval(id).await;
+        if waiting {
+            x.d.finish_receiving_turn(leaf).await;
+        }
+        x.d.answer(id, "approved").await;
+        let row = aurora_db::repo::approvals::get(pool, id)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut turn_end = pool.begin().await.unwrap();
+        assert!(convs::lock(&mut turn_end, x.pcb).await.unwrap());
+        let (pid_tx, pid_rx) = tokio::sync::oneshot::channel();
+        let deliver = async {
+            let mut tx = pool.begin().await.unwrap();
+            pid_tx.send(backend_pid(&mut tx).await).unwrap();
+            peers::approval_notice(&mut tx, &row).await.unwrap();
+            tx.commit().await.unwrap();
+        };
+        let other = async {
+            until_blocked(pool, pid_rx.await.unwrap()).await;
+            for task in [leaf, x.low, x.top] {
+                lock_link_then_task(&mut turn_end, task).await;
+            }
+            turn_end.commit().await.unwrap();
+        };
+        tokio::join!(deliver, other);
+        assert_eq!(
+            x.d.rig
+                .notices(x.d.conv, "peer_approval_decided")
+                .await
+                .len(),
+            1
+        );
+    }
 }

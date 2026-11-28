@@ -130,6 +130,14 @@ go only to the origin conversation and carry only the words — the agent's name
 and a one-line action — never a request field. A later `peer_task_closed`
 notice settles a waiting card the same way (an abandoned approval, e.g. the
 task cancelled, fires no decision notice).
+(FIX-288, D-509) In a delegation chain "the origin" of these notices is the
+conversation reached by walking up the task origins while the same person asked
+(`07 §Agent links and peer tasks`); the task conversations in between get
+neither notice, only their agent's follow-up turn. When the approval's task is
+closed with the approval pending, `peer_task_closed` is posted there as well as
+at the task's own origin. A task with a live onward task waits for it with no
+`peer_task_waiting` notice of its own, and whatever that task sends up wakes it
+(held while its agent is frozen, delivered once after the unfreeze).
 
 (FIX-253, D-490(b)) **A waiting peer task.** A task whose receiving turn ends
 while a wake is registered (an armed watch on the task conversation, a one-time

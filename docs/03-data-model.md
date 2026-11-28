@@ -859,6 +859,18 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | expires_at | timestamptz not null | |
 | partial unique | (from_agent_id, to_agent_id) WHERE status in (`open`,`waiting`) | a waiting task holds the pair's slot (FIX-253, migration `20261201000287`) |
 
+(FIX-288, D-509, migration `20261201000293`) The SQL function `peer_task_card_home(task uuid, max_depth integer) → uuid` is the conversation a task's approval is reported to: up the task origins while the same person asked (`07`). A live task opened from a task conversation also holds that conversation's task `waiting`.
+
+### `peer_held_wakes`
+(FIX-288, D-509) Wake-ups of a delegating task held while its agent is frozen; a row is deleted when it is delivered, or when its task has ended.
+
+| Column | Type | Notes |
+|---|---|---|
+| task_id | uuid FK→peer_tasks (cascade) | the task to wake |
+| source | text not null | `approval:<id>` or `report:<task id>`; primary key with `task_id` |
+| about_task | uuid not null | the task the event is about (the wake turn's door) |
+| text | text not null | the wake turn's text (a report in it is fenced and sanitized, as in `peer_tasks.report`) |
+
 ---
 
 ## 5. Agents, gateway credentials (owner doc: `10`, `08`)
