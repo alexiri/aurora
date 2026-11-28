@@ -207,6 +207,50 @@ fn interrupted_generation_keeps_previous_state_and_is_replaced() {
     );
 }
 
+/// The locked set of a generation is held by the process that staged it. A new process must not
+/// finish what an earlier one staged: a locked memory would install writable.
+#[test]
+fn a_restart_mid_generation_never_installs_a_locked_memory_writable() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let d = TempDir::new();
+    let parts = vec![
+        part(
+            1,
+            0,
+            3,
+            "memory",
+            json!([{"path": "memory/pinned.md", "content": "a person's", "locked": true}]),
+        ),
+        part(1, 1, 3, "manifest", json!([{"path": "memory/pinned.md"}])),
+        part(1, 2, 3, "final", json!([])),
+    ];
+    let mut before = projector(d.path());
+    before.apply_part(&parts[0]).unwrap();
+    drop(before);
+
+    // The new process is given the rest only: it must not commit it.
+    let mut after = projector(d.path());
+    for s in &parts[1..] {
+        match after.apply_part(s) {
+            Ok(PartOutcome::ReadyToCommit(g)) => after.commit(g).unwrap(),
+            Ok(PartOutcome::Staged) | Err(_) => {}
+        }
+    }
+    let pinned = d.path().join("memory/pinned.md");
+    let mode = || fs::metadata(&pinned).unwrap().permissions().mode() & 0o777;
+    assert!(
+        !pinned.exists() || mode() == 0o444,
+        "a locked memory installed with mode {:o}",
+        mode()
+    );
+
+    // The generation sent again from its first part installs it locked and protected.
+    assert_eq!(apply_all(&mut after, &parts), PartOutcome::ReadyToCommit(1));
+    after.commit(1).unwrap();
+    assert_eq!(mode(), 0o444);
+    assert!(after.locked_memories().contains_key("pinned"));
+}
+
 #[test]
 fn replayed_part_is_idempotent_and_missing_manifest_is_not_acked() {
     let d = TempDir::new();

@@ -117,10 +117,14 @@ pub async fn by_task_conversation<'e, E: PgExecutor<'e>>(
     .await?)
 }
 
-/// (FIX-257) The conversations that closing task `id` may write into and that are task
-/// conversations themselves: the origins of every task in [`CLOSE_REACH`]. Newest first, so a
-/// task conversation comes before the one it was opened from.
-pub async fn task_origins<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Vec<Uuid>, DbError> {
+/// (FIX-257) The conversations that closing any of the tasks `ids` may write into and that are
+/// task conversations themselves: the origins of every task in [`CLOSE_REACH`]. Newest first.
+/// A queued task's origin can be newer than the conversation of the task whose close reaches
+/// it, so a path that locks that conversation too sorts it in with these.
+pub async fn task_origins<'e, E: PgExecutor<'e>>(
+    exec: E,
+    ids: &[Uuid],
+) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "WITH RECURSIVE {CLOSE_REACH} SELECT DISTINCT t.origin_conversation_id
            FROM reach JOIN peer_tasks t ON t.id = reach.id
@@ -128,12 +132,12 @@ pub async fn task_origins<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Ve
                  WHERE p.task_conversation_id = t.origin_conversation_id)
           ORDER BY 1 DESC"
     )))
-    .bind(id)
+    .bind(ids)
     .fetch_all(exec)
     .await?)
 }
 
-/// (FIX-288) Every task a close of task `$1` may go on to write for: the task and its pair's
+/// (FIX-288) Every task a close of one of the tasks `$1` may go on to write for: the task and its pair's
 /// queued tasks (the promotion after the close may end one of those at once), and, from any of
 /// these, the task whose conversation it was opened from **with that pair's queued tasks**: the
 /// report wakes that task, the wake may cancel it, and its close promotes in turn. A fixed
@@ -144,7 +148,7 @@ const CLOSE_REACH: &str = "reach (id) AS (
           JOIN peer_tasks t ON t.id = c.id
             OR (t.from_agent_id = c.from_agent_id AND t.to_agent_id = c.to_agent_id
                 AND t.status = 'queued')
-         WHERE c.id = $1
+         WHERE c.id = ANY($1)
         UNION
         SELECT t.id FROM reach
           JOIN peer_tasks below ON below.id = reach.id
@@ -154,15 +158,15 @@ const CLOSE_REACH: &str = "reach (id) AS (
                 AND t.status = 'queued')
     )";
 
-/// (FIX-288) Row-locks the links of every task in [`CLOSE_REACH`] of task `id`, in id order, so
-/// that two closes whose chains share links take them alike.
-pub async fn lock_chain_links(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
+/// (FIX-288) Row-locks the links of every task in [`CLOSE_REACH`] of the tasks `ids`, in one
+/// pass in id order, so that two writers whose chains share links take them alike.
+pub async fn lock_chain_links(conn: &mut PgConnection, ids: &[Uuid]) -> Result<(), DbError> {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "WITH RECURSIVE {CLOSE_REACH} SELECT l.id FROM agent_links l
           WHERE l.id IN (SELECT t.link_id FROM reach JOIN peer_tasks t ON t.id = reach.id)
           ORDER BY l.id FOR UPDATE OF l"
     )))
-    .bind(id)
+    .bind(ids)
     .execute(conn)
     .await?;
     Ok(())

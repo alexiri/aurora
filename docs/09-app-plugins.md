@@ -563,8 +563,13 @@ oauth_clients:
   governed LLM host (`08 §6`), and MUST NOT be one of Aurora's own addresses;
   these checks are per host and ignore the base path, so a path never gets
   around them (`instance_host_conflict`). The optional `probe` runs through the gateway's
-  destination guard. A private address is reachable only where the operator
-  allows it (`gateway.allowed_private`, `06`).
+  destination guard. A private address is reachable where the operator allows
+  it (`gateway.allowed_private`, `06`), and (FIX-290, D-511, SEC-170) without
+  an entry for an instance administrator's own registration: the API's
+  registration probe made by an instance administrator for all organizations, and
+  the connect probe, OAuth code exchange, sign-in app test and account test of
+  that registration; and the gateway's requests as `06` §Destination guard says.
+  An organization's registration and a preset get nothing.
 - (phase 5, D-231) **Base path.** A registration may carry a base path for an
   app served under a path (`https://its.cern.ch/jira`: host `its.cern.ch`, base
   path `/jira`). Validation (`instance_base_path_invalid`, pointer `/base_path`):
@@ -1306,7 +1311,7 @@ rejected by the validator.
 | `connect.authorize` | API | Connect clicked (method `hook` with `authorize: true`) | client non-secret fields, permitted context | none |
 | `connect.exchange` | API | OAuth callback or form submit | callback params / form fields, client incl. secret, PKCE verifier, continuation, context | declared |
 | `token.mint` | gateway → hook host | credential expired (under the refresh lock) | one connection's credentials + metadata, client, context | declared |
-| `approval.summarize` | gateway → hook host | a request is held | tool, method, host, path, safe headers, body prefix | **none** |
+| `approval.summarize` | gateway → hook host | a request is held | tool, method, host, path, safe headers, body prefix (of a multipart body the first part only; not asked at all when the body has more than one reading, `06 §Approval holds`) | **none** |
 
 Outputs are validated against the manifest: credential/metadata keys must be
 declared; `tenant-host` must fall in the declared zone; `continue.url` must be

@@ -1049,6 +1049,12 @@ The home (`/workspace`) holds:
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves
   stale bytes and no ack; the next boot starts at generation 0 with a full sync.
+  A supervisor process commits only a generation it staged itself, from part 0
+  with no part missing (a replayed part is fine). What the staging needs to
+  remember, the locked memories among it, is held by that process and never read
+  back from the home, which the agent can write. Any other part is refused, the
+  generation is not acked, and the API sends it again from part 0. Every part of
+  a generation counts, the `previews` part too, which writes nothing to the home.
 - (FIX-294, SEC-171) The staging area is in the agent's home, so only what the
   API sent is installed. The supervisor keeps in memory, for the generation being
   staged, the SHA-256 and executable bit of every staged file (by destination)
@@ -1062,9 +1068,9 @@ The home (`/workspace`) holds:
   installed one stays, there is no ack, and the API sends the whole generation
   again when its sync lease lapses. A file that changes while the commit runs is
   not written and the commit stops there, so the home can hold files of both
-  generations (each as sent) until the resend. Which generation is staged is also
-  the supervisor's memory alone: a generation first seen past part 0 (a
-  restarted supervisor) is incomplete.
+  generations (each as sent) until the resend. A commit that stops for any reason
+  after its first check locks the managed trees again, and the harvest protects
+  the memories as they were installed, a newly locked one included.
 - (FIX-258) The skills and helpers roots are pruned **before** the staged files
   are installed, so a path may turn from a file into a folder, or back, between
   two generations. A skill file the home cannot hold (a file where a folder is

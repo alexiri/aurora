@@ -1,0 +1,922 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+//! Deciding an approval raised in a delegated task while the task is being cancelled. Both take
+//! the conversations, the link and the task before the approval row, so one waits for the other
+//! and neither deadlocks.
+
+use crate::common::ORIGIN;
+use crate::peers_rig::{Rig, rig};
+use aurora_api::domains::approvals::resume;
+use aurora_api::domains::peer_tasks::service::{self as peers, Close, RequesterCancel};
+use aurora_db::repo::approvals;
+use aurora_db::repo::conversations as convs;
+use serde_json::json;
+use sqlx::PgPool;
+use uuid::Uuid;
+
+/// A task P asked agent `a` to give agent `b`, with a pending gateway approval of `b`'s in it.
+struct Held {
+    rig: Rig,
+    task: Uuid,
+    task_conversation: Uuid,
+    approval: Uuid,
+}
+
+async fn held(batch: Option<&str>) -> Held {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let (origin, turn) = rig.person_turn(a, rig.p.id).await;
+    let task = delegate(&rig, (a, origin, turn), "@bravo").await;
+    let task_conversation = rig.peer_conversation(task).await;
+    let approval = pending_approval(&rig, b, task_conversation, batch).await;
+    Held {
+        rig,
+        task,
+        task_conversation,
+        approval,
+    }
+}
+
+/// The agent sends a message in its conversation's turn, which ends: the task it opened.
+async fn delegate(rig: &Rig, (agent, conv, turn): (Uuid, Uuid, Uuid), to: &str) -> Uuid {
+    let sent = rig
+        .tool(
+            agent,
+            conv,
+            Some(turn),
+            "message_agent",
+            json!({"agent": to, "text": "do it"}),
+        )
+        .await;
+    rig.finish_turn(turn).await;
+    Rig::id(&Rig::ok(&sent)["peer_task_id"])
+}
+
+/// A pending gateway approval of `agent`, raised in `conversation`.
+async fn pending_approval(rig: &Rig, agent: Uuid, conversation: Uuid, batch: Option<&str>) -> Uuid {
+    let pool = rig.h.pool();
+    let gateway = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO gateway_instances (id, hostname, version, started_at, last_seen_at)
+         VALUES ($1,'h','0',now(),now())",
+    )
+    .bind(gateway)
+    .execute(pool)
+    .await
+    .unwrap();
+    let approval = Uuid::now_v7();
+    let ws = rig.agent_ws(agent).await;
+    let turn = rig.running_turn(conversation).await;
+    sqlx::query(
+        "INSERT INTO approvals (id, org_id, workspace_id, agent_id, conversation_id, turn_id,
+            gateway_instance_id, method, host, path, summary, status, deadline, batch_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'POST','api.example.com','/x',
+            '{\"title\":\"Push\",\"source\":\"generic\"}','pending',
+            now() + interval '5 minutes', $8)",
+    )
+    .bind(approval)
+    .bind(rig.org)
+    .bind(ws)
+    .bind(agent)
+    .bind(conversation)
+    .bind(turn)
+    .bind(gateway)
+    .bind(batch)
+    .execute(pool)
+    .await
+    .unwrap();
+    approval
+}
+
+/// A delegation chain: P asked alpha, alpha's task is bravo's, and bravo, in that task's
+/// conversation, delegated on to charlie. The approval is charlie's, in the second task's
+/// conversation; bravo cancels that task, which locks its own conversation (the origin) first.
+#[tokio::test]
+async fn a_decision_waits_for_the_middle_agent_cancelling_the_task_it_delegated() {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let c = rig.agent(rig.ws1, "charlie").await;
+    let (origin, turn) = rig.person_turn(a, rig.p.id).await;
+    let first = delegate(&rig, (a, origin, turn), "@bravo").await;
+    let bravos = rig.peer_conversation(first).await;
+    if let Some(t) = rig.running_turn(bravos).await {
+        rig.finish_turn(t).await;
+    }
+    let turn = rig.turn(bravos, b, "person", Some(rig.p.id)).await;
+    let second = delegate(&rig, (b, bravos, turn), "@charlie").await;
+    let charlies = rig.peer_conversation(second).await;
+    let approval = pending_approval(&rig, c, charlies, None).await;
+    let pool = rig.h.pool();
+
+    let mut cancel = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut cancel).await;
+    assert!(convs::lock(&mut cancel, bravos).await.unwrap());
+    let uri = format!("/v1/approvals/{approval}/decision");
+    let decide = rig.post(&rig.p, &uri, Some(json!({"decision": "approve"})));
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let done = peers::cancel(&mut cancel, b, second)
+            .await
+            .map(|r| r.map(|t| t.status))
+            .map_err(|e| e.message().to_owned());
+        assert_eq!(done, Ok(Ok("cancelled".to_owned())));
+        cancel.commit().await.unwrap();
+    };
+    let ((status, body), ()) = tokio::join!(decide, finish);
+    assert_eq!(
+        (status, &body["error"]["code"]),
+        (409, &json!("already_decided")),
+        "{body}"
+    );
+}
+
+/// A batch over two task conversations of one agent, while the requester cancels the task whose
+/// conversation the batch locks second. The batch holds no row while it waits, and decides what
+/// the cancel left.
+#[tokio::test]
+async fn a_batch_over_two_tasks_waits_for_a_cancel_of_one() {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let d = rig.agent(rig.ws1, "delta").await;
+    let mut tasks = Vec::new();
+    for requester in [a, d] {
+        let (origin, turn) = rig.person_turn(requester, rig.p.id).await;
+        let task = delegate(&rig, (requester, origin, turn), "@bravo").await;
+        let conversation = rig.peer_conversation(task).await;
+        let approval = pending_approval(&rig, b, conversation, Some("batch-2")).await;
+        tasks.push((task, conversation, approval));
+    }
+    // The older conversation is locked second.
+    let (task, conversation, _) = tasks[0];
+    let pool = rig.h.pool();
+    let mut cancel = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut cancel).await;
+    assert!(convs::lock(&mut cancel, conversation).await.unwrap());
+    let body = json!({"decision": "deny", "agent_id": b});
+    let decide = rig.post(&rig.p, "/v1/approvals/batches/batch-2/decision", Some(body));
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let done = peers::cancel_by_requester(&mut cancel, rig.p.id, task)
+            .await
+            .map(|c| matches!(c, RequesterCancel::Done(_)))
+            .map_err(|e| e.message().to_owned());
+        assert_eq!(done, Ok(true));
+        cancel.commit().await.unwrap();
+    };
+    let ((status, body), ()) = tokio::join!(decide, finish);
+    assert_eq!((status, &body["decided"]), (200, &json!(1)), "{body}");
+    let mut statuses = Vec::new();
+    for (_, _, approval) in &tasks {
+        let s: String = sqlx::query_scalar("SELECT status FROM approvals WHERE id = $1")
+            .bind(approval)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        statuses.push(s);
+    }
+    assert_eq!(statuses, ["abandoned", "denied"]);
+}
+
+async fn backend_pid(conn: &mut sqlx::PgConnection) -> i32 {
+    sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
+/// Returns once some backend waits for a lock that backend `pid` holds (asks the server until it
+/// says so; the timeout only keeps a broken test from hanging).
+async fn until_somebody_waits_for(pool: &PgPool, pid: i32) {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                  WHERE $1 = ANY(pg_blocking_pids(pid)))",
+            )
+            .bind(pid)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("nobody waited for the held lock");
+}
+
+/// P decides the held gateway approval in the dashboard.
+async fn decide(h: &Held) -> (u16, serde_json::Value) {
+    let uri = format!("/v1/approvals/{}/decision", h.approval);
+    h.rig
+        .post(&h.rig.p, &uri, Some(json!({"decision": "approve"})))
+        .await
+}
+
+async fn approval_status(h: &Held) -> String {
+    sqlx::query_scalar("SELECT status FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(h.rig.h.pool())
+        .await
+        .unwrap()
+}
+
+/// The requester's cancel holds the task conversation (its first lock) when the decision
+/// arrives. The decision waits there, holding no approval row, so the cancel finishes.
+#[tokio::test]
+async fn a_decision_waits_for_a_cancel_that_holds_the_task_conversation() {
+    let h = held(None).await;
+    let pool = h.rig.h.pool();
+    let mut cancel = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut cancel).await;
+    assert!(convs::lock(&mut cancel, h.task_conversation).await.unwrap());
+    let decide = decide(&h);
+    let finish_cancel = async {
+        until_somebody_waits_for(pool, pid).await;
+        let done = peers::cancel_by_requester(&mut cancel, h.rig.p.id, h.task)
+            .await
+            .map(|c| matches!(c, RequesterCancel::Done(_)));
+        assert_eq!(done.map_err(|e| e.message().to_owned()), Ok(true));
+        cancel.commit().await.unwrap();
+    };
+    let ((status, body), ()) = tokio::join!(decide, finish_cancel);
+    assert_eq!(
+        (status, &body["error"]["code"]),
+        (409, &json!("already_decided")),
+        "{body}"
+    );
+    assert_eq!(approval_status(&h).await, "abandoned");
+}
+
+/// A close that never takes the task conversation (the tool, the channel card, the expiry
+/// sweep) holds the link, its first lock here, when the decision arrives.
+#[tokio::test]
+async fn a_decision_waits_for_a_close_that_holds_the_link() {
+    let h = held(None).await;
+    a_close_that_holds_the_link(&h, decide(&h)).await;
+}
+
+#[tokio::test]
+async fn a_batch_decision_waits_for_a_close_that_holds_the_link() {
+    let h = held(Some("batch-1")).await;
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(h.rig.h.pool())
+        .await
+        .unwrap();
+    let decide = async {
+        h.rig
+            .post(
+                &h.rig.p,
+                "/v1/approvals/batches/batch-1/decision",
+                Some(json!({"decision": "deny", "agent_id": agent})),
+            )
+            .await
+    };
+    a_close_that_holds_the_link(&h, decide).await;
+}
+
+/// Turns the held approval into a parked one: a revocation then writes a notice into its
+/// conversation after it has ended the row.
+async fn park(h: &Held) {
+    sqlx::query(
+        "UPDATE approvals SET parked = true, fp_salt = '\\x00', fingerprint = '\\x00'
+          WHERE id = $1",
+    )
+    .bind(h.approval)
+    .execute(h.rig.h.pool())
+    .await
+    .unwrap();
+}
+
+/// A revocation has ended the parked row and has its notice still to write when the decision of
+/// the same approval arrives. The decision waits; the revocation finishes.
+#[tokio::test]
+async fn a_decision_waits_for_a_revocation_of_the_same_parked_approval() {
+    let h = held(None).await;
+    park(&h).await;
+    let pool = h.rig.h.pool();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut revoke = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut revoke).await;
+    let ended = approvals::abandon_pending_depending_on(
+        &mut revoke,
+        approvals::Dependency::AgentSecrets { agent_id: agent },
+    )
+    .await
+    .unwrap();
+    assert_eq!(ended.len(), 1);
+    let decide = decide(&h);
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let noticed = resume::notify_ended(&mut revoke, &ended, "access_removed")
+            .await
+            .map_err(|e| e.message().to_owned());
+        assert_eq!(noticed, Ok(()));
+        revoke.commit().await.unwrap();
+    };
+    let ((status, body), ()) = tokio::join!(decide, finish);
+    assert_eq!(
+        (status, &body["error"]["code"]),
+        (409, &json!("already_decided")),
+        "{body}"
+    );
+    assert_eq!(approval_status(&h).await, "abandoned");
+}
+
+/// The same moment of a revocation, with the requester's cancel arriving: the cancel waits.
+#[tokio::test]
+async fn a_cancel_waits_for_a_revocation_of_its_tasks_parked_approval() {
+    let h = held(None).await;
+    park(&h).await;
+    let pool = h.rig.h.pool();
+    let mut revoke = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut revoke).await;
+    let ended = approvals::end_parked_of(
+        &mut revoke,
+        approvals::Scope::Conversation(h.task_conversation),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ended.len(), 1);
+    let cancel = async {
+        let mut tx = pool.begin().await.unwrap();
+        let done = peers::cancel_by_requester(&mut tx, h.rig.p.id, h.task)
+            .await
+            .map(|c| matches!(c, RequesterCancel::Done(_)))
+            .map_err(|e| e.message().to_owned());
+        if done.is_ok() {
+            tx.commit().await.unwrap();
+        }
+        done
+    };
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let noticed = resume::notify_ended(&mut revoke, &ended, "access_removed")
+            .await
+            .map_err(|e| e.message().to_owned());
+        if noticed.is_ok() {
+            revoke.commit().await.unwrap();
+        }
+        noticed
+    };
+    let (cancelled, noticed) = tokio::join!(cancel, finish);
+    assert_eq!((cancelled, noticed), (Ok(true), Ok(())));
+    assert_eq!(h.rig.task_status(h.task).await, "cancelled");
+}
+
+/// A freeze ends the rows of many conversations and then writes into them. It waits for a
+/// writer that holds a conversation without holding any of its rows.
+#[tokio::test]
+async fn a_freeze_waits_for_a_conversation_before_it_ends_the_rows() {
+    let h = held(None).await;
+    park(&h).await;
+    let pool = h.rig.h.pool();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut holder = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut holder).await;
+    assert!(convs::lock(&mut holder, h.task_conversation).await.unwrap());
+    let freeze = async {
+        let mut tx = pool.begin().await.unwrap();
+        let ended = aurora_db::repo::freeze::abandon_pending_approvals(&mut tx, &[agent])
+            .await
+            .map_err(|e| e.to_string())?;
+        resume::notify_ended(&mut tx, &ended, "frozen")
+            .await
+            .map_err(|e| e.message().to_owned())?;
+        tx.commit().await.map_err(|e| e.to_string())
+    };
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let ended = approvals::abandon_pending_of_conversation(&mut holder, h.task_conversation)
+            .await
+            .map(|e| e.len())
+            .map_err(|e| e.to_string());
+        if ended.is_ok() {
+            holder.commit().await.unwrap();
+        }
+        ended
+    };
+    let (frozen, ended) = tokio::join!(freeze, finish);
+    assert_eq!((frozen, ended), (Ok(()), Ok(1)));
+}
+
+/// The same for the sweep of resume windows that ran out.
+#[tokio::test]
+async fn the_resume_window_sweep_waits_for_a_conversation_before_it_ends_the_rows() {
+    let h = held(None).await;
+    park(&h).await;
+    let pool = h.rig.h.pool();
+    sqlx::query(
+        "UPDATE approvals SET status = 'approved', resume_state = 'ready',
+            resume_expires_at = now() - interval '1 minute' WHERE id = $1",
+    )
+    .bind(h.approval)
+    .execute(pool)
+    .await
+    .unwrap();
+    let mut holder = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut holder).await;
+    assert!(convs::lock(&mut holder, h.task_conversation).await.unwrap());
+    let sweep = async {
+        aurora_api::jobs::sweep_resume_windows(pool)
+            .await
+            .map_err(|e| e.message().to_owned())
+    };
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let revoked = approvals::end_parked_of(
+            &mut holder,
+            approvals::Scope::Conversation(h.task_conversation),
+        )
+        .await
+        .map(|e| e.len())
+        .map_err(|e| e.to_string());
+        if revoked.is_ok() {
+            holder.commit().await.unwrap();
+        }
+        revoked
+    };
+    let (swept, revoked) = tokio::join!(sweep, finish);
+    // The revocation had the conversation first: it ends the grant and the sweep finds none.
+    assert_eq!((swept, revoked), (Ok(0), Ok(1)));
+}
+
+/// A batch over two task conversations of one agent takes every conversation before any link.
+/// The agent, working in the older task's conversation, messages the agent that delegated the
+/// newer one: it holds its conversation and takes that pair's link.
+#[tokio::test]
+async fn a_batch_takes_every_conversation_before_any_link() {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let c = rig.agent(rig.ws1, "charlie").await;
+    let mut tasks = Vec::new();
+    for requester in [a, c] {
+        let (origin, turn) = rig.person_turn(requester, rig.p.id).await;
+        let task = delegate(&rig, (requester, origin, turn), "@bravo").await;
+        let conversation = rig.peer_conversation(task).await;
+        pending_approval(&rig, b, conversation, Some("batch-3")).await;
+        tasks.push((task, conversation));
+    }
+    let (older, newer) = (tasks[0], tasks[1]);
+    let pool = rig.h.pool();
+    let mut message = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut message).await;
+    assert!(convs::lock(&mut message, older.1).await.unwrap());
+    let body = json!({"decision": "deny", "agent_id": b});
+    let decide = rig.post(&rig.p, "/v1/approvals/batches/batch-3/decision", Some(body));
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let link = sqlx::query(
+            "SELECT 1 FROM agent_links WHERE id = (SELECT link_id FROM peer_tasks WHERE id = $1)
+             FOR UPDATE",
+        )
+        .bind(newer.0)
+        .execute(&mut *message)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string());
+        if link.is_ok() {
+            message.commit().await.unwrap();
+        }
+        link
+    };
+    let ((status, body), link) = tokio::join!(decide, finish);
+    assert_eq!(
+        (link, status, &body["decided"]),
+        (Ok(()), 200, &json!(2)),
+        "{body}"
+    );
+}
+
+/// A task whose pair has a queued task opened from a task conversation **newer** than the
+/// task's own: `(rig, bravo, the open task, its conversation, that newer conversation)`.
+async fn queued_from_a_newer_conversation() -> (Rig, Uuid, Uuid, Uuid, Uuid) {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let c = rig.agent(rig.ws1, "charlie").await;
+    let (origin, turn) = rig.person_turn(a, rig.p.id).await;
+    let task = delegate(&rig, (a, origin, turn), "@bravo").await;
+    let conversation = rig.peer_conversation(task).await;
+    let (origin, turn) = rig.person_turn(c, rig.p.id).await;
+    let to_alpha = delegate(&rig, (c, origin, turn), "@alpha").await;
+    let newer = rig.peer_conversation(to_alpha).await;
+    if let Some(t) = rig.running_turn(newer).await {
+        rig.finish_turn(t).await;
+    }
+    let turn = rig.turn(newer, a, "person", Some(rig.p.id)).await;
+    let queued = delegate(&rig, (a, newer, turn), "@bravo").await;
+    assert_eq!(rig.task_status(queued).await, "queued");
+    assert!(newer > conversation);
+    (rig, b, task, conversation, newer)
+}
+
+/// A writer that locks several conversations takes the newest first. While it holds the newer
+/// one and still wants the task's, `work` waits for it holding neither.
+async fn works_beside_a_newest_first_writer<T>(
+    pool: &PgPool,
+    newer: Uuid,
+    older: Uuid,
+    work: impl Future<Output = T>,
+) -> (T, Result<bool, String>) {
+    let mut writer = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut writer).await;
+    assert!(convs::lock(&mut writer, newer).await.unwrap());
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let locked = convs::lock(&mut writer, older)
+            .await
+            .map_err(|e| e.to_string());
+        if locked.is_ok() {
+            writer.commit().await.unwrap();
+        }
+        locked
+    };
+    tokio::join!(work, finish)
+}
+
+#[tokio::test]
+async fn a_cancel_takes_a_newer_task_origin_before_the_task_conversation() {
+    let (rig, _, task, conversation, newer) = queued_from_a_newer_conversation().await;
+    let pool = rig.h.pool();
+    let cancel = async {
+        let mut tx = pool.begin().await.unwrap();
+        let done = peers::cancel_by_requester(&mut tx, rig.p.id, task)
+            .await
+            .map(|c| matches!(c, RequesterCancel::Done(_)))
+            .map_err(|e| e.message().to_owned());
+        if done.is_ok() {
+            tx.commit().await.unwrap();
+        }
+        done
+    };
+    let (cancelled, writer) =
+        works_beside_a_newest_first_writer(pool, newer, conversation, cancel).await;
+    assert_eq!((cancelled, writer), (Ok(true), Ok(true)));
+}
+
+#[tokio::test]
+async fn a_turn_end_takes_a_newer_task_origin_before_the_task_conversation() {
+    use aurora_api::domains::hosted::lifecycle;
+    let (rig, _, task, conversation, newer) = queued_from_a_newer_conversation().await;
+    let pool = rig.h.pool();
+    let turn: Uuid = sqlx::query_scalar(
+        "SELECT id FROM turns WHERE conversation_id = $1 AND role = 'turn'
+           AND status IN ('queued','dispatched','running')",
+    )
+    .bind(conversation)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let end = async {
+        let mut tx = pool.begin().await.unwrap();
+        let ended = lifecycle::fail(&mut tx, turn, conversation, "agent_restarted", "Restarted.")
+            .await
+            .map(|t| t.is_some())
+            .map_err(|e| e.message().to_owned());
+        if ended.is_ok() {
+            tx.commit().await.unwrap();
+        }
+        ended
+    };
+    let (ended, writer) = works_beside_a_newest_first_writer(pool, newer, conversation, end).await;
+    assert_eq!((ended, writer), (Ok(true), Ok(true)));
+    assert_eq!(rig.task_status(task).await, "cancelled");
+}
+
+#[tokio::test]
+async fn an_approval_delivery_takes_a_newer_task_origin_before_the_task_conversation() {
+    use aurora_api::domains::approvals::transcript;
+    let (rig, b, task, conversation, newer) = queued_from_a_newer_conversation().await;
+    let approval = pending_approval(&rig, b, conversation, None).await;
+    let pool = rig.h.pool();
+    let origin: Uuid =
+        sqlx::query_scalar("SELECT origin_conversation_id FROM peer_tasks WHERE id = $1")
+            .bind(task)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let deliver = async {
+        transcript::write_current(&rig.h.state, approval)
+            .await
+            .map_err(|e| e.message().to_owned())
+    };
+    let (delivered, writer) =
+        works_beside_a_newest_first_writer(pool, newer, conversation, deliver).await;
+    assert_eq!((delivered, writer), (Ok(()), Ok(true)));
+    // The delivery's own writes are best-effort: they must not have been the ones given up.
+    assert_eq!(
+        rig.notices(origin, "peer_waiting_for_approval").await.len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_reply_takes_a_newer_task_origin_before_the_task_conversation() {
+    let (rig, b, _, conversation, newer) = queued_from_a_newer_conversation().await;
+    let pool = rig.h.pool();
+    let turn: Uuid = sqlx::query_scalar(
+        "SELECT id FROM turns WHERE conversation_id = $1 AND role = 'turn'
+           AND status IN ('queued','dispatched','running')",
+    )
+    .bind(conversation)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let reply = rig.tool(
+        b,
+        conversation,
+        Some(turn),
+        "message_agent",
+        json!({"agent": "@alpha", "text": "a question"}),
+    );
+    let (sent, writer) = works_beside_a_newest_first_writer(pool, newer, conversation, reply).await;
+    assert!(sent.ok, "{:?}", sent.error);
+    assert_eq!(writer, Ok(true));
+}
+
+/// A caller that revokes twice in one transaction: the first call ends a held row, the second a
+/// parked one in the same conversation. A decision of the first row, arriving between them,
+/// waits for the whole transaction.
+#[tokio::test]
+async fn a_decision_waits_for_a_caller_that_revokes_twice() {
+    let h = held(None).await;
+    let pool = h.rig.h.pool();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut revoke = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut revoke).await;
+    let ended = approvals::abandon_pending_depending_on(
+        &mut revoke,
+        approvals::Dependency::AgentSecrets { agent_id: agent },
+    )
+    .await
+    .unwrap();
+    assert_eq!(ended.len(), 1);
+    let decide = decide(&h);
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let second = pending_approval(&h.rig, agent, h.task_conversation, None).await;
+        sqlx::query(
+            "UPDATE approvals SET parked = true, fp_salt = '\\x00', fingerprint = '\\x00'
+              WHERE id = $1",
+        )
+        .bind(second)
+        .execute(pool)
+        .await
+        .unwrap();
+        let ended = approvals::end_parked_of(
+            &mut revoke,
+            approvals::Scope::Conversation(h.task_conversation),
+        )
+        .await
+        .map(|e| e.len())
+        .map_err(|e| e.to_string());
+        if ended.is_ok() {
+            revoke.commit().await.unwrap();
+        }
+        ended
+    };
+    let ((status, body), second) = tokio::join!(decide, finish);
+    assert_eq!(
+        (second, status, &body["error"]["code"]),
+        (Ok(1), 409, &json!("already_decided")),
+        "{body}"
+    );
+}
+
+/// Freezing an agent and deleting a workspace's connection are its owners' acts.
+async fn p_owns_the_workspace(rig: &Rig) {
+    sqlx::query(
+        "UPDATE workspace_access SET role = 'owner' WHERE workspace_id = $1 AND user_id = $2",
+    )
+    .bind(rig.ws1)
+    .bind(rig.p.id)
+    .execute(rig.h.pool())
+    .await
+    .unwrap();
+}
+
+/// A close that never takes the task conversation holds the link and wants the task's rows when
+/// a freeze of the working agent arrives. The freeze takes what its turn ends will need before
+/// it ends a row, so it waits holding none.
+#[tokio::test]
+async fn a_freeze_takes_its_turns_locks_before_it_ends_a_row() {
+    let h = held(None).await;
+    p_owns_the_workspace(&h.rig).await;
+    park(&h).await;
+    let pool = h.rig.h.pool();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let mut close = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut close).await;
+    aurora_db::repo::peer_tasks::lock_chain_links(&mut close, &[h.task])
+        .await
+        .unwrap();
+    let uri = format!("/v1/agents/{agent}/freeze");
+    let freeze = h.rig.post(&h.rig.p, &uri, Some(json!({"reason": "test"})));
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let task = aurora_db::repo::peer_tasks::get(&mut *close, h.task)
+            .await
+            .unwrap()
+            .unwrap();
+        let closed = peers::close_with_promotion(&mut close, &task, &Close::Cancelled(None))
+            .await
+            .map(|c| c.is_some())
+            .map_err(|e| e.message().to_owned());
+        if closed.is_ok() {
+            close.commit().await.unwrap();
+        }
+        closed
+    };
+    let ((status, body), closed) = tokio::join!(freeze, finish);
+    assert_eq!((closed, status), (Ok(true), 200), "{body}");
+}
+
+/// A restart ends every turn of the agent in one transaction. It takes all their conversations
+/// before the first turn's links: the agent, messaging from the newer task conversation, holds
+/// it and takes the older task's pair link.
+#[tokio::test]
+async fn a_restart_takes_every_turns_conversations_before_any_link() {
+    let rig = rig().await;
+    let a = rig.agent(rig.ws1, "alpha").await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    let c = rig.agent(rig.ws1, "charlie").await;
+    let mut tasks = Vec::new();
+    for requester in [a, c] {
+        let (origin, turn) = rig.person_turn(requester, rig.p.id).await;
+        let task = delegate(&rig, (requester, origin, turn), "@bravo").await;
+        tasks.push((task, rig.peer_conversation(task).await));
+    }
+    let (older, newer) = (tasks[0], tasks[1]);
+    let pool = rig.h.pool();
+    sqlx::query(
+        "INSERT INTO sandboxes (id, agent_id, state, boot_id) VALUES ($1,$2,'running',$3)
+         ON CONFLICT (agent_id) DO UPDATE SET state = 'running'",
+    )
+    .bind(Uuid::now_v7())
+    .bind(b)
+    .bind(Uuid::now_v7())
+    .execute(pool)
+    .await
+    .unwrap();
+    let mut message = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut message).await;
+    assert!(convs::lock(&mut message, newer.1).await.unwrap());
+    let uri = format!("/v1/agents/{b}/restart");
+    let restart = rig.post(&rig.p, &uri, None);
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        let link = aurora_db::repo::peer_tasks::lock_chain_links(&mut message, &[older.0])
+            .await
+            .map_err(|e| e.to_string());
+        if link.is_ok() {
+            message.commit().await.unwrap();
+        }
+        link
+    };
+    let ((status, body), link) = tokio::join!(restart, finish);
+    assert_eq!((link, status), (Ok(()), 202), "{body}");
+}
+
+/// Deleting a connection revokes for it and for each connection derived from it in one
+/// transaction: every conversation is locked before the first row is ended.
+#[tokio::test]
+async fn a_connection_delete_locks_every_conversation_before_the_first_row() {
+    let rig = rig().await;
+    let b = rig.agent(rig.ws1, "bravo").await;
+    p_owns_the_workspace(&rig).await;
+    let (older, _) = rig.person_turn(b, rig.p.id).await;
+    let (newer, _) = rig.person_turn(b, rig.p.id).await;
+    let pool = rig.h.pool();
+    let ws = rig.agent_ws(b).await;
+    let (parent, child) = (Uuid::now_v7(), Uuid::now_v7());
+    for (id, source, label) in [(parent, None, "Main"), (child, Some(parent), "Derived")] {
+        sqlx::query(
+            "INSERT INTO app_connections (id, org_id, workspace_id, app_id, package_id,
+                app_version, label, status, credentials_ref, source_connection_id)
+             VALUES ($1,$2,$3,'acme_app','acme','1.0.0',$4,'active','x',$5)",
+        )
+        .bind(id)
+        .bind(rig.org)
+        .bind(ws)
+        .bind(label)
+        .bind(source)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    for (conversation, connection) in [(older, parent), (newer, child)] {
+        let approval = pending_approval(&rig, b, conversation, None).await;
+        sqlx::query("UPDATE approvals SET connection_id = $2 WHERE id = $1")
+            .bind(approval)
+            .bind(connection)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    let uri = format!("/v1/connections/{parent}");
+    let delete = async {
+        let headers = [("cookie", rig.p.cookie.as_str()), ("origin", ORIGIN)];
+        let (status, _, body) = rig.h.send(http::Method::DELETE, &uri, &headers, None).await;
+        (status.as_u16(), body)
+    };
+    let ((status, body), writer) =
+        works_beside_a_newest_first_writer(pool, newer, older, delete).await;
+    assert_eq!((writer, status < 300), (Ok(true), true), "{status} {body}");
+}
+
+/// A batch decision writes only in the conversations it locked: a member raised in another
+/// one since stays pending.
+#[tokio::test]
+async fn a_batch_decides_only_in_the_conversations_it_locked() {
+    let h = held(Some("batch-4")).await;
+    let pool = h.rig.h.pool();
+    let agent: Uuid = sqlx::query_scalar("SELECT agent_id FROM approvals WHERE id = $1")
+        .bind(h.approval)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let (other, _) = h.rig.person_turn(agent, h.rig.p.id).await;
+    let mut holder = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut holder).await;
+    assert!(convs::lock(&mut holder, h.task_conversation).await.unwrap());
+    let body = json!({"decision": "deny", "agent_id": agent});
+    let uri = "/v1/approvals/batches/batch-4/decision";
+    let decide = h.rig.post(&h.rig.p, uri, Some(body));
+    let finish = async {
+        until_somebody_waits_for(pool, pid).await;
+        // The batch has read which conversations to lock and waits for the first.
+        let late = pending_approval(&h.rig, agent, other, Some("batch-4")).await;
+        holder.commit().await.unwrap();
+        late
+    };
+    let ((status, body), late) = tokio::join!(decide, finish);
+    assert_eq!((status, &body["decided"]), (200, &json!(1)), "{body}");
+    let s: String = sqlx::query_scalar("SELECT status FROM approvals WHERE id = $1")
+        .bind(late)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(s, "pending");
+}
+
+async fn a_close_that_holds_the_link(
+    h: &Held,
+    decide: impl Future<Output = (u16, serde_json::Value)>,
+) {
+    let pool = h.rig.h.pool();
+    // The receiving turn ended while the approval waits, so the decision is the task's wake and
+    // takes the link.
+    sqlx::query("UPDATE peer_tasks SET status = 'waiting' WHERE id = $1")
+        .bind(h.task)
+        .execute(pool)
+        .await
+        .unwrap();
+    let mut close = pool.begin().await.unwrap();
+    let pid = backend_pid(&mut close).await;
+    sqlx::query(
+        "SELECT 1 FROM agent_links WHERE id = (SELECT link_id FROM peer_tasks WHERE id = $1)
+         FOR UPDATE",
+    )
+    .bind(h.task)
+    .execute(&mut *close)
+    .await
+    .unwrap();
+    let finish_close = async {
+        until_somebody_waits_for(pool, pid).await;
+        let task = aurora_db::repo::peer_tasks::get(&mut *close, h.task)
+            .await
+            .unwrap()
+            .unwrap();
+        let closed = peers::close_with_promotion(&mut close, &task, &Close::Cancelled(None))
+            .await
+            .map(|c| c.is_some());
+        assert_eq!(closed.map_err(|e| e.message().to_owned()), Ok(true));
+        close.commit().await.unwrap();
+    };
+    let ((status, body), ()) = tokio::join!(decide, finish_close);
+    assert!(status < 500, "{status} {body}");
+    assert_eq!(approval_status(h).await, "abandoned");
+}

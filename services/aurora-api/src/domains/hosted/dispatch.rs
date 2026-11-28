@@ -5,6 +5,7 @@
 use super::{home, lifecycle, model};
 use crate::app::AppState;
 use crate::domains::conversations::{dto::door_name, service as conv};
+use crate::domains::peer_tasks::service as peers;
 use aurora_core::token::{self, TokenPrefix};
 use aurora_core::{ApiError, limits};
 use aurora_db::repo::conversations as convs;
@@ -140,7 +141,7 @@ pub async fn sweep_no_model_key(
         if let Some((code, message)) = failure {
             // Every queued turn of the agent ends with the reason (the verdict is per agent).
             for (turn, conversation) in hosted::queued_turns_of_agent(tx, agent).await? {
-                convs::lock(tx, conversation).await?;
+                peers::lock_with_task_origins(tx, conversation).await?;
                 if lifecycle::fail(tx, turn, conversation, code, &message)
                     .await?
                     .is_some()
@@ -297,7 +298,7 @@ async fn arm6_dispatch(
 ) -> Result<(), ApiError> {
     let ttl = s.ops().hosted.turn_ceiling_secs as f64 + secs(limits::CONTEXT_CREDENTIAL_GRACE);
     for cand in hosted::dispatch_candidates(tx, runner, replica, ARM_LIMIT).await? {
-        convs::lock(tx, cand.conversation_id).await?;
+        peers::lock_with_task_origins(tx, cand.conversation_id).await?;
         let Some(turn) = turns::get(&mut *tx, cand.turn_id)
             .await?
             .filter(|t| t.status == "queued" && t.role == "turn")
@@ -512,7 +513,7 @@ async fn arm8_stale(
     )
     .await?
     {
-        convs::lock(tx, t.conversation_id).await?;
+        peers::lock_with_task_origins(tx, t.conversation_id).await?;
         if hosted::revive(tx, t.turn_id).await? {
             conv::notify_work(tx).await?;
             continue;
@@ -547,7 +548,7 @@ async fn arm8_stale(
     )
     .await?
     {
-        convs::lock(tx, t.conversation_id).await?;
+        peers::lock_with_task_origins(tx, t.conversation_id).await?;
         if lifecycle::fail(
             tx,
             t.turn_id,
@@ -573,7 +574,7 @@ async fn arm8_stale(
     )
     .await?
     {
-        convs::lock(tx, t.conversation_id).await?;
+        peers::lock_with_task_origins(tx, t.conversation_id).await?;
         if lifecycle::fail(
             tx,
             t.turn_id,

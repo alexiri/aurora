@@ -432,6 +432,7 @@ impl Ctx<'_> {
                     instance_host: self.instance_host(),
                     instance_base_path: self.instance_base_path(),
                     instance_registered: self.instance.is_some(),
+                    app_host: self.app_host(),
                 },
             )
             .await;
@@ -461,6 +462,14 @@ impl Ctx<'_> {
                 .as_ref()
                 .and_then(|i| i.default_host.as_deref()),
         }
+    }
+
+    /// (FIX-290, D-511) What the registration being connected opens beyond
+    /// `gateway.allowed_private`.
+    fn app_host(&self) -> Option<aurora_core::ranges::AppHost> {
+        self.instance
+            .as_ref()
+            .and_then(|i| self.state.connect.self_hosted(i))
     }
 
     /// The registered instance's base path (D-231); a default-host connection has none.
@@ -582,6 +591,7 @@ impl Ctx<'_> {
                     instance_host: self.instance_host(),
                     instance_base_path: self.instance_base_path(),
                     instance_registered: self.instance.is_some(),
+                    app_host: self.app_host(),
                 },
             )
             .await
@@ -1875,10 +1885,9 @@ pub(crate) async fn probe_token_endpoint(
     };
     let host = host_of(&raw);
     let cf = client_fields(state, client).await.map_err(ApiError::from)?;
-    let http = if instance.is_some() {
-        &env.http_instance
-    } else {
-        &env.http
+    let http = match &instance {
+        Some(i) => env.instance_client(env.self_hosted(i).as_ref(), &url),
+        None => env.http.clone(),
     };
     let code = format!("aurora-test-{}", flow::random(16)?);
     let verifier = if ce.pkce {
@@ -1887,7 +1896,7 @@ pub(crate) async fn probe_token_endpoint(
         None
     };
     let req = token_request(
-        http,
+        &http,
         url,
         ce,
         &cf,
@@ -1960,21 +1969,11 @@ fn provider_code(description: &str) -> Option<String> {
     .then(|| head.to_owned())
 }
 
-/// An `error_description` made fit for one log field: control characters dropped, at most 300
-/// characters. It goes to the server log only, never to the page (C-1158).
-fn log_text(description: Option<&str>) -> String {
-    description
-        .unwrap_or_default()
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(300)
-        .collect()
-}
-
 /// (FIX-232, C-1158) Why the provider refused a sign-in, in fixed identifiers only: the stage
 /// (`authorize`: the provider sent the person back with `error`; `token`: the code exchange), the
 /// token endpoint's HTTP status (none when it could not be reached), the OAuth `error` code and
-/// the provider's own error number. The description itself is logged, not shown.
+/// the provider's own error number. The description itself is neither shown nor logged: it is the
+/// provider's free text and may repeat what it was sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refusal {
     pub stage: &'static str,
@@ -1993,7 +1992,7 @@ impl Refusal {
             error: q.get("error").and_then(|e| ident(e)),
             provider_code: description.and_then(provider_code),
         };
-        r.log(app_id, description);
+        r.log(app_id);
         r
     }
 
@@ -2006,7 +2005,7 @@ impl Refusal {
             error: oauth_error_code(body),
             provider_code: description.as_deref().and_then(provider_code),
         };
-        r.log(app_id, description.as_deref());
+        r.log(app_id);
         r
     }
 
@@ -2018,18 +2017,17 @@ impl Refusal {
             error: None,
             provider_code: None,
         };
-        r.log(app_id, None);
+        r.log(app_id);
         r
     }
 
-    fn log(&self, app_id: &str, description: Option<&str>) {
+    fn log(&self, app_id: &str) {
         tracing::warn!(
             app_id,
             stage = self.stage,
             status = self.status,
             error = self.error.as_deref(),
             provider_code = self.provider_code.as_deref(),
-            description = %log_text(description),
             "the provider refused the OAuth sign-in"
         );
     }
@@ -2062,14 +2060,15 @@ async fn token_exchange(
     )
     .ok_or(ConnectErr::Exchange)?;
     let url = env.prepare(&url).map_err(|_| ConnectErr::Exchange)?;
-    // A registered instance is dialled through the guard that honours `gateway.allowed_private`.
+    // A registered instance is dialled through the guard that honours `gateway.allowed_private`
+    // (and, for an instance administrator's registration, its own host).
     let http = if ctx.instance.is_some() {
-        &env.http_instance
+        env.instance_client(ctx.app_host().as_ref(), &url)
     } else {
-        &env.http
+        env.http.clone()
     };
     let req = token_request(
-        http,
+        &http,
         url,
         ce,
         cf,
@@ -2212,8 +2211,57 @@ mod refusal_tests {
         assert_eq!(r.stage, "authorize");
         assert_eq!(r.error.as_deref(), Some("invalid_request"));
         assert_eq!(r.provider_code.as_deref(), Some("AADSTS700016"));
-        assert_eq!(log_text(Some("a\nb\u{7}c")), "abc");
-        assert_eq!(log_text(Some(&"x".repeat(400))).len(), 300);
+    }
+
+    /// Everything the log lines written by `f` say.
+    fn logged(f: impl FnOnce()) -> String {
+        #[derive(Clone, Default)]
+        struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = sink.0.lock().unwrap().clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    /// The provider's free text can hold anything it was sent: the log gets its codes only.
+    #[test]
+    fn the_log_has_the_providers_codes_and_never_its_text() {
+        let body = br#"{"error":"invalid_client","error_description":"AADSTS7000215: Invalid client secret s3cr3t-value."}"#;
+        let out = logged(|| {
+            Refusal::token(401, body, "microsoft-365");
+        });
+        assert!(out.contains("invalid_client"), "{out}");
+        assert!(out.contains("AADSTS7000215"), "{out}");
+        assert!(!out.contains("s3cr3t-value"), "{out}");
+        assert!(!out.contains("Invalid client secret"), "{out}");
+
+        let q: HashMap<String, String> = [
+            ("error".to_owned(), "access_denied".to_owned()),
+            (
+                "error_description".to_owned(),
+                "the user ada@example.org said no".to_owned(),
+            ),
+        ]
+        .into();
+        let out = logged(|| {
+            Refusal::authorize(&q, "microsoft-365");
+        });
+        assert!(out.contains("access_denied"), "{out}");
+        assert!(!out.contains("ada@example.org"), "{out}");
     }
 
     /// (FIX-233, C-1159) A fixed OAuth URL takes the client's directory, else the default.

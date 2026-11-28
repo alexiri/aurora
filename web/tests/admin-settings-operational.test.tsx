@@ -256,6 +256,40 @@ describe("Admin › Settings › the operational pages (SET-5)", () => {
     });
   });
 
+  it("shows, read-only, the private hosts that the administrator's self-hosted apps open (FIX-290)", async () => {
+    const reg = (id: string, host: string, o: Json = {}) => ({
+      id, host, org_id: null, builtin: false, status: "active", app_id: "wiki", package_id: "wiki", label: `Label ${id}`,
+      base_url: `https://${host}`, connections: 0, created_at: "2026-11-28T00:00:00Z", updated_at: "2026-11-28T00:00:00Z", ...o,
+    });
+    mockFetch({
+      "GET /v1/admin/settings/limits": () =>
+        json(200, section("limits", "Limits", [
+          { ...base, key: "gateway.allowed_private", value: [], source: "default", default: [], schema: schema("list", { item_kind: "string" }) },
+        ])),
+      "GET /v1/admin/app-instances": () =>
+        json(200, {
+          items: [
+            reg("a", "wiki.corp.example"),
+            reg("b", "region.vendor.example", { builtin: true }),
+            reg("c", "off.corp.example", { status: "disabled" }),
+            reg("d", "team.corp.example", { org_id: "o1" }),
+          ],
+          next_cursor: null,
+        }),
+    });
+    render(wrap("limits"));
+    const card = (await screen.findByRole("heading", { name: "Private hosts opened by self-hosted apps", level: 3 })).closest("section") as HTMLElement;
+    expect(await within(card).findByText("wiki.corp.example")).toBeTruthy();
+    expect(within(card).getByText("Allowed for Label a only")).toBeTruthy();
+    for (const hidden of ["region.vendor.example", "off.corp.example", "team.corp.example"]) {
+      expect(within(card).queryByText(hidden)).toBeNull();
+    }
+    // Read-only: the list is changed where the apps are registered.
+    expect(within(card).queryByRole("textbox")).toBeNull();
+    expect(within(card).queryByRole("button")).toBeNull();
+    expect(within(card).getByRole("link", { name: "Self-hosted apps" }).getAttribute("href")).toBe("/admin/apps?tab=self-hosted");
+  });
+
   it("asks for confirmation naming the organizations a lowered retention ceiling clamps", async () => {
     let put = false;
     const retention = () =>

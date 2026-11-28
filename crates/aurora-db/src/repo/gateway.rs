@@ -996,6 +996,10 @@ pub struct InstanceHostRow {
     pub host: String,
     /// (FIX-145, D-231) The path the app is served under on `host`; null = the host root.
     pub base_path: Option<String>,
+    /// (FIX-290, D-511) An instance administrator's own registration: instance-wide and not a
+    /// package's preset. Only such a registration opens its host's private addresses to the
+    /// app's own requests; an organization's registration and a preset never do.
+    pub admin_registered: bool,
 }
 
 /// `active` instances visible to the organization (instance-wide and its own).
@@ -1004,7 +1008,8 @@ pub async fn visible_instances(
     org_id: Uuid,
 ) -> Result<Vec<InstanceHostRow>, DbError> {
     Ok(sqlx::query_as::<_, InstanceHostRow>(
-        "SELECT id, app_id, host, base_path FROM app_instances \
+        "SELECT id, app_id, host, base_path, (org_id IS NULL AND NOT builtin) AS admin_registered \
+         FROM app_instances \
          WHERE status = 'active' AND (org_id IS NULL OR org_id = $1) ORDER BY host, id",
     )
     .bind(org_id)

@@ -945,7 +945,8 @@ impl Supervisor {
                 shares = self.preview_shares.len(),
                 "preview share list applied"
             );
-            return;
+            // No return: the projector counts every part of a generation, and writes nothing
+            // for this kind. A part it is not given leaves a gap, and the generation is refused.
         }
         if h.part.kind == aurora_protocol::runner::HomeSyncKind::RenderInputs {
             for e in &h.part.entries {

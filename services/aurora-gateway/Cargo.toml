@@ -69,7 +69,13 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 x509-parser = { workspace = true }
 
+[features]
+# (FIX-290) The destination guard's test-only seams (fixed name answers, injected interface
+# addresses). Never on in a build of the binary: only the dev-dependency below turns it on.
+test-hooks = []
+
 [dev-dependencies]
+aurora-gateway = { path = ".", features = ["test-hooks"] }
 aurora-config = { workspace = true, features = ["test-registry"] }
 aurora-secrets = { workspace = true, features = ["memory-store"] }
 aurora-testkit = { workspace = true }

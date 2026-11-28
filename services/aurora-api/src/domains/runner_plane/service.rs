@@ -449,7 +449,7 @@ pub(crate) async fn fail_start(
         .filter(|c| START_FAILURE_CODES.contains(c))
         .unwrap_or("agent_start_failed");
     for (turn, conv) in hosted::queued_turns_of_agent(conn, f.agent_id).await? {
-        aurora_db::repo::conversations::lock(&mut *conn, conv).await?;
+        crate::domains::peer_tasks::service::lock_with_task_origins(conn, conv).await?;
         crate::domains::hosted::lifecycle::fail(
             conn,
             turn,

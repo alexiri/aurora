@@ -6,6 +6,7 @@
 
 use crate::{ApprovalSummary, SummaryField, SummarySource};
 use aurora_core::limits::SUMMARY_TEXT_MAX;
+use aurora_policy::json::{self, Lookup, Node};
 use aurora_registry::manifest::{Approval, Decoder, GraphqlSelect, Inject, Source};
 use aurora_registry::template::{Ns, Part};
 use base64::Engine;
@@ -68,7 +69,25 @@ pub fn wants_hook(a: &Approval) -> bool {
 #[must_use]
 pub fn summarize(a: &Approval, inp: &Input<'_>) -> ApprovalSummary {
     let mut fields: Vec<SummaryField> = Vec::new();
+    // The approver answers what the card says and the receiver gets the bytes: when anything
+    // a field reads has two readings, no value from the body is shown and the card says why.
+    let doubt = !inp.truncated
+        && a.fields.iter().any(|f| {
+            matches!(&f.source, Source::Body { steps } if has_two_readings(steps, inp.body_prefix))
+        });
+    if doubt {
+        fields.push(crate::two_readings(
+            "a name appears twice, or also in another case",
+        ));
+    } else if let Some(why) = unreadable_body(a, inp) {
+        fields.push(crate::warning(format!(
+            "{why}, so the values this card reads from it are not shown."
+        )));
+    }
     for f in &a.fields {
+        if doubt && matches!(f.source, Source::Body { .. }) {
+            continue;
+        }
         if let Some(value) = source_value(&f.source, inp).filter(|v| !v.is_empty()) {
             fields.push(SummaryField {
                 label: f.label.clone(),
@@ -89,6 +108,129 @@ pub fn summarize(a: &Approval, inp: &Input<'_>) -> ApprovalSummary {
         source: SummarySource::Template,
     }
     .clamp()
+}
+
+/// Something a JSON decoder reads has more than one reading.
+struct TwoReadings;
+
+/// The nodes `pointer` names in `doc`; with `wildcard`, a `*` segment visits every element of
+/// an array (or member of an object).
+fn nodes_at<'a>(
+    doc: &'a Node,
+    pointer: &str,
+    wildcard: bool,
+) -> Result<Vec<&'a Node>, TwoReadings> {
+    let found = |node: &'a Node, pointer: &str| match node.lookup(pointer) {
+        Lookup::Found(n) => Ok(Some(n)),
+        Lookup::Missing => Ok(None),
+        Lookup::Ambiguous => Err(TwoReadings),
+    };
+    let mut nodes = Vec::new();
+    if wildcard && pointer.split('/').any(|s| s == "*") {
+        nodes.push(doc);
+        for seg in pointer.split('/').skip(1) {
+            let mut next = Vec::new();
+            for n in nodes {
+                match n {
+                    Node::Array(a) if seg == "*" => next.extend(a.iter()),
+                    Node::Object(o) if seg == "*" => {
+                        let mut names = std::collections::HashSet::new();
+                        for (k, v) in o {
+                            if !names.insert(k) {
+                                return Err(TwoReadings);
+                            }
+                            next.push(v);
+                        }
+                    }
+                    _ if seg == "*" => {}
+                    _ => next.extend(found(n, &format!("/{seg}"))?),
+                }
+            }
+            nodes = next;
+        }
+    } else {
+        nodes.extend(found(doc, pointer)?);
+    }
+    if nodes.iter().any(|n| n.value().is_err()) {
+        return Err(TwoReadings);
+    }
+    Ok(nodes)
+}
+
+/// The values at `pointer` in `body`; `None` when it is not JSON or has two readings there.
+fn json_at(body: &[u8], pointer: &str, wildcard: bool) -> Option<Vec<serde_json::Value>> {
+    let doc = json::parse(body)?;
+    let nodes = nodes_at(&doc, pointer, wildcard).ok()?;
+    nodes.iter().map(|n| n.value().ok()).collect()
+}
+
+/// Why a field that reads JSON or GraphQL from the body cannot, when there is a body: such a
+/// field never just vanishes from the card, whatever decoders come before. A value that is only
+/// not there is no reason.
+fn unreadable_body(a: &Approval, inp: &Input<'_>) -> Option<&'static str> {
+    if inp.body_prefix.is_empty() {
+        return None;
+    }
+    a.fields.iter().find_map(|f| {
+        let Source::Body { steps } = &f.source else {
+            return None;
+        };
+        let last = steps.iter().rposition(reads_document)?;
+        if inp.truncated {
+            return Some("The body is longer than what was read");
+        }
+        unreadable_by(&steps[..=last], inp.body_prefix)
+    })
+}
+
+fn reads_document(d: &Decoder) -> bool {
+    matches!(
+        d,
+        Decoder::Json(_) | Decoder::JsonCount(_) | Decoder::JsonText(_) | Decoder::Graphql(_)
+    )
+}
+
+/// Where the chain `steps`, which ends in a JSON or GraphQL step, fails to read `body`.
+fn unreadable_by(steps: &[Decoder], body: &[u8]) -> Option<&'static str> {
+    let mut v = Val::Bytes(body.to_vec());
+    for (i, s) in steps.iter().enumerate() {
+        let readable = match s {
+            Decoder::Graphql(_) => graphql_request(v.bytes())
+                .is_some_and(|(q, _)| graphql_parser::parse_query::<String>(&q).is_ok()),
+            _ if reads_document(s) => json::parse(v.bytes()).is_some(),
+            _ => true,
+        };
+        if !readable {
+            return Some(match s {
+                _ if i > 0 => "Part of the body could not be read",
+                Decoder::Graphql(_) => "The body could not be read as a GraphQL request",
+                _ => "The body is not valid JSON",
+            });
+        }
+        match step(s, &v) {
+            Some(next) => v = next,
+            // The document was read and the value is not in it.
+            None if reads_document(s) => return None,
+            None => return Some("Part of the body could not be read"),
+        }
+    }
+    None
+}
+
+/// Whether the body, as the first step of `steps` reads it, has two readings. A body that is
+/// not JSON has none.
+fn has_two_readings(steps: &[Decoder], body: &[u8]) -> bool {
+    let (pointers, wildcard): (Vec<&str>, bool) = match steps.first() {
+        Some(Decoder::Json(p)) => (vec![p], true),
+        Some(Decoder::JsonCount(p) | Decoder::JsonText(p)) => (vec![p], false),
+        Some(Decoder::Graphql(_)) => (vec!["/query", "/operationName"], false),
+        _ => return false,
+    };
+    json::parse(body).is_some_and(|doc| {
+        pointers
+            .iter()
+            .any(|p| nodes_at(&doc, p, wildcard).is_err())
+    })
 }
 
 fn path_segment(path: &str, n: usize) -> Option<&str> {
@@ -177,30 +319,11 @@ fn step(d: &Decoder, v: &Val) -> Option<Val> {
         Decoder::Json(ptr) if ptr.split('/').any(|s| s == "*") => {
             // (FIX-118) `*` visits every element of an array (or member of an object); the scalar
             // leaves are listed, comma-separated, so every recipient or attendee is shown.
-            let j: serde_json::Value = serde_json::from_slice(v.bytes()).ok()?;
-            let mut nodes = vec![&j];
-            for seg in ptr.split('/').skip(1) {
-                let mut next = Vec::new();
-                for n in nodes {
-                    if seg == "*" {
-                        match n {
-                            serde_json::Value::Array(a) => next.extend(a.iter()),
-                            serde_json::Value::Object(o) => next.extend(o.values()),
-                            _ => {}
-                        }
-                    } else if let Some(c) = n.pointer(&format!("/{seg}")) {
-                        next.push(c);
-                    }
-                }
-                nodes = next;
-            }
-            let leaves: Vec<String> = nodes.into_iter().filter_map(scalar_text).collect();
+            let nodes = json_at(v.bytes(), ptr, true)?;
+            let leaves: Vec<String> = nodes.iter().filter_map(scalar_text).collect();
             (!leaves.is_empty()).then(|| Val::Text(leaves.join(", ")))
         }
-        Decoder::Json(ptr) => {
-            let j: serde_json::Value = serde_json::from_slice(v.bytes()).ok()?;
-            scalar_text(j.pointer(ptr)?).map(Val::Text)
-        }
+        Decoder::Json(ptr) => scalar_text(json_at(v.bytes(), ptr, false)?.first()?).map(Val::Text),
         Decoder::Form(name) => {
             let t = v.text()?;
             t.split('&')
@@ -257,8 +380,7 @@ fn step(d: &Decoder, v: &Val) -> Option<Val> {
             Some(Val::Text(msg.attachments().len().to_string()))
         }
         Decoder::JsonCount(ptr) => {
-            let j: serde_json::Value = serde_json::from_slice(v.bytes()).ok()?;
-            let n = match j.pointer(ptr) {
+            let n = match json_at(v.bytes(), ptr, false)?.first() {
                 Some(serde_json::Value::Array(a)) => a.len(),
                 Some(_) => return None,
                 None => 0,
@@ -266,9 +388,8 @@ fn step(d: &Decoder, v: &Val) -> Option<Val> {
             Some(Val::Text(n.to_string()))
         }
         Decoder::JsonText(ptr) => {
-            let j: serde_json::Value = serde_json::from_slice(v.bytes()).ok()?;
             let mut out = Vec::new();
-            collect_text(j.pointer(ptr)?, &mut out, 0);
+            collect_text(json_at(v.bytes(), ptr, false)?.first()?, &mut out, 0);
             (!out.is_empty()).then(|| Val::Text(out.join(" ")))
         }
         Decoder::MimeText(_) => {
@@ -397,18 +518,26 @@ fn collect_text(v: &serde_json::Value, out: &mut Vec<String>, depth: usize) {
     }
 }
 
+/// The query text and `operationName` of a GraphQL request: a JSON object with a string
+/// `query`, else the whole body as the query text.
+fn graphql_request(body: &[u8]) -> Option<(String, Option<String>)> {
+    match json::parse(body) {
+        Some(doc @ Node::Object(_)) => {
+            let member = |name: &str| match doc.get(name) {
+                Lookup::Found(Node::Scalar(v)) => Ok(v.as_str().map(str::to_owned)),
+                Lookup::Found(_) | Lookup::Missing => Ok(None),
+                Lookup::Ambiguous => Err(TwoReadings),
+            };
+            Some((member("query").ok()??, member("operationName").ok()?))
+        }
+        _ => Some((std::str::from_utf8(body).ok()?.to_owned(), None)),
+    }
+}
+
 /// `operation_name`: the request's `operationName`, else the first named operation.
 /// `field_names`: top-level fields of the first operation, comma-separated.
 fn graphql(body: &[u8], sel: GraphqlSelect) -> Option<String> {
-    let (query, op_name) = match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(serde_json::Value::Object(o)) => (
-            o.get("query")?.as_str()?.to_owned(),
-            o.get("operationName")
-                .and_then(|x| x.as_str())
-                .map(str::to_owned),
-        ),
-        _ => (std::str::from_utf8(body).ok()?.to_owned(), None),
-    };
+    let (query, op_name) = graphql_request(body)?;
     let doc = graphql_parser::parse_query::<String>(&query).ok()?;
     use graphql_parser::query::{Definition, OperationDefinition as Op, Selection};
     let ops: Vec<(Option<&str>, &graphql_parser::query::SelectionSet<String>)> = doc
@@ -558,6 +687,131 @@ mod tests {
         assert_eq!(s.source, SummarySource::Template);
     }
 
+    /// The approver answers what the card says and the receiver gets the bytes: a body with
+    /// more than one reading shows no value taken from it, and says why.
+    #[test]
+    fn a_body_with_two_readings_shows_no_value_and_says_so() {
+        let a = json!({"title":"Send","fields":[
+            {"label":"To","source":"body","steps":[{"json":"/to"}]},
+            {"label":"Count","source":"body","steps":[{"json_count":"/cc"}]},
+            {"label":"Op","source":"body","steps":[{"graphql":"operation_name"}]},
+            {"label":"Task","source":"path","segment":1}]});
+        for body in [
+            r#"{"to":"evil@example.org","to":"ok@example.com"}"#,
+            r#"{"to":"ok@example.com","To":"evil@example.org"}"#,
+            r#"{"to":"ok@example.com","Cc":["evil@example.org"]}"#,
+            r#"{"query":"{ a }","Query":"mutation { b }"}"#,
+        ] {
+            let s = run(a.clone(), "/t1", None, body.as_bytes(), false);
+            let note = val(&s, "Warning").unwrap_or_default();
+            assert!(note.contains("more than one way"), "{body}: {note:?}");
+            assert_eq!(s.fields.first().map(|f| f.label.as_str()), Some("Warning"));
+            let shown = serde_json::to_string(&s).unwrap();
+            assert!(!shown.contains("ok@example.com"), "{body}: {shown}");
+            for l in ["To", "Count", "Op"] {
+                assert!(val(&s, l).is_none(), "{body}: {l}");
+            }
+            assert_eq!(val(&s, "Task").as_deref(), Some("t1"));
+        }
+        // A body every field can read, the `graphql` one included.
+        let body = br#"{"to":"ok@example.com","cc":[],"query":"{ a }"}"#;
+        let s = run(a, "/t1", None, body, false);
+        assert_eq!(val(&s, "To").as_deref(), Some("ok@example.com"));
+        assert!(val(&s, "Warning").is_none());
+    }
+
+    /// Fields that cannot be read from the body never just vanish from the card.
+    #[test]
+    fn a_body_that_cannot_be_read_says_so() {
+        let a = json!({"title":"Share","fields":[
+            {"label":"Email","source":"body","steps":[{"json":"/emailAddress"}]},
+            {"label":"File","source":"path","segment":1}]});
+        for (body, truncated, why) in [
+            (
+                br#"{"emailAddress":"a@x","p":"\ud800"}"#.as_slice(),
+                false,
+                "not valid JSON",
+            ),
+            (b"emailAddress=a@x".as_slice(), false, "not valid JSON"),
+            (
+                br#"{"emailAddress":"a@x","p":"aaa"#.as_slice(),
+                true,
+                "longer than",
+            ),
+        ] {
+            let s = run(a.clone(), "/f1", None, body, truncated);
+            let note = val(&s, "Warning").unwrap_or_default();
+            assert!(note.contains(why), "{note:?}");
+            assert_eq!(s.fields.first().map(|f| f.label.as_str()), Some("Warning"));
+            assert!(val(&s, "Email").is_none());
+            assert_eq!(val(&s, "File").as_deref(), Some("f1"));
+        }
+        // No body, or no field that reads JSON from it: nothing is hidden.
+        let s = run(a, "/f1", None, b"", false);
+        assert!(val(&s, "Warning").is_none());
+        let form = json!({"title":"T","fields":[
+            {"label":"A","source":"body","steps":[{"form":"Action"}]}]});
+        let s = run(form, "/", None, b"Action=Run", false);
+        assert!(val(&s, "Warning").is_none());
+    }
+
+    /// The same for a field that reaches JSON through another decoder, and for a `graphql`
+    /// field. A value that is merely not there is no warning.
+    #[test]
+    fn a_decoder_chain_or_graphql_field_that_cannot_read_says_so() {
+        let one = |steps: serde_json::Value| json!({"title":"T","fields":[{"label":"V","source":"body","steps":steps}]});
+        for (steps, body) in [
+            (
+                json!([{"form":"payload"},{"json":"/to"}]),
+                "payload=not-json",
+            ),
+            (json!([{"form":"payload"},{"json":"/to"}]), "other=1"),
+            (json!([{"mime_text":{}},{"json":"/to"}]), "\u{0}"),
+            (json!([{"base64":{}},{"json":"/to"}]), "!!!"),
+            (json!([{"graphql":"operation_name"}]), "{ not graphql"),
+            (json!([{"graphql":"field_names"}]), r#"{"query": 5}"#),
+            (
+                json!([{"graphql":"field_names"}]),
+                r#"{"query": "mutation {"}"#,
+            ),
+        ] {
+            let s = run(one(steps.clone()), "/", None, body.as_bytes(), false);
+            assert!(val(&s, "V").is_none(), "{steps}: {body}");
+            assert!(
+                val(&s, "Warning").is_some_and(
+                    |w| w.contains("could not be read") || w.contains("not valid JSON")
+                ),
+                "{steps}: {body}: {s:?}"
+            );
+        }
+        let s = run(
+            one(json!([{"graphql":"operation_name"}])),
+            "/",
+            None,
+            b"{",
+            true,
+        );
+        assert!(
+            val(&s, "Warning").is_some_and(|w| w.contains("longer than")),
+            "{s:?}"
+        );
+        for (steps, body) in [
+            (
+                json!([{"form":"payload"},{"json":"/to"}]),
+                r#"payload={"cc":1}"#,
+            ),
+            (
+                json!([{"graphql":"operation_name"}]),
+                r#"{"query":"{ a }"}"#,
+            ),
+            (json!([{"graphql":"field_names"}]), "{ a }"),
+            (json!([{"json":"/to"}]), r#"{"cc":1}"#),
+        ] {
+            let s = run(one(steps.clone()), "/", None, body.as_bytes(), false);
+            assert!(val(&s, "Warning").is_none(), "{steps}: {body}: {s:?}");
+        }
+    }
+
     #[test]
     fn raw_mime_message() {
         let mime = "To: Alice <alice@example.com>, bob@example.com\r\nSubject: =?UTF-8?B?SMOpbGxv?=\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello body\r\n";
@@ -588,7 +842,9 @@ mod tests {
             &body[..20],
             true,
         );
-        assert!(s.fields.is_empty());
+        // The card says why instead of showing nothing.
+        let labels: Vec<&str> = s.fields.iter().map(|f| f.label.as_str()).collect();
+        assert_eq!(labels, ["Warning"]);
     }
 
     /// (FIX-118, PKG-1) Every recipient — repeated `To:` lines, Cc and Bcc — and the attachment

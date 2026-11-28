@@ -205,7 +205,9 @@ impl PolicyHandler {
                 "error",
             ));
         };
-        let values: serde_json::Value = match serde_json::from_slice(&bytes) {
+        // The rules read these bytes and the message is rendered from the parsed values: a
+        // body with more than one reading is refused.
+        let values = match aurora_policy::json::read_unrepeated(&bytes) {
             Ok(v) => v,
             Err(_) => return self.wh_refuse(ctx, &invalid("", "type"), "blocked"),
         };
@@ -536,6 +538,7 @@ impl PolicyHandler {
             response_headers: HeaderMap::new(),
             retry: None,
             ldap: None,
+            app_host: None,
             link: Some(LinkFetch {
                 url,
                 connection_id: conn_id,

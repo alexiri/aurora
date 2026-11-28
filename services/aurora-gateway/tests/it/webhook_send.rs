@@ -769,6 +769,26 @@ async fn a_connect_failure_is_502_link_unreachable_and_nothing_was_delivered() {
     );
 }
 
+/// The rules read the agent's bytes and the message is rendered from what was parsed: a body
+/// with more than one reading is refused, and nothing is sent.
+#[tokio::test]
+async fn slot_values_with_two_readings_are_refused_and_nothing_is_sent() {
+    let l = lane(&hook_pq(), config(json!({})), None, None).await;
+    for body in [
+        r#"{"text":"first","text":"second","n":3}"#,
+        r#"{"$serde_json::private::RawValue":"{\"text\":\"hidden\",\"n\":3}"}"#,
+    ] {
+        let r = l.post(JSON, body).await;
+        assert_eq!(
+            (r.status, r.code().as_str()),
+            (422, "invalid_slot"),
+            "{}",
+            r.body
+        );
+    }
+    assert!(l.upstream().is_empty());
+}
+
 #[tokio::test]
 async fn an_approval_shows_the_slot_values_creates_none_for_an_invalid_send_and_sends_after_approve()
  {

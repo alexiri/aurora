@@ -72,11 +72,12 @@ struct Static(World);
 #[async_trait]
 impl CredentialResolver for Static {
     async fn resolve(&self, token: &str) -> Result<Option<RequestIdentity>, ResolveError> {
-        if token != TOKEN && token != EVAL_CTX {
+        if token != TOKEN && token != EVAL_CTX && token != BROWSER {
             return Ok(None);
         }
         let w = self.0;
         let eval = token == EVAL_CTX;
+        let browser = token == BROWSER;
         Ok(Some(RequestIdentity {
             credential_id: Uuid::nil(),
             kind: if eval {
@@ -95,6 +96,8 @@ impl CredentialResolver for Static {
             speaker_group_ids: Vec::new(),
             capabilities: if eval {
                 vec![aurora_gateway::auth::CAP_EVAL_READ_ONLY.into()]
+            } else if browser {
+                vec![aurora_gateway::auth::CAP_BROWSER.into()]
             } else {
                 vec![]
             },
@@ -105,6 +108,14 @@ impl CredentialResolver for Static {
 
 /// (P4-EVAL-2) the `auc_` credential of a turn in an eval conversation.
 const EVAL_CTX: &str = "auc_eval";
+
+/// (FIX-290) a boot credential with the `browser` capability (the open lane).
+const BROWSER: &str = "aub_browser";
+
+/// (FIX-290, D-511) Self-hosted app hosts on private addresses.
+mod self_hosted;
+/// (FIX-290) How often an unresolvable service of Aurora's is logged.
+mod service_log;
 
 #[derive(Default)]
 struct Rows {
@@ -214,6 +225,8 @@ struct Env {
     resolve_cache: Arc<aurora_gateway::resolve::ResolveCache>,
     /// With a hold store: the shutdown signal its holds listen to (`send(true)` = SIGTERM).
     shutdown: Option<tokio::sync::watch::Sender<bool>>,
+    /// The proxy's destination guard.
+    guard: Arc<aurora_gateway::guard::Guard>,
 }
 
 /// The contact-point answer the upstream returns: names and types, and settings a projected
@@ -521,7 +534,7 @@ async fn start_in(
     let cache = handler.link_cache();
     let handler = Arc::new(handler);
     let gw = ca::generate("gw").unwrap();
-    let (proxy, _) = crate::common::spawn_proxy(
+    let (proxy, handle) = crate::common::spawn_proxy(
         &gw,
         Arc::new(Static(w)),
         handler,
@@ -530,6 +543,7 @@ async fn start_in(
     .await;
     (
         Env {
+            guard: handle.guard().clone(),
             proxy,
             up,
             rows,
@@ -1356,6 +1370,7 @@ fn instance_row_at(id: Uuid, app: &str, host: &str, base: Option<&str>) -> Insta
         app_id: app.into(),
         host: host.into(),
         base_path: base.map(str::to_owned),
+        admin_registered: false,
     }
 }
 

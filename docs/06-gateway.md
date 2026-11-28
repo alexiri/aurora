@@ -676,7 +676,48 @@ minted.
    | Translated | an address that **embeds** an IPv4 address is judged by the embedded address: IPv4-mapped `::ffff:0:0/96`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16` (so `64:ff9b::a00:1` is `10.0.0.1`; one embedding a public IPv4 address is public). An IPv4 CIDR in `allowed_private` does not open the translated forms of its range |
 
    Cloud-metadata addresses (169.254.169.254, fd00:ec2::254, and their translated
-   forms) only by exact-IP entry. (phase 5, P4-LLM spec batch, D-262) The implicit
+   forms) only by exact-IP entry.
+
+   (FIX-290, D-511, SEC-170) **A self-hosted app's own host** needs no entry. The
+   allowance travels with one request, never with a host name, and a request
+   carries it only when all of this holds: it is `https`; it goes to the exact
+   host of a registration an instance administrator made (`app_instances` with
+   `org_id` null, not a package preset, `active`), on the port the app's
+   `{instance}` entry declares (443: a manifest cannot declare another); that
+   registration matched the app (its base path covers the request path); and the
+   request won a **granted connection bound to that registration**. Everything else
+   is judged as before: the open lane, a request without such a connection,
+   another app or registration on the same host, an organization's registration,
+   a preset, a generic secret, webhooks, secret links, LDAP, databases and token
+   minting. With the allowance an address the table refuses passes only if it is
+   private unicast (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
+   `100.64.0.0/10`, `fc00::/7`; never a metadata service inside them:
+   `100.100.100.200`, `fd00:ec2::/32`, `fd20:ce::254`); every other row, the
+   translated forms included, stays refused. The name must be a lower-case name of
+   at least two labels, not an address, and not under `.svc`, `.cluster.local`,
+   `.localhost` or `aurora.internal`. Aurora's own addresses stay refused: the
+   gateway's listeners and database (as above), every address of the gateway's own
+   interfaces on any port, and every address of the other services the process
+   knows: from its configuration the database, hook host, counters Redis and
+   configured secret stores, plus, for the gateway, the egress proxy and, for the
+   API, the gateway; and the Kubernetes API (`KUBERNETES_SERVICE_HOST`). If one of
+   those does not resolve, nothing is opened (logged once a minute per name). That
+   list is **defence in depth and not complete** (it has no pod addresses, and of the
+   Kubernetes API only the Service address): what really bounds the allowance is
+   port 443, TLS verification of the registered name, and the NetworkPolicies. The
+   operator closes whole networks with `gateway.self_hosted_refused_ranges` (CIDRs,
+   gateway and API; the cluster's pod and Service ranges): an address in one is never
+   opened. (FIX-296, D-515) The chart's NetworkPolicies still refuse private addresses unless
+   the operator opens them, for example with `networkPolicy.selfHostedPrivateEgress`
+   (off by default; `15 §Production: Helm`). The fully qualified name (`host.`)
+   must resolve to the same address, so a short cluster name completed by a DNS
+   search domain gets nothing. These requests use their own upstream connection
+   pool, so no other request can reuse such a connection. Removing, disabling or
+   re-scoping the registration applies with the next resolve (the same
+   invalidation as every registration change); a request held for approval is
+   judged again on release.
+
+   (phase 5, P4-LLM spec batch, D-262) The implicit
    allowance for LLM endpoint hosts (`08 §LLM hosts`) is added only for endpoints
    defined in the deployment configuration, never covers a metadata or link-local
    address, and is rebuilt with the endpoint table on every `llm` or `limits`
@@ -884,7 +925,29 @@ upstreams on random ports keep working.
 1. Build the **approval summary** (`09 §Approval summaries`): manifest template
    for the tool → `approval.summarize` hook (only if declared; bounded call to
    the hook host with the body prefix ≤ `APPROVAL_BODY_PEEK`, no egress) →
-   generic redacting summarizer. Raw bodies are never stored.
+   generic redacting summarizer. Raw bodies are never stored. (FIX-284,
+   `07 §One reading of a JSON body`) When what a template field reads has two
+   readings, the card shows no value from the body and has a `Warning` field
+   saying so (the generic summary does the same for a repeated name anywhere,
+   naming it). A template field that reads JSON or GraphQL, directly or after
+   other decoders, adds a `Warning` when the body, or the part it decodes, cannot
+   be read or the body is longer than what was read; its values never just
+   vanish. A value that is only not there adds none. The hook gets JSON only when it has one reading,
+   whatever the content type says: a body the core reads as JSON must repeat no
+   name anywhere, also in another case; one it cannot read, a cut-off one
+   included, stays with the template when its content type says JSON or it
+   starts with `{` or `[` (behind white space or a byte order mark too; an empty
+   body has nothing to read). So does a request with two content types, with a
+   `content-encoding` other than `identity`, or whose multipart first part names
+   a transfer encoding other than `7bit`, `8bit` or `binary`: the core checks
+   bytes as they are. **A
+   hook sees only the first part of a multipart body** (a `multipart/` type, or
+   any mention of a boundary): the body is cut after that part and closed
+   again. It gets that only when the body starts at the delimiter, the part is
+   declared JSON and has one reading (in a cut-off body, only a part that a
+   delimiter in what was read closes), and every reader reads the same boundary:
+   one `;boundary=` parameter (no `boundary*=`, no space around `=`), a closed
+   quote, RFC 2046's characters and no backslash.
 2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
    gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
    effective timeout comes from the matching rules (`07 §Approval deadlines`,

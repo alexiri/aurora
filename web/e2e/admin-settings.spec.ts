@@ -185,10 +185,23 @@ for (const scheme of ["light", "dark"] as const) {
 
       test("the limits page lists a Helm rate class and warns about private destinations", async ({ page }) => {
         await openRoute(page, "/admin/settings/limits", scheme);
+        // (FIX-290) One self-hosted server registered for all organizations, with a long host name. Registered
+        // after the shared mock, so it answers first; the reload fetches it.
+        await page.route("**/v1/admin/app-instances", (route) =>
+          route.fulfill({
+            json: {
+              items: [{ id: "i1", org_id: null, builtin: false, status: "active", label: "Team wiki", host: "team-wiki.engineering.intranet.corp.example" }],
+              next_cursor: null,
+            },
+          }),
+        );
+        await page.reload();
         await expect(page).toHaveURL(/\/admin\/platform\?tab=limits$/);
         await expect(page.getByRole("heading", { name: "Health & runners", level: 1 })).toBeVisible();
         await expect(page.getByText("Set by the installation").first()).toBeVisible();
         await expect(page.getByText(/Entries in the allowed-private list open an address range/)).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Private hosts opened by self-hosted apps" })).toBeVisible();
+        await expect(page.getByText("team-wiki.engineering.intranet.corp.example")).toBeVisible();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         expect(await axeClean(page)).toEqual([]);
       });

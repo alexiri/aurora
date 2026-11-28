@@ -166,9 +166,10 @@ pub struct HomeProjector {
     cfg: HomeConfig,
     /// A part of the current generation was invalid or failed; the generation must not be acked.
     failed: Option<&'static str>,
-    /// The generation being staged (or last committed). In memory only: a marker in the home
-    /// would be the agent's to rewrite.
     current: Option<u64>,
+    /// The generation this process is staging and the lowest part index it has not been given.
+    /// Set by part 0 only: what an earlier process staged is never finished by this one.
+    staging: Option<(u64, u32)>,
     /// (SEC-171) Every staged file of the current generation, by destination (home-relative);
     /// reset with the staging area. Only these are installed, and only with these bytes.
     staged: BTreeMap<PathBuf, Staged>,
@@ -376,6 +377,7 @@ impl HomeProjector {
             cfg,
             failed: None,
             current: None,
+            staging: None,
             staged: BTreeMap::new(),
             staged_docs: BTreeMap::new(),
             locked_keys: BTreeSet::new(),
@@ -431,6 +433,19 @@ impl HomeProjector {
     fn record(&mut self, rel: PathBuf, body: &[u8], exec: bool) {
         let digest = (body.len() as u64 <= STAGED_READ_MAX).then(|| digest_of(body));
         self.staged.insert(rel, Staged { digest, exec });
+    }
+
+    /// A skill or helper file that is skipped. Whatever an earlier part staged for it goes too:
+    /// neither remembered nor left in the staging area, so it is not installed.
+    fn skip(&mut self, rel: PathBuf) {
+        if self.staged.remove(&rel).is_some() {
+            let staged = Path::new(SYNC_DIR).join("files").join(&rel);
+            if let Err(error) = nofollow::remove_file_beneath(&self.cfg.root, &staged) {
+                // The commit then finds a file nobody sent and refuses the generation.
+                tracing::warn!(path = %rel.display(), %error, "staged version of a skipped file not removed");
+            }
+        }
+        self.skipped.insert(rel);
     }
 
     /// The staged document `name`, checked against what was last written to it. `None` when no
@@ -490,20 +505,33 @@ impl HomeProjector {
         })
     }
 
-    /// Applies one `home.sync` part. Part 0 (or a new generation) resets staging.
+    /// Applies one `home.sync` part. Part 0 resets staging; any other part is taken only when
+    /// this process staged every part before it (a replay of one is fine). The locked set lives
+    /// in this process, so a generation staged by an earlier one, or with a part missing, would
+    /// install a locked memory writable: it is refused, not acked, and sent again from part 0.
     pub fn apply_part(&mut self, sync: &HomeSync) -> Result<PartOutcome, HomeError> {
-        let new_generation = self.current != Some(sync.generation);
-        if sync.part_index == 0 || new_generation {
+        if sync.part_index == 0 {
+            self.staging = None;
             let _ = fs::remove_dir_all(self.sync_dir());
             fs::create_dir_all(self.staged_files())?;
-            // A generation first seen past its first part (the supervisor restarted) is never
-            // complete: what was staged before cannot be checked.
-            self.failed = (sync.part_index != 0).then_some("earlier parts missing");
+            self.failed = None;
             self.staged.clear();
             self.staged_docs.clear();
             // (P6-MEMLOCK) The locked set belongs to the generation being staged.
             self.locked_keys.clear();
             self.skipped.clear();
+            self.staging = Some((sync.generation, 0));
+        }
+        match self.staging {
+            Some((g, next)) if g == sync.generation && sync.part_index <= next => {
+                self.staging = Some((g, next.max(sync.part_index.saturating_add(1))));
+            }
+            _ => {
+                return Err(HomeError::Incomplete(
+                    sync.generation,
+                    "an earlier part was not staged; waiting for the generation from part 0",
+                ));
+            }
         }
         self.current = Some(sync.generation);
         if let Err(e) = self.stage(sync) {
@@ -568,7 +596,7 @@ impl HomeProjector {
                                         %error,
                                         "skill file does not decode; skipped"
                                     );
-                                    self.skipped.insert(rel);
+                                    self.skip(rel);
                                     continue;
                                 }
                             }
@@ -590,7 +618,7 @@ impl HomeProjector {
                                 %error,
                                 "skill file not written; skipped"
                             );
-                            self.skipped.insert(rel);
+                            self.skip(rel);
                         }
                         Err(error) => return Err(error.into()),
                     }
@@ -638,7 +666,7 @@ impl HomeProjector {
                                         %error,
                                         "helper file not written; skipped"
                                     );
-                                    self.skipped.insert(r);
+                                    self.skip(r);
                                 }
                             }
                         }
@@ -694,12 +722,49 @@ impl HomeProjector {
     /// Installs the staged generation: installs the staged files, prunes managed roots to the
     /// manifest (agent-edited memory files are kept until superseded), renders instructions.
     pub fn commit(&mut self, generation: u64) -> Result<(), HomeError> {
+        // (SEC-171) Refused here, the installed generation is left as it is. A file swapped
+        // while the commit runs is refused at its install: nothing but what was sent is ever
+        // installed, and without an ack the generation is sent again.
+        let docs = self.verify_staged(generation)?;
+        let mut memories = Vec::new();
+        if let Err(error) = self.install_verified(generation, &docs, &mut memories) {
+            // Stopped part way: what is installed is guarded as it now stands.
+            if let Some(rel) = self.skills_prefix() {
+                lock_tree(&self.cfg.root, &rel, self.agent_uid);
+            }
+            for rel in [APPS_DIR, HELPERS_DIR] {
+                lock_tree(&self.cfg.root, Path::new(rel), self.agent_uid);
+            }
+            let mut locked = (*self.locked_bytes).clone();
+            for (key, bytes) in memories {
+                match bytes {
+                    Some(bytes) => locked.insert(key, bytes),
+                    None => locked.remove(&key),
+                };
+            }
+            self.locked_bytes = Arc::new(locked);
+            return Err(error);
+        }
+        self.current = Some(generation);
+        // (P6-MEMLOCK) What the harvest protects from now on; an empty map unlocks everything.
+        let locked = memories
+            .into_iter()
+            .filter_map(|(key, bytes)| Some((key, bytes?)))
+            .collect();
+        self.locked_bytes = Arc::new(locked);
+        Ok(())
+    }
+
+    /// The install of a generation [`Self::verify_staged`] passed. `memories` gets every memory
+    /// file as it is installed: its key, and its bytes when it is a locked one.
+    fn install_verified(
+        &self,
+        generation: u64,
+        docs: &StagedDocs,
+        memories: &mut Vec<(String, Option<Vec<u8>>)>,
+    ) -> Result<(), HomeError> {
         let root = self.cfg.root.clone();
         let sync = self.sync_dir();
-        // (SEC-171) Refused here, the installed generation is left as it is. A file swapped
-        // while the commit runs is refused at its install below: nothing but what was sent is
-        // ever installed, and without an ack the generation is sent again.
-        let docs = self.verify_staged(generation)?;
         let manifest: Vec<String> = serde_json::from_slice(&docs.manifest)?;
         let mut keep: BTreeSet<PathBuf> = manifest
             .iter()
@@ -738,7 +803,6 @@ impl HomeProjector {
         prune_to(&root, &helpers_root, &keep);
 
         // Install.
-        let mut locked_bytes: HashMap<String, Vec<u8>> = HashMap::new();
         for (rel, entry) in &self.staged {
             let rel = rel.clone();
             let src = self.staged_files().join(&rel);
@@ -779,15 +843,18 @@ impl HomeProjector {
                     continue;
                 }
             };
-            if locked {
-                // The harvest restores these exact (sealed) bytes instead of uploading an edit.
+            if rel.starts_with(MEMORY_DIR) {
+                // The harvest restores a locked one's exact (sealed) bytes instead of
+                // uploading an edit.
                 match rel.file_name().and_then(|n| n.to_str()) {
                     Some(n) => {
-                        locked_bytes.insert(n.trim_end_matches(".md").to_owned(), bytes);
+                        let key = n.trim_end_matches(".md").to_owned();
+                        memories.push((key, locked.then_some(bytes)));
                     }
-                    None => {
+                    None if locked => {
                         tracing::warn!(path = %rel.display(), "locked memory file name refused")
                     }
+                    None => {}
                 }
             }
             keep.insert(rel);
@@ -856,9 +923,6 @@ impl HomeProjector {
             None => self.render_installed()?,
         }
         let _ = fs::remove_dir_all(&sync);
-        self.current = Some(generation);
-        // (P6-MEMLOCK) What the harvest protects from now on; an empty map unlocks everything.
-        self.locked_bytes = Arc::new(locked_bytes);
         Ok(())
     }
 
@@ -1445,6 +1509,119 @@ mod tests {
         assert_refused(p.commit(2));
         assert!(!home.join("memory/planted.md").exists());
         assert_first_generation(&home, &p);
+        cleanup(&dir, &home);
+    }
+
+    /// A generation of the given parts, a manifest of `paths` and the final part.
+    fn generation_of(
+        generation: u64,
+        mut parts: Vec<(&str, serde_json::Value)>,
+        paths: &[&str],
+    ) -> Vec<HomeSync> {
+        use serde_json::json;
+        let manifest: Vec<_> = paths.iter().map(|p| json!({"path": p})).collect();
+        parts.push(("manifest", json!(manifest)));
+        parts.push(("final", json!([])));
+        let count = parts.len();
+        parts
+            .into_iter()
+            .enumerate()
+            .map(|(i, (kind, entries))| {
+                serde_json::from_value(json!({
+                    "generation": generation, "part_index": i, "part_count": count,
+                    "part": {"kind": kind, "entries": entries}
+                }))
+                .unwrap()
+            })
+            .collect()
+    }
+
+    /// (SEC-171) A path staged by one part and skipped by a later one is not installed with the
+    /// earlier bytes, and does not stop the rest of the generation.
+    #[test]
+    fn a_file_skipped_after_it_was_staged_is_not_installed() {
+        use serde_json::json;
+        let (dir, home, _) = scratch();
+        let mut p = projector(&home);
+        apply(&mut p, &sync_parts(1, "one"));
+        p.commit(1).unwrap();
+        apply(
+            &mut p,
+            &generation_of(
+                2,
+                vec![
+                    (
+                        "skills",
+                        json!([
+                            {"path": SKILL, "content": "earlier"},
+                            {"path": RUN, "content": "run two"}
+                        ]),
+                    ),
+                    (
+                        "skills",
+                        json!([{"path": SKILL, "content": null, "content_base64": "not base64!"}]),
+                    ),
+                ],
+                &[SKILL, RUN],
+            ),
+        );
+        p.commit(2).unwrap();
+        assert!(fs::symlink_metadata(home.join(SKILL)).is_err());
+        assert_eq!(fs::read_to_string(home.join(RUN)).unwrap(), "run two");
+        cleanup(&dir, &home);
+    }
+
+    /// (SEC-171) A commit that stops part way leaves the managed trees locked and protects the
+    /// memories as it installed them: one locked by this generation is restored by the harvest,
+    /// one it unlocked is the agent's again.
+    #[test]
+    fn a_commit_that_stops_part_way_still_guards_what_it_installed() {
+        use serde_json::json;
+        let (dir, home, _) = scratch();
+        let mut p = projector(&home);
+        apply(&mut p, &sync_parts(1, "one"));
+        p.commit(1).unwrap();
+        apply(
+            &mut p,
+            &generation_of(
+                2,
+                vec![
+                    ("skills", json!([{"path": SKILL, "content": "skill two"}])),
+                    ("apps", json!([{"path": APP, "content": "app two"}])),
+                    (
+                        "helpers",
+                        json!([{"path": HELPER, "content": "helper two"}]),
+                    ),
+                    (
+                        "memory",
+                        json!([
+                            {"path": "memory/fresh.md", "content": "fresh", "locked": true},
+                            {"path": "memory/pinned.md", "content": "unlocked now"},
+                            {"path": "memory/zz.md", "content": "never installed"}
+                        ]),
+                    ),
+                ],
+                &[
+                    SKILL,
+                    APP,
+                    HELPER,
+                    "memory/fresh.md",
+                    "memory/pinned.md",
+                    "memory/zz.md",
+                ],
+            ),
+        );
+        // The last file in install order cannot be written: a folder is in its place.
+        fs::create_dir_all(home.join("memory/zz.md/in-the-way")).unwrap();
+        assert!(p.commit(2).is_err());
+        for rel in [".claude/skills", APPS_DIR, HELPERS_DIR] {
+            assert_eq!(mode_of(&home.join(rel)), 0o555, "{rel}");
+        }
+        let locked = p.locked_memories();
+        assert_eq!(locked.get("fresh"), Some(&seal("fresh").into_bytes()));
+        assert_eq!(mode_of(&home.join("memory/fresh.md")), 0o444);
+        assert_eq!(locked.get("pinned"), None, "unlocked by what was installed");
+        assert_eq!(locked.len(), 1);
         cleanup(&dir, &home);
     }
 
