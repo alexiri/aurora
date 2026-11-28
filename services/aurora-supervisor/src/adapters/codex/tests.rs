@@ -382,6 +382,46 @@ async fn a_thread_id_that_is_not_a_uuid_is_not_stored() {
     assert_eq!(s.session_ref(), None);
 }
 
+/// (FIX-297) A link planted anywhere the purge walks: nothing it points at is listed or
+/// removed.
+#[tokio::test]
+async fn a_session_purge_removes_nothing_through_a_planted_link() {
+    use std::fs;
+    for link in [
+        ".codex",
+        ".codex/sessions",
+        ".codex/sessions/2026",
+        ".codex/archived_sessions",
+        ".codex/shell_snapshots",
+    ] {
+        let dir = tmp("purge-link");
+        let (home, outside) = (dir.join("home"), dir.join("outside"));
+        // Whatever the link stands for, the folder outside holds what a purge would remove.
+        let rollout = "rollout-2026-11-10T06-10-39-resolv.jsonl";
+        let mut victims = vec!["resolv.conf".to_owned()];
+        for at in ["", "11/", "2026/11/", "sessions/11/", "archived_sessions/"] {
+            victims.push(format!("{at}{rollout}"));
+        }
+        victims.push("shell_snapshots/resolv.conf".to_owned());
+        for victim in &victims {
+            let path = outside.join(victim);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "outside").unwrap();
+        }
+        let at = home.join(link);
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &at).unwrap();
+
+        let a =
+            CodexAdapter::with_launcher(Arc::new(Mock::new(TEXT))).codex_home(home.join(".codex"));
+        let _ = a.purge_session(&home, "resolv").await;
+        for victim in &victims {
+            assert!(outside.join(victim).exists(), "{link}: {victim} removed");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
 #[tokio::test]
 async fn purge_of_a_short_reference_leaves_longer_ids_that_end_with_it() {
     let dir = tmp("purge-short");
