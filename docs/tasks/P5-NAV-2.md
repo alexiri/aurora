@@ -219,4 +219,14 @@ longer be reached through the routes; their components and unit tests are unchan
   finish within one 10-minute command (242 passed, none failed, when stopped);
 - `pnpm typecheck` and eslint on touched files: pass; `scripts/guards/run-all.sh`, `extract-schema.py --check`,
   `cargo fmt --all --check`: pass. No Rust, OpenAPI, schema or migration change.
-FLAKE_AND_FAILFIRST
+- one flake to know about: in one run of those seven specs, `fix-236`'s owner journey timed out waiting for the
+  address after **Open emergency read access** (`waitForURL **/o/acme/w/main`). That run still had the manage-page rail
+  bug above, as had an earlier run in which it passed, so the cause is not established. After the rail fix it passed in
+  the full rerun and then `--repeat-each=5` (50 of 50);
+- fail-first, the new and updated tests over the old `web/src` (new modules left in place so they import): 40 of 105
+  fail in `places` (23 of 29), `context-switcher` (12), `visible-topics` (3), `roles` (1) and `palette-registry` (1);
+  `org-manage` passes there because the page it renders is the new one. The two later bugs were each seen failing
+  before their fix.
+
+**Screenshots** are not committed: `AURORA_SHOTS=<dir> scripts/dev/test.sh <lane> web playwright e2e/places.spec.ts
+--project=mocked` writes them again (overview, rails and Workspaces; 1256 and 390 px; light and dark).
