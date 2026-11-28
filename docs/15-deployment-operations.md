@@ -600,7 +600,25 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   backend api and gateway also reach the configured Redis peers
   (`counters.redis.networkPolicy`) on its port; nothing else changes. (phase 6 (D-318, moved from phase 5), P4-S3)
   With the `s3` blob backend the **api** (only) also reaches the configured bucket
-  endpoint (`blobs.s3.networkPolicy`).
+  endpoint (`blobs.s3.networkPolicy`). (FIX-296, D-515) "External egress" leaves the private
+  ranges out. `networkPolicy.selfHostedPrivateEgress` (**off by default**) adds one egress rule to
+  the **gateway's** and the **API's** policies, and to no other: TCP `ports` (`[443]`) to `cidrs`
+  (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), so a self-hosted app that an
+  instance administrator registers needs no per-host `privateHosts` or `*ExtraEgress` entry
+  (`06 §Destination guard`). One `ipBlock` per entry; each block's `except` holds the entries of
+  `except`, of `config.gateway.self_hosted_refused_ranges` and the cloud metadata addresses that
+  lie inside it (same family, strictly smaller); a block one of them covers entirely is left out.
+  Only ranges inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10` and
+  `fc00::/7` can be listed: link-local, loopback, metadata and wider ranges such as `0.0.0.0/0`
+  fail the render, as do a malformed CIDR, a bad or empty `ports`, empty `cidrs`, and a
+  configuration that leaves no block. The network layer cannot tell requests apart: it is open
+  to all of the gateway's and API's traffic, so **Aurora's own destination check is then the
+  main control** (it opens a self-hosted app's host to that app's own requests only, besides what
+  `gateway.allowed_private` and configured LLM endpoints already open). Set the refused ranges
+  to the pod and Service CIDRs and a private Kubernetes API endpoint's range. `except` narrows
+  this rule only (NetworkPolicy rules add up). The hook host gets no such rule: `token.mint`
+  hooks run there, and its own fetch check refuses every private address. `NOTES.txt` says what
+  is open while the value is on.
 - (phase 4, P4-MCON) **Connector host** (`connectorHost.enabled`, default `true`; replicas
   default 1, `connectorHost.testTypes` default `false`): Deployment `aurora-connector-host`,
   Service on 4110 (callbacks) routed by the edge rule `/connectors/` (Ingress and HTTPRoute;

@@ -161,7 +161,8 @@ config:
     # `privateHosts`. List here the CIDRs that must never be reached that way, whatever such a host name
     # resolves to: your cluster's pod and Service CIDRs (and, on a managed cluster, the range of its
     # private Kubernetes API endpoint). Read by the gateway and the API. Empty by default. It does not
-    # narrow `allowed_private`, and it opens nothing: the NetworkPolicies below still apply. Example:
+    # narrow `allowed_private`, and it opens nothing: the NetworkPolicies below still apply (with
+    # networkPolicy.selfHostedPrivateEgress on, these ranges are left out of its rule too). Example:
     # self_hosted_refused_ranges: ["10.244.0.0/16", "10.96.0.0/12"]
   runner:
     ops_bind: 0.0.0.0
@@ -530,6 +531,8 @@ sandboxes:
 # In Cilium, `*` matches within one label: `*.example.org` covers `a.example.org`, not
 # `a.b.example.org`; list deeper names explicitly. If a name is a CNAME, list its target too.
 # Host names only: addresses and CIDRs go in `config.gateway.allowed_private` (no policy follows them).
+# (FIX-296) With networkPolicy.selfHostedPrivateEgress on, a self-hosted app that an instance
+# administrator registers for all organizations needs no entry here (on the ports and ranges it opens).
 privateHosts:
   names: []
   ports: [443]
@@ -587,6 +590,27 @@ networkPolicy:
   externalEgress:
     cidr: 0.0.0.0/0
     except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+  # (FIX-296, D-515) Self-hosted apps on private addresses. On, it adds one egress rule to the
+  # gateway's and the API's policies: TCP `ports` to `cidrs`, except `except`. Aurora's own check
+  # (D-511) still decides which requests may go there: only an instance-wide self-hosted app's
+  # own host, never loopback, link-local, metadata, Aurora's services or
+  # gateway.self_hosted_refused_ranges. Off, a private server needs privateHosts or the
+  # *ExtraEgress values, as before.
+  # At the network layer the rule is open to every request of those two services, so Aurora's
+  # check is then the main control (what config.gateway.allowed_private already permits passes too).
+  # `cidrs` takes only ranges inside 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 and
+  # fc00::/7; anything else fails the render, so link-local, loopback and wider ranges such as
+  # 0.0.0.0/0 can't be listed. config.gateway.self_hosted_refused_ranges and the cloud metadata
+  # addresses inside private space are added to `except`; an `except` or refused range that
+  # covers a whole entry of `cidrs` leaves that entry out. `except` narrows this rule only, not
+  # the other egress rules.
+  # The hook host is not included: token-mint hooks run there, and its own check refuses every
+  # private address, so a rule would open nothing a hook can use.
+  selfHostedPrivateEgress:
+    enabled: false
+    ports: [443]
+    cidrs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"]
+    except: []
   # Extra egress rules appended to the gateway policy (raw NetworkPolicy `egress` entries), e.g. to
   # open a private-range LLM endpoint that `gateway.allowed_private` also permits. Dev example:
   # deploy/kind/values-llm-mock.yaml.
