@@ -99,9 +99,10 @@ pub fn instance_guard(
 }
 
 /// (FIX-290, D-511, SEC-170) The allowance to reach a self-hosted app's host on a private
-/// address, for a request that **won the granted connection** `conn_instance` belongs to; call it
-/// nowhere else. `serving` is the registration whose app match serves the request (`None` when
-/// the match did not come from a registration). It must be an instance administrator's own, be
+/// address, for a request that **won the granted connection** `conn_instance` belongs to, and
+/// (FIX-295, SEC-172) for the token refresh of that connection; call it nowhere else. `serving`
+/// is the registration whose app match serves the request, or the connection's own one for its
+/// refresh (`None` when the match did not come from a registration). It must be an instance administrator's own, be
 /// the very one the connection is bound to, and the request must leave over `https` to its host
 /// on 443, the only port an `{instance}` entry has.
 pub fn self_hosted_allowance(

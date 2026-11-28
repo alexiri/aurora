@@ -7,6 +7,9 @@ UPGRADE NOTE: every instance-wide self-hosted app registration (also an organiza
 now lets that app's connected accounts reach its host on a private address, with no privateHosts entry. Review them in
 Administration > Apps & accounts > Self-hosted apps, and set config.gateway.self_hosted_refused_ranges to your pod and
 Service CIDRs (docs/15, Upgrades).
+
+UPGRADE NOTE: the gateway's OAuth token refreshes no longer follow HTTPS_PROXY, HTTP_PROXY or ALL_PROXY. If a token
+endpoint is reachable only through a proxy, set config.gateway.egress_proxy instead (docs/15, Upgrades).
 {{ end }}
 
 {{- if and .Values.networkPolicy.enabled (.Values.networkPolicy.selfHostedPrivateEgress | default dict).enabled }}

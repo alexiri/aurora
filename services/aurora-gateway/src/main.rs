@@ -230,11 +230,7 @@ async fn serve(
         aurora_gateway::summarize_client::HttpSummarizer::new(&hookhost_url, &hook_bearer)
             .with_key_id(&hook_key_id),
     );
-    let tokens = Arc::new(
-        aurora_gateway::refresh::TokenManager::try_new(pool.clone(), vault.clone(), Some(minter))?
-            .with_health(health.clone()),
-    );
-    let plaintext = Arc::new(PlaintextCache::new(vault).with_health(health.clone()));
+    let plaintext = Arc::new(PlaintextCache::new(vault.clone()).with_health(health.clone()));
     hub.register(plaintext.clone());
     let reqlog = RequestLog::new(Arc::new(DbWriter(pool.clone())));
     reqlog.set_health(health.clone());
@@ -391,6 +387,26 @@ async fn serve(
         llm.overrides().clone(),
     ));
     hub.register(llm_mint.clone());
+    // (FIX-295, SEC-172) Token refreshes: their own guarded upstream, with the same destination
+    // guard, egress proxy and extra CAs as agent requests.
+    let tokens = Arc::new(
+        aurora_gateway::refresh::TokenManager::new(
+            pool.clone(),
+            vault,
+            Some(minter),
+            Arc::new(aurora_gateway::upstream::Upstream::new(
+                guard.clone(),
+                cfg.gateway
+                    .egress_proxy
+                    .as_deref()
+                    .map(aurora_gateway::upstream::EgressProxy::parse)
+                    .transpose()?,
+                extra_ca_pem.as_deref(),
+                aurora_gateway::refresh::TOKEN_CALL_WALL,
+            )?),
+        )
+        .with_health(health.clone()),
+    );
     let handler = Arc::new(
         PolicyHandler::new(PolicyHandlerParts {
             resolver: policy_resolver,

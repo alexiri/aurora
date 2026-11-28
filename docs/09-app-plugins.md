@@ -1347,8 +1347,10 @@ starting with `aurora_` are reserved (`field_name_reserved`), so a user cannot s
   `HOOK_MEMORY`; epoch interruption enforcing `HOOK_WALL` (15 s for connect and
   mint hooks; 1 s for `approval.summarize`); output ≤ `HOOK_OUTPUT`.
 - `fetch`: https only; host must be in the package's egress list for this hook;
-  resolved through the same destination guard as the gateway (no private
-  addresses); ≤ `HOOK_FETCH_MAX` calls per invocation, 10 s and 1 MiB each;
+  public addresses only, by the hook host's own check (a name with any other
+  address is denied; `gateway.allowed_private`, the self-hosted app allowance and
+  `tls.extra_ca_bundle` do not apply, so TLS verifies against system roots);
+  ≤ `HOOK_FETCH_MAX` calls per invocation, 10 s and 1 MiB each;
   redirects not followed; request headers `Host`/`Connection` controlled by the
   host.
 - `log`: redacted (credential-looking values masked), ≤100 lines per call,

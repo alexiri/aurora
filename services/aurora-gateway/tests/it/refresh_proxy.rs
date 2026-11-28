@@ -278,6 +278,18 @@ async fn start_app(
     health: Option<Arc<aurora_gateway::health::Health>>,
     tools: Value,
 ) -> Rig {
+    let token_calls = crate::common::loopback_token_upstream();
+    start_calling(status, expires_in_secs, health, tools, token_calls).await
+}
+
+/// [`start_app`] with the upstream the token endpoint is called through.
+async fn start_calling(
+    status: &str,
+    expires_in_secs: i64,
+    health: Option<Arc<aurora_gateway::health::Health>>,
+    tools: Value,
+    token_calls: Arc<aurora_gateway::upstream::Upstream>,
+) -> Rig {
     let db = TestDb::new().await;
     let p = db.pool();
     let w = World {
@@ -413,7 +425,7 @@ async fn start_app(
     rows.conns.push(row);
     let src = Arc::new(Src(Mutex::new(rows)));
     let resolver = Arc::new(Resolver::new(src, llm).with_snapshots(store));
-    let mut tokens = TokenManager::new(p.clone(), vault.clone(), None);
+    let mut tokens = TokenManager::new(p.clone(), vault.clone(), None, token_calls);
     let mut plaintext = PlaintextCache::new(vault);
     if let Some(h) = &health {
         tokens = tokens.with_health(h.clone());
@@ -646,4 +658,65 @@ async fn invalid_grant_during_refresh_answers_403_reauth() {
     assert_eq!(a.status, 403);
     assert_eq!(a.code(), "connection_reauth_required");
     assert_eq!(r.hits.load(Ordering::SeqCst), 0);
+}
+
+/// (FIX-295) The app answers its stale code and the forced refresh is refused: the app's answer
+/// stands, and the account's health says the token endpoint cannot be reached, not that the app
+/// refused the sign-in (reconnecting would not help).
+#[tokio::test]
+async fn a_stale_retry_with_a_refused_token_endpoint_records_unreachable() {
+    let guard = aurora_gateway::guard::Guard::new(&[], Vec::new()).unwrap();
+    let token_calls = crate::common::token_upstream(Arc::new(guard), None);
+    // Unexpired: only the app's stale code asks for a refresh.
+    let r = start_calling("active", 3600, None, Value::Null, token_calls).await;
+    let a = get(&r.env, "/x", "").await;
+    assert_eq!(a.status, 401, "{}", a.body);
+    assert!(a.body.contains("INVALID_SESSION_ID"), "{}", a.body);
+    assert_eq!(r.prov.lock().unwrap().calls, 0, "the endpoint was called");
+    assert_eq!(r.hits.load(Ordering::SeqCst), 1);
+    // The health writes are off the request path: give a second one time to arrive too.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let line: Option<String> = sqlx::query_scalar("SELECT last_error FROM app_connections")
+        .fetch_one(r.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(line.as_deref(), Some("unreachable"));
+}
+
+/// (FIX-295, SEC-172) A token endpoint the destination guard refuses: the agent is told the
+/// destination is refused (not a broken credential), nothing is sent anywhere, and the account's
+/// health line says it cannot be reached.
+#[tokio::test]
+async fn a_refused_token_endpoint_is_said_to_be_refused() {
+    let guard = aurora_gateway::guard::Guard::new(&[], Vec::new()).unwrap();
+    let token_calls = crate::common::token_upstream(Arc::new(guard), None);
+    let r = start_calling("active", -5, None, Value::Null, token_calls).await;
+    let a = get(&r.env, "/x", "").await;
+    assert_eq!(r.prov.lock().unwrap().calls, 0, "the endpoint was called");
+    assert_eq!(
+        (a.status, a.code().as_str()),
+        (403, "destination_refused"),
+        "{}",
+        a.body
+    );
+    assert_eq!(
+        a.json()["error"]["details"]["host"],
+        "127.0.0.1",
+        "{}",
+        a.body
+    );
+    assert_eq!(r.hits.load(Ordering::SeqCst), 0);
+    // The health write is off the request path.
+    let mut line: Option<String> = None;
+    for _ in 0..100 {
+        line = sqlx::query_scalar("SELECT last_error FROM app_connections")
+            .fetch_one(r.db.pool())
+            .await
+            .unwrap();
+        if line.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(line.as_deref(), Some("unreachable"));
 }

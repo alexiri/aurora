@@ -52,6 +52,17 @@ pub fn destination_refused(host: &str) -> ApiError {
     .with_details(json!({ "host": host }))
 }
 
+/// (FIX-295) The guard refused the token endpoint of the account's sign-in, so its access
+/// could not be renewed. The same code as any refused destination; `host` is that endpoint's.
+pub fn token_endpoint_refused(host: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "destination_refused",
+        "The account's access could not be renewed: its sign-in server is at a private or internal address that is not permitted. Ask an administrator to check the app's server address.",
+    )
+    .with_details(json!({ "host": host }))
+}
+
 /// (RFE-003) The credential does not hold the `browser` capability.
 pub fn open_lane_not_permitted() -> ApiError {
     ApiError::new(

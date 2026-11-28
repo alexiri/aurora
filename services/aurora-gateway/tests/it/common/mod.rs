@@ -37,6 +37,63 @@ pub fn gateway_tls(gw: &GeneratedCa, proxy: SocketAddr) -> (Arc<Ca>, Arc<ProxyTl
     (ca, tls)
 }
 
+/// The upstream a token manager of a test calls its token endpoint through: `guard` with
+/// `extra_ca_pem`.
+pub fn token_upstream(
+    guard: Arc<aurora_gateway::guard::Guard>,
+    extra_ca_pem: Option<&[u8]>,
+) -> Arc<aurora_gateway::upstream::Upstream> {
+    Arc::new(
+        aurora_gateway::upstream::Upstream::new(
+            guard,
+            None,
+            extra_ca_pem,
+            aurora_gateway::refresh::TOKEN_CALL_WALL,
+        )
+        .unwrap(),
+    )
+}
+
+/// [`token_upstream`] for a token endpoint on loopback: `127.0.0.0/8` is allowed.
+pub fn loopback_token_upstream() -> Arc<aurora_gateway::upstream::Upstream> {
+    let guard = aurora_gateway::guard::Guard::new(&["127.0.0.0/8".to_owned()], Vec::new()).unwrap();
+    token_upstream(Arc::new(guard), None)
+}
+
+/// A private (RFC 1918) address of this machine: a developer's LAN or a CI runner's `eth0`.
+pub fn private_ip() -> std::net::IpAddr {
+    aurora_gateway::guard::local_addresses()
+        .into_iter()
+        .find(|ip| matches!(ip, std::net::IpAddr::V4(v4) if v4.is_private()))
+        .expect("this test needs a network interface with a private IPv4 address")
+}
+
+/// A server certificate for `host` signed by a CA made here (only the returned PEM trusts it).
+pub fn private_ca_server(host: &str) -> (Arc<rustls::ServerConfig>, String) {
+    use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair};
+    let ca_key = KeyPair::generate().unwrap();
+    let mut ca = CertificateParams::new(Vec::<String>::new()).unwrap();
+    ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let ca_pem = ca.self_signed(&ca_key).unwrap().pem();
+    let key = KeyPair::generate().unwrap();
+    let leaf = CertificateParams::new(vec![host.to_owned()])
+        .unwrap()
+        .signed_by(&key, &Issuer::from_params(&ca, &ca_key))
+        .unwrap();
+    let cfg = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![leaf.der().clone()],
+        rustls::pki_types::PrivateKeyDer::Pkcs8(key.serialize_der().into()),
+    )
+    .unwrap();
+    (Arc::new(cfg), ca_pem)
+}
+
 /// The boot every proxy test repeats (P5-DEDUP-1 T6): binds a loopback listener, a guard that
 /// allows `127.0.0.0/8`, the gateway TLS ([`gateway_tls`]) and a 5 s header timeout. Returns the
 /// listener, its address and the parts to hand to `Proxy::new`/`with_byo`.
