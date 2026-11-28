@@ -97,6 +97,18 @@ Packages come from `conda.anaconda.org` through the loopback proxy (pixi reads `
 - Add the hosts to the `15 §Governance example` `baseline_allowlist`. No default changes.
 - If pixi fetches a conda-to-PyPI name mapping on its own, turn that off in the system config (or explain in
   the report why it's needed).
+- **Sharded repodata (added 2026-11-28, owner).** conda-forge's index comes in two forms. The full
+  `repodata.json.zst` is 61 MB for `linux-64` plus 30 MB for `noarch` (measured 2026-11-28). The sharded form
+  is a 0.6 MB `repodata_shards.msgpack.zst` plus only the shards of the packages being solved.
+  `conda.anaconda.org` and `prefix.dev` both serve the sharded form. Every agent whose cache was just pruned
+  solves again, so the full form would cost about 90 MB per agent per solve.
+  - Confirm that pixi fetches the sharded form from `conda.anaconda.org` and never the full
+    `repodata.json(.zst)`. pixi's configuration example enables sharding per host only for `prefix.dev`.
+  - If it isn't on by default for `conda.anaconda.org`, enable it in `/etc/pixi/config.toml` with
+    `[repodata-config."https://conda.anaconda.org"] disable-sharded = false`.
+  - When `SANDBOX_CONDA_MIRROR` is set, render the same setting for the mirror's URL. Confirm that pixi falls
+    back to the full index when a mirror has no shards, rather than failing.
+  - Report the bytes a first `pixi exec --spec go-yq` downloads.
 
 ### 5. Docs
 - `11 §Sandbox image`: pixi, its configuration and mirror argument, the two variables, the `PATH`, and the
@@ -113,8 +125,9 @@ Packages come from `conda.anaconda.org` through the loopback proxy (pixi reads `
   1. **Disk:** each agent's volume holds its own tools, with no sharing between agents. A writable shared
      cache would let one agent plant files for another. Global installs are bounded by the volume's size (an
   install fails with "no space"), and the one-off cache by `TOOL_CACHE_MAX`.
-  2. **Downloads:** each first use downloads through the gateway, at the gateway's TLS-interception cost. At
-     scale, a deployment sets `SANDBOX_CONDA_MIRROR` to a nearby mirror.
+  2. **Downloads:** each first use downloads through the gateway, at the gateway's TLS-interception cost. The
+     sharded index keeps each solve's index download well under a megabyte instead of about 90 MB
+     (§4). At scale, a deployment sets `SANDBOX_CONDA_MIRROR` to a nearby mirror.
 - **Constraint for later:** if homes ever move over the network (the deferred `snapshot` durability, D-379),
   that move excludes `.cache/` and may rebuild `.pixi/` from `manifests/pixi-global.toml` with
   `pixi global sync`, instead of copying environments.
@@ -138,12 +151,16 @@ Packages come from `conda.anaconda.org` through the loopback proxy (pixi reads `
   - Leftover `pixi.old-*` folders are removed.
   - A failing delete doesn't fail the boot.
 - **Instructions:** the golden text, and its absence without the binary.
+- **Config:** a build-time check that `/etc/pixi/config.toml` parses (`pixi config list`) and, if §4 needed it, holds
+  the sharding setting. With `SANDBOX_CONDA_MIRROR` set, the setting is also rendered for the mirror's URL.
 - **PATH:** FIX-298's `PATH` assertions move again (`pty_shell.rs`, `hosted.rs`'s `IMAGE_PATH`, and anything
   `rg -F '/workspace/.local/bin:'` finds).
 - **Optional live check, on a throwaway kind cluster only (never the `aurora-dev` stack, `:4000` or its
   database):**
   - `pixi exec --spec go-yq -- yq --version` and `pixi global install imagemagick` through the gateway.
   - Record the hosts contacted and the image's compressed size before and after.
+  - Record the paths fetched: the gateway log shows `repodata_shards.msgpack.zst` and shard files, never
+    `repodata.json`.
   - If you don't run it, write "not run".
 
 ## Tests move with the change
