@@ -10,10 +10,12 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::fd::AsFd as _;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::MEMORY_CONTENT_MAX;
 
+use crate::home::may_lock;
 use crate::nofollow;
 
 /// (FIX-114) Largest memory file the harvest reads (four times the content limit, in bytes —
@@ -187,6 +189,8 @@ pub struct Harvester {
     dir: PathBuf,
     uploaded: HashMap<String, String>,
     notices: Vec<String>,
+    /// The uid the agent runs as: the only files whose mode is changed.
+    agent_uid: u32,
 }
 
 impl Harvester {
@@ -196,7 +200,13 @@ impl Harvester {
             dir: root.join(MEMORY_DIR),
             uploaded: HashMap::new(),
             notices: Vec::new(),
+            agent_uid: rustix::process::getuid().as_raw(),
         }
+    }
+
+    /// The agent runs as another uid than the supervisor (the root supervisor mode).
+    pub fn set_agent_uid(&mut self, uid: u32) {
+        self.agent_uid = uid;
     }
 
     /// Notices for the next turn (invalid keys, oversized files); drains them.
@@ -332,9 +342,7 @@ impl Harvester {
         match current {
             // The unmodified projection (the recorded bytes verify by construction).
             Some(b) if b == recorded => {
-                let _ =
-                    nofollow::open_regular_beneath(&self.root, &Path::new(MEMORY_DIR).join(name))
-                        .and_then(|f| nofollow::set_mode(&f, 0o444));
+                self.keep_read_only(name, recorded);
                 self.uploaded.remove(name);
             }
             current => {
@@ -348,6 +356,24 @@ impl Harvester {
                 }
                 self.restore_locked(name, recorded);
             }
+        }
+    }
+
+    /// An unmodified locked memory stays 0444. The mode is changed only on a file that is the
+    /// agent's own with this one name; any other one is replaced by a new file.
+    fn keep_read_only(&self, name: &str, recorded: &[u8]) {
+        let rel = Path::new(MEMORY_DIR).join(name);
+        let Ok(file) = nofollow::open_regular_beneath(&self.root, &rel) else {
+            return;
+        };
+        let Ok(meta) = file.metadata() else { return };
+        if meta.mode() & 0o7777 == 0o444 {
+            return;
+        }
+        if may_lock(meta.nlink(), meta.uid(), self.agent_uid) {
+            let _ = nofollow::set_mode(&file, 0o444);
+        } else {
+            self.restore_locked(name, recorded);
         }
     }
 
@@ -435,6 +461,36 @@ mod tests {
 
     fn write_keys(writes: &[MemoryWrite]) -> Vec<&str> {
         writes.iter().map(|w| w.key.as_str()).collect()
+    }
+
+    /// (FIX-297) A locked memory that holds the recorded bytes but is a hard link to another
+    /// file: that file's mode is not touched; the memory is written anew, read-only.
+    #[test]
+    fn a_hard_linked_locked_memory_is_replaced_not_chmodded() {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        let dir = std::env::temp_dir().join(format!("aurora-harvest-{}", Uuid::now_v7()));
+        let home = dir.join("home");
+        std::fs::create_dir_all(home.join(MEMORY_DIR)).unwrap();
+        let sealed = seal("the person's text\n");
+        let victim = dir.join("victim");
+        std::fs::write(&victim, &sealed).unwrap();
+        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let memory = home.join(MEMORY_DIR).join("pinned.md");
+        std::fs::hard_link(&victim, &memory).unwrap();
+        let locked = HashMap::from([("pinned".to_owned(), sealed.clone().into_bytes())]);
+
+        let mut h = Harvester::new(&home);
+        assert!(h.scan(&locked).is_empty());
+
+        let of_victim = std::fs::metadata(&victim).unwrap();
+        assert_eq!(of_victim.mode() & 0o777, 0o600, "outside file chmodded");
+        let installed = std::fs::metadata(&memory).unwrap();
+        assert_ne!(installed.ino(), of_victim.ino());
+        assert_eq!(installed.mode() & 0o777, 0o444);
+        assert_eq!(std::fs::read_to_string(&memory).unwrap(), sealed);
+        // Its content never changed: there is nothing to tell the agent.
+        assert!(h.take_notices().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// (P6-MEMLOCK, C-1149) `scan` with locked keys: an edited, deleted or chmod-ed locked file is

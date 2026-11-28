@@ -261,9 +261,11 @@ impl Supervisor {
             .filter(|_| own_uid.is_root())
             .unwrap_or_else(|| own_uid.as_raw());
         projector.set_agent_uid(agent_uid);
+        let mut harvester = Harvester::new(&cfg.working_dir);
+        harvester.set_agent_uid(agent_uid);
         let home = Arc::new(StdMutex::new(HomeCtl {
             projector,
-            harvester: Harvester::new(&cfg.working_dir),
+            harvester,
         }));
         let mut process = cfg.process.clone();
         // (P5-SKILLDIR, D-454) Set last, so it wins over an image or profile value.
