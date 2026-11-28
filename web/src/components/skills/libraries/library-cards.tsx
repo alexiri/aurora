@@ -57,7 +57,7 @@ function pinnedCommits(l: SkillLibrary, orgSkills: Skill[]): string[] {
  * The libraries of one level as cards (D-450, D-506, C-1129; skill-6): the organization's own, the instance's own
  * (`orgName` undefined) or the instance libraries an organization sees (`canManage` false: read-only, with **Browse
  * skills**). `orgId` is the organization whose list changes (`null` for the instance's own). One card per row up to a
- * content width of 896 px, as drawn; wider screens add columns.
+ * content width of 1024 px, so one per row at 1256 px, as drawn; wider screens add columns.
  */
 export function LibraryCards({
   orgId,
@@ -94,7 +94,7 @@ export function LibraryCards({
   return (
     <div className="space-y-3">
       <ErrorNotice error={failed} />
-      <CardGrid aria-label={label} className="@2xl:grid-cols-1 @4xl:grid-cols-2 @7xl:grid-cols-3">
+      <CardGrid aria-label={label} className="@2xl:grid-cols-1 @4xl:grid-cols-1 @5xl:grid-cols-2 @7xl:grid-cols-3">
         {rows.map((l) => {
           const paused = l.status === "paused";
           const reason = libraryReason(l);

@@ -155,7 +155,7 @@ export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Internet access"
+          title={`Internet access in ${org.name}`}
           description={
             eff.data ? (
               <span data-testid="internet-summary" className="block font-display text-xl text-ink">
@@ -180,7 +180,7 @@ export function OrgInternet({ org, slug }: { org: Org; slug: string }) {
   return (
     <div className="space-y-6">
       {/* (P5-REFINE-20, org-8) The page heading first, then the preset card. */}
-      <PageHeader title="Internet access" description={<span data-testid="internet-summary">What agents in {org.name} may reach.</span>} className="mb-2" />
+      <PageHeader title={`Internet access in ${org.name}`} description={<span data-testid="internet-summary">What agents in {org.name} may reach.</span>} className="mb-2" />
       <OrgPolicyPresets org={org} part="internet" />
       <OrgInternetBody key={doc.data?.revision ?? 0} org={org} slug={slug} eff={eff.data} revision={doc.data?.revision ?? 0} initial={formFromDocument(doc.data?.document, eff.data, instance.data)} />
     </div>

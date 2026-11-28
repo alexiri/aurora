@@ -3,25 +3,26 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { useCallback, useState, useSyncExternalStore, type ComponentType, type ReactNode, type SVGProps } from "react";
 
 import { clearDrafts } from "@/components/chat/composer/drafts";
-import { logout, useInstance, useMe, useResolve, useWorkspace } from "@/lib/api/queries";
+import { logout, useInstance, useMe, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
 import { useAltitude } from "@/lib/altitude";
 import { useMoreControls } from "@/lib/api/use-more-controls";
 import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { ApiError } from "@/lib/api/client";
-import { lastScope } from "@/lib/nav/recent-scopes";
 import { personName, workspaceDisplayName } from "@/lib/workspace-name";
-import { pickRailWorkspace, useRailWorkspace, writeRailWorkspace } from "@/lib/nav/manage-return";
+import { backLink, lastWorkspace, usePlaceRecord, useRecordPlace } from "@/lib/nav/manage-return";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
-import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
+import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, ORG_RAIL_GROUPS, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { useTimezoneAutofill } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
-import { useRefreshAttentionOnMutation, useWorkspaceCounts } from "@/lib/api/attention";
+import { useOrgBadge, useRefreshAttentionOnMutation, useWorkspaceCounts } from "@/lib/api/attention";
 import { AttentionBadge } from "./admin/attention-badge";
+import { CountBadge } from "./attention/count-badge";
+import { PlaceBack, PlaceCard } from "./nav/place-card";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { EmergencyBanners } from "./emergency/emergency-banners";
@@ -40,13 +41,15 @@ import { AuroraLogo } from "./ui/aurora-logo";
 import { UndoToastHost } from "./ui/undo-toast";
 import {
   ActivityIcon,
-  ArrowLeftIcon,
   BellIcon,
   BotIcon,
   BookIcon,
   BuildingIcon,
   CheckCircleIcon,
   ChevronsUpDownIcon,
+  DatabaseIcon,
+  GlobeIcon,
+  GridIcon,
   HomeIcon,
   KeyIcon,
   LinkIcon,
@@ -62,6 +65,7 @@ import {
   ServerIcon,
   SettingsIcon,
   ShieldIcon,
+  SparkIcon,
   TrashIcon,
   UserIcon,
   UsersIcon,
@@ -105,6 +109,8 @@ function NavItem({
     </li>
   );
 }
+
+const noopSubscribe = () => () => {};
 
 /** (P5-REFINE-19) "Search · ⌘K" in the rail's footer: opens the command palette; the shortcut is muted text beside it. */
 function SearchButton() {
@@ -235,10 +241,94 @@ const TOPIC_ICON: Record<string, IconType> = {
   settings: SettingsIcon,
 };
 
-/** Overview and Workspaces are the level's own address; every other topic owns the paths below its folder. */
+/** Overview is the level's own address; every other topic owns the paths below its folder. */
 function topicActive(pathname: string, href: string, topic: string): boolean {
   const path = href.split("?")[0]!;
-  return topic === "overview" || topic === "workspaces" ? pathname === path : pathname === path || pathname.startsWith(`${path}/`);
+  return topic === "overview" ? pathname === path : pathname === path || pathname.startsWith(`${path}/`);
+}
+
+/** Where the Manage menu's icons differ from the shared ones (`docs/design/navigation`, nav-3b). */
+const ORG_TOPIC_ICON: Record<string, IconType> = {
+  ...TOPIC_ICON,
+  workspaces: GridIcon,
+  people: UserIcon,
+  "ai-models": SparkIcon,
+  "internet-access": GlobeIcon,
+  data: DatabaseIcon,
+};
+
+/** A rail's topics in labelled groups (Administration and Manage <org>); a group with no `label` starts without a heading. */
+function GroupedNav<T extends string>({
+  label,
+  idBase,
+  groups,
+  visible,
+  item,
+}: {
+  label: string;
+  idBase: string;
+  groups: readonly { label: string | null; topics: readonly T[] }[];
+  visible: ReadonlySet<T>;
+  item: (topic: T) => ReactNode;
+}) {
+  return (
+    <nav aria-label={label} className="space-y-3">
+      {groups.map((g, i) => {
+        const topics = g.topics.filter((t) => visible.has(t));
+        if (topics.length === 0) return null;
+        const headingId = g.label ? `${idBase}-${g.label.toLowerCase().replace(/\s+/g, "-")}` : undefined;
+        return (
+          <div key={g.label ?? i} role={g.label ? "group" : undefined} aria-labelledby={headingId} className="space-y-1">
+            {g.label ? (
+              <p id={headingId} className="px-2.5 text-label font-semibold uppercase tracking-label text-muted">
+                {g.label}
+              </p>
+            ) : null}
+            <ul className="space-y-0.5">{topics.map(item)}</ul>
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
+/**
+ * (D-508(b)) Manage <org>'s menu: it replaces the rail. Owners, admins and instance admins only; nothing is listed until the
+ * role is known (a member is on the way to their workspace). The counts are C-1082's: the total on Overview, a part per topic.
+ */
+export function OrgNavList({ orgSlug, pathname }: { orgSlug: string; pathname: string }) {
+  const instanceAdmin = useMe().data?.user.is_instance_admin === true;
+  const resolved = useResolve(orgSlug);
+  const orgId = resolved.data?.org.id;
+  const org = useOrg(orgId);
+  const altitude = useAltitude({ orgId });
+  const badge = useOrgBadge(orgId);
+  const orgName = org.data?.name ?? resolved.data?.org.name;
+  if (!orgName) return null;
+  const visible = new Set(visibleTopics("org", { instanceAdmin, org: org.data?.my_role }, altitude));
+  return (
+    <GroupedNav
+      label={`Manage ${orgName}`}
+      idBase="org-rail"
+      groups={ORG_RAIL_GROUPS}
+      visible={visible}
+      item={(t) => {
+        const href = topicHref("org", t, orgSlug);
+        return (
+          <NavItem
+            key={t}
+            // Not the bare topic: the tour points at the workspace's navigation.
+            tour={`org-${t}`}
+            href={href}
+            label={TOPIC_LABEL[t]}
+            icon={ORG_TOPIC_ICON[t]!}
+            active={topicActive(pathname, href, t)}
+            badge={<CountBadge n={t === "overview" ? badge?.count : badge?.topics[t]} actionId="manage-nav-entry" testId={`manage-attention-badge-${t}`} />}
+          />
+        );
+      }}
+    />
+  );
 }
 
 /**
@@ -346,111 +436,34 @@ function AdminNavList({ pathname }: { pathname: string }) {
   const visible = new Set(visibleTopics("admin", { instanceAdmin }));
   // (P5-REFINE-18 #1, rec 9) Overview, then what is decided for everyone, then what belongs to this installation.
   return (
-    <nav aria-label="Administration" className="space-y-3">
-      {ADMIN_RAIL_GROUPS.map((g) => {
-        const topics = g.topics.filter((t) => visible.has(t));
-        if (topics.length === 0) return null;
-        const headingId = g.label ? `admin-rail-${g.label.toLowerCase().replace(/\s+/g, "-")}` : undefined;
+    <GroupedNav
+      label="Administration"
+      idBase="admin-rail"
+      groups={ADMIN_RAIL_GROUPS}
+      visible={visible}
+      item={(t) => {
+        const href = topicHref("admin", t);
+        // (P5-REFINE-18 #18, C-1022/C-1080) Overview carries the total: the same count as the sidebar entry and the account menu.
         return (
-          <div key={g.label ?? "top"} role={g.label ? "group" : undefined} aria-labelledby={headingId} className="space-y-1">
-            {g.label ? (
-              <p id={headingId} className="px-2.5 text-label font-semibold uppercase tracking-label text-muted">
-                {g.label}
-              </p>
-            ) : null}
-            <ul className="space-y-0.5">
-              {topics.map((t) => {
-                const href = topicHref("admin", t);
-                // (P5-REFINE-18 #18, C-1022/C-1080) Overview carries the total: the same count as the sidebar entry and the account menu.
-                return (
-                  <NavItem
-                    key={t}
-                    tour={t}
-                    href={href}
-                    label={ADMIN_RAIL_LABEL[t]}
-                    icon={TOPIC_ICON[t]!}
-                    active={topicActive(pathname, href, t)}
-                    badge={t === "overview" ? <AttentionBadge /> : <AttentionBadge topic={t} />}
-                  />
-                );
-              })}
-            </ul>
-          </div>
+          <NavItem
+            key={t}
+            tour={t}
+            href={href}
+            label={ADMIN_RAIL_LABEL[t]}
+            icon={TOPIC_ICON[t]!}
+            active={topicActive(pathname, href, t)}
+            badge={t === "overview" ? <AttentionBadge /> : <AttentionBadge topic={t} />}
+          />
         );
-      })}
-    </nav>
+      }}
+    />
   );
 }
 
-/** Where Administration's "Back to <Org>" goes: the organization and workspace you came from (this tab only). */
-const RETURN_KEY = "aurora.admin-return";
-interface ReturnTo {
-  href: string;
-  name: string;
-}
-const noopSubscribe = () => () => {};
-function readRawReturn(): string | null {
-  try {
-    return window.sessionStorage.getItem(RETURN_KEY);
-  } catch {
-    return null;
-  }
-}
-/** An internal path only: starts with one "/", no scheme, no protocol-relative "//", no backslash. */
-export function isInternalPath(href: string): boolean {
-  return href.startsWith("/") && !href.startsWith("//") && !href.includes("\\") && !/^[a-z][a-z0-9+.-]*:/i.test(href);
-}
-
-export function parseReturn(raw: string | null): ReturnTo | null {
-  try {
-    const v: unknown = raw ? JSON.parse(raw) : null;
-    if (v && typeof v === "object" && "href" in v && "name" in v && typeof v.href === "string" && typeof v.name === "string" && isInternalPath(v.href)) {
-      return { href: v.href, name: v.name };
-    }
-  } catch {
-    // Storage is blocked: fall back to the first workspace.
-  }
-  return null;
-}
-
-/** Remember the organization page the person is on, so Administration can send them back to it. */
-function useRememberReturn(orgSlug: string | undefined, wsSlug: string | undefined, orgName: string | undefined, active: boolean) {
-  useEffect(() => {
-    if (!active || !orgSlug || !orgName) return;
-    try {
-      const href = wsSlug ? wsRoutes(orgSlug, wsSlug).home() : `/o/${orgSlug}`;
-      window.sessionStorage.setItem(RETURN_KEY, JSON.stringify({ href, name: orgName }));
-    } catch {
-      // Storage is blocked: nothing is remembered.
-    }
-  }, [active, orgSlug, wsSlug, orgName]);
-}
-
-/** E8: Administration's rail — back to where you came from, the level header, the admin topics; no switcher. */
-function AdminRailHeader() {
-  const me = useMe();
-  // Session storage is the external store (null on the server, so the first render matches).
-  const raw = useSyncExternalStore(noopSubscribe, readRawReturn, () => null);
-  const stored = useMemo(() => parseReturn(raw), [raw]);
-  const first = me.data?.memberships?.find((m) => m.workspaces.length > 0);
-  const fallback: ReturnTo | null = first
-    ? { href: wsRoutes(first.org.slug, first.workspaces[0]!.slug).home(), name: first.org.name ?? first.org.slug }
-    : null;
-  const back = stored ?? fallback ?? { href: "/", name: "Aurora" };
-  return (
-    <div className="space-y-3">
-      <Link href={back.href} className="flex min-h-9 items-center gap-2 rounded-control px-2.5 py-1.5 text-sm text-ink-2 hover:bg-subtle hover:text-ink">
-        <ArrowLeftIcon className="size-4 shrink-0 text-muted" />
-        <span className="min-w-0 truncate">Back to {back.name}</span>
-      </Link>
-      <div className="px-2.5">
-        <p className="text-label font-semibold uppercase tracking-label text-muted">You&apos;re in</p>
-        <p className="font-display text-base font-semibold text-ink">Administration</p>
-      </div>
-    </div>
-  );
-}
-
+/**
+ * (D-508(a)) The rail shows exactly one place — a workspace, its organization (Manage <org>), Administration or Your
+ * account — and its top says which: the place card, with a back line outside a workspace.
+ */
 function SidebarContent({
   orgSlug,
   wsSlug,
@@ -462,49 +475,70 @@ function SidebarContent({
   wsId?: string;
   pathname: string;
 }) {
-  const inAdmin = pathname.startsWith("/admin");
-  // (P5-REFINE-17, rec 8) The organization is an area, not a second rail: on /o/<org>/… the rail stays the workspace
-  // rail of the workspace the person was in (this tab), else their personal workspace, else the first.
-  const meQuery = useMe();
-  const stored = useRailWorkspace();
-  const manageRail = orgSlug && !wsSlug && !inAdmin ? pickRailWorkspace(orgSlug, stored, meQuery.data?.memberships) : null;
-  const railResolved = useResolve(orgSlug, manageRail?.wsSlug);
-  const railSlug = wsSlug ?? manageRail?.wsSlug;
-  const base = orgSlug && railSlug ? wsRoutes(orgSlug, railSlug).base : null;
-  const railWsId = wsSlug ? wsId : railResolved.data?.workspace?.id;
+  const me = useMe();
+  const viewer = me.data?.user;
   // The admin navigation is for instance admins only (the page guard already refuses everyone else; the nav must not
   // advertise it to a signed-in member who typed an /admin path, WEBA-11).
-  const isInstanceAdmin = useMe().data?.user.is_instance_admin === true;
+  const isInstanceAdmin = viewer?.is_instance_admin === true;
   // Any success may have decided or resolved something: refetch the active counts (nothing is fetched for a query nobody shows).
   useRefreshAttentionOnMutation(true);
-  const resolved = useResolve(orgSlug);
-  useRememberReturn(orgSlug, wsSlug, resolved.data?.org.name, !inAdmin);
-  // (P5-REFINE-20, workspace-7) The remembered name is the one name everyone sees ("Your workspace"), not the stored one.
-  const resolvedWs = resolved.data?.workspace;
-  const wsName = resolvedWs ? workspaceDisplayName(resolvedWs, meQuery.data?.user) : undefined;
-  useEffect(() => {
-    if (orgSlug && wsSlug && wsName) writeRailWorkspace({ orgSlug, wsSlug, wsName });
-  }, [orgSlug, wsSlug, wsName]);
-  const adminRail = inAdmin && isInstanceAdmin;
+  const resolved = useResolve(orgSlug, wsSlug);
+  const railWsId = wsSlug ? (wsId ?? resolved.data?.workspace?.id) : undefined;
+  const workspace = useWorkspace(railWsId).data;
+  // (D-508(h)) A workspace is remembered as the way back only when its pages open for this person: an administrator
+  // who is not one of its people is on the way to its manage page (the workspace layout's own rule, FIX-277).
+  const opens = !!workspace && !(workspace.my_role == null && workspace.administers === true && !isEmergencyReader(workspace));
+  useRecordPlace(
+    orgSlug && wsSlug && viewer?.id && workspace && opens
+      ? { userId: viewer.id, orgSlug, wsSlug, wsName: workspaceDisplayName(workspace, viewer), reader: isEmergencyReader(workspace) }
+      : null,
+    pathname,
+  );
+  const record = usePlaceRecord();
+  const inAdmin = pathname.startsWith("/admin");
+  const inAccount = pathname === "/account" || pathname.startsWith("/account/");
+  const adminPlace = inAdmin && isInstanceAdmin;
+  const orgPlace = !inAdmin && !inAccount && !!orgSlug && !wsSlug;
+  const back =
+    adminPlace || inAccount || orgPlace ? backLink(record, viewer?.id, me.data?.memberships, orgPlace ? orgSlug : undefined) : undefined;
+  const accountName = viewer ? personName(viewer.display_name) : "Account";
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
         <AuroraLogo className="h-9.5 w-auto" />
       </Link>
-      {/* D-389: one switcher says where you are (workspace, then organization). Administration has no switcher: its own header. */}
-      {adminRail ? <AdminRailHeader /> : <ScopeSwitcher orgSlug={orgSlug} wsSlug={wsSlug} />}
+      <div className="space-y-1">
+        {back ? <PlaceBack back={back} /> : null}
+        {adminPlace ? (
+          <PlaceCard
+            mark={
+              <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-subtle text-ink">
+                <ShieldIcon className="size-4" />
+              </span>
+            }
+            name="Administration"
+            kind="This Aurora"
+          />
+        ) : inAccount ? (
+          <PlaceCard mark={<Avatar name={accountName} tintKey={viewer?.email} size={28} />} name={accountName} kind="Your account" />
+        ) : (
+          <ScopeSwitcher orgSlug={orgSlug} wsSlug={wsSlug} />
+        )}
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {base ? (
-          <WorkspaceNav base={base} wsId={railWsId} pathname={pathname} />
-        ) : adminRail ? (
+        {adminPlace ? (
           <AdminNavList pathname={pathname} />
-        ) : pathname.startsWith("/account") ? (
+        ) : inAccount ? (
           <AccountNavList pathname={pathname} />
+        ) : orgPlace ? (
+          <OrgNavList orgSlug={orgSlug!} pathname={pathname} />
+        ) : orgSlug && wsSlug && !inAdmin ? (
+          <WorkspaceNav base={wsRoutes(orgSlug, wsSlug).base} wsId={railWsId} pathname={pathname} />
         ) : null}
       </div>
       <div className="space-y-2 border-t border-line pt-3">
-        {/* Inside Administration the rail's own header says "You're in Administration": the entry would name it a second time. */}
-        {isInstanceAdmin && !adminRail ? (
+        {/* Inside Administration the rail's place card names it: the entry would say it a second time. */}
+        {isInstanceAdmin && !adminPlace ? (
           <ul>
             <NavItem
               href={adminRoutes.home()}
@@ -548,7 +582,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const wsSlug = params.ws;
   const resolvedQuery = useResolve(orgSlug, wsSlug);
   const resolved = resolvedQuery.data;
-  const wsId = resolved?.workspace?.id;
+  // A workspace is the place only under `/w/`: the manage page (`/o/<org>/workspaces/<ws>`) has a `ws` parameter too,
+  // and belongs to Manage <org>.
+  const placeWs = /^\/o\/[^/]+\/w\//.test(pathname) ? wsSlug : undefined;
+  const wsId = placeWs ? resolved?.workspace?.id : undefined;
   const waiting = useWaitingCount(wsId);
   // (P5-REFINE-2, org-3) An unknown organization or workspace is a 404 *inside* the shell: the rail and switcher show the
   // viewer's real organization, never the unknown slug, and the page body is the not-found state.
@@ -561,13 +598,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       : wsSlug && isNotFound(resolvedQuery.error)
         ? "workspace"
         : null;
-  const real = missing === "organization" ? lastScope(me.data?.user.id, me.data?.memberships) : undefined;
-  const side =
-    missing === "organization"
-      ? { orgSlug: real?.orgSlug, wsSlug: undefined, wsId: undefined, pathname }
-      : missing === "workspace"
-        ? { orgSlug, wsSlug: undefined, wsId: undefined, pathname }
-        : { orgSlug, wsSlug, wsId, pathname };
+  // The rail then shows a real workspace (never the Manage menu, which a member may not see): the viewer's last one,
+  // for a missing workspace in the same organization.
+  const real = missing ? lastWorkspace(me.data?.user.id, me.data?.memberships, missing === "workspace" ? orgSlug : undefined) : undefined;
+  // A real workspace's rail is drawn from its address; with `pathname` outside it nothing records it.
+  const side = missing ? { orgSlug: real?.orgSlug, wsSlug: real?.wsSlug, wsId: undefined, pathname } : { orgSlug, wsSlug: placeWs, wsId, pathname };
   // The switcher's menu lives in a portal outside the drawer: close the drawer when the page changes.
   const [seenPath, setSeenPath] = useState(pathname);
   if (seenPath !== pathname) {

@@ -121,10 +121,14 @@ describe("the palette with Show more controls off", () => {
     const field = await open();
     await screen.findByRole("option", { name: /Operations/ });
     await userEvent.type(field, "glob");
-    // The workspace "Main" of Globex, then the organization itself.
+    // The workspace "Main" of Globex. Ada is only a member there, so no entry opens Manage Globex (D-508(e)).
     const hits = await screen.findAllByRole("option", { name: /Globex/ });
-    expect(hits.map((h) => h.textContent)).toEqual(["MainGlobex", "Globex"]);
+    expect(hits.map((h) => h.textContent)).toEqual(["MainGlobex"]);
     expect(hits[0]).toHaveAttribute("aria-selected", "true");
+    // The organization Ada owns is found itself.
+    await userEvent.clear(field);
+    await userEvent.type(field, "acme");
+    await waitFor(() => expect(screen.getAllByRole("option").map((h) => h.textContent)).toContain("Acme"));
     await userEvent.clear(field);
     await userEvent.type(field, "o");
     await waitFor(() => expect(screen.getAllByRole("option").length).toBeGreaterThan(1));

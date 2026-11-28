@@ -16,6 +16,7 @@ import { useGrants } from "@/lib/api/policy";
 import { useApp } from "@/lib/api/apps";
 import { TechnicalDetails } from "@/components/ui/technical-details";
 import { counts, customBody, groupOf, initialDecisions, type Decision, type Tool } from "@/lib/grant-editor";
+import { useOrgMemberOnly } from "@/lib/nav/org-member";
 import { orgRoutes, wsRoutes } from "@/lib/routes";
 
 const DECISION_LABEL: Record<Decision, string> = { allow: "Allowed", ask: "Asks you", block: "Blocked" };
@@ -138,15 +139,19 @@ function Groups({ rows, account, agentName }: { rows: AppAccessTool[]; account: 
 /** "Limited by Acme", or the rule's name with a link to Internet access; the agent's own choice in small text. */
 function Reason({ tool, account, agentName, showOwn }: { tool: AppAccessTool; account: Account; agentName: string; showOwn: boolean }) {
   const params = useParams<{ org?: string; ws?: string }>();
+  // (D-508(e)) A member doesn't see Manage: their link is the workspace's page, which shows what applies from above.
+  const member = useOrgMemberOnly(params.org);
   const r = tool.reason;
   if (!r) return null;
   const href =
     r.link !== "internet_access"
       ? null
-      : r.layer === "workspace_rule" && params.org && params.ws
+      : (r.layer === "workspace_rule" || member) && params.org && params.ws
         ? wsRoutes(params.org, params.ws).internetAccess()
         : params.org
-          ? orgRoutes(params.org).internetAccess()
+          ? member
+            ? null
+            : orgRoutes(params.org).internetAccess()
           : "/admin/internet-access";
   return (
     <div className="space-y-0.5 text-sm text-ink-2">

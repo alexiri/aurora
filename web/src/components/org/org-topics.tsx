@@ -66,7 +66,7 @@ export function OrgAgentsPage() {
           <AdminOrgAgents org={org} slug={slug} />
         ) : (
           <div className="max-w-page-narrow space-y-4" data-testid="member-org-agents">
-            <PageHeader title="Agents" description="These rules apply to your organization. Only owners and admins can change them." className="mb-2" />
+            <PageHeader title={`Agents in ${org.name}`} description="These rules apply to your organization. Only owners and admins can change them." className="mb-2" />
             <OrgByo org={org} />
             {/* (P6-TPL-4, C-1115) A member reads the templates' sentence and who turns one off. */}
             <MemberTemplates org={org} />
@@ -119,7 +119,7 @@ function AdminOrgAgents({ org, slug }: { org: Org; slug: string }) {
   return (
     <AltitudeScope>
       <ReportHidden n={hidden} />
-      <TopicPage idBase="org-agents" title="Agents" description={`Every agent in ${org.name}, by workspace.`} tabs={tabs} />
+      <TopicPage idBase="org-agents" title={`Agents in ${org.name}`} tabsName="Agents" description={`Every agent in ${org.name}, by workspace.`} tabs={tabs} />
       <MoreControlsLine className="pt-4" />
     </AltitudeScope>
   );
@@ -131,7 +131,8 @@ export function OrgAppsPage() {
       {(org, slug) => (
         <TopicPage<Tabs<"orgApps">>
           idBase="org-apps"
-          title="Apps & accounts"
+          title={`Apps & accounts in ${org.name}`}
+          tabsName="Apps & accounts"
           description="The accounts shared with the whole organization, and the apps people can connect."
           tabs={[
             {
@@ -174,7 +175,7 @@ export function OrgAiModelsPage() {
       {(org) => (
         <div className="max-w-page-narrow space-y-4">
           <PageHeader
-            title="AI models"
+            title={`AI models in ${org.name}`}
             description={
               isAdmin(org)
                 ? "Which AI models the agents of this organization may use."
@@ -238,7 +239,7 @@ function DirectoryAwareTopic({ org, slug }: { org: Org; slug: string }) {
   return (
     <AltitudeScope>
       <ReportHidden n={hidden} />
-      <TopicPage idBase="org-people" title="People" description="Who can use this organization, and the groups they belong to." tabs={tabs} />
+      <TopicPage idBase="org-people" title={`People in ${org.name}`} tabsName="People" description="Who can use this organization, and the groups they belong to." tabs={tabs} />
       <MoreControlsLine className="pt-4" />
     </AltitudeScope>
   );
@@ -260,7 +261,7 @@ function MemberChatPlatforms({ org }: { org: Org }) {
   return (
     <div className="max-w-page-narrow space-y-4" data-testid="member-chat-platforms">
       <PageHeader
-        title="Chat platforms"
+        title={`Chat platforms in ${org.name}`}
         description={`Owners and admins connect ${org.name} to a chat platform; once they have, agents can be added to its channels.`}
         className="mb-2"
       />
@@ -279,7 +280,8 @@ export function OrgDataPage() {
       {(org) => (
         <TopicPage<Tabs<"orgData">>
           idBase="org-data"
-          title="Data"
+          title={`Data in ${org.name}`}
+          tabsName="Data"
           description="How long conversations and files are kept, how much the organization stores, and its audit log."
           tabs={[
             {
@@ -305,7 +307,8 @@ export function OrgSettingsPage() {
       {(org) => (
         <TopicPage<Tabs<"orgSettings">>
           idBase="org-settings"
-          title="Settings"
+          title={`Settings in ${org.name}`}
+          tabsName="Settings"
           description="The organization's name and limits, its API keys, and deletion."
           tabs={[
             {

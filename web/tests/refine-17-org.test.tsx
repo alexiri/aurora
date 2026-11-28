@@ -2,10 +2,10 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { historySentence } from "@/components/internet/internet-level";
-import { expiresIn, peopleLine } from "@/components/org/members-view";
+import { expiresIn } from "@/components/org/members-view";
 import { agentRowState, groupAgents, groupTitle, type OrgAgentRow } from "@/components/org/org-agents-list";
 import { OrgRoleHelp } from "@/components/org/role-help";
-import { pickRailWorkspace } from "@/lib/nav/manage-return";
+import { lastWorkspace } from "@/lib/nav/manage-return";
 import { ROLE_CAN } from "@/lib/roles-explain";
 
 // P5-REFINE-17: the Manage area, the organization's agents list, invitations and role words.
@@ -42,13 +42,9 @@ describe("invitations and people (org-4, org-13)", () => {
     expect(expiresIn("2026-11-20T18:00:00Z", now)).toBe("in 6 h");
     expect(expiresIn("2026-11-19T12:00:00Z", now)).toBe("expired");
   });
-  it("sums up people and waiting invitations for the Overview", () => {
-    expect(peopleLine(3, 1)).toBe("3 people · 1 invitation waiting");
-    expect(peopleLine(1, 0)).toBe("1 person");
-  });
 });
 
-describe("the Manage area's rail workspace (rec 8)", () => {
+describe("the workspace Manage sends a person to (rec 8, D-508(h))", () => {
   const memberships = [
     {
       org: { slug: "acme" },
@@ -58,13 +54,15 @@ describe("the Manage area's rail workspace (rec 8)", () => {
       ],
     },
   ];
-  it("keeps the remembered workspace of this organization", () => {
-    expect(pickRailWorkspace("acme", { orgSlug: "acme", wsSlug: "team", wsName: "Team" }, memberships)).toEqual({ wsSlug: "team", wsName: "Team" });
+  it("takes the one used last in this organization", () => {
+    window.localStorage.setItem("aurora.recent-scopes:u1", JSON.stringify(["other/x", "acme/team"]));
+    expect(lastWorkspace("u1", memberships, "acme")).toEqual({ orgSlug: "acme", wsSlug: "team", wsName: "Team" });
+    window.localStorage.clear();
   });
   it("else the personal workspace, else the first", () => {
-    expect(pickRailWorkspace("acme", null, memberships)?.wsSlug).toBe("bob");
-    expect(pickRailWorkspace("acme", { orgSlug: "other", wsSlug: "x", wsName: "X" }, [{ org: { slug: "acme" }, workspaces: [{ slug: "team", name: "Team" }] }])?.wsSlug).toBe("team");
-    expect(pickRailWorkspace("nope", null, memberships)).toBeNull();
+    expect(lastWorkspace("u1", memberships, "acme")?.wsSlug).toBe("bob");
+    expect(lastWorkspace("u1", [{ org: { slug: "acme" }, workspaces: [{ slug: "team", name: "Team" }] }], "acme")?.wsSlug).toBe("team");
+    expect(lastWorkspace("u1", memberships, "nope")).toBeUndefined();
   });
 });
 

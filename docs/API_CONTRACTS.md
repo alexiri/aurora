@@ -3047,7 +3047,13 @@ and copy them into `14`.
   or `/` when they have none there; the redirect is a navigation decision only — every API route keeps its own
   authorization. Agent addresses are unchanged (`…/agents/<handle>?tab=…`, D-507(e)). The back line of a place reads
   where you came from from the tab's session storage (the pattern of `aurora.admin-return`, `lib/nav/manage-return.ts`),
-  never from the URL.
+  never from the URL. **As built (P5-NAV-2):** one session-storage key, `aurora.place-return`
+  (`{userId, orgSlug, wsSlug, wsName, path, reader}`), replaces `aurora.admin-return` and `aurora.manage-rail`; it is
+  written while a workspace page is on screen and read back only for the same person and only when `path` is inside
+  `/o/<orgSlug>/w/<wsSlug>` (no scheme, `//`, backslash or dot segment) and the workspace is still among their
+  memberships (or was read under their own emergency grant). The Workspaces page uses existing routes only:
+  `GET /v1/orgs/{org}/workspaces`, `GET /v1/orgs/{org}/agents`, and `GET /v1/workspaces/{ws}` for each team
+  workspace's `audience.owners` (the list carries no owners).
 
 ## Shared schemas
 

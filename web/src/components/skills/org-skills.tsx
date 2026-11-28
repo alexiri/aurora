@@ -32,7 +32,8 @@ function OrgSkillsPage({ slug, org }: { slug: string; org: Org }) {
   return (
     <TopicPage<Tab>
       idBase="org-skills"
-      title="Skills"
+      title={`Skills in ${org.name}`}
+      tabsName="Skills"
       description={`What every agent in ${org.name} can do, and where it comes from.`}
       // Add skill belongs to the Skills tab: the list puts it here.
       actions={(tab) => (tab === "skills" ? header.slot : null)}

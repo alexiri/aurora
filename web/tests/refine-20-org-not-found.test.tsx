@@ -3,7 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/components/app-shell";
-import { ManageFrame } from "@/components/org/manage-frame";
+import { ManageGate } from "@/components/org/manage-gate";
 import { seedMoreControls } from "./support/render";
 import { json } from "./support/api";
 
@@ -47,13 +47,14 @@ describe("an unknown organization (org-3)", () => {
     render(
       <QueryClientProvider client={qc}>
         <AppShell>
-          <ManageFrame>Overview page</ManageFrame>
+          <ManageGate>Overview page</ManageGate>
         </AppShell>
       </QueryClientProvider>,
     );
     expect((await screen.findAllByRole("heading", { name: "We couldn't find that organization" })).length).toBeGreaterThan(0);
     await new Promise((r) => setTimeout(r, 600));
-    expect(screen.queryByTestId("manage-area")).toBeNull();
+    // No Manage menu for it either: the rail shows a real workspace of the viewer's.
+    expect(screen.queryByRole("navigation", { name: /^Manage / })).toBeNull();
     expect(screen.queryByText("Manage new")).toBeNull();
     expect(screen.queryByText("Overview page")).toBeNull();
     const resolves = calls.filter((c) => c.startsWith("/v1/resolve?org=new"));

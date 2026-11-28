@@ -166,11 +166,12 @@ describe("scope switcher", () => {
   });
 
   it("many: at most five workspaces of the current organization, then 'All n in Org', and the other organization as one row", async () => {
-    onWorkspace({ usersCount: 8, acmeCount: 4 });
+    onWorkspace({ usersCount: 8, acmeCount: 4, orgRole: "owner" });
     await openSwitcher();
     const links = await screen.findAllByRole("link", { name: /Team \d|Your workspace/ });
     expect(links).toHaveLength(5);
-    expect(screen.getByRole("link", { name: "All 8 in Users" })).toHaveAttribute("href", "/o/users");
+    // (D-508(e)) For owners and admins, Manage › Workspaces.
+    expect(screen.getByRole("link", { name: "All 8 in Users" })).toHaveAttribute("href", "/o/users/workspaces");
     expect(screen.getByRole("button", { name: /Acme Labs · 4 workspaces/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "All workspaces" })).toBeNull();
     // The current workspace is marked and read from the viewer's side.
@@ -187,7 +188,17 @@ describe("scope switcher", () => {
     expect(links).toHaveLength(5);
     expect(screen.queryByRole("link", { name: /Not mine/ })).toBeNull();
     // The count covers only the listed (own) workspaces, not the whole organization.
-    expect(screen.getByRole("link", { name: "All 6 in Users" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All 6 in Users" })).toBeInTheDocument();
+  });
+
+  it("(D-508(e)) a member gets the whole list in the menu, never a link to a Manage page", async () => {
+    onWorkspace({ usersCount: 8 });
+    await openSwitcher();
+    expect(await screen.findAllByRole("link", { name: /Team \d|Your workspace/ })).toHaveLength(5);
+    fireEvent.click(screen.getByRole("button", { name: "All 8 in Users" }));
+    expect(screen.getAllByRole("link", { name: /Team \d|Your workspace/ })).toHaveLength(8);
+    expect(screen.queryByRole("button", { name: "All 8 in Users" })).toBeNull();
+    for (const a of screen.getAllByRole("link")) expect(a.getAttribute("href")).not.toBe("/o/users");
   });
 
   it("recently used workspaces come first (kept in this browser)", async () => {
@@ -223,7 +234,8 @@ describe("scope switcher", () => {
     const input = await openSwitcher();
     fireEvent.change(input, { target: { value: "acme" } });
     fireEvent.click(await screen.findByRole("button", { name: /Acme Labs/ }));
-    expect(await screen.findByRole("link", { name: "All 7 in Acme Labs" })).toHaveAttribute("href", "/o/acme");
+    // A member of Acme Labs: the rest of the list opens here.
+    expect(await screen.findByRole("button", { name: "All 7 in Acme Labs" })).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: /Acme \d/ })).toHaveLength(5);
     fireEvent.click(screen.getByRole("button", { name: "Acme Labs" }));
     expect(await screen.findByRole("link", { name: /Your workspace/ })).toBeInTheDocument();
@@ -309,13 +321,19 @@ describe("scope switcher", () => {
   });
 });
 
+const placeRecord = (path: string, over: Record<string, unknown> = {}) =>
+  window.sessionStorage.setItem(
+    "aurora.place-return",
+    JSON.stringify({ userId: "u1", orgSlug: "acme", wsSlug: "a-0", wsName: "Acme 0", reader: false, path, ...over }),
+  );
+
 describe("Administration rail", () => {
-  it("has Back to <Org> (where you came from), the level header and no switcher", async () => {
-    window.sessionStorage.setItem("aurora.admin-return", JSON.stringify({ href: "/o/acme/w/a-0", name: "Acme Labs" }));
-    render("/admin/people", {}, { admin: true });
-    const back = await screen.findByRole("link", { name: "Back to Acme Labs" });
-    expect(back).toHaveAttribute("href", "/o/acme/w/a-0");
-    expect(screen.getByText("You're in")).toBeInTheDocument();
+  it("has the back line (where you came from), its place card and no switcher", async () => {
+    placeRecord("/o/acme/w/a-0/agents");
+    render("/admin/people", {}, { admin: true, acmeCount: 1 });
+    const back = await screen.findByRole("link", { name: "Back to Acme 0" });
+    expect(back).toHaveAttribute("href", "/o/acme/w/a-0/agents");
+    expect(screen.getAllByTestId("place-card")[0]).toHaveTextContent("Administration This Aurora");
     expect(screen.queryByTestId("scope-switcher")).toBeNull();
     expect(screen.queryByText("Select organization")).toBeNull();
     expect((await screen.findByRole("link", { name: "People & sign-in" })).getAttribute("aria-current")).toBe("page");
@@ -325,7 +343,7 @@ describe("Administration rail", () => {
     expect(groups.map((g) => g.getAttribute("aria-labelledby") && g.querySelector("p")?.textContent)).toEqual(["Policy for everyone", "This installation"]);
     expect(within(groups[0]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["What agents may do", "Apps", "Skills", "Chat platforms", "People & sign-in", "Data"]);
     expect(within(groups[1]!).getAllByRole("link").map((a) => a.textContent)).toEqual(["Health & runners", "AI endpoints", "Set in Helm", "All settings"]);
-    // "Administration" is said once: the header's "You're in Administration"; the footer entry is only outside Administration.
+    // "Administration" is said once: on the place card; the footer entry is only outside Administration.
     const shell = screen.getByRole("complementary", { name: "Sidebar" });
     expect(within(shell).queryByRole("link", { name: "Administration" })).toBeNull();
     expect(within(shell).getAllByText("Administration")).toHaveLength(1);
@@ -337,29 +355,29 @@ describe("Administration rail", () => {
     expect(await within(shell).findByRole("link", { name: "Administration" })).toHaveAttribute("href", "/admin");
   });
 
-  it.each(["javascript:alert(1)", "//evil.example/x", "https://evil.example/", "/\\evil"])("ignores a remembered href that is not an internal path: %s", async (href) => {
-    window.sessionStorage.setItem("aurora.admin-return", JSON.stringify({ href, name: "Evil" }));
+  it.each(["javascript:alert(1)", "//evil.example/x", "https://evil.example/", "/\\evil"])("ignores a remembered path that is not an internal path: %s", async (path) => {
+    placeRecord(path, { orgSlug: "users", wsSlug: "bob", wsName: "Evil" });
     render("/admin", {}, { admin: true, usersCount: 2 });
-    const back = await screen.findByRole("link", { name: "Back to Users" });
+    const back = await screen.findByRole("link", { name: "Back to Your workspace" });
     expect(back).toHaveAttribute("href", "/o/users/w/bob");
   });
 
-  it("without a remembered place goes back to the first workspace", async () => {
+  it("without a remembered place goes back to your last workspace", async () => {
     render("/admin", {}, { admin: true, usersCount: 2 });
-    const back = await screen.findByRole("link", { name: "Back to Users" });
+    const back = await screen.findByRole("link", { name: "Back to Your workspace" });
     expect(back).toHaveAttribute("href", "/o/users/w/bob");
   });
 
-  it("remembers the organization page you were on", async () => {
+  it("remembers the workspace page you were on", async () => {
     onWorkspace({ admin: true });
-    await waitFor(() => expect(window.sessionStorage.getItem("aurora.admin-return")).toContain("/o/users/w/bob"));
+    await waitFor(() => expect(window.sessionStorage.getItem("aurora.place-return")).toContain("/o/users/w/bob/agents"));
   });
 
   it("is not rendered for a signed-in member on /admin", async () => {
     render("/admin", {}, { admin: false });
     await screen.findByRole("button", { name: /Bob Builder/ });
     expect(screen.queryByRole("navigation", { name: "Administration" })).toBeNull();
-    expect(screen.queryByText("You're in")).toBeNull();
+    expect(screen.queryByText("This Aurora")).toBeNull();
   });
 });
 
@@ -482,11 +500,12 @@ describe("navigation entries", () => {
     expect(screen.queryByRole("link", { name: "Members" })).toBeNull();
   });
 
-  it("shows the account navigation on account pages, with a switcher that is busy until the session loads and then keeps the last scope", async () => {
+  it("shows the account navigation on account pages, under the person's place card with a way back, and no switcher", async () => {
     render("/account", {});
-    // (firstday-2) Loading first, never a live-looking empty card; then the last scope kept for Account pages (P5-REFINE-2).
-    expect(within(switcher()).getByText("Loading workspaces…")).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "Profile" })).toBeInTheDocument();
-    expect(await within(switcher()).findByText("Users")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByTestId("place-card")[0]).toHaveTextContent("Bob Builder Your account"));
+    expect(screen.queryByTestId("scope-switcher")).toBeNull();
+    // (P5-REFINE-2) The last scope is kept: it is where the back line goes.
+    expect(await screen.findByRole("link", { name: "Back to Your workspace" })).toHaveAttribute("href", "/o/users/w/bob");
   });
 });

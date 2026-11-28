@@ -15,6 +15,7 @@ import { GeneralTab } from "@/components/settings/general-tab";
 import { KeysTab } from "@/components/settings/keys-tab";
 import { EmergencyHistory } from "@/components/emergency/emergency-history";
 import { isEmergencyReader } from "@/lib/emergency";
+import { useOrgMemberOnly } from "@/lib/nav/org-member";
 import { ErrorState, Loading } from "@/components/states";
 import { TopicPage, type TopicTab } from "@/components/topic-page";
 import { PageHeader } from "@/components/ui/page-header";
@@ -128,6 +129,8 @@ export function WorkspacePeoplePage() {
 /** Settings: name, API keys, audit log and deletion. */
 export function WorkspaceSettingsPage() {
   const router = useRouter();
+  // (D-508(e)) After deleting, owners and admins land on Manage; a member lands wherever `/` sends them.
+  const member = useOrgMemberOnly(useParams<{ org: string }>().org);
   return (
     <WorkspaceGate>
       {(w, org) => {
@@ -148,7 +151,7 @@ export function WorkspaceSettingsPage() {
                 content: (
                   <div className="space-y-6">
                     <WorkspaceFreeze wsId={w.id} name={w.name} orgId={w.org_id} frozen={w.frozen} />
-                    <DangerTab wsId={w.id} slug={w.slug} name={w.name} onDeleted={() => router.replace(orgRoutes(org).home())} />
+                    <DangerTab wsId={w.id} slug={w.slug} name={w.name} onDeleted={() => router.replace(member ? "/" : orgRoutes(org).home())} />
                   </div>
                 ),
               },

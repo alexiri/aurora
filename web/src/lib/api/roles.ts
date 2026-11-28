@@ -45,9 +45,8 @@ export interface AltitudeView {
 
 // (P5-REFINE-18 #1) In the rail's order: Overview · policy for everyone · this installation.
 const ADMIN_TOPICS: AdminTopic[] = ["overview", "internet-access", "apps", "skills", "chat-platforms", "people", "data", "platform", "ai-models", "set-in-helm", "settings"];
-// (P5-REFINE-17, rec 8) The Manage <org> sub-nav: Overview first (the organization's own address), then the topics.
-const ORG_TOPICS: OrgTopic[] = ["overview", "agents", "skills", "people", "apps", "chat-platforms", "ai-models", "internet-access", "data", "settings"];
-const ORG_MEMBER_TOPICS: OrgTopic[] = ["overview", "ai-models", "internet-access"];
+// (D-508(b)) Manage <org>'s menu, in the rail's order (`ORG_RAIL_GROUPS`). Members do not see Manage (D-508(e)).
+const ORG_TOPICS: OrgTopic[] = ["overview", "workspaces", "people", "ai-models", "apps", "chat-platforms", "internet-access", "skills", "agents", "data", "settings"];
 
 export function visibleTopics(level: "admin", roles: ViewerRoles, alt?: AltitudeView): AdminTopic[];
 export function visibleTopics(level: "org", roles: ViewerRoles, alt?: AltitudeView): OrgTopic[];
@@ -59,9 +58,8 @@ export function visibleTopics(level: Level, roles: ViewerRoles, alt?: AltitudeVi
   if (level === "org") {
     // An instance admin acting in an organization sees its pages exactly as its owner would.
     const role = roles.org ?? (roles.instanceAdmin ? "owner" : undefined);
-    const list = role === "owner" || role === "admin" ? ORG_TOPICS : role === "member" ? ORG_MEMBER_TOPICS : [];
-    // At Use an organization member lists Overview only; AI models and Internet access need Set up. Skills is listed to
-    // the people who own it (owners and admins) at every altitude (D-506(b)); a member's list has no Skills.
+    const list = role === "owner" || role === "admin" ? ORG_TOPICS : [];
+    // At Use: Overview, and Skills for the people who own it (D-506(b)).
     return setup ? list : list.filter((t) => t === "overview" || t === "skills");
   }
   const role = roles.workspace ?? (roles.instanceAdmin ? "owner" : undefined);

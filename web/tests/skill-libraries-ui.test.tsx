@@ -547,7 +547,7 @@ describe("Manage <org> › Skills", () => {
   it("has the page's heading and lead, and the tabs Skills and Libraries, with Skills first", async () => {
     mockFetch(routes());
     wrap(<OrgSkills />);
-    expect(await screen.findByRole("heading", { level: 1, name: "Skills" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Skills in Acme" })).toBeTruthy();
     expect(screen.getByText("What every agent in Acme can do, and where it comes from.")).toBeTruthy();
     expect(screen.getAllByRole("tab").map((t) => [t.textContent, t.getAttribute("aria-selected")])).toEqual([["Skills", "true"], ["Libraries", "false"]]);
     expect(await screen.findByText("No skills yet")).toBeTruthy();

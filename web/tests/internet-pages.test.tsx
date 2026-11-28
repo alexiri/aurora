@@ -286,7 +286,7 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     expect(screen.getByRole("heading", { name: "Your rules" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Set above you" })).toBeInTheDocument();
     // (P5-REFINE-20, org-8) The page heading is the first thing: the preset card sits under it, and there is one h1.
-    const h1 = screen.getAllByRole("heading", { level: 1, name: "Internet access" });
+    const h1 = screen.getAllByRole("heading", { level: 1, name: "Internet access in Acme" });
     expect(h1).toHaveLength(1);
     const presets = await screen.findByTestId("policy-presets");
     expect(h1[0]!.compareDocumentPosition(presets) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -301,7 +301,7 @@ describe("an organization's Internet access page (one bar, two steps)", () => {
     const calls = routes();
     const member = { id: "o1", slug: "acme", name: "Acme", my_role: "member", contacts: null } as never;
     wrap(<OrgInternet org={member} slug="acme" />);
-    expect(await screen.findByRole("heading", { name: "Internet access" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Internet access in Acme" })).toBeInTheDocument();
     // The sentence comes from the effective governance, a read any organization member may make (05).
     expect((await screen.findByTestId("internet-summary")).textContent).toBe(
       "In Acme, requests without an account can reach any website unless a rule or a workspace blocks them.",

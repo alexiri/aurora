@@ -89,7 +89,7 @@ for (const width of [1280, 390]) {
     // action on screen (no table, no sideways scroll).
     test("organization: the tabs Skills and Libraries; every card action is on screen", async ({ page }) => {
       await openLibraryScreen(page, "skills", "light");
-      await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Skills in Acme Labs", level: 1 })).toBeVisible();
       await expect(page.getByText("What every agent in Acme Labs can do, and where it comes from.")).toBeVisible();
       await expect(page.getByRole("tab")).toHaveText(["Skills", "Libraries"]);
       await page.getByRole("button", { name: "Add skill" }).click();

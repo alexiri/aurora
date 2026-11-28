@@ -70,7 +70,7 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(search).toBeInViewport();
       // D4: a personal workspace's avatar is its owner's initial, not the "Y" of "Your workspace".
       await expect(page.getByRole("link", { name: /Your workspace/ }).first()).toContainText("A");
-      await expect(page.getByRole("link", { name: "All 8 in Acme Labs" })).toHaveAttribute("href", "/o/acme");
+      await expect(page.getByRole("link", { name: "All 8 in Acme Labs" })).toHaveAttribute("href", "/o/acme/workspaces");
       await expect(page.getByRole("button", { name: "Northwind · 4 workspaces" })).toBeVisible();
       const { violations } = await new AxeBuilder({ page }).analyze();
       expect(violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
@@ -95,16 +95,19 @@ for (const scheme of ["light", "dark"] as const) {
       await page.getByRole("complementary", { name: "Sidebar" }).getByRole("link", { name: "Administration" }).click();
       await expect(page).toHaveURL(/\/admin$/, { timeout: 30_000 });
       const sidebar = page.getByRole("complementary", { name: "Sidebar" });
-      await expect(sidebar.getByText("You're in")).toBeVisible();
+      await expect(sidebar.getByTestId("place-card")).toHaveText(/Administration\s+This Aurora/);
       await expect(sidebar.getByTestId("scope-switcher")).toHaveCount(0);
       await expect(page.getByText("Select organization")).toHaveCount(0);
       await expect(page.getByTestId("level-badge")).toHaveCount(0);
-      // (P5-REFINE-20 batch 4) Inside Administration the rail's header names it once ("You're in Administration"): the
-      // sidebar's own Administration entry is gone there.
-      await expect(sidebar.getByText("Administration", { exact: true }).first()).toBeVisible();
+      // (P5-REFINE-20 batch 4) Inside Administration the rail's place card names it once: the sidebar's own
+      // Administration entry is gone there.
       await expect(sidebar.getByRole("link", { name: /^Administration/ })).toHaveCount(0);
-      await sidebar.getByRole("link", { name: "Back to Acme Labs" }).click();
-      await expect(page).toHaveURL(/\/o\/acme\/w\/team-3$/);
+      // (D-508(h)) The back line returns to the workspace and page you came from. (The shared mock answers every
+      // workspace address with the same workspace, so only the address tells them apart here.)
+      const back = sidebar.getByRole("link", { name: /^Back to / });
+      await expect(back).toHaveAttribute("href", "/o/acme/w/team-3/agents");
+      await back.click();
+      await expect(page).toHaveURL(/\/o\/acme\/w\/team-3\/agents$/);
       expect(errors).toEqual([]);
     });
 
