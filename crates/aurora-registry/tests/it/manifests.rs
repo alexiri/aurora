@@ -97,6 +97,186 @@ fn a_body_check_kinds_key_that_is_not_an_identifier_is_invalid() {
     assert_eq!(got, BTreeSet::from(["body_check_key"]), "{v:#?}");
 }
 
+/// The codes the linter reports for a tool with this `body_check`.
+fn body_check_codes(body_check: &str) -> BTreeSet<&'static str> {
+    let y = METHODS.replace(
+        "connect_methods: [token] }",
+        &format!("connect_methods: [token], body_check: {body_check} }}"),
+    );
+    run(&y).iter().map(|x| x.code).collect()
+}
+
+fn listed(n: usize, f: impl Fn(usize) -> String) -> String {
+    (0..n).map(f).collect::<Vec<_>>().join(", ")
+}
+
+#[test]
+fn a_body_check_with_variants_length_pins_and_value_lists_is_valid() {
+    let codes = body_check_codes(
+        "{ entry_keys: { data: [refId] }, entry_at: { data: [ { at: 0, key: refId, values: [A, B] } ] }, \
+         one_of: [ { entry_len: { data: [ { at: 0, member: model/metrics, len: 1 } ] } }, \
+         { entry_max_len: { data: [ { at: 0, member: model/query, max: 200 } ] }, \
+           entry_member: { data: [ { at: 0, member: model, keys: [query], value: { key: query, values: [a, b] } } ] }, \
+           entry_at: { data: [ { at: 0, key: refId, value: A } ] } } ] }",
+    );
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+#[test]
+fn a_body_check_variant_that_nests_variants_is_refused_at_load() {
+    assert_eq!(
+        body_check_codes("{ one_of: [ { one_of: [ { refuse_keys: [record] } ] } ] }"),
+        BTreeSet::from(["body_check_one_of"])
+    );
+}
+
+#[test]
+fn the_new_body_check_limits_are_enforced() {
+    let variants = |n| listed(n, |i| format!("{{ refuse_keys: [k{i}] }}"));
+    assert!(body_check_codes(&format!("{{ one_of: [{}] }}", variants(4))).is_empty());
+    let lens = |n| listed(n, |i| format!("{{ at: 0, member: model/k{i}, len: 1 }}"));
+    assert!(body_check_codes(&format!("{{ entry_len: {{ data: [{}] }} }}", lens(16))).is_empty());
+    let values = |n| listed(n, |i| format!("v{i}"));
+    let pin = |v: String| {
+        format!("{{ entry_at: {{ data: [ {{ at: 0, member: model, key: k, values: [{v}] }} ] }} }}")
+    };
+    assert!(body_check_codes(&pin(values(8))).is_empty());
+    let long = "x".repeat(80);
+    let member_pin = |v: &str| {
+        format!(
+            "{{ entry_member: {{ data: [ {{ at: 0, member: model, keys: [k], value: {v} }} ] }} }}"
+        )
+    };
+    let max = |m: u32| {
+        format!("{{ entry_max_len: {{ data: [ {{ at: 0, member: model/k, max: {m} }} ] }} }}")
+    };
+    // No longer than an approval card shows a value.
+    let shown = u32::try_from(aurora_core::limits::SUMMARY_VALUE_MAX).unwrap();
+    assert!(body_check_codes(&max(shown)).is_empty());
+    for (bc, code) in [
+        (
+            format!("{{ one_of: [{}] }}", variants(5)),
+            "body_check_one_of",
+        ),
+        // A variant that checks nothing would pass every body.
+        ("{ one_of: [ {} ] }".to_owned(), "body_check_one_of"),
+        // A variant is held to the same limits as the base.
+        (
+            "{ one_of: [ { refuse_keys: [bad-key] } ] }".to_owned(),
+            "body_check_key",
+        ),
+        (
+            format!("{{ entry_len: {{ data: [{}] }} }}", lens(17)),
+            "body_check_entry_len",
+        ),
+        // Over all keys together.
+        (
+            format!(
+                "{{ entry_len: {{ data: [{}], more: [{}] }} }}",
+                lens(9),
+                lens(8)
+            ),
+            "body_check_entry_len",
+        ),
+        (
+            "{ entry_len: { data: [ { at: 0, member: model/m, len: 0 } ] } }".to_owned(),
+            "body_check_entry_len",
+        ),
+        (
+            "{ entry_len: { data: [ { at: 65, member: model/m, len: 1 } ] } }".to_owned(),
+            "body_check_entry_len",
+        ),
+        (
+            "{ entry_len: { data: [] } }".to_owned(),
+            "body_check_entry_len",
+        ),
+        (
+            "{ entry_len: { data: [ { at: 0, member: \"model/bad name\", len: 1 } ] } }".to_owned(),
+            "body_check_key",
+        ),
+        (
+            format!(
+                "{{ entry_greater: {{ data: [{}] }} }}",
+                listed(17, |i| format!(
+                    "{{ at: 0, member: m{i}, key: from, than: to }}"
+                ))
+            ),
+            "body_check_entry_greater",
+        ),
+        (
+            "{ entry_greater: { data: [ { at: 65, member: m, key: from, than: to } ] } }"
+                .to_owned(),
+            "body_check_entry_greater",
+        ),
+        (
+            "{ entry_greater: { data: [ { at: 0, member: m, key: from, than: from } ] } }"
+                .to_owned(),
+            "body_check_entry_greater",
+        ),
+        (
+            "{ entry_greater: { data: [] } }".to_owned(),
+            "body_check_entry_greater",
+        ),
+        (
+            "{ entry_greater: { data: [ { at: 0, member: m, key: bad-key, than: to } ] } }"
+                .to_owned(),
+            "body_check_key",
+        ),
+        (
+            "{ entry_greater: { data: [ { at: 0, member: \"bad name\", key: from, than: to } ] } }"
+                .to_owned(),
+            "body_check_key",
+        ),
+        (max(0), "body_check_entry_max_len"),
+        (max(shown + 1), "body_check_entry_max_len"),
+        (
+            format!(
+                "{{ entry_max_len: {{ data: [{}] }} }}",
+                listed(17, |i| format!("{{ at: 0, member: model/k{i}, max: 5 }}"))
+            ),
+            "body_check_entry_max_len",
+        ),
+        (
+            "{ entry_max_len: { data: [ { at: 65, member: model/k, max: 5 } ] } }".to_owned(),
+            "body_check_entry_max_len",
+        ),
+        (
+            "{ entry_max_len: { data: [ { at: 0, member: \"model/bad name\", max: 5 } ] } }"
+                .to_owned(),
+            "body_check_key",
+        ),
+        (pin(values(9)), "body_check_entry_at"),
+        (pin(String::new()), "body_check_entry_at"),
+        (pin(long.clone()), "body_check_entry_at"),
+        (pin("{ a: 1 }".to_owned()), "body_check_entry_at"),
+        // Exactly one of `value` and `values`.
+        (
+            "{ entry_at: { data: [ { at: 0, member: model, key: k } ] } }".to_owned(),
+            "body_check_entry_at",
+        ),
+        (
+            "{ entry_at: { data: [ { at: 0, member: model, key: k, value: a, values: [b] } ] } }"
+                .to_owned(),
+            "body_check_entry_at",
+        ),
+        (member_pin("{ key: k }"), "body_check_entry_member"),
+        (
+            member_pin("{ key: k, value: a, values: [b] }"),
+            "body_check_entry_member",
+        ),
+        (
+            member_pin(&format!("{{ key: k, values: [{}] }}", values(9))),
+            "body_check_entry_member",
+        ),
+        (
+            member_pin(&format!("{{ key: k, values: [{long}] }}")),
+            "body_check_entry_member",
+        ),
+    ] {
+        assert_eq!(body_check_codes(&bc), BTreeSet::from([code]), "{bc}");
+    }
+}
+
 #[test]
 fn invalid_fixtures_yield_expected_code() {
     let table: &[(&str, &str)] = &[

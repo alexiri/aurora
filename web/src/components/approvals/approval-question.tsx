@@ -90,7 +90,7 @@ export function ApprovalQuestion({ approval: a, now, onDecide, pending, message,
         <Sentence a={a} />
       </p>
       {a.summary.text ? <p className="whitespace-pre-wrap text-sm text-ink-2">{a.summary.text}</p> : null}
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+      <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
         {a.summary.fields.map((f, i) => (
           <div key={i} className="contents">
             <dt className="text-muted">{f.label}</dt>

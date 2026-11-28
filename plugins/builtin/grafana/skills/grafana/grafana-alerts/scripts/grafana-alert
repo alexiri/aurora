@@ -13,6 +13,14 @@ TIMEOUT = 300
 UID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+FIELD_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,200}$")
+DS_TYPE = {"prometheus": "prometheus", "logs": "grafana-opensearch-datasource"}
+# A log metric's reduce and min_doc_count. An empty bucket is a zero for a count or sum; for
+# the others it has no value, which would empty the whole reduce, so it is left out.
+LOG_METRICS = {"count": ("sum", "0"), "sum": ("sum", "0"), "avg": ("mean", "1"),
+               "max": ("max", "1"), "min": ("min", "1")}
+SHOWN_MAX = 200  # what an approval card shows of a value
+BUCKETS_MAX = 60
 ACCOUNT = None
 FOLDER_CAP, SERVICE_CAP = 10, 5
 MIN_EVAL_S, MIN_FOR_S = 60, 120
@@ -139,13 +147,86 @@ def check_receiver(name):
         die(f"no contact point named {name!r}; a person makes contact points")
 
 
-def check_ds(ds):
+def check_ds(ds, kind):
+    """The data source's type, which must be the one the rule's kind queries."""
     data = send("list_datasources", None)
     types = {d.get("uid"): d.get("type") for d in data if isinstance(d, dict)} \
         if isinstance(data, list) else {}
-    if types.get(ds) != "prometheus":
-        die(f"--ds {ds} is a {types.get(ds) or 'unknown'} data source: the rule is one Prometheus "
-            "query, no SQL or Loki data source, and no second query")
+    if types.get(ds) != DS_TYPE[kind]:
+        die(f"--ds {ds} is a {types.get(ds) or 'unknown'} data source: --expr needs a "
+            f"{DS_TYPE['prometheus']} data source and --logs a {DS_TYPE['logs']} one; no other "
+            "type can have a rule")
+    return types[ds]
+
+
+def field_arg(value, what):
+    if not FIELD_RE.match(value or ""):
+        die(f"{what}: {value!r} is not a field name (letters, digits, _ . @ -, at most 200 characters)")
+    return value
+
+
+def check_lucene(query):
+    if not query.strip():
+        die("--logs is empty")
+    if "\n" in query or "\t" in query or CTRL.search(query):
+        die("--logs is one line of text")
+    if len(query) > SHOWN_MAX:
+        die(f"--logs is at most {SHOWN_MAX} characters, so that an approval shows it in full")
+    # Escaped pairs and quoted phrases are plain text. What is left must hold no regular
+    # expression and no wildcard that starts a term (`*` alone matches all): both are costly.
+    bare = re.sub(r'\\.|"(?:\\.|[^"\\])*"', "x", query)
+    if "/" in bare:
+        die('--logs has a regular expression (/.../): quote a text with a slash, as url:"/api"')
+    if re.search(r"(?<![^\s(:+\-!|&\[{<>=])(?!\*+(?![^\s)\]}^]))[*?]", bare):
+        die("--logs has a leading wildcard: start the term with text, as host:web*")
+
+
+def seconds(value, flag, low, high, text):
+    n = 0 if low == 0 and re.fullmatch(r"0[smh]?", value) else parse_step(value)
+    if not low <= n <= high:
+        die(f"{flag} is {text} (got {value})")
+    return n
+
+
+def log_query(a):
+    """A log rule's query model, reduce, no-data state and time range."""
+    check_lucene(a.logs)
+    if not a.window:
+        die("--logs needs --window: how far back each evaluation counts, 5m to 60m")
+    window = seconds(a.window, "--window", 300, 3600, "5m to 60m")
+    delay = seconds(a.delay or "1m", "--delay", 0, 900, "0m to 15m")
+    interval = a.hist or "1m"
+    bucket = parse_step(interval)
+    if len(interval) > SHOWN_MAX or window > bucket * BUCKETS_MAX:
+        die(f"--hist {interval} divides --window {a.window} into too many: at most "
+            f"{BUCKETS_MAX} buckets")
+    spec = a.metric or "count"
+    kind, colon, field = spec.partition(":")
+    if kind not in LOG_METRICS:
+        die(f"--metric {spec!r}: use count, sum:F, avg:F, max:F or min:F")
+    if kind == "count" and colon:
+        die(f"--metric {spec!r}: count takes no field")
+    field = None if kind == "count" else field_arg(field, f"--metric {spec!r}")
+    tf = None if a.time_field is None else field_arg(a.time_field, "--time-field")
+    reducer, quiet = LOG_METRICS[kind]
+    # No matching documents is normal for a count or sum: it means zero.
+    no_data = ("OK" if a.op == "gt" else "Alerting") if quiet == "0" else "NoData"
+    # The counted span is the window, ending the delay ago.
+    return (log_model(a.logs, kind, field, interval, tf, tf), reducer, no_data,
+            {"from": window + delay, "to": delay})
+
+
+def log_model(query, kind, field, interval, time_field, bucket_field):
+    metric = {"id": "1", "type": kind}
+    hist = {"id": "2", "type": "date_histogram",
+            "settings": {"interval": interval, "min_doc_count": LOG_METRICS[kind][1]}}
+    model = {"refId": "A", "queryType": "lucene", "query": query, "metrics": [metric],
+             "bucketAggs": [hist]}
+    for holder, key, value in ((metric, "field", field), (model, "timeField", time_field),
+                               (hist, "field", bucket_field)):
+        if value is not None:
+            holder[key] = value
+    return model
 
 
 def group_interval(folder, group):
@@ -155,21 +236,19 @@ def group_interval(folder, group):
             return g.get("interval")
 
 
-def steps(ds, expr, w, op, thr):
-    """The three-step query model: one data source query, reduce last, threshold."""
+def steps(ds, query, reducer, rng, op, thr):
+    """The three-step query model: one data source query, reduce, threshold."""
     def step(ref, dsu, model):
         return {"refId": ref, "datasourceUid": dsu, "queryType": "",
-                "relativeTimeRange": {"from": w, "to": 0}, "model": model}
+                "relativeTimeRange": dict(rng), "model": model}
     def cond(ref, ty, params):
         return {"evaluator": {"params": params, "type": ty}, "operator": {"type": "and"},
                 "query": {"params": [ref]}, "reducer": {"params": [], "type": "last"},
                 "type": "query"}
     x = {"type": "__expr__", "uid": "__expr__"}
-    q = {"editorMode": "code", "expr": expr, "instant": True, "legendFormat": "__auto",
-         "refId": "A"}
-    return [step("A", ds, q),
+    return [step("A", ds, query),
             step("B", "__expr__", {"conditions": [cond("B", "gt", [])], "datasource": x,
-                                   "expression": "A", "reducer": "last", "refId": "B",
+                                   "expression": "A", "reducer": reducer, "refId": "B",
                                    "type": "reduce"}),
             step("C", "__expr__", {"conditions": [cond("C", op, [thr])], "datasource": x,
                                    "expression": "B", "refId": "C", "type": "threshold"})]
@@ -178,12 +257,24 @@ def steps(ds, expr, w, op, thr):
 def cmd_create(a):
     if not a.title or CTRL.search(a.title):
         die("--title is one line of text")
-    w = check_expr(a.expr)
+    if a.expr is not None and a.logs is not None:
+        die("pass --expr or --logs, not both: a rule is one query")
+    if a.expr is None and a.logs is None:
+        die("create needs --expr or --logs")
+    if a.logs is not None:
+        kind, (query, reducer, no_data, rng) = "logs", log_query(a)
+    else:
+        if any(v is not None for v in (a.window, a.metric, a.hist, a.delay, a.time_field)):
+            die("--window, --metric, --hist, --delay and --time-field go with --logs")
+        kind, reducer, no_data = "prometheus", "last", "NoData"
+        rng = {"from": check_expr(a.expr), "to": 0}
+        query = {"editorMode": "code", "expr": a.expr, "instant": True, "legendFormat": "__auto",
+                 "refId": "A"}
     for_s = parse_step(a.for_)
     if for_s < MIN_FOR_S:
         die(f"--for is at least 2 minutes (got {a.for_})")
     exp = (today() + dt.timedelta(days=days_of(a.expires))).isoformat()
-    check_ds(a.ds)
+    check_ds(a.ds, kind)
     check_receiver(a.receiver)
     rules = mine(a.managed_by, a.folder)
     if len(rules) >= FOLDER_CAP:
@@ -202,8 +293,8 @@ def cmd_create(a):
         labels["service"] = a.service
     body = {"orgID": send("get_current_org", None)["id"], "title": a.title, "ruleGroup": a.group,
             "folderUID": a.folder, "condition": "C",
-            "data": steps(a.ds, a.expr, w, a.op, a.threshold), "for": f"{for_s}s",
-            "noDataState": "NoData", "execErrState": "Error", "isPaused": False, "labels": labels,
+            "data": steps(a.ds, query, reducer, rng, a.op, a.threshold), "for": f"{for_s}s",
+            "noDataState": no_data, "execErrState": "Error", "isPaused": False, "labels": labels,
             "annotations": {"summary": a.title, "expires": exp},
             "notification_settings": {"receiver": a.receiver}}
     if a.print_body:
@@ -229,11 +320,33 @@ def read_managed(a):
 
 SHAPE_LABELS = {"managed_by", "expires", "service"}
 SHAPE_ANNOTATIONS = {"summary", "expires"}
+PROM_KEYS = {"editorMode", "expr", "instant", "legendFormat", "refId"}
+
+
+def query_model(rule):
+    """The first step's query model without what the server adds to every stored one."""
+    data = rule.get("data") or [{}]
+    m = data[0].get("model") if isinstance(data[0], dict) else None
+    return {k: v for k, v in m.items() if k not in STEP_STRIP} if isinstance(m, dict) else {}
+
+
+def rule_kind(model):
+    """`prometheus`, or `logs` when the script would build this very model from its values."""
+    if "expr" in model and set(model) <= PROM_KEYS:
+        return "prometheus"
+    try:
+        (m,), (b,) = model["metrics"], model["bucketAggs"]
+        values = (model["query"], m["type"], m.get("field"), b["settings"]["interval"],
+                  model.get("timeField"), b.get("field"))
+        if model == log_model(*values) and all(len(str(v)) <= SHOWN_MAX for v in values):
+            return "logs"
+    except (KeyError, TypeError, ValueError, AttributeError):
+        pass
 
 
 def check_shape(rule):
     """Refuses a rule that left the shape the script builds; it is never resent."""
-    why = ("record" in rule and "a recording rule (`record`)"
+    why = (rule.get("record") is not None and "a recording rule (`record`)"
            or len(rule.get("data") or []) != 3
            and "not the script's one query with its reduce and threshold"
            or set(rule.get("notification_settings") or {}) - {"receiver"}
@@ -246,6 +359,11 @@ def check_shape(rule):
         die(f"the rule carries {why}: the script resends only the shape it builds — a second query "
             "or a recording rule would run on every evaluation, and another label could be what a "
             "notification policy matches")
+    model = query_model(rule)
+    if not rule_kind(model):
+        die("the script resends only one Prometheus query, or one OpenSearch log query as it "
+            f"builds it (texts up to {SHOWN_MAX} characters); the rule's query model is "
+            f"{json.dumps(model, sort_keys=True)[:600]}")
 
 
 def expiry_of(rule):
@@ -266,7 +384,8 @@ def expiry_of(rule):
 def apply_change(rule, a):
     """The rule's body with the asked changes; an expiry extension needs --renew."""
     check_shape(rule)
-    body = {k: v for k, v in rule.items() if k not in STRIP}
+    # A newer server answers every rule with `record: null`, which is not sent back.
+    body = {k: v for k, v in rule.items() if k not in STRIP and not (k == "record" and v is None)}
     for s in body.get("data") or []:
         m = s.get("model") if isinstance(s, dict) else None
         if isinstance(m, dict):
@@ -333,25 +452,26 @@ def cmd_expire(a):
 
 
 def cmd_list(a):
-    print("uid\ttitle\tgroup\texpiry")
+    print("uid\ttitle\tgroup\tkind\texpiry")
     for r in mine(a.managed_by, a.folder):
         print("\t".join(clean(x) for x in (r.get("uid"), r.get("title"), r.get("ruleGroup"),
-              (r.get("labels") or {}).get("expires") or "?")))
+              rule_kind(query_model(r)) or "?", (r.get("labels") or {}).get("expires") or "?")))
 
 
 def main():
     ap = argparse.ArgumentParser(prog="grafana-alert")
     ap.add_argument("cmd", choices=("create", "list", "update", "delete", "expire"))
     ap.add_argument("uid", nargs="?")
-    for f in ("--managed-by --folder --group --title --ds --expr --op --threshold --for --receiver "
-              "--expires --service --print-body --renew --reason").split():
+    for f in ("--managed-by --folder --group --title --ds --expr --logs --metric --window --hist "
+              "--delay --time-field --op --threshold --for --receiver --expires --service "
+              "--print-body --renew --reason").split():
         d = f[2:].replace("-", "_") + ("_" if f == "--for" else "")
         kw = ({"action": "store_true"} if f in ("--print-body", "--renew") else
               {"type": float} if f == "--threshold" else
               {"choices": ("gt", "lt")} if f == "--op" else {})
         ap.add_argument(f, dest=d, **kw)
     a = ap.parse_args()
-    need = {"create": "managed-by folder group title ds expr op threshold for receiver expires",
+    need = {"create": "managed-by folder group title ds op threshold for receiver expires",
             "update": "uid managed-by folder", "delete": "uid managed-by folder",
             "list": "managed-by", "expire": "managed-by folder"}[a.cmd]
     for f in need.split():

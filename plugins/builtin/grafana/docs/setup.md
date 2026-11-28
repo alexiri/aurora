@@ -86,7 +86,7 @@ These are separate permissions and are held for approval:
   database user, so give SQL data sources read-only database users.
 - **Create, change or delete an alert rule** (`POST /api/v1/provisioning/alert-rules`, `PUT` and
   `DELETE …/alert-rules/<uid>`): the approval shows the rule the script builds — title, folder,
-  group, the data source and query, the comparison and threshold, the `for` duration, the states,
+  group, the data source and query, how far back the query looks, the comparison and threshold, the `for` duration, the states,
   the labels and annotations each under its name, and the receiver. See *Alert rules* below.
 
 ## Alert rules
@@ -94,6 +94,21 @@ These are separate permissions and are held for approval:
 Agents can create, change and delete Grafana-managed alert rules and list the contact points the
 server has (names and types only, never their settings or secrets). Reading rules, their state and
 alerts works with Viewer.
+
+A rule watches **one query** of one of two kinds:
+
+- **Prometheus** (or Mimir): one PromQL expression.
+- **OpenSearch logs** (the *OpenSearch* data source plugin; Elasticsearch is not supported): one
+  Lucene query with one count, or the sum, average, maximum or minimum of one field, over a window
+  of 5 to 60 minutes that ends up to 15 minutes ago, to allow for late log lines. The approval card
+  shows the query, the metric and its field, the bucket size, the time fields and the time range in
+  full. Each evaluation runs one aggregation over the window. A count or sum treats "no matching
+  lines" as zero, so a rule that fires **below** a number fires when the logs stop. When no line
+  matches at all, an average, maximum or minimum rule behaves differently by version: Grafana 11.0
+  fires it with no value, 13.3 keeps it normal.
+
+The service account needs read access to the data source a rule queries, the OpenSearch one
+included (data source permissions, where your Grafana uses them).
 
 Keep the service account's role **Viewer** and give it **Edit on one folder** — the folder named
 for the agent, and no other. The role matters: by default Grafana's Editors can edit every folder,
@@ -116,7 +131,7 @@ create from the agent.
 A rule an agent makes carries a `managed_by` label (which agent left it) and an `expires` label and
 annotation, and the app's helper script builds the rule, refuses to touch rules without its own
 label or outside its folder, and refuses to change a rule that left the shape it builds — a
-recording rule (`record`), a second query, a label or annotation other than `managed_by`,
+recording rule (`record`), a second query, a query other than the two kinds above, a label or annotation other than `managed_by`,
 `expires`, `service` and `summary`, or a receiver setting other than `receiver`. The script is the
 only supported way to write a rule. The approval card shows that shape field by field, but its
 template cannot print a map's keys: a body built by hand could carry fields — a recording rule, a

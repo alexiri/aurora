@@ -66,6 +66,57 @@ pub struct BodyCheck {
     /// the server adds these keys only when it runs the feature.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub kinds: BTreeMap<String, Vec<JsonKind>>,
+    /// A key the body must carry as an array whose entry at `at` holds, along the `member`
+    /// path, an array of exactly `len` entries (one metric and one bucket: a second one
+    /// would run without any approval card field showing it).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entry_len: BTreeMap<String, Vec<EntryLen>>,
+    /// A key the body must carry as an array whose entry at `at` holds, along the `member`
+    /// path, a string of 1 to `max` characters (a value an approval card shows in full: a
+    /// longer one would be cut, and one that is not a string would be left off the card).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entry_max_len: BTreeMap<String, Vec<EntryMaxLen>>,
+    /// A key the body must carry as an array whose entry at `at` holds, along the `member`
+    /// path, an object whose `key` and `than` are whole numbers (0 or more), `key` the
+    /// larger: a time range `{from, to}` in seconds before now that is neither empty nor
+    /// inverted.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub entry_greater: BTreeMap<String, Vec<EntryGreater>>,
+    /// Further shapes: the body must pass this check **and** at least one of these. A
+    /// variant carries no `one_of` of its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub one_of: Vec<BodyCheck>,
+}
+
+/// An entry rule of [`BodyCheck::entry_len`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryLen {
+    pub at: u32,
+    pub member: String,
+    pub len: u32,
+}
+
+/// An entry rule of [`BodyCheck::entry_greater`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryGreater {
+    pub at: u32,
+    pub member: String,
+    pub key: String,
+    pub than: String,
+}
+
+/// An entry rule of [`BodyCheck::entry_max_len`]. With `optional`, the object the path's
+/// last segment is read from may lack it; everything before it must be there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EntryMaxLen {
+    pub at: u32,
+    pub member: String,
+    pub max: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
 }
 
 /// A JSON kind a [`BodyCheck::kinds`] rule allows for a key's value.
@@ -102,7 +153,8 @@ impl JsonKind {
 }
 
 /// An entry rule of [`BodyCheck::entry_at`]: the entry at `at` (0 counts the first)
-/// carries, on itself or along the optional `member` path, `key` with exactly `value`.
+/// carries, on itself or along the optional `member` path, `key` with exactly `value`, or
+/// with one of `values` (a manifest declares exactly one of the two).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntryAt {
@@ -110,7 +162,10 @@ pub struct EntryAt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
     pub key: String,
-    pub value: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<serde_json::Value>,
 }
 
 /// An entry rule of [`BodyCheck::entry_member`]: the entry at `at` (0 counts the first)
@@ -127,13 +182,45 @@ pub struct EntryMember {
     pub value: Option<EntryMemberValue>,
 }
 
-/// The exact value an entry member carries: the member object's `key` is `value`.
+/// The value an entry member carries: the member object's `key` is `value`, or one of
+/// `values` (a manifest declares exactly one of the two).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntryMemberValue {
     pub key: String,
-    pub value: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<serde_json::Value>,
 }
+
+/// Whether `found` is the pinned `value`, or one of `values`. A pin with neither accepts
+/// nothing.
+fn pinned(
+    found: Option<&serde_json::Value>,
+    value: Option<&serde_json::Value>,
+    values: &[serde_json::Value],
+) -> bool {
+    found.is_some_and(|f| value == Some(f) || values.contains(f))
+}
+
+/// What a pin accepts for `key`, as a refusal message says it.
+fn accepted(key: &str, value: Option<&serde_json::Value>, values: &[serde_json::Value]) -> String {
+    match value {
+        Some(v) => format!("`{key}: {v}`"),
+        None => {
+            let list = values
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("`{key}` as one of {list}")
+        }
+    }
+}
+
+/// Characters of one variant's reason quoted when a body fits none.
+const VARIANT_WHY_MAX: usize = 240;
 
 /// An entry rule of [`BodyCheck::entry_value`]: from the `from`-th entry of the array on
 /// (0 counts entries from the first), every entry carries `key` with exactly `value`.
@@ -164,6 +251,30 @@ impl BodyCheck {
         let Some(obj) = v.as_object() else {
             return Some("the body is not a JSON object".into());
         };
+        self.object_violation(obj)
+    }
+
+    /// [`BodyCheck::violation`] on the body as read: this check's own parts, then `one_of`.
+    fn object_violation(&self, obj: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+        if let Some(why) = self.parts_violation(obj) {
+            return Some(why);
+        }
+        if self.one_of.is_empty() {
+            return None;
+        }
+        let mut whys = Vec::with_capacity(self.one_of.len());
+        for (i, variant) in self.one_of.iter().enumerate() {
+            let why = variant.object_violation(obj)?;
+            let why: String = why.chars().take(VARIANT_WHY_MAX).collect();
+            whys.push(format!("shape {}: {why}", i + 1));
+        }
+        Some(format!(
+            "the body fits none of the shapes this tool sends ({})",
+            whys.join("; ")
+        ))
+    }
+
+    fn parts_violation(&self, obj: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
         // The receiver's parser matches object key names without regard to case. A key its fold (case, the Kelvin sign U+212A, the long s U+017F) makes
         // equal to a key this check reads is that key to the parser, whatever its spelling, so
         // it is refused at every level the check reads before any exact comparison.
@@ -187,6 +298,10 @@ impl BodyCheck {
         known.extend(self.entry_at.keys().map(String::as_str));
         known.extend(self.value.keys().map(String::as_str));
         known.extend(self.kinds.keys().map(String::as_str));
+        known.extend(self.entry_member.keys().map(String::as_str));
+        known.extend(self.entry_len.keys().map(String::as_str));
+        known.extend(self.entry_max_len.keys().map(String::as_str));
+        known.extend(self.entry_greater.keys().map(String::as_str));
         let mut hit: Option<(&String, &str)> = None;
         for k in obj.keys() {
             if let Some(same) = known.iter().find(|s| fold(s) == fold(k) && **s != *k) {
@@ -344,7 +459,7 @@ impl BodyCheck {
                             ));
                         }
                         if let Some(v) = &m.value {
-                            if o.get(&v.key).is_some_and(|x| x == &v.value) {
+                            if pinned(o.get(&v.key), v.value.as_ref(), &v.values) {
                                 continue;
                             }
                             let actual = o
@@ -352,9 +467,8 @@ impl BodyCheck {
                                 .map(|x| format!("`{key}: {x}`", key = v.key))
                                 .unwrap_or_else(|| format!("no `{}`", v.key));
                             return Some(format!(
-                                "{place} carries {actual}: this tool sends only `{key}: {value}` here",
-                                key = v.key,
-                                value = v.value
+                                "{place} carries {actual}: this tool sends only {} here",
+                                accepted(&v.key, v.value.as_ref(), &v.values)
                             ));
                         }
                     }
@@ -429,7 +543,7 @@ impl BodyCheck {
                                 p.key, p.key
                             ));
                         }
-                        if o.get(&p.key).is_some_and(|v| v == &p.value) {
+                        if pinned(o.get(&p.key), p.value.as_ref(), &p.values) {
                             continue;
                         }
                         let actual = o
@@ -437,17 +551,147 @@ impl BodyCheck {
                             .map(|v| format!("`{key}: {v}`", key = p.key))
                             .unwrap_or_else(|| format!("no `{}`", p.key));
                         return Some(format!(
-                            "{place} carries {actual}: this tool sends only `{key}: {value}` there",
-                            key = p.key,
-                            value = p.value
+                            "{place} carries {actual}: this tool sends only {} there",
+                            accepted(&p.key, p.value.as_ref(), &p.values)
                         ));
                     }
                 }
                 Some(_) => return Some(format!("`{k}` must be a JSON array")),
             }
         }
+        // The length rules refuse whatever they cannot find: an absent array, entry or
+        // member is no body of the shape.
+        for (k, lens) in &self.entry_len {
+            for l in lens {
+                let (e, place) = match entry(obj, k, l.at) {
+                    Ok(found) => found,
+                    Err(why) => return Some(why),
+                };
+                let (cur, place) = match member_value(e, &l.member, &place) {
+                    Ok(found) => found,
+                    Err(why) => return Some(why),
+                };
+                let Some(a) = cur.as_array() else {
+                    return Some(format!("{place} must be a JSON array"));
+                };
+                if a.len() != usize::try_from(l.len).unwrap_or(0) {
+                    return Some(format!(
+                        "{place} has {} entries, this tool sends exactly {}",
+                        a.len(),
+                        l.len
+                    ));
+                }
+            }
+        }
+        for (k, pairs) in &self.entry_greater {
+            for g in pairs {
+                let (e, place) = match entry(obj, k, g.at) {
+                    Ok(found) => found,
+                    Err(why) => return Some(why),
+                };
+                let (cur, place) = match member_value(e, &g.member, &place) {
+                    Ok(found) => found,
+                    Err(why) => return Some(why),
+                };
+                let Some(o) = cur.as_object() else {
+                    return Some(format!("{place} must be a JSON object"));
+                };
+                for name in [&g.key, &g.than] {
+                    if let Some(why) = folded_sibling(o, name, &place) {
+                        return Some(why);
+                    }
+                    if !o.contains_key(name) {
+                        return Some(format!("{place} carries no `{name}`"));
+                    }
+                }
+                let number = |name: &str| o.get(name).and_then(serde_json::Value::as_u64);
+                let (Some(larger), Some(smaller)) = (number(&g.key), number(&g.than)) else {
+                    return Some(format!(
+                        "{place}: `{}` and `{}` must be whole numbers, 0 or more",
+                        g.key, g.than
+                    ));
+                };
+                if larger <= smaller {
+                    return Some(format!(
+                        "{place}: `{key}` ({larger}) must be greater than `{than}` ({smaller})",
+                        key = g.key,
+                        than = g.than
+                    ));
+                }
+            }
+        }
+        for (k, limits) in &self.entry_max_len {
+            for l in limits {
+                let (e, place) = match entry(obj, k, l.at) {
+                    Ok(found) => found,
+                    Err(why) => return Some(why),
+                };
+                let (parent, last) = match l.member.rsplit_once('/') {
+                    Some((parent, last)) => (Some(parent), last),
+                    None => (None, l.member.as_str()),
+                };
+                let (holder, place) = match parent {
+                    Some(parent) => match member_value(e, parent, &place) {
+                        Ok(found) => found,
+                        Err(why) => return Some(why),
+                    },
+                    None => (e, place),
+                };
+                let Some(o) = holder.as_object() else {
+                    return Some(format!("{place} must be a JSON object"));
+                };
+                if let Some(why) = folded_sibling(o, last, &place) {
+                    return Some(why);
+                }
+                let Some(found) = o.get(last) else {
+                    if l.optional {
+                        continue;
+                    }
+                    return Some(format!("{place} carries no `{last}`"));
+                };
+                let Some(text) = found.as_str() else {
+                    return Some(format!("{place}/{last} must be a string"));
+                };
+                let n = text.chars().count();
+                if n == 0 || n > usize::try_from(l.max).unwrap_or(0) {
+                    return Some(format!(
+                        "{place}/{last} has {n} characters, this tool sends 1 to {} characters there",
+                        l.max
+                    ));
+                }
+            }
+        }
         None
     }
+}
+
+/// The entry at `at` of the array `key` names, with the place a refusal message quotes.
+fn entry<'a>(
+    obj: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    at: u32,
+) -> Result<(&'a serde_json::Value, String), String> {
+    let Some(serde_json::Value::Array(a)) = obj.get(key) else {
+        return Err(format!("the body has no `{key}` array"));
+    };
+    a.get(usize::try_from(at).unwrap_or(usize::MAX))
+        .map(|e| (e, format!("`{key}`[{at}]")))
+        .ok_or_else(|| format!("the body has no `{key}`[{at}]"))
+}
+
+/// The refusal for a key of `o` the receiver reads as `name` without being spelled so.
+fn folded_sibling(
+    o: &serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    place: &str,
+) -> Option<String> {
+    o.keys()
+        .find(|x| fold(x) == fold(name) && *x != name)
+        .map(|x| {
+            format!(
+                "{place} carries `{x}`, which the receiver reads as `{name}` (key names match without case): spell it `{name}`"
+            )
+        })
 }
 
 /// The value `member` names from `entry` (object keys and array indexes separated by `/`),
@@ -463,7 +707,12 @@ fn member_value<'a>(
     for seg in member.split('/') {
         let next = match seg.parse::<usize>() {
             Ok(n) => cur.get(n),
-            Err(_) => cur.get(seg),
+            Err(_) => {
+                if let Some(why) = cur.as_object().and_then(|o| folded_sibling(o, seg, &place)) {
+                    return Err(why);
+                }
+                cur.get(seg)
+            }
         };
         let Some(next) = next else {
             return Err(format!("{place} carries no `{seg}`"));
@@ -1221,6 +1470,293 @@ mod tests {
             .violation(b, false)
             .unwrap()
             .contains("`missingSeriesEvalsToResolve` carries `\"2\"`: this tool sends `missingSeriesEvalsToResolve` as an integer there"));
+    }
+
+    // --- `one_of`, `entry_len`, `entry_max_len` and `values` ----------------------------
+
+    /// Two shapes of one step's model behind a common base: a string query (`expr`), or a
+    /// log query with exactly one metric.
+    fn two_shapes() -> BodyCheck {
+        serde_json::from_value(json!({
+            "allow_keys": ["data"],
+            "exact_len": { "data": 1 },
+            "one_of": [
+                { "entry_member": { "data": [
+                    { "at": 0, "member": "model", "keys": ["expr", "refId"] }
+                ] } },
+                {
+                    "entry_member": { "data": [
+                        { "at": 0, "member": "model", "keys": ["query", "metrics", "refId"] },
+                        { "at": 0, "member": "model/metrics/0", "keys": ["type", "field"],
+                          "value": { "key": "type", "values": ["count", "sum"] } }
+                    ] },
+                    "entry_len": { "data": [ { "at": 0, "member": "model/metrics", "len": 1 } ] },
+                    "entry_max_len": { "data": [
+                        { "at": 0, "member": "model/query", "max": 10 },
+                        { "at": 0, "member": "model/metrics/0/field", "max": 5, "optional": true }
+                    ] }
+                }
+            ]
+        }))
+        .unwrap()
+    }
+
+    fn why(c: &BodyCheck, body: &Value) -> Option<String> {
+        c.violation(&serde_json::to_vec(body).unwrap(), false)
+    }
+
+    fn model(m: Value) -> Value {
+        json!({ "data": [ { "model": m } ] })
+    }
+
+    fn log_model() -> Value {
+        json!({ "query": "status:500", "refId": "A", "metrics": [ { "type": "count" } ] })
+    }
+
+    #[test]
+    fn one_of_passes_a_body_that_fits_any_variant_and_the_base() {
+        let c = two_shapes();
+        assert_eq!(why(&c, &model(json!({ "expr": "up" }))), None);
+        assert_eq!(why(&c, &model(log_model())), None);
+    }
+
+    #[test]
+    fn one_of_refuses_a_body_that_passes_the_base_but_no_variant_and_says_why_for_each() {
+        let c = two_shapes();
+        let w = why(&c, &model(json!({ "rawSql": "select 1" }))).unwrap();
+        assert!(w.contains("none of the shapes"), "{w}");
+        assert!(w.contains("shape 1: ") && w.contains("shape 2: "), "{w}");
+        assert!(w.contains("`rawSql`"), "{w}");
+        // A variant never loosens the base.
+        let w = why(
+            &c,
+            &json!({ "data": [ { "model": { "expr": "up" } }, {} ] }),
+        )
+        .unwrap();
+        assert!(w.contains("`data` has 2 entries"), "{w}");
+        let w = why(
+            &c,
+            &json!({ "data": [ { "model": { "expr": "up" } } ], "x": 1 }),
+        )
+        .unwrap();
+        assert!(w.contains("`x`"), "{w}");
+    }
+
+    #[test]
+    fn one_of_refuses_a_body_with_one_variants_keys_and_the_others_pins() {
+        let c = two_shapes();
+        // The first variant's key beside the second's: neither key list holds both.
+        let mut m = log_model();
+        m["expr"] = json!("up");
+        assert!(why(&c, &model(m)).is_some());
+        // The first variant's model with a key only the second one reads.
+        assert!(why(&c, &model(json!({ "expr": "up", "query": "x" }))).is_some());
+        // The second variant's keys with a metric its value list does not hold.
+        let mut m = log_model();
+        m["metrics"][0]["type"] = json!("raw_data");
+        let w = why(&c, &model(m)).unwrap();
+        assert!(w.contains("raw_data") && w.contains("count"), "{w}");
+    }
+
+    #[test]
+    fn one_of_refuses_a_repeated_key_and_a_truncated_body_before_any_variant() {
+        let c = two_shapes();
+        let b = br#"{"data":[{"model":{"expr":"up","expr":"down"}}]}"#;
+        assert_eq!(c.violation(b, false), Some(twice("expr")));
+        assert!(
+            c.violation(br#"{"data":[{"model":{"expr":"up"}}]}"#, true)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn entry_len_pins_the_length_of_an_array_along_a_path() {
+        let c: BodyCheck = serde_json::from_value(json!({
+            "entry_len": { "data": [ { "at": 0, "member": "model/metrics", "len": 1 } ] }
+        }))
+        .unwrap();
+        assert_eq!(why(&c, &model(json!({ "metrics": [1] }))), None);
+        for (m, want) in [
+            (json!({ "metrics": [1, 2] }), "has 2 entries"),
+            (json!({ "metrics": [] }), "has 0 entries"),
+            (json!({ "metrics": { "0": {} } }), "must be a JSON array"),
+            (json!({ "metrics": "x" }), "must be a JSON array"),
+            (json!({}), "carries no `metrics`"),
+        ] {
+            let w = why(&c, &model(m.clone())).unwrap();
+            assert!(w.contains(want), "{m}: {w}");
+        }
+        // Fail closed: no entry, no array, no key at all.
+        assert!(why(&c, &json!({ "data": [] })).is_some());
+        assert!(why(&c, &json!({ "data": "x" })).is_some());
+        assert!(why(&c, &json!({})).is_some());
+    }
+
+    #[test]
+    fn entry_max_len_wants_a_string_of_one_to_max_characters() {
+        let c: BodyCheck = serde_json::from_value(json!({
+            "entry_max_len": { "data": [ { "at": 0, "member": "model/query", "max": 5 } ] }
+        }))
+        .unwrap();
+        assert_eq!(why(&c, &model(json!({ "query": "abcde" }))), None);
+        // Characters, not bytes.
+        assert_eq!(why(&c, &model(json!({ "query": "äöüäö" }))), None);
+        for (m, want) in [
+            (json!({ "query": "abcdef" }), "6 characters"),
+            (json!({ "query": "" }), "1 to 5 characters"),
+            (json!({ "query": { "a": 1 } }), "must be a string"),
+            (json!({ "query": ["a"] }), "must be a string"),
+            (json!({ "query": 5 }), "must be a string"),
+            (json!({ "query": null }), "must be a string"),
+            (json!({}), "carries no `query`"),
+        ] {
+            let w = why(&c, &model(m.clone())).unwrap();
+            assert!(w.contains(want), "{m}: {w}");
+        }
+        assert!(why(&c, &json!({})).is_some());
+    }
+
+    #[test]
+    fn an_optional_entry_max_len_member_may_be_absent_but_never_another_kind() {
+        let c = two_shapes();
+        // `field` is optional: absent passes, present is a string within the limit.
+        let mut m = log_model();
+        m["metrics"][0]["field"] = json!("ms");
+        assert_eq!(why(&c, &model(m)), None);
+        for field in [
+            json!("abcdef"),
+            json!(""),
+            json!({ "script": "x" }),
+            json!(1),
+        ] {
+            let mut m = log_model();
+            m["metrics"][0]["field"] = field.clone();
+            assert!(why(&c, &model(m)).is_some(), "{field} passed");
+        }
+        // Only the last segment may be absent: a missing parent is refused.
+        let c: BodyCheck = serde_json::from_value(json!({
+            "entry_max_len": { "data": [
+                { "at": 0, "member": "model/metrics/0/field", "max": 5, "optional": true }
+            ] }
+        }))
+        .unwrap();
+        assert!(why(&c, &model(json!({ "metrics": [] }))).is_some());
+        assert!(why(&c, &model(json!({}))).is_some());
+        assert_eq!(why(&c, &model(json!({ "metrics": [ {} ] }))), None);
+    }
+
+    #[test]
+    fn entry_greater_wants_two_whole_numbers_the_first_the_larger() {
+        let c: BodyCheck = serde_json::from_value(json!({
+            "entry_greater": { "data": [
+                { "at": 0, "member": "range", "key": "from", "than": "to" }
+            ] }
+        }))
+        .unwrap();
+        let body = |range: Value| json!({ "data": [ { "range": range } ] });
+        assert_eq!(why(&c, &body(json!({ "from": 360, "to": 60 }))), None);
+        assert_eq!(why(&c, &body(json!({ "from": 1, "to": 0 }))), None);
+        for (range, want) in [
+            (json!({ "from": 60, "to": 60 }), "must be greater than"),
+            (json!({ "from": 300, "to": 900 }), "must be greater than"),
+            (json!({ "from": 300, "to": -60 }), "whole numbers"),
+            (json!({ "from": "300", "to": 0 }), "whole numbers"),
+            (json!({ "from": 300.5, "to": 0 }), "whole numbers"),
+            (json!({ "from": 300, "to": { "a": 1 } }), "whole numbers"),
+            (json!({ "from": 300 }), "carries no `to`"),
+            (json!({ "to": 0 }), "carries no `from`"),
+            (json!({ "from": 300, "to": 0, "From": 0 }), "without case"),
+            (json!([300, 0]), "must be a JSON object"),
+        ] {
+            let w = why(&c, &body(range.clone())).unwrap_or_default();
+            assert!(w.contains(want), "{range}: {w}");
+        }
+        assert!(why(&c, &json!({ "data": [ {} ] })).is_some());
+        assert!(why(&c, &json!({ "data": [] })).is_some());
+        assert!(why(&c, &json!({})).is_some());
+    }
+
+    #[test]
+    fn a_folded_spelling_anywhere_on_a_new_rules_path_is_refused() {
+        // With no key list to lean on: the receiver reads these names without case.
+        for rule in [
+            json!({ "entry_len": { "data": [ { "at": 0, "member": "model/skills", "len": 1 } ] } }),
+            json!({ "entry_max_len": { "data": [
+                { "at": 0, "member": "model/skills/0/kind", "max": 9, "optional": true }
+            ] } }),
+        ] {
+            let c: BodyCheck = serde_json::from_value(rule).unwrap();
+            let plain = json!({ "skills": [ { "kind": "a" } ] });
+            assert_eq!(why(&c, &model(plain)), None);
+            // `Model` beside nothing, the long s in `skills`, and (where the path reaches
+            // it) the Kelvin sign in `kind`.
+            for m in [
+                json!({ "skills": [ { "kind": "a" } ], "Skills": [] }),
+                json!({ "skills": [ { "kind": "a" } ], "\u{017F}kills": [] }),
+            ] {
+                let w = why(&c, &model(m.clone())).unwrap_or_default();
+                assert!(w.contains("without case"), "{m}: {w}");
+            }
+        }
+        let c: BodyCheck = serde_json::from_value(json!({
+            "entry_max_len": { "data": [
+                { "at": 0, "member": "model/kind", "max": 9, "optional": true }
+            ] }
+        }))
+        .unwrap();
+        let w = why(&c, &model(json!({ "\u{212A}ind": { "a": 1 } }))).unwrap_or_default();
+        assert!(w.contains("without case"), "{w}");
+        let w = why(&c, &json!({ "data": [ {} ], "Data": [] })).unwrap_or_default();
+        assert!(w.contains("`Data`"), "{w}");
+    }
+
+    #[test]
+    fn values_accept_any_of_the_listed_scalars_and_nothing_else() {
+        let c: BodyCheck = serde_json::from_value(json!({
+            "entry_at": { "data": [
+                { "at": 0, "member": "model", "key": "reducer", "values": ["last", "sum", 3] }
+            ] }
+        }))
+        .unwrap();
+        for ok in [json!("last"), json!("sum"), json!(3)] {
+            assert_eq!(why(&c, &model(json!({ "reducer": ok }))), None);
+        }
+        for bad in [
+            json!("count"),
+            json!("Sum"),
+            json!("3"),
+            json!(["sum"]),
+            json!(null),
+        ] {
+            let w = why(&c, &model(json!({ "reducer": bad }))).unwrap();
+            assert!(w.contains("one of"), "{bad}: {w}");
+        }
+        let w = why(&c, &model(json!({}))).unwrap();
+        assert!(w.contains("no `reducer`"), "{w}");
+        let w = why(&c, &model(json!({ "Reducer": "sum" }))).unwrap();
+        assert!(w.contains("without case"), "{w}");
+        // The same list on a member rule's value.
+        let c = two_shapes();
+        let mut m = log_model();
+        m["metrics"][0]["type"] = json!("sum");
+        assert_eq!(why(&c, &model(m)), None);
+        let mut m = log_model();
+        m["metrics"][0].as_object_mut().unwrap().remove("type");
+        assert!(why(&c, &model(m)).is_some());
+    }
+
+    #[test]
+    fn the_new_parts_change_nothing_in_a_serialized_check_that_does_not_use_them() {
+        let text = serde_json::to_string(&check()).unwrap();
+        for part in [
+            "one_of",
+            "entry_len",
+            "entry_max_len",
+            "entry_greater",
+            "values",
+        ] {
+            assert!(!text.contains(part), "{part} appears in {text}");
+        }
     }
 
     #[test]

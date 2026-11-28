@@ -16,21 +16,54 @@ pub use wildcard::wildcards;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-use aurora_core::limits::{AGENT_SNIPPET_MAX, SUMMARY_FIELDS_MAX, SUMMARY_TITLE_MAX};
+use aurora_core::limits::{
+    AGENT_SNIPPET_MAX, SUMMARY_FIELDS_MAX, SUMMARY_TITLE_MAX, SUMMARY_VALUE_MAX,
+};
 use aurora_policy::HostPattern;
 use regex::Regex;
 
 use crate::Violation;
 use crate::manifest::{
-    Access, App, CONNECTION_HOST, Connect, FieldType, Finalize, FormField, Hook, HostRule,
-    INSTANCE_HOST, Inject, LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest, OwnServer, Probe,
-    ProbeMethod, SECRET_LINK_HOST_SUFFIX, SECRET_LINK_PREFIX_MAX, SECRET_LINK_PRESETS_MAX,
-    SECRET_LINK_TOOL_HOST, SecretLink, SecretLinkMode, Source, Store, TokenKind, Transform,
-    UrlOrTemplate, preset_file_ok,
+    Access, App, BodyCheck, CONNECTION_HOST, Connect, FieldType, Finalize, FormField, Hook,
+    HostRule, INSTANCE_HOST, Inject, LDAP_MAX_ATTRIBUTES, LDAP_MAX_ENTRIES, Ldap, Manifest,
+    OwnServer, Probe, ProbeMethod, SECRET_LINK_HOST_SUFFIX, SECRET_LINK_PREFIX_MAX,
+    SECRET_LINK_PRESETS_MAX, SECRET_LINK_TOOL_HOST, SecretLink, SecretLinkMode, Source, Store,
+    TokenKind, Transform, UrlOrTemplate, preset_file_ok,
 };
 use crate::template::{CONTEXT_VARS, Declared, Place, Template};
 
 const FORBIDDEN_HEADERS: [&str; 3] = ["authorization", "cookie", "x-api-key"];
+/// `body_check.one_of`: variants of one check.
+const BODY_CHECK_VARIANTS_MAX: usize = 4;
+/// `body_check.entry_len`, `entry_max_len` and `entry_greater`: rules each, per check or
+/// variant.
+const BODY_CHECK_LENGTH_PINS_MAX: usize = 16;
+/// The values a `body_check` pin may list.
+const BODY_CHECK_PIN_VALUES_MAX: usize = 8;
+/// One key of a `body_check` rule that reads along a path: the array it reads, and each rule
+/// as (entry, member path, whether its own numbers or names are in range).
+type PathRules<'a> = (&'a String, Vec<(u32, &'a str, bool)>);
+
+/// What is wrong with a `body_check` pin: it declares exactly one of `value` (a scalar) and
+/// `values` (at most [`BODY_CHECK_PIN_VALUES_MAX`] scalars), each at most 64 characters of
+/// JSON.
+fn pin_problem(
+    value: Option<&serde_json::Value>,
+    values: &[serde_json::Value],
+) -> Option<&'static str> {
+    if value.is_some() != values.is_empty() {
+        return Some("declares exactly one of `value` and `values`");
+    }
+    if values.len() > BODY_CHECK_PIN_VALUES_MAX {
+        return Some("lists at most 8 values");
+    }
+    let mut all = value.into_iter().chain(values);
+    if all.clone().any(|v| v.is_object() || v.is_array()) {
+        return Some("is a scalar the body must carry exactly");
+    }
+    all.any(|v| v.to_string().len() > 64)
+        .then_some("is at most 64 characters of JSON")
+}
 /// The tool host pattern of a database app (`docs/06 §Database lane`, C-222).
 const DATABASE_TOOL_HOST: &str = "*.db.aurora.internal";
 const RESERVED_ENV: [&str; 16] = [
@@ -1465,8 +1498,39 @@ fn method_rules(cx: &mut Ctx<'_>) {
                 }
                 // A `body_check` only ever refuses, and its key names are quoted in the
                 // refusal message, so they are plain identifiers and the lists stay small.
-                if let Some(bc) = &it.body_check {
-                    let bp = format!("/tools/{gname}/items/{j}/body_check");
+                // The check and each of its `one_of` variants are held to the same limits.
+                let root_bp = format!("/tools/{gname}/items/{j}/body_check");
+                let shapes = it.body_check.iter().flat_map(|root| {
+                    std::iter::once((root_bp.clone(), root, None)).chain(
+                        root.one_of.iter().enumerate().map({
+                            let root_bp = &root_bp;
+                            move |(n, variant)| {
+                                (format!("{root_bp}/one_of/{n}"), variant, Some(root))
+                            }
+                        }),
+                    )
+                });
+                for (bp, bc, base) in shapes {
+                    let empty = BodyCheck::default();
+                    if bc.one_of.len() > BODY_CHECK_VARIANTS_MAX
+                        || (base.is_some() && (!bc.one_of.is_empty() || *bc == empty))
+                    {
+                        cx.v(
+                            "body_check_one_of",
+                            &bp,
+                            format!(
+                                "tool `{}`: `one_of` holds at most {BODY_CHECK_VARIANTS_MAX} variants, each checking something and none with a `one_of` of its own",
+                                it.id
+                            ),
+                        );
+                    }
+                    // A variant's rules force keys onto entries of the same bodies as the
+                    // base: either `entry_keys` may be the one that lists them.
+                    let entry_key_listed = |k: &str, key: &String| {
+                        std::iter::once(bc)
+                            .chain(base)
+                            .any(|c| c.entry_keys.get(k).is_some_and(|a| a.contains(key)))
+                    };
                     let key_ok = |k: &str| {
                         !k.is_empty()
                             && k.len() <= 64
@@ -1585,11 +1649,7 @@ fn method_rules(cx: &mut Ctx<'_>) {
                         // The rule forces `key` onto every entry from `from` on: a key the
                         // matching `entry_keys` does not list would have the two rules refuse
                         // every body, whatever it carries.
-                        if !bc
-                            .entry_keys
-                            .get(k)
-                            .is_some_and(|allowed| allowed.contains(&ev.key))
-                        {
+                        if !entry_key_listed(k, &ev.key) {
                             cx.v(
                                 "body_check_entry_value",
                                 &format!("{bp}/entry_value/{k}/key"),
@@ -1691,23 +1751,11 @@ fn method_rules(cx: &mut Ctx<'_>) {
                             }
                             if let Some(v) = &m.value {
                                 name!("entry_member", &v.key);
-                                if v.value.is_object() || v.value.is_array() {
+                                if let Some(why) = pin_problem(v.value.as_ref(), &v.values) {
                                     cx.v(
                                         "body_check_entry_member",
                                         &format!("{bp}/entry_member/{k}/value"),
-                                        format!(
-                                            "tool `{}`: `entry_member.{k}.value` is a scalar the body must carry exactly",
-                                            it.id
-                                        ),
-                                    );
-                                } else if v.value.to_string().len() > 64 {
-                                    cx.v(
-                                        "body_check_entry_member",
-                                        &format!("{bp}/entry_member/{k}/value"),
-                                        format!(
-                                            "tool `{}`: `entry_member.{k}.value` is at most 64 characters of JSON",
-                                            it.id
-                                        ),
+                                        format!("tool `{}`: `entry_member.{k}.value` {why}", it.id),
                                     );
                                 }
                             }
@@ -1820,11 +1868,7 @@ fn method_rules(cx: &mut Ctx<'_>) {
                                 // A pin on the entry itself forces a key onto it: one
                                 // `entry_keys` lists, or the two rules contradict each
                                 // other and refuse every body, whatever it carries.
-                                if !bc
-                                    .entry_keys
-                                    .get(k)
-                                    .is_some_and(|allowed| allowed.contains(&p.key))
-                                {
+                                if !entry_key_listed(k, &p.key) {
                                     cx.v(
                                         "body_check_entry_at",
                                         &format!("{bp}/entry_at/{k}/key"),
@@ -1835,24 +1879,107 @@ fn method_rules(cx: &mut Ctx<'_>) {
                                     );
                                 }
                             }
-                            if p.value.is_object() || p.value.is_array() {
+                            if let Some(why) = pin_problem(p.value.as_ref(), &p.values) {
                                 cx.v(
                                     "body_check_entry_at",
                                     &format!("{bp}/entry_at/{k}/value"),
-                                    format!(
-                                        "tool `{}`: `entry_at.{k}.value` is a scalar the body must carry exactly",
-                                        it.id
-                                    ),
+                                    format!("tool `{}`: `entry_at.{k}.value` {why}", it.id),
                                 );
-                            } else if p.value.to_string().len() > 64 {
+                            }
+                        }
+                    }
+                    // A path of object keys and array indexes, quoted in refusal messages.
+                    let path_ok = |m: &str| {
+                        let segs: Vec<&str> = m.split('/').collect();
+                        !m.is_empty()
+                            && segs.len() <= 8
+                            && segs.iter().all(|s| s.parse::<u32>().is_ok() || key_ok(s))
+                    };
+                    // Each rule as (entry, member path, whether its length is in range).
+                    let lens: Vec<PathRules<'_>> = bc
+                        .entry_len
+                        .iter()
+                        .map(|(k, rules)| {
+                            let rules = rules.iter().map(|r| (r.at, r.member.as_str(), r.len >= 1));
+                            (k, rules.collect())
+                        })
+                        .collect();
+                    // A string rule is no longer than an approval card shows a value.
+                    let max_lens: Vec<PathRules<'_>> = bc
+                        .entry_max_len
+                        .iter()
+                        .map(|(k, rules)| {
+                            let rules = rules.iter().map(|r| {
+                                let fits = (1..=SUMMARY_VALUE_MAX).contains(&(r.max as usize));
+                                (r.at, r.member.as_str(), fits)
+                            });
+                            (k, rules.collect())
+                        })
+                        .collect();
+                    // A comparison names two different keys.
+                    let greater: Vec<PathRules<'_>> = bc
+                        .entry_greater
+                        .iter()
+                        .map(|(k, rules)| {
+                            let rules = rules
+                                .iter()
+                                .map(|r| (r.at, r.member.as_str(), r.key != r.than));
+                            (k, rules.collect())
+                        })
+                        .collect();
+                    for r in bc.entry_greater.values().flatten() {
+                        name!("entry_greater", &r.key);
+                        name!("entry_greater", &r.than);
+                    }
+                    for (field, code, rules) in [
+                        ("entry_len", "body_check_entry_len", lens),
+                        ("entry_max_len", "body_check_entry_max_len", max_lens),
+                        ("entry_greater", "body_check_entry_greater", greater),
+                    ] {
+                        let total: usize = rules.iter().map(|(_, pins)| pins.len()).sum();
+                        if total > BODY_CHECK_LENGTH_PINS_MAX {
+                            cx.v(
+                                code,
+                                &format!("{bp}/{field}"),
+                                format!(
+                                    "tool `{}`: `{field}` holds at most {BODY_CHECK_LENGTH_PINS_MAX} rules",
+                                    it.id
+                                ),
+                            );
+                        }
+                        for (k, pins) in &rules {
+                            name!(field, k);
+                            if pins.is_empty() {
                                 cx.v(
-                                    "body_check_entry_at",
-                                    &format!("{bp}/entry_at/{k}/value"),
+                                    code,
+                                    &format!("{bp}/{field}/{k}"),
                                     format!(
-                                        "tool `{}`: `entry_at.{k}.value` is at most 64 characters of JSON",
+                                        "tool `{}`: `{field}.{k}` holds at least one rule",
                                         it.id
                                     ),
                                 );
+                            }
+                            for (at, member, length_ok) in pins {
+                                if !path_ok(member) {
+                                    cx.v(
+                                        "body_check_key",
+                                        &format!("{bp}/{field}/{k}/member"),
+                                        format!(
+                                            "tool `{}`: `{field}.{k}.member` is a path of at most 8 identifiers or indexes",
+                                            it.id
+                                        ),
+                                    );
+                                }
+                                if *at > 64 || !length_ok {
+                                    cx.v(
+                                        code,
+                                        &format!("{bp}/{field}/{k}"),
+                                        format!(
+                                            "tool `{}`: `{field}.{k}` needs `at` of at most 64, a length of at least 1 (`max` at most {SUMMARY_VALUE_MAX}) and, to compare, two different keys",
+                                            it.id
+                                        ),
+                                    );
+                                }
                             }
                         }
                     }

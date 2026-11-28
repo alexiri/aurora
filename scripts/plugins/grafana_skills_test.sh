@@ -23,7 +23,7 @@ trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR" "$WORK/bin" "$WORK/bodies"
 export STUB_FIX="$FIX" STUB_LOG="$WORK/calls.log" STUB_BODIES="$WORK/bodies"
-unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE STUB_RECORD_RULE STUB_MISMATCH_RULE STUB_NOEXPIRY_RULE STUB_GRAFANA12_RULE
+unset STUB_EMPTY STUB_FAIL_CALL STUB_NO_CP STUB_RULES STUB_PERSON_RULE STUB_RECORD_RULE STUB_MISMATCH_RULE STUB_NOEXPIRY_RULE STUB_GRAFANA12_RULE STUB_RULE STUB_RULE_FILE
 
 # The stub: `aurora-agent call grafana <operation> [name=value ...] [--body @file] [--account A] --out FILE`.
 cat > "$WORK/bin/aurora-agent" <<'STUB'
@@ -47,7 +47,7 @@ case "$op" in
   get_current_org) cp "$STUB_FIX/get_current_org.json" "$out" ;;
   list_contact_points) if [ -n "${STUB_NO_CP:-}" ]; then echo '[]' > "$out"; else cp "$STUB_FIX/list_contact_points.json" "$out"; fi ;;
   list_alert_rules) cp "$STUB_FIX/list_alert_rules${STUB_RULES:+-$STUB_RULES}.json" "$out" ;;
-  get_alert_rule) if [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; elif [ -n "${STUB_RECORD_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_record.json" "$out"; elif [ -n "${STUB_MISMATCH_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_mismatch.json" "$out"; elif [ -n "${STUB_NOEXPIRY_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_noexpiry.json" "$out"; elif [ -n "${STUB_GRAFANA12_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_grafana12.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
+  get_alert_rule) if [ -n "${STUB_RULE_FILE:-}" ]; then cp "$STUB_RULE_FILE" "$out"; elif [ -n "${STUB_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_$STUB_RULE.json" "$out"; elif [ -n "${STUB_PERSON_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_person.json" "$out"; elif [ -n "${STUB_RECORD_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_record.json" "$out"; elif [ -n "${STUB_MISMATCH_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_mismatch.json" "$out"; elif [ -n "${STUB_NOEXPIRY_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_noexpiry.json" "$out"; elif [ -n "${STUB_GRAFANA12_RULE:-}" ]; then cp "$STUB_FIX/get_alert_rule_grafana12.json" "$out"; else cp "$STUB_FIX/get_alert_rule.json" "$out"; fi ;;
   list_alert_rule_states) cp "$STUB_FIX/list_alert_rule_states.json" "$out" ;;
   create_alert_rule|update_alert_rule)
     n=$(find "$STUB_BODIES" -type f | wc -l)
@@ -91,11 +91,13 @@ import ast, sys
 files = dict(zip(("query", "os", "prom", "alert"), sys.argv[1:]))
 want = {
     "query,os,prom": ["norm_time"],
+    "os,alert": ["field_arg"],
     "query,os,prom,alert": ["clean", "die", "tmp_dir", "mktemp", "parse_step"],
     "query,prom": ["fit_step", "read_json", "send_body"],
     "query,prom,alert": ["agent"],
 }
-consts = {"query,os,prom,alert": ["CTRL", "UID_RE", "UNIT_S", "TIMEOUT"], "query,prom": ["POINTS_MAX"]}
+consts = {"query,os,prom,alert": ["CTRL", "UID_RE", "UNIT_S", "TIMEOUT"], "query,prom": ["POINTS_MAX"],
+          "os,alert": ["FIELD_RE"]}
 src = {k: open(p, encoding="utf-8").read() for k, p in files.items()}
 # `die` and `mktemp` name their script: the alert script's own name (its errors are not the query
 # script's) is the one difference allowed.
@@ -619,6 +621,141 @@ sys.exit(1)
 PY
 then ok "update accepts a rule read back with keep_firing_for and missingSeriesEvalsToResolve, read-only fields stripped"; else bad "update of the newer Grafana rule differs"; fi
 
+# A newer server answers every stored rule with `record: null`: that is no recording rule, and
+# the resend leaves the key out. A record block that is not null stays refused (above).
+reset
+if STUB_RULE=nullrecord AL update tripwire-p95 --managed-by night --folder night-folder --title "p95 over 3s" >"$WORK/out" 2>"$WORK/err" \
+  && jq -e '(has("record") | not) and .title == "p95 over 3s" and .keep_firing_for == "0s"
+     and (.data[0].model | has("intervalMs") | not)' "$WORK/bodies/body-1.json" >/dev/null; then
+  ok "update of a Prometheus rule answered with record: null sends it without the key"
+else
+  bad "update of a rule with record: null failed"; cat "$WORK/err" >&2
+fi
+
+# --- grafana-alert: rules that count log documents ----------------------------------------------------
+LOGS=(create --managed-by night --folder night-folder --group agent-night --title "web 500s"
+  --ds os-logs --threshold 25 --for 2m --receiver oncall --expires 14d --service web)
+# golden NAME OP REDUCER NODATA MDC METRIC_JSON FROM TO INTERVAL TIMEFIELD QUERY [flags...]
+golden() {
+  local name=$1 op=$2 reducer=$3 nodata=$4 mdc=$5 metric=$6 from=$7 to=$8 interval=$9 tf=${10} query=${11}
+  shift 11
+  reset
+  if AL "${LOGS[@]}" --op "$op" --logs "$query" "$@" >"$WORK/out" 2>"$WORK/err" \
+    && python3 -I - "$WORK/bodies/body-1.json" "$EXP" "$op" "$reducer" "$nodata" "$mdc" "$metric" "$from" "$to" "$interval" "$tf" "$query" <<'PY'
+import json, sys
+path, exp, op, reducer, nodata, mdc, metric, frm, to, interval, tf, query = sys.argv[1:]
+body = json.load(open(path))
+def step(ref, dsu, model):
+    return {"refId": ref, "datasourceUid": dsu, "queryType": "",
+            "relativeTimeRange": {"from": int(frm), "to": int(to)}, "model": model}
+def cond(ref, ty, params):
+    return {"evaluator": {"params": params, "type": ty}, "operator": {"type": "and"},
+            "query": {"params": [ref]}, "reducer": {"params": [], "type": "last"}, "type": "query"}
+x = {"type": "__expr__", "uid": "__expr__"}
+hist = {"id": "2", "type": "date_histogram", "settings": {"interval": interval, "min_doc_count": mdc}}
+model = {"refId": "A", "queryType": "lucene", "query": query, "metrics": [json.loads(metric)], "bucketAggs": [hist]}
+if tf:
+    model["timeField"] = hist["field"] = tf
+want = {"orgID": 1, "title": "web 500s", "ruleGroup": "agent-night", "folderUID": "night-folder",
+        "condition": "C", "for": "120s", "noDataState": nodata, "execErrState": "Error",
+        "isPaused": False, "labels": {"managed_by": "night", "expires": exp, "service": "web"},
+        "annotations": {"summary": "web 500s", "expires": exp},
+        "notification_settings": {"receiver": "oncall"},
+        "data": [step("A", "os-logs", model),
+                 step("B", "__expr__", {"conditions": [cond("B", "gt", [])], "datasource": x,
+                                        "expression": "A", "reducer": reducer, "refId": "B", "type": "reduce"}),
+                 step("C", "__expr__", {"conditions": [cond("C", op, [25.0])], "datasource": x,
+                                        "expression": "B", "refId": "C", "type": "threshold"})]}
+if body == want:
+    sys.exit(0)
+for k in sorted(set(want) | set(body)):
+    if body.get(k) != want.get(k):
+        print(f"create body[{k}]:\n  want {want.get(k)!r}\n  got  {body.get(k)!r}", file=sys.stderr)
+sys.exit(1)
+PY
+  then ok "create builds the exact log rule: $name"; else bad "log rule body differs: $name"; cat "$WORK/err" >&2; fi
+}
+# The counted span is the window, ending the delay ago: from = window + delay.
+golden "count over gt (the default metric, delay and buckets)" gt sum OK 0 '{"id":"1","type":"count"}' \
+  960 60 1m "" 'status:500 AND service:web' --window 15m
+golden "count under lt fires when nothing is logged" lt sum Alerting 0 '{"id":"1","type":"count"}' \
+  300 0 5m "@timestamp" 'message:"upstream timed out"' --window 5m --delay 0m --hist 5m --time-field @timestamp --metric count
+golden "sum" gt sum OK 0 '{"id":"1","type":"sum","field":"bytes"}' 4500 900 1m "" '*' --window 1h --delay 15m --metric sum:bytes
+golden "avg" gt mean NoData 1 '{"id":"1","type":"avg","field":"duration_ms"}' \
+  720 120 30s "" 'url:"/api/health" AND status:[500 TO *]' --window 10m --delay 2m --hist 30s --metric avg:duration_ms
+golden "max" lt max NoData 1 '{"id":"1","type":"max","field":"ms"}' 660 60 1m "" 'host:web\/1 OR user:*' --window 10m --metric max:ms
+golden "min" gt min NoData 1 '{"id":"1","type":"min","field":"ms"}' 660 60 1m "" 'host:web*' --window 10m --metric min:ms
+
+logs_refused() {  # logs_refused WANT [flags...]: a log create with these flags is refused and sends nothing
+  local want=$1; shift
+  reset
+  refuse "$want" "${LOGS[@]}" --op gt "$@"
+  if grep -q create_alert_rule "$STUB_LOG"; then bad "a refused log rule was sent: $want"; fi
+}
+logs_refused "--window is 5m to 60m" --logs x --window 4m
+logs_refused "--window is 5m to 60m" --logs x --window 61m
+logs_refused "--logs needs --window" --logs x
+logs_refused "--delay is 0m to 15m" --logs x --window 10m --delay 16m
+logs_refused "at most 60 buckets" --logs x --window 60m --hist 30s
+logs_refused "at most 60 buckets" --logs x --window 10m --hist 9s
+logs_refused "bad step" --logs x --window 10m --hist 0s
+logs_refused "--logs is empty" --logs '   ' --window 10m
+logs_refused "at most 200 characters" --logs "message:$(printf 'a%.0s' $(seq 193))" --window 10m
+logs_refused "one line" --logs $'status:500\nOR *' --window 10m
+logs_refused "regular expression" --logs 'message:/time.*out/' --window 10m
+logs_refused "regular expression" --logs '/err[0-9]+/' --window 10m
+logs_refused "leading wildcard" --logs 'message:*timeout' --window 10m
+logs_refused "leading wildcard" --logs '?rror' --window 10m
+logs_refused "leading wildcard" --logs 'a AND (*b OR c)' --window 10m
+logs_refused "leading wildcard" --logs 'NOT -*.example.org' --window 10m
+logs_refused "is not a field name" --logs x --window 10m --metric 'avg:a b'
+logs_refused "is not a field name" --logs x --window 10m --metric sum:
+logs_refused "count takes no field" --logs x --window 10m --metric count:ms
+logs_refused "use count, sum:F, avg:F, max:F or min:F" --logs x --window 10m --metric percentiles:ms
+logs_refused "is not a field name" --logs x --window 10m --time-field 'a{b}'
+logs_refused "--expr or --logs, not both" --logs x --window 10m --expr 'x[5m]'
+refuse "create needs --expr or --logs" create --managed-by night --folder night-folder --group agent-night \
+  --title t --ds prom-main --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
+refuse "go with --logs" create --managed-by night --folder night-folder --group agent-night \
+  --title t --ds prom-main --expr 'x[5m]' --window 10m --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
+
+# each kind needs its own data source type, and the refusal names both
+for pair in "--expr x[5m] os-logs" "--logs status:500 prom-main" "--logs status:500 loki-main"; do
+  read -r flag query ds <<<"$pair"
+  extra=(); [ "$flag" = --logs ] && extra=(--window 10m)
+  reset
+  refuse "--expr needs a prometheus data source and --logs a grafana-opensearch-datasource one" create \
+    --managed-by night --folder night-folder --group agent-night --title t --ds "$ds" "$flag" "$query" "${extra[@]}" \
+    --op gt --threshold 1 --for 5m --receiver oncall --expires 14d
+done
+
+# update accepts both shapes: a stored log rule keeps its query as read
+reset
+if STUB_RULE=logs AL update tripwire-p95 --managed-by night --folder night-folder --title "web 500s v2" >"$WORK/out" 2>"$WORK/err" \
+  && jq -e --slurpfile was "$FIX/get_alert_rule_logs.json" '(has("record") | not) and .title == "web 500s v2"
+     and .data[0].queryType == "lucene"
+     and .data[0].model == ($was[0].data[0].model | del(.intervalMs, .maxDataPoints))' "$WORK/bodies/body-1.json" >/dev/null; then
+  ok "update resends a stored log rule's query unchanged"
+else
+  bad "update of a stored log rule failed"; cat "$WORK/err" >&2
+fi
+STUB_RULE=sql refuse '"rawSql": "select count(*) from slow"' update tripwire-p95 --managed-by night \
+  --folder night-folder --title t2
+# a stored log query a person changed outside the script's shape is never resent
+changed_rule() {  # changed_rule WANT JQ_FILTER
+  jq "$2" "$FIX/get_alert_rule_logs.json" > "$WORK/changed.json"
+  reset
+  STUB_RULE_FILE="$WORK/changed.json" refuse "$1" update tripwire-p95 --managed-by night --folder night-folder --title t2
+  if grep -q update_alert_rule "$STUB_LOG"; then bad "a changed log rule was sent: $1"; fi
+}
+changed_rule '"type": "percentiles"' '.data[0].model.metrics[0].type = "percentiles"'
+changed_rule '"type": "terms"' '.data[0].model.bucketAggs = [{"id":"3","type":"terms","field":"h"}] + .data[0].model.bucketAggs'
+changed_rule '"queryType": "PPL"' '.data[0].model.queryType = "PPL"'
+changed_rule '"alias": "x"' '.data[0].model.alias = "x"'
+changed_rule '"min_doc_count": "1"' '.data[0].model.bucketAggs[0].settings.min_doc_count = "1"'
+changed_rule '"id": "7"' '.data[0].model.metrics[0].id = "7"'
+changed_rule "texts up to 200 characters" '.data[0].model.query = ("a" * 201)'
+
 # expire deletes only the expired managed ones, each delete still held for approval
 reset
 out=$(AL expire --managed-by night --folder night-folder)
@@ -638,14 +775,16 @@ if grep -qF 'tripwire-p95' <<<"$out" && grep -qF 'tripwire-5xx' <<<"$out" \
 else
   bad "list output wrong"; echo "$out" >&2
 fi
+expect_eq "list prints each rule's kind" $'uid\tkind\ntripwire-p95\tprometheus\ntripwire-5xx\tlogs' \
+  "$(cut -f1,4 <<<"$out")"
 
-# --- size budgets (D-484): the app must not grow back silently ---------------------------------------------------------
+# --- size budgets (D-484, D-514): the app must not grow back silently --------------------------------------------------
 PKG="$ROOT/plugins/builtin/grafana"
 total=$(find "$SKILLS" -type f -exec cat {} + | wc -c)
 bodies=$(cat "$SKILLS"/*/SKILL.md | wc -c)
-echo "sizes: all skill files $total (budget 75000), SKILL.md bodies $bodies (budget 20000)"
+echo "sizes: all skill files $total (budget 85000), SKILL.md bodies $bodies (budget 20000)"
 for f in "$SKILLS"/*/SKILL.md "$SCRIPT" "$OSCRIPT" "$PSCRIPT" "$ASCRIPT"; do echo "sizes: $(wc -c < "$f") ${f#"$SKILLS"/}"; done
-if [ "$total" -le 75000 ]; then ok "all skill files together are at most 75000 characters ($total)"; else bad "all skill files are $total characters, over 75000"; fi
+if [ "$total" -le 85000 ]; then ok "all skill files together are at most 85000 characters ($total)"; else bad "all skill files are $total characters, over 85000"; fi
 if [ "$bodies" -le 20000 ]; then ok "SKILL.md bodies together are at most 20000 characters ($bodies)"; else bad "SKILL.md bodies are $bodies characters, over 20000"; fi
 expect_eq "exactly four skills" "grafana-alerts grafana-opensearch grafana-prometheus grafana-query" "$(find "$SKILLS" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | paste -sd' ')"
 expect_eq "only grafana-query's description says to read it first" "grafana-query" \

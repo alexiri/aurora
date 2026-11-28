@@ -117,8 +117,21 @@ mod tests {
     }
 
     #[test]
+    fn a_card_holds_thirty_two_fields() {
+        let vals: Vec<(String, Value)> = (0..30).map(|i| (format!("s{i}"), json!(i))).collect();
+        let s = summary(
+            "W",
+            "h.example",
+            "POST",
+            vals.iter().map(|(k, v)| (k.as_str(), v)),
+        );
+        assert_eq!(s.fields.len(), 32);
+        assert_eq!(s.text, None);
+    }
+
+    #[test]
     fn slots_past_the_field_limit_go_to_the_text() {
-        let vals: Vec<(String, Value)> = (0..20).map(|i| (format!("s{i}"), json!(i))).collect();
+        let vals: Vec<(String, Value)> = (0..32).map(|i| (format!("s{i}"), json!(i))).collect();
         let s = summary(
             "W",
             "h.example",
@@ -126,6 +139,6 @@ mod tests {
             vals.iter().map(|(k, v)| (k.as_str(), v)),
         );
         assert_eq!(s.fields.len(), SUMMARY_FIELDS_MAX as usize);
-        assert!(s.text.unwrap().contains("s19: 19"));
+        assert!(s.text.unwrap().contains("s31: 31"));
     }
 }

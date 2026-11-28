@@ -1,6 +1,6 @@
 package:
   id: grafana
-  version: 1.8.1
+  version: 1.9.0
   contract: 1
   min_core: 0.1.0
   publisher: aurora
@@ -147,19 +147,40 @@ apps:
           # even when the check would not read it; a body that repeats a key at any depth is
           # refused too. Every `data` step
           # is the `{refId, datasourceUid, queryType, relativeTimeRange, model}` object the
-          # script sends, and the steps after the first are the server's own `__expr__` steps
+          # script sends, its time range holds only `from` and `to` (the card shows the first
+          # step's, and `entry_greater` refuses an empty or inverted one), and the steps after
+          # the first are the server's own `__expr__` steps
           # (its reduce and threshold): a step that queries a data source of its own — a
-          # second SQL query the approval card does not show — is refused. The first step's
-          # `model` is the raw query object that same parser reads without case, so
-          # `entry_member` holds the same folded allow list for it that `allow_keys` holds
-          # for the body: exactly the keys the script's builder sends (editorMode, expr,
-          # instant, legendFormat, refId), no other key and no other spelling of one. That is
-          # what keeps a query the card does not show out of the one step that queries a data
-          # source: a SQL query lives in the model's `rawSql`, not in the `expr` the card
-          # shows. The first step's `datasourceUid` itself has no value to declare (it names
-          # the connection's Prometheus data source, whichever instance the connection was
-          # made on), so the card shows it and nothing binds it here; the model keys are what
-          # keep a query type the card cannot show out of the rule.
+          # second SQL query the approval card does not show — is refused. The reduce step's
+          # reducer is one the script picks, and the threshold step holds exactly one
+          # condition, the one the card shows.
+          # The first step's `model` is the raw query object that same parser reads without
+          # case, so it is the part that must have exactly one of three shapes (`one_of`), each
+          # a folded allow list for it like `allow_keys` for the body. That is what keeps a
+          # query the card does not show out of the one step that queries a data source: a SQL
+          # query lives in the model's `rawSql`, not in the `expr` or `query` the card shows.
+          # The three key lists share only `refId` between the two query languages, so a body
+          # cannot mix them.
+          #  1. Prometheus: exactly the keys the script's builder sends (editorMode, expr,
+          #     instant, legendFormat, refId), no other key and no other spelling of one.
+          #  2. and 3. OpenSearch: one Lucene query (`queryType: lucene`, so no PPL), exactly
+          #     one metric and exactly one bucket, a date histogram (`entry_len`). The metric
+          #     carries only id, type and field (no settings, so no script or pipeline), its
+          #     type is count or sum in shape 2 and avg, max or min in shape 3 (no
+          #     bucket_script, raw_data, logs or percentiles). The bucket carries only id,
+          #     type, field and settings (interval and min_doc_count: no terms, no other
+          #     setting). `min_doc_count` is bound to the metric: "0" with count and sum (a
+          #     quiet bucket is a zero), "1" with avg, max and min (a quiet bucket is left
+          #     out; as a zero-document bucket its value is null and the reduce step answers
+          #     nothing). The two ids are the script's. Every text the card shows of the
+          #     query (the query, the time field, the metric field, the bucket field and the
+          #     interval) is a string of 1 to 200 characters, the length the card shows in
+          #     full; the optional ones may only be absent. The step's own `queryType` is
+          #     empty in a new rule and `lucene` in a rule read back from the server.
+          # The first step's `datasourceUid` itself has no value to declare (it names the
+          # connection's data source, whichever instance the connection was made on), so the
+          # card shows it and nothing binds it here; the model keys are what keep a query type
+          # the card cannot show out of the rule.
           - id: create_alert_rule
             description: "Creates a Grafana-managed alert rule from the three-step query model the grafana-alerts script builds."
             name: Create an alert rule
@@ -193,9 +214,10 @@ apps:
                   - { at: 2, key: refId, value: C }
                   - { at: 1, member: model, key: expression, value: A }
                   - { at: 2, member: model, key: expression, value: B }
+                  - { at: 1, member: model, key: reducer, values: [last, sum, max, min, mean] }
               entry_member:
                 data:
-                  - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                  - { at: 0, member: relativeTimeRange, keys: [from, to] }
                   # The two expression steps the receiver runs itself: each model is what the
                   # script's builder sends, its `type` is the one the script builds, and the
                   # conditions the card reads its comparison and threshold from carry no
@@ -206,6 +228,65 @@ apps:
                   - { at: 2, member: model, keys: [conditions, datasource, expression, refId, type], value: { key: type, value: threshold } }
                   - { at: 2, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
                   - { at: 2, member: model/conditions/0/evaluator, keys: [params, type] }
+              entry_len:
+                data:
+                  - { at: 2, member: model/conditions, len: 1 }
+              # The query's time range, which the card shows: seconds before now, neither empty
+              # nor inverted.
+              entry_greater:
+                data:
+                  - { at: 0, member: relativeTimeRange, key: from, than: to }
+              one_of:
+                # 1. One Prometheus query.
+                - entry_member:
+                    data:
+                      - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                # 2. One OpenSearch count or sum.
+                - entry_member:
+                    data:
+                      - { at: 0, member: model, keys: [refId, queryType, query, metrics, bucketAggs, timeField], value: { key: queryType, value: lucene } }
+                      - { at: 0, member: model/metrics/0, keys: [id, type, field], value: { key: type, values: [count, sum] } }
+                      - { at: 0, member: model/bucketAggs/0, keys: [id, type, field, settings], value: { key: type, value: date_histogram } }
+                      - { at: 0, member: model/bucketAggs/0/settings, keys: [interval, min_doc_count], value: { key: min_doc_count, value: "0" } }
+                  entry_len:
+                    data:
+                      - { at: 0, member: model/metrics, len: 1 }
+                      - { at: 0, member: model/bucketAggs, len: 1 }
+                  entry_at:
+                    data:
+                      - { at: 0, key: queryType, values: ["", lucene] }
+                      - { at: 0, member: model/metrics/0, key: id, value: "1" }
+                      - { at: 0, member: model/bucketAggs/0, key: id, value: "2" }
+                  entry_max_len:
+                    data:
+                      - { at: 0, member: model/query, max: 200 }
+                      - { at: 0, member: model/timeField, max: 200, optional: true }
+                      - { at: 0, member: model/metrics/0/field, max: 200, optional: true }
+                      - { at: 0, member: model/bucketAggs/0/field, max: 200, optional: true }
+                      - { at: 0, member: model/bucketAggs/0/settings/interval, max: 200 }
+                # 3. One OpenSearch average, maximum or minimum.
+                - entry_member:
+                    data:
+                      - { at: 0, member: model, keys: [refId, queryType, query, metrics, bucketAggs, timeField], value: { key: queryType, value: lucene } }
+                      - { at: 0, member: model/metrics/0, keys: [id, type, field], value: { key: type, values: [avg, max, min] } }
+                      - { at: 0, member: model/bucketAggs/0, keys: [id, type, field, settings], value: { key: type, value: date_histogram } }
+                      - { at: 0, member: model/bucketAggs/0/settings, keys: [interval, min_doc_count], value: { key: min_doc_count, value: "1" } }
+                  entry_len:
+                    data:
+                      - { at: 0, member: model/metrics, len: 1 }
+                      - { at: 0, member: model/bucketAggs, len: 1 }
+                  entry_at:
+                    data:
+                      - { at: 0, key: queryType, values: ["", lucene] }
+                      - { at: 0, member: model/metrics/0, key: id, value: "1" }
+                      - { at: 0, member: model/bucketAggs/0, key: id, value: "2" }
+                  entry_max_len:
+                    data:
+                      - { at: 0, member: model/query, max: 200 }
+                      - { at: 0, member: model/timeField, max: 200, optional: true }
+                      - { at: 0, member: model/metrics/0/field, max: 200, optional: true }
+                      - { at: 0, member: model/bucketAggs/0/field, max: 200, optional: true }
+                      - { at: 0, member: model/bucketAggs/0/settings/interval, max: 200 }
           - id: update_alert_rule
             description: "Changes one Grafana-managed alert rule the agent manages (sends the whole rule the grafana-alerts script read and changed)."
             name: Change an alert rule
@@ -233,12 +314,10 @@ apps:
                 data: [refId, datasourceUid, queryType, relativeTimeRange, model]
               entry_value:
                 data: { from: 1, key: datasourceUid, value: __expr__ }
-              # The steps carry exactly the script's refIds: the query step is `A`, the reduce
-              # step `B`, the threshold step `C`; the reduce step reads `A` and the threshold
-              # step reads `B`; and the top-level `condition` is `C`, the step the card reads
-              # its decision from. A body that swaps or renames them shows one decision on the
-              # card and runs another (a `condition` naming the raw query step fires on
-              # whatever the query returns, with the threshold step only shown).
+              # The same base and the same three shapes of the first step's model as the create
+              # tool (the comment above it says what each part keeps out). A rule read back
+              # carries nothing more in its model: the server adds only intervalMs and
+              # maxDataPoints, which the script strips.
               value: { condition: C }
               entry_at:
                 data:
@@ -247,9 +326,10 @@ apps:
                   - { at: 2, key: refId, value: C }
                   - { at: 1, member: model, key: expression, value: A }
                   - { at: 2, member: model, key: expression, value: B }
+                  - { at: 1, member: model, key: reducer, values: [last, sum, max, min, mean] }
               entry_member:
                 data:
-                  - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                  - { at: 0, member: relativeTimeRange, keys: [from, to] }
                   # The two expression steps the receiver runs itself: each model is what the
                   # script's builder sends, its `type` is the one the script builds, and the
                   # conditions the card reads its comparison and threshold from carry no
@@ -260,11 +340,69 @@ apps:
                   - { at: 2, member: model, keys: [conditions, datasource, expression, refId, type], value: { key: type, value: threshold } }
                   - { at: 2, member: model/conditions/0, keys: [evaluator, operator, query, reducer, type] }
                   - { at: 2, member: model/conditions/0/evaluator, keys: [params, type] }
+              entry_len:
+                data:
+                  - { at: 2, member: model/conditions, len: 1 }
+              # The query's time range, which the card shows: seconds before now, neither empty
+              # nor inverted.
+              entry_greater:
+                data:
+                  - { at: 0, member: relativeTimeRange, key: from, than: to }
+              one_of:
+                # 1. One Prometheus query.
+                - entry_member:
+                    data:
+                      - { at: 0, member: model, keys: [editorMode, expr, instant, legendFormat, refId] }
+                # 2. One OpenSearch count or sum.
+                - entry_member:
+                    data:
+                      - { at: 0, member: model, keys: [refId, queryType, query, metrics, bucketAggs, timeField], value: { key: queryType, value: lucene } }
+                      - { at: 0, member: model/metrics/0, keys: [id, type, field], value: { key: type, values: [count, sum] } }
+                      - { at: 0, member: model/bucketAggs/0, keys: [id, type, field, settings], value: { key: type, value: date_histogram } }
+                      - { at: 0, member: model/bucketAggs/0/settings, keys: [interval, min_doc_count], value: { key: min_doc_count, value: "0" } }
+                  entry_len:
+                    data:
+                      - { at: 0, member: model/metrics, len: 1 }
+                      - { at: 0, member: model/bucketAggs, len: 1 }
+                  entry_at:
+                    data:
+                      - { at: 0, key: queryType, values: ["", lucene] }
+                      - { at: 0, member: model/metrics/0, key: id, value: "1" }
+                      - { at: 0, member: model/bucketAggs/0, key: id, value: "2" }
+                  entry_max_len:
+                    data:
+                      - { at: 0, member: model/query, max: 200 }
+                      - { at: 0, member: model/timeField, max: 200, optional: true }
+                      - { at: 0, member: model/metrics/0/field, max: 200, optional: true }
+                      - { at: 0, member: model/bucketAggs/0/field, max: 200, optional: true }
+                      - { at: 0, member: model/bucketAggs/0/settings/interval, max: 200 }
+                # 3. One OpenSearch average, maximum or minimum.
+                - entry_member:
+                    data:
+                      - { at: 0, member: model, keys: [refId, queryType, query, metrics, bucketAggs, timeField], value: { key: queryType, value: lucene } }
+                      - { at: 0, member: model/metrics/0, keys: [id, type, field], value: { key: type, values: [avg, max, min] } }
+                      - { at: 0, member: model/bucketAggs/0, keys: [id, type, field, settings], value: { key: type, value: date_histogram } }
+                      - { at: 0, member: model/bucketAggs/0/settings, keys: [interval, min_doc_count], value: { key: min_doc_count, value: "1" } }
+                  entry_len:
+                    data:
+                      - { at: 0, member: model/metrics, len: 1 }
+                      - { at: 0, member: model/bucketAggs, len: 1 }
+                  entry_at:
+                    data:
+                      - { at: 0, key: queryType, values: ["", lucene] }
+                      - { at: 0, member: model/metrics/0, key: id, value: "1" }
+                      - { at: 0, member: model/bucketAggs/0, key: id, value: "2" }
+                  entry_max_len:
+                    data:
+                      - { at: 0, member: model/query, max: 200 }
+                      - { at: 0, member: model/timeField, max: 200, optional: true }
+                      - { at: 0, member: model/metrics/0/field, max: 200, optional: true }
+                      - { at: 0, member: model/bucketAggs/0/field, max: 200, optional: true }
+                      - { at: 0, member: model/bucketAggs/0/settings/interval, max: 200 }
               # The two keys a newer server answers with are scalars when it adds them: the
               # duration is a string (or a number for seconds) and the count is an integer.
               # A body carrying either as an object is refused, whatever its keys say. The
-              # card does not show them: it holds at most 20 fields and this tool needs the
-              # slot for the rule's uid, so two pass-through values stay off it.
+              # card shows both when the body carries them.
               kinds: { keep_firing_for: [string, number], missingSeriesEvalsToResolve: [integer] }
           - { id: delete_alert_rule, description: "Deletes one Grafana-managed alert rule the agent manages.", name: Delete an alert rule, host: "{instance}", path: "/api/v1/provisioning/alert-rules/*", methods: [DELETE] }
     approvals:
@@ -313,6 +451,16 @@ apps:
           - { label: Evaluate for, source: body, steps: [ { json: /for } ] }
           - { label: Data source, source: body, steps: [ { json: /data/0/datasourceUid } ] }
           - { label: Query, source: body, steps: [ { json: /data/0/model/expr } ] }
+          # An OpenSearch rule's query, in full: a row a body does not carry is left out.
+          - { label: Query language, source: body, steps: [ { json: /data/0/model/queryType } ] }
+          - { label: Log query, source: body, steps: [ { json: /data/0/model/query } ] }
+          - { label: Metric, source: body, steps: [ { json: /data/0/model/metrics/0/type } ] }
+          - { label: Metric field, source: body, steps: [ { json: /data/0/model/metrics/0/field } ] }
+          - { label: Buckets, source: body, steps: [ { json: /data/0/model/bucketAggs/0/settings/interval } ] }
+          - { label: Bucket field, source: body, steps: [ { json: /data/0/model/bucketAggs/0/field } ] }
+          - { label: Time field, source: body, steps: [ { json: /data/0/model/timeField } ] }
+          - { label: Looks back (seconds), source: body, steps: [ { json: /data/0/relativeTimeRange/from } ] }
+          - { label: Ends before now (seconds), source: body, steps: [ { json: /data/0/relativeTimeRange/to } ] }
           - { label: Comparison, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/type } ] }
           - { label: Threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/0 } ] }
           - { label: Reducer, source: body, steps: [ { json: /data/1/model/reducer } ] }
@@ -329,9 +477,8 @@ apps:
           - { label: Receiver, source: body, steps: [ { json: /notification_settings/receiver } ] }
       update_alert_rule:
         title: change an alert rule
-        # The card holds at most 20 fields and this tool needs one for the rule's uid, so the
-        # annotation copy of the expiry is dropped here: the `Expires` label above shows the
-        # same date from the rule's labels.
+        # The create card's rows with the rule's uid before them, and after them the two keys
+        # a newer server answers with, which a change resends: 32 rows, the most a card holds.
         fields:
           - { label: Rule, source: path, segment: 5 }
           - { label: Title, source: body, steps: [ { json: /title } ] }
@@ -340,6 +487,15 @@ apps:
           - { label: Evaluate for, source: body, steps: [ { json: /for } ] }
           - { label: Data source, source: body, steps: [ { json: /data/0/datasourceUid } ] }
           - { label: Query, source: body, steps: [ { json: /data/0/model/expr } ] }
+          - { label: Query language, source: body, steps: [ { json: /data/0/model/queryType } ] }
+          - { label: Log query, source: body, steps: [ { json: /data/0/model/query } ] }
+          - { label: Metric, source: body, steps: [ { json: /data/0/model/metrics/0/type } ] }
+          - { label: Metric field, source: body, steps: [ { json: /data/0/model/metrics/0/field } ] }
+          - { label: Buckets, source: body, steps: [ { json: /data/0/model/bucketAggs/0/settings/interval } ] }
+          - { label: Bucket field, source: body, steps: [ { json: /data/0/model/bucketAggs/0/field } ] }
+          - { label: Time field, source: body, steps: [ { json: /data/0/model/timeField } ] }
+          - { label: Looks back (seconds), source: body, steps: [ { json: /data/0/relativeTimeRange/from } ] }
+          - { label: Ends before now (seconds), source: body, steps: [ { json: /data/0/relativeTimeRange/to } ] }
           - { label: Comparison, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/type } ] }
           - { label: Threshold, source: body, steps: [ { json: /data/2/model/conditions/0/evaluator/params/0 } ] }
           - { label: Reducer, source: body, steps: [ { json: /data/1/model/reducer } ] }
@@ -352,7 +508,10 @@ apps:
           - { label: Service, source: body, steps: [ { json: /labels/service } ] }
           - { label: Expires, source: body, steps: [ { json: /labels/expires } ] }
           - { label: Summary, source: body, steps: [ { json: /annotations/summary } ] }
+          - { label: Expires annotation, source: body, steps: [ { json: /annotations/expires } ] }
           - { label: Receiver, source: body, steps: [ { json: /notification_settings/receiver } ] }
+          - { label: Keep firing for, source: body, steps: [ { json: /keep_firing_for } ] }
+          - { label: Evaluations to resolve, source: body, steps: [ { json: /missingSeriesEvalsToResolve } ] }
       delete_alert_rule:
         title: delete an alert rule
         fields:
@@ -377,10 +536,10 @@ apps:
         steps small; send only read statements.
         To leave a Grafana alert rule, read the grafana-alerts skill and use its script: never
         create, change or delete a rule without the script's managed_by label and expiry, and
-        never name a contact point that list_contact_points does not show. The script is the only
-        way to write a rule: build no rule body by hand — the gateway refuses a rule body the
-        script cannot build (a recording rule, a second query, or a label, annotation or receiver
-        setting the script does not set), and the approval card shows the shape the script builds
-        and cannot show fields outside it. There is no tool for contact points,
-        notification policies, mute timings or templates: a person makes those.
+        never name a contact point that list_contact_points does not show. A rule watches one
+        Prometheus query or one OpenSearch log count. The script is the only way to write a rule:
+        build no rule body by hand — the gateway refuses a body the script cannot build (a
+        recording rule, a second query, or a label, annotation or receiver setting it does not
+        set), and the approval card shows only the script's shape. No tool makes contact points,
+        notification policies, mute timings or templates: a person does.
       operations: operations.json
