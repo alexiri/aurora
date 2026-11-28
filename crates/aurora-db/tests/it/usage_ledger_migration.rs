@@ -102,7 +102,8 @@ async fn the_backfill_equals_what_the_live_rule_writes() {
     let (_db, pool) = TestDb::unmigrated_with_pool().await;
     let before: Vec<_> = aurora_db::MIGRATOR
         .iter()
-        .filter(|m| m.version != VERSION)
+        // Everything before it, never a later migration: a later one may need its columns.
+        .filter(|m| m.version < VERSION)
         .cloned()
         .collect();
     Migrator::with_migrations(before).run(&pool).await.unwrap();
