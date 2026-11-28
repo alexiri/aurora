@@ -159,10 +159,9 @@ present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
   that parses a request body and lets the bytes, or a rewrite of them, go on: a
   model allow-list reads `/model` (no reading ⇒ no model); an approval card
   shows no value from such a body and says so (`06 §Approval holds`), and a
-  `summarize` hook is not asked about a body that repeats a name anywhere, also
-  in another case; an outgoing webhook's slot values with a repeated name are
-  refused; and `git_commit_trailer` forwards such a body unchanged.
-  Raw conditions (no `json_pointer`) match the bytes themselves.
+  `summarize` hook is not asked about it; an outgoing webhook's slot values with
+  a repeated name are refused; and `git_commit_trailer` forwards such a body
+  unchanged. Raw conditions (no `json_pointer`) match the bytes themselves.
 
 ## Injection selection
 

@@ -386,6 +386,119 @@ async fn a_summary_hook_is_not_asked_about_a_body_with_two_readings() {
     }
 }
 
+/// What the core cannot read, a hook with a more lenient parser may: it is not asked about a
+/// JSON body, or a multipart metadata part, that does not parse.
+#[tokio::test]
+async fn a_summary_hook_is_not_asked_about_a_body_the_core_cannot_read() {
+    use aurora_gateway::hold::{SummaryRequest, build_summary_hooked};
+    use aurora_gateway::summarize_client::{SummarizeCall, Summarizer};
+    use aurora_summary::{ApprovalSummary, SummarySource};
+
+    struct Hook;
+    #[async_trait::async_trait]
+    impl Summarizer for Hook {
+        async fn summarize(&self, _: SummarizeCall<'_>) -> Option<ApprovalSummary> {
+            Some(ApprovalSummary {
+                title: "from the hook".into(),
+                fields: Vec::new(),
+                text: None,
+                link: None,
+                group: None,
+                source: SummarySource::Hook,
+            })
+        }
+    }
+    let mut v: Value = serde_json::from_slice(&snapshot_json()).unwrap();
+    v["apps"][0]["approvals"] = serde_json::json!({"send": {
+        "title": "Send", "summarize": "hook",
+        "fields": [{"label": "To", "source": "body", "steps": [{"json": "/to"}]}]
+    }});
+    let l = parse("h", v).unwrap();
+    let app = identify_app(&l, "ec2.eu-west-1.amazonaws.com", 443, "/").unwrap();
+    let header = |_: &str| None;
+    let title = async |content_type: &str, body: &str, truncated: bool| {
+        let request = SummaryRequest {
+            method: "POST",
+            host: "ec2.eu-west-1.amazonaws.com",
+            base_path: None,
+            path: "/",
+            query: None,
+            content_type: Some(content_type),
+            header: &header,
+            body_prefix: body.as_bytes(),
+            truncated,
+            headers: &[],
+        };
+        build_summary_hooked(Some(&Hook), Some(&l), Some(&app), Some("send"), &request)
+            .await
+            .title
+    };
+    let json = "application/json; charset=UTF-8";
+    // A lone surrogate: the core's parser refuses the body, a lenient one reads on.
+    let surrogate = r#"{"to":"ok@example.com","to":"evil@example.org","p":"\ud800"}"#;
+    let related = "multipart/related; boundary=BND";
+    let part = |metadata: &str| {
+        format!(
+            "--BND\r\ncontent-type: application/json\r\n\r\n{metadata}\r\n--BND\r\ncontent-type: text/plain\r\n\r\ncontent\r\n--BND--"
+        )
+    };
+    // The delimiter inside the preamble: a lenient reader takes this part for the first one.
+    let preamble = format!(
+        "x{}",
+        part(r#"{"to":"ok@example.com"}"#).replace("--BND--", "--BND")
+    );
+    for (content_type, body, truncated) in [
+        (json, surrogate.to_owned(), false),
+        ("text/plain", format!("  {surrogate}"), false),
+        (
+            json,
+            r#"{"to":"ok@example.com","padding":"aaaa"#.to_owned(),
+            true,
+        ),
+        (json, "not json at all".to_owned(), false),
+        ("application/vnd.api+json", "{oops".to_owned(), false),
+        (related, part(surrogate), false),
+        (
+            related,
+            part(r#"{"to":"ok@example.com","To":"evil@example.org"}"#),
+            false,
+        ),
+        (related, preamble, false),
+        (
+            related,
+            "--BND\r\ncontent-type: application/json\r\n\r\n{\"to\":\"o".to_owned(),
+            true,
+        ),
+        (
+            "multipart/related; boundary=BND; boundary=OTHER",
+            part(r#"{"to":"ok@example.com"}"#),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            title(content_type, &body, truncated).await,
+            "Send",
+            "{content_type}: {body}"
+        );
+    }
+    // What has one reading, and what is no JSON at all, is still the hook's.
+    let whole = part(r#"{"to":"ok@example.com"}"#);
+    let cut_media = whole.split("content\r\n--BND--").next().unwrap().to_owned();
+    for (content_type, body, truncated) in [
+        (json, r#"{"to":"ok@example.com"}"#, false),
+        (json, "", false),
+        ("text/csv", "a,b,c", false),
+        (related, whole.as_str(), false),
+        (related, cut_media.as_str(), true),
+    ] {
+        assert_eq!(
+            title(content_type, body, truncated).await,
+            "from the hook",
+            "{content_type}: {body}"
+        );
+    }
+}
+
 #[test]
 fn the_body_is_buffered_only_when_a_form_params_tool_may_match() {
     let l = loaded();

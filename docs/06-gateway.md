@@ -888,8 +888,12 @@ upstreams on random ports keep working.
    `07 §One reading of a JSON body`) When what a template field reads has two
    readings, the card shows no value from the body and has a `Warning` field
    saying so (the generic summary does the same for a repeated name anywhere,
-   naming it); the hook is not asked about a body that repeats a name, also in
-   another case.
+   naming it). The hook gets JSON only when it has one reading: where the body
+   is meant as JSON (a JSON content type, or it starts with `{`), and the first
+   part of a multipart body, it must parse and repeat no name anywhere, also in
+   another case. A body that does not parse, a cut-off one included, one with
+   two content types, and a multipart body that does not start at its
+   delimiter with a JSON part go to the template.
 2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
    gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
    effective timeout comes from the matching rules (`07 §Approval deadlines`,

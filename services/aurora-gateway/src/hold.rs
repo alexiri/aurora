@@ -87,11 +87,84 @@ pub async fn build_summary_hooked(
     build_summary(l, app, tool_id, r)
 }
 
-/// A hook reads the body with its own parser, and the core cannot tell which names it reads:
-/// a JSON body that repeats a name anywhere, also in another case, is not given to it.
+/// A hook reads the body with its own parser, which may read what the core's refuses, and the
+/// core cannot tell which names it reads. So a hook gets JSON only when it has one reading:
+/// where the body is meant to be JSON (its content type says so, or it starts like an object),
+/// and the metadata part of a multipart body, it must parse and repeat no name anywhere, also
+/// in another case. A cut-off body does not parse. Anything else is a guess.
 fn hook_would_guess(r: &SummaryRequest<'_>) -> bool {
-    !r.truncated
-        && aurora_policy::json::parse(r.body_prefix).is_some_and(|doc| doc.has_colliding_names())
+    let one_reading =
+        |json: &[u8]| aurora_policy::json::parse(json).is_some_and(|d| !d.has_colliding_names());
+    let content_type = r.content_type.unwrap_or_default();
+    let lower = content_type.to_ascii_lowercase();
+    // Which of two content types a receiver follows is its own choice.
+    let content_types = r
+        .headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .count();
+    if content_types > 1 {
+        return true;
+    }
+    let body = r.body_prefix.trim_ascii_start();
+    let media = lower.split(';').next().unwrap_or_default();
+    let meant_as_json = !body.is_empty() && (media.contains("json") || body.starts_with(b"{"));
+    if meant_as_json && !one_reading(r.body_prefix) {
+        return true;
+    }
+    lower.contains("boundary=")
+        && !metadata_part(content_type, r.body_prefix).is_some_and(one_reading)
+}
+
+/// The first part of a multipart body, when it is the first part for every reader: one
+/// `boundary` parameter, the body starting at the delimiter (a lenient reader takes the first
+/// place the delimiter occurs, a strict one only a line of its own), and a part declared JSON.
+fn metadata_part<'a>(content_type: &str, body: &'a [u8]) -> Option<&'a [u8]> {
+    let find = |needle: &[u8], from: usize| {
+        let rest = body.get(from..)?;
+        let at = rest.windows(needle.len()).position(|w| w == needle)?;
+        Some(from + at)
+    };
+    let lower = content_type.to_ascii_lowercase();
+    let mut parameters = lower.match_indices("boundary=");
+    let (at, name) = parameters.next()?;
+    if parameters.next().is_some() {
+        return None;
+    }
+    let raw = content_type.get(at + name.len()..)?;
+    let boundary = match raw.strip_prefix('"') {
+        Some(quoted) => quoted.split('"').next()?,
+        None => raw.split([';', ' ']).next()?,
+    };
+    if boundary.is_empty() {
+        return None;
+    }
+    let delimiter = format!("--{boundary}");
+    let after = body.strip_prefix(delimiter.as_bytes())?;
+    if !after.starts_with(b"\r\n") && !after.starts_with(b"\n") {
+        return None;
+    }
+    let start = delimiter.len();
+    let (headers_end, blank) = match (find(b"\r\n\r\n", start), find(b"\n\n", start)) {
+        (Some(a), Some(b)) if b < a => (b, 2),
+        (Some(a), _) => (a, 4),
+        (None, Some(b)) => (b, 2),
+        (None, None) => return None,
+    };
+    let headers = String::from_utf8_lossy(body.get(start..headers_end)?).to_ascii_lowercase();
+    if !headers.contains("json") {
+        return None;
+    }
+    let part = headers_end + blank;
+    let end = [
+        find(format!("\r\n{delimiter}").as_bytes(), part),
+        find(format!("\n{delimiter}").as_bytes(), part),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(body.len());
+    body.get(part..end)
 }
 
 /// The one approval-summary entry point (live holds and `check-snapshot`): the tool's
