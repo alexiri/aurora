@@ -16,7 +16,7 @@ afterEach(() => {
 describe("scope switcher while loading", () => {
   it("is busy and disabled, with no chevron button, until the session answers", async () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
-    wrap(<ScopeSwitcher />);
+    wrap(<ScopeSwitcher place={{ kind: "workspace" }} />);
     const card = await screen.findByTestId("scope-switcher");
     expect(card).toHaveAttribute("aria-busy", "true");
     expect(card).toHaveAttribute("aria-disabled", "true");

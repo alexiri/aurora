@@ -15,27 +15,29 @@ import { ApiError } from "@/lib/api/client";
 import { personName, workspaceDisplayName } from "@/lib/workspace-name";
 import { backLink, lastWorkspace, usePlaceRecord, useRecordPlace } from "@/lib/nav/manage-return";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
-import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, ORG_RAIL_GROUPS, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
+import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, ORG_RAIL_GROUPS, orgRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { useTimezoneAutofill } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
 import { useOrgBadge, useRefreshAttentionOnMutation, useWorkspaceCounts } from "@/lib/api/attention";
 import { AttentionBadge } from "./admin/attention-badge";
 import { CountBadge } from "./attention/count-badge";
-import { PlaceBack, PlaceCard } from "./nav/place-card";
+import { PlaceBack } from "./nav/place-card";
+import type { Place } from "./nav/place-picker";
+import { placeOf } from "@/lib/nav/places";
 import { ApprovalNotifier } from "./approvals/approval-notifier";
 import { FrozenEntityBanner } from "./freeze/frozen-entity-banner";
 import { EmergencyBanners } from "./emergency/emergency-banners";
 import { EMERGENCY_TOPICS, isEmergencyReader } from "@/lib/emergency";
 import { CommandPalette, openPalette, openShortcutSheet } from "./palette/command-palette";
-import { ScopeSwitcher } from "./nav/scope-switcher";
+import { ScopeSwitcher, TopBarPlace, usePickerModel } from "./nav/scope-switcher";
 import { ShortcutsHost } from "./shortcuts/shortcuts-host";
 import { isMac, keysLabel, SHORTCUTS } from "@/lib/shortcuts";
 import { Altitude } from "./ui/altitude";
 import { Tour } from "./onboarding/tour";
 import { startTour } from "./onboarding/tour-events";
 import { ThemeSwitch } from "./theme/theme-switch";
-import { Avatar } from "./agent-avatar";
+import { Avatar, tintFor } from "./agent-avatar";
 import { NotFoundState, type NotFoundKind } from "./not-found-state";
 import { AuroraLogo } from "./ui/aurora-logo";
 import { UndoToastHost } from "./ui/undo-toast";
@@ -460,6 +462,28 @@ function AdminNavList({ pathname }: { pathname: string }) {
   );
 }
 
+/** (D-508(g)) The rail's foot: Manage <org> of the organization you are in (or came from), with what waits there. */
+function RailManage({ place }: { place: Place }) {
+  const org = usePickerModel(place, false).current;
+  const badge = useOrgBadge(org?.manage ? org.id : undefined);
+  if (!org?.manage) return null;
+  return (
+    <li>
+      <Link
+        href={orgRoutes(org.slug).home()}
+        data-tour="manage"
+        className="flex min-h-9 items-center gap-2.5 rounded-control px-2.5 py-1.5 text-sm text-ink-2 hover:bg-subtle hover:text-ink"
+      >
+        <span aria-hidden="true" className={cn("inline-flex size-4.5 shrink-0 items-center justify-center rounded-full text-micro font-semibold uppercase", tintFor(org.slug))}>
+          {org.name.trim().slice(0, 2)}
+        </span>{" "}
+        <span className="min-w-0 flex-1 truncate">Manage {org.name}</span>{" "}
+        <CountBadge n={badge?.count} actionId="manage-switcher-entry" testId="rail-manage-badge" />
+      </Link>
+    </li>
+  );
+}
+
 /**
  * (D-508(a)) The rail shows exactly one place — a workspace, its organization (Manage <org>), Administration or Your
  * account — and its top says which: the place card, with a back line outside a workspace.
@@ -496,12 +520,9 @@ function SidebarContent({
   );
   const record = usePlaceRecord();
   const inAdmin = pathname.startsWith("/admin");
-  const inAccount = pathname === "/account" || pathname.startsWith("/account/");
-  const adminPlace = inAdmin && isInstanceAdmin;
-  const orgPlace = !inAdmin && !inAccount && !!orgSlug && !wsSlug;
+  const place = placeOf(pathname, orgSlug, wsSlug, isInstanceAdmin);
   const back =
-    adminPlace || inAccount || orgPlace ? backLink(record, viewer?.id, me.data?.memberships, orgPlace ? orgSlug : undefined) : undefined;
-  const accountName = viewer ? personName(viewer.display_name) : "Account";
+    place.kind === "workspace" ? undefined : backLink(record, viewer?.id, me.data?.memberships, place.kind === "org" ? place.orgSlug : undefined);
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
@@ -509,47 +530,28 @@ function SidebarContent({
       </Link>
       <div className="space-y-1">
         {back ? <PlaceBack back={back} /> : null}
-        {adminPlace ? (
-          <PlaceCard
-            mark={
-              <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-subtle text-ink">
-                <ShieldIcon className="size-4" />
-              </span>
-            }
-            name="Administration"
-            kind="This Aurora"
-          />
-        ) : inAccount ? (
-          <PlaceCard mark={<Avatar name={accountName} tintKey={viewer?.email} size={28} />} name={accountName} kind="Your account" />
-        ) : (
-          <ScopeSwitcher orgSlug={orgSlug} wsSlug={wsSlug} />
-        )}
+        <ScopeSwitcher place={place} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {adminPlace ? (
+        {place.kind === "admin" ? (
           <AdminNavList pathname={pathname} />
-        ) : inAccount ? (
+        ) : place.kind === "account" ? (
           <AccountNavList pathname={pathname} />
-        ) : orgPlace ? (
-          <OrgNavList orgSlug={orgSlug!} pathname={pathname} />
+        ) : place.kind === "org" ? (
+          <OrgNavList orgSlug={place.orgSlug} pathname={pathname} />
         ) : orgSlug && wsSlug && !inAdmin ? (
           <WorkspaceNav base={wsRoutes(orgSlug, wsSlug).base} wsId={railWsId} pathname={pathname} />
         ) : null}
       </div>
       <div className="space-y-2 border-t border-line pt-3">
-        {/* Inside Administration the rail's place card names it: the entry would say it a second time. */}
-        {isInstanceAdmin && !adminPlace ? (
-          <ul>
-            <NavItem
-              href={adminRoutes.home()}
-              label="Administration"
-              icon={ShieldIcon}
-              active={inAdmin}
-              badge={<AttentionBadge />}
-              tour="administration"
-            />
-          </ul>
-        ) : null}
+        <ul className="space-y-0.5 empty:hidden">
+          {/* (D-508(g), nav-3) Manage <org> for its owners, admins and instance admins; inside it the menu above is it. */}
+          {place.kind !== "org" ? <RailManage place={place} /> : null}
+          {/* Inside Administration the rail's place card names it: the entry would say it a second time. */}
+          {isInstanceAdmin && place.kind !== "admin" ? (
+            <NavItem href={adminRoutes.home()} label="Administration" icon={ShieldIcon} active={inAdmin} badge={<AttentionBadge />} tour="administration" />
+          ) : null}
+        </ul>
         <SearchButton />
         <ThemeSwitch />
         <UserMenu />
@@ -623,16 +625,14 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="min-w-0 flex-1">
-        <div className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-surface px-4 py-2 md:hidden">
-          <Link href="/" aria-label="Aurora home" className="rounded-md">
-            <AuroraLogo className="h-8 w-auto" />
-          </Link>
+        {/* (D-508(k), nav-3d) The menu, then the place card in short, which opens the picker as a sheet. */}
+        <div className="sticky top-0 z-30 flex items-center gap-2 border-b border-line bg-surface px-3 py-2 md:hidden">
           <DialogPrimitive.Root open={navOpen} onOpenChange={setNavOpen} modal={!tourNav}>
             <DialogPrimitive.Trigger asChild>
               <button
                 type="button"
                 aria-label={waiting > 0 ? `Open menu, ${attentionText(waiting)}` : "Open menu"}
-                className="relative inline-flex size-11 items-center justify-center rounded-control text-ink hover:bg-subtle"
+                className="relative inline-flex size-11 shrink-0 items-center justify-center rounded-control text-ink hover:bg-subtle"
               >
                 <MenuIcon className="size-5" />
                 {waiting > 0 ? (
@@ -643,7 +643,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DialogPrimitive.Portal>
               <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
               <DialogPrimitive.Content
-                className="fixed inset-y-0 right-0 z-50 w-[min(18rem,calc(100vw-3rem))] border-l border-line bg-surface text-ink shadow-pop"
+                // It opens from the side its button is on.
+                className="fixed inset-y-0 left-0 z-50 w-[min(18rem,calc(100vw-3rem))] border-r border-line bg-surface text-ink shadow-pop"
                 onInteractOutside={(e) => {
                   if (tourNav) e.preventDefault();
                 }}
@@ -667,6 +668,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </DialogPrimitive.Content>
             </DialogPrimitive.Portal>
           </DialogPrimitive.Root>
+          <TopBarPlace place={placeOf(side.pathname, side.orgSlug, side.wsSlug, me.data?.user.is_instance_admin === true)} />
         </div>
         {/* No max width here: each page sets its own (docs/14 page widths), so the agent page gets the full content width. */}
         <main className="w-full min-w-0 space-y-4 px-4 py-6 md:px-8 md:py-8">

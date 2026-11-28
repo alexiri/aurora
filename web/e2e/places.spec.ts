@@ -129,7 +129,6 @@ for (const scheme of ["light", "dark"] as const) {
         const r = await rail(page, width);
         await expect(r.getByTestId("place-card")).toHaveText(new RegExp(`${user.display_name}\\s+Your account`));
         await expect(r.getByRole("link", { name: /^Back to / })).toBeVisible();
-        await expect(r.getByTestId("scope-switcher")).toHaveCount(0);
         expect(await serious(page)).toEqual([]);
         await shot(page, `account-rail-${scheme}-${width}`);
       });

@@ -1,5 +1,5 @@
 import type { VerbId } from "@/lib/palette-verb";
-import { accountRoutes, orgRoutes, TOPIC_LABEL, topicHref, wsRoutes, type WorkspaceTopic } from "@/lib/routes";
+import { accountRoutes, adminRoutes, orgRoutes,TOPIC_LABEL, topicHref, wsRoutes, type WorkspaceTopic } from "@/lib/routes";
 
 /**
  * (P5-REFINE-19, D-406) What the command palette lists. Pure: the component gathers the viewer's data and passes it in,
@@ -9,8 +9,8 @@ import { accountRoutes, orgRoutes, TOPIC_LABEL, topicHref, wsRoutes, type Worksp
  * button's own dialog (`lib/palette-verb.ts`).
  */
 
-export type PaletteGroup = "Workspaces" | "Organizations" | "Agents" | "Pages" | "Agent pages" | "Account" | "Actions";
-export const PALETTE_GROUP_ORDER: PaletteGroup[] = ["Actions", "Workspaces", "Organizations", "Agents", "Pages", "Agent pages", "Account"];
+export type PaletteGroup = "Workspaces" | "Places" | "Agents" | "Pages" | "Agent pages" | "Account" | "Actions";
+export const PALETTE_GROUP_ORDER: PaletteGroup[] = ["Actions", "Workspaces", "Places", "Agents", "Pages", "Agent pages", "Account"];
 
 export interface PaletteItem {
   id: string;
@@ -43,7 +43,8 @@ export interface PaletteContext {
   wsSlug?: string;
   /** The agent whose page is open (a handle). */
   agentHandle?: string;
-  memberships: { slug: string; name: string; role?: string; workspaces: { slug: string; name: string }[] }[];
+  /** The organizations and the workspaces this person can enter; `also` is a second name a workspace is found by. */
+  memberships: { slug: string; name: string; role?: string; workspaces: { slug: string; name: string; also?: string }[] }[];
   topics: WorkspaceTopic[];
   agents: PaletteAgent[];
   /** The open agent's pages, from `availableSections` (what the navigation lists). */
@@ -62,14 +63,16 @@ export function paletteItems(c: PaletteContext): PaletteItem[] {
 
   for (const m of c.memberships) {
     for (const w of m.workspaces) {
-      out.push(link(`ws:${m.slug}/${w.slug}`, "Workspaces", w.name, wsRoutes(m.slug, w.slug).home(), { hint: m.name, also: m.name, recentKey: `${m.slug}/${w.slug}` }));
+      out.push(link(`ws:${m.slug}/${w.slug}`, "Workspaces", w.name, wsRoutes(m.slug, w.slug).home(), { hint: m.name, also: [m.name, w.also].filter(Boolean).join(" "), recentKey: `${m.slug}/${w.slug}` }));
     }
   }
+  // (D-508(e), (f)) The other places, only for those who may enter them: Manage <org> for owners, admins and instance
+  // admins (never a member), and Administration for instance admins.
   for (const m of c.memberships) {
-    // (D-508(e)) The entry opens Manage <org>, which members don't see; their workspaces are listed above.
-    if (m.role === "member" && !c.instanceAdmin) continue;
-    out.push(link(`org:${m.slug}`, "Organizations", m.name, orgRoutes(m.slug).home(), { recentKey: m.slug }));
+    if (!c.instanceAdmin && m.role !== "owner" && m.role !== "admin") continue;
+    out.push(link(`org:${m.slug}`, "Places", `Manage ${m.name}`, orgRoutes(m.slug).home(), { also: m.name, recentKey: m.slug }));
   }
+  if (c.instanceAdmin) out.push(link("admin", "Places", "Administration", adminRoutes.home(), { also: "Settings for everyone on this Aurora" }));
   if (ws) {
     for (const a of c.agents) out.push(link(`agent:${a.id}`, "Agents", a.name, ws.agent(a.handle), { hint: `@${a.handle}`, also: a.handle }));
     for (const t of c.topics) {

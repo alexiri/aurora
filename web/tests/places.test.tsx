@@ -237,12 +237,11 @@ describe("the back line (D-508(h), C-1178)", () => {
 });
 
 describe("the place card of Administration and Your account (nav-4)", () => {
-  it("Your account: the person's card, with the way back, and no switcher", async () => {
+  it("Your account: the person's card, with the way back", async () => {
     record();
     shell("/account", {});
     await waitFor(() => expect(within(sidebar()).getByTestId("place-card")).toHaveTextContent("Alice Admin Your account"));
     expect(within(sidebar()).getByRole("link", { name: "Back to Ops two" })).toBeInTheDocument();
-    expect(within(sidebar()).queryByTestId("scope-switcher")).toBeNull();
     expect(within(sidebar()).getByRole("navigation", { name: "Account" })).toBeInTheDocument();
   });
 

@@ -1,7 +1,7 @@
 "use client";
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { availableSections, type AgentPageId } from "@/components/agents/sections";
@@ -9,6 +9,7 @@ import { SearchIcon } from "@/components/ui/icons";
 import { useAltitude } from "@/lib/altitude";
 import { visibleTopics } from "@/lib/api/roles";
 import { useAgents, useInstance, useMe, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
+import { buildPlaces } from "@/lib/nav/places";
 import { readRecent } from "@/lib/nav/recent-scopes";
 import { matchItems, paletteItems, type PaletteContext, type PaletteGroup, type PaletteItem } from "@/lib/palette-registry";
 import { requestVerb } from "@/lib/palette-verb";
@@ -29,8 +30,10 @@ export function openShortcutSheet(): void {
 /** The viewer's data in the shape the registry takes. Everything here is already cached by the shell. */
 export function usePaletteContext(): PaletteContext {
   const params = useParams<{ org?: string; ws?: string; handle?: string }>();
+  const pathname = usePathname() ?? "";
   const orgSlug = params?.org;
-  const wsSlug = params?.ws;
+  // The manage page (`/o/<org>/workspaces/<ws>`) has a `ws` parameter too: its workspace's pages are not offered there.
+  const wsSlug = /^\/o\/[^/]+\/w\//.test(pathname) ? params?.ws : undefined;
   const me = useMe();
   const resolved = useResolve(orgSlug, wsSlug);
   const wsId = resolved.data?.workspace?.id;
@@ -59,11 +62,19 @@ export function usePaletteContext(): PaletteContext {
       orgSlug,
       wsSlug,
       agentHandle: open?.handle,
-      memberships: (me.data?.memberships ?? []).map((m) => ({
-        slug: m.org.slug,
-        name: m.org.name ?? m.org.slug,
-        role: m.effective_role ?? m.role,
-        workspaces: m.workspaces.map((w) => ({ slug: w.slug, name: w.name ?? w.slug })),
+      // The same places the picker lists (`lib/nav/places.ts`), with the reader's workspace while their grant is open.
+      memberships: buildPlaces({
+        viewer: me.data?.user,
+        instanceAdmin,
+        memberships: me.data?.memberships ?? [],
+        open: orgSlug && resolved.data ? { id: resolved.data.org.id, slug: orgSlug, name: resolved.data.org.name } : null,
+        reading: wsSlug ? workspace.data : null,
+        recent: [],
+      }).map((o) => ({
+        slug: o.slug,
+        name: o.name,
+        role: o.role,
+        workspaces: o.workspaces.map((w) => ({ slug: w.slug, name: w.label, also: w.stored })),
       })),
       topics: wsId ? visibleTopics("workspace", { instanceAdmin, workspace: role ?? (instanceAdmin ? undefined : "member") }, altitude) : [],
       agents: wsId ? agentList : [],
@@ -72,7 +83,7 @@ export function usePaletteContext(): PaletteContext {
       instanceAdmin,
       ssh: instance.data?.features?.ssh === true,
     } satisfies PaletteContext;
-  }, [orgSlug, wsSlug, handle, me.data, agents.data, instance.data, org.data, altitude, wsId, role, instanceAdmin]);
+  }, [orgSlug, wsSlug, handle, me.data, resolved.data, workspace.data, agents.data, instance.data, org.data, altitude, wsId, role, instanceAdmin]);
 }
 
 /** ⌘K / Ctrl K: a search field and one list of places (and, with more controls, actions). Choosing one goes there. */

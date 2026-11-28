@@ -139,11 +139,16 @@ function render(pathname: string, params: Record<string, string | undefined>, ov
 
 const onWorkspace = (over: Partial<World> = {}) => render("/o/users/w/bob/agents", { org: "users", ws: "bob" }, over);
 const switcher = () => screen.getByTestId("scope-switcher");
+/** Opens the place picker; the returned element is the picker itself. */
 async function openSwitcher() {
   const trigger = await within(switcher()).findByRole("button");
   fireEvent.click(trigger);
-  return screen.findByPlaceholderText("Find a workspace or organization");
+  return screen.findByRole("dialog", { name: "Switch workspace or organization" });
 }
+/** The search field, there with more than six places. */
+const searchField = (picker: HTMLElement) => within(picker).findByPlaceholderText("Find a workspace or organization");
+/** The picker's workspace rows. */
+const wsLinks = (picker: HTMLElement) => within(picker).findAllByRole("link", { name: /Team \d|Your workspace/ });
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -165,40 +170,44 @@ describe("scope switcher", () => {
     expect(screen.queryByTestId("workspace-selector")).toBeNull();
   });
 
-  it("many: at most five workspaces of the current organization, then 'All n in Org', and the other organization as one row", async () => {
+  it("many: at most five workspaces of the current organization, then 'All n workspaces…', and the other organization as one row", async () => {
     onWorkspace({ usersCount: 8, acmeCount: 4, orgRole: "owner" });
-    await openSwitcher();
-    const links = await screen.findAllByRole("link", { name: /Team \d|Your workspace/ });
-    expect(links).toHaveLength(5);
+    const picker = await openSwitcher();
+    await waitFor(async () => expect(await wsLinks(picker)).toHaveLength(5));
     // (D-508(e)) For owners and admins, Manage › Workspaces.
-    expect(screen.getByRole("link", { name: "All 8 in Users" })).toHaveAttribute("href", "/o/users/workspaces");
-    expect(screen.getByRole("button", { name: /Acme Labs · 4 workspaces/ })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "All workspaces" })).toBeNull();
-    // The current workspace is marked and read from the viewer's side.
-    const mine = screen.getByRole("link", { name: /Your workspace/ });
+    expect(await within(picker).findByRole("link", { name: "All 8 workspaces…" })).toHaveAttribute("href", "/o/users/workspaces");
+    expect(within(picker).getByRole("link", { name: /Acme Labs Member · opens your last workspace there/ })).toBeInTheDocument();
+    expect(within(picker).queryByRole("link", { name: "All workspaces" })).toBeNull();
+    // The current workspace is marked and read from the viewer's side, with the person's role and the organization.
+    const mine = within(picker).getByRole("link", { name: /Your workspace/ });
     expect(mine).toHaveAttribute("aria-current", "true");
-    expect(mine).toHaveTextContent("Owner");
+    expect(mine).toHaveTextContent("Owner · Users");
   });
 
-  it("(FIX-235, D-477) lists only the workspaces the person is in in their own right, and 'All n in' counts those", async () => {
+  it("(FIX-235, D-477) lists only the workspaces the person is in in their own right", async () => {
     onWorkspace({ usersCount: 6, notMine: 2 });
-    await openSwitcher();
+    const picker = await openSwitcher();
     // The six own workspaces (five listed), none of the `my_role: null` ones.
-    const links = await screen.findAllByRole("link", { name: /Team \d|Your workspace/ });
-    expect(links).toHaveLength(5);
-    expect(screen.queryByRole("link", { name: /Not mine/ })).toBeNull();
-    // The count covers only the listed (own) workspaces, not the whole organization.
-    expect(screen.getByRole("button", { name: "All 6 in Users" })).toBeInTheDocument();
+    expect(await wsLinks(picker)).toHaveLength(5);
+    expect(within(picker).queryByRole("link", { name: /Not mine/ })).toBeNull();
+    // A member's count covers only their own workspaces, not the whole organization.
+    expect(within(picker).getByRole("button", { name: "All 6 workspaces…" })).toBeInTheDocument();
+    cleanup();
+    // An owner may list every workspace, on Manage › Workspaces: their count is the organization's, their rows their own.
+    onWorkspace({ usersCount: 6, notMine: 2, orgRole: "owner" });
+    const owners = await openSwitcher();
+    expect(await within(owners).findByRole("link", { name: "All 8 workspaces…" })).toBeInTheDocument();
+    expect(within(owners).queryByRole("link", { name: /Not mine/ })).toBeNull();
   });
 
   it("(D-508(e)) a member gets the whole list in the menu, never a link to a Manage page", async () => {
     onWorkspace({ usersCount: 8 });
-    await openSwitcher();
-    expect(await screen.findAllByRole("link", { name: /Team \d|Your workspace/ })).toHaveLength(5);
-    fireEvent.click(screen.getByRole("button", { name: "All 8 in Users" }));
-    expect(screen.getAllByRole("link", { name: /Team \d|Your workspace/ })).toHaveLength(8);
-    expect(screen.queryByRole("button", { name: "All 8 in Users" })).toBeNull();
-    for (const a of screen.getAllByRole("link")) expect(a.getAttribute("href")).not.toBe("/o/users");
+    const picker = await openSwitcher();
+    expect(await wsLinks(picker)).toHaveLength(5);
+    fireEvent.click(within(picker).getByRole("button", { name: "All 8 workspaces…" }));
+    expect(await wsLinks(picker)).toHaveLength(8);
+    expect(within(picker).queryByRole("button", { name: "All 8 workspaces…" })).toBeNull();
+    for (const a of screen.getAllByRole("link")) expect(a.getAttribute("href")).not.toMatch(/^\/o\/users(\/workspaces)?$/);
   });
 
   it("recently used workspaces come first (kept in this browser)", async () => {
@@ -206,71 +215,67 @@ describe("scope switcher", () => {
     onWorkspace({ usersCount: 8 });
     // The current workspace is recorded once the session has loaded; open the menu after that.
     await within(switcher()).findByText("Your workspace");
-    await openSwitcher();
-    const names = (await screen.findAllByRole("link", { name: /Team \d|Your workspace/ })).map((a) => a.textContent ?? "");
+    const names = (await wsLinks(await openSwitcher())).map((a) => a.textContent ?? "");
     // The current workspace is the most recent of all, then the stored order.
     expect(names[0]).toContain("Your workspace");
     expect(names[1]).toContain("Team 8");
     expect(names[2]).toContain("Team 7");
   });
 
-  it("search finds workspaces and organizations, grouped", async () => {
+  it("search finds workspaces and organizations, grouped by organization", async () => {
     onWorkspace({ usersCount: 8, acmeCount: 4 });
-    const input = await openSwitcher();
+    const picker = await openSwitcher();
+    const input = await searchField(picker);
     fireEvent.change(input, { target: { value: "acme" } });
-    expect(await screen.findByText("Organizations")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Acme Labs/ })).toBeInTheDocument();
-    expect(screen.getByText("Workspaces")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Acme 0/ })).toHaveAttribute("href", "/o/acme/w/a-0");
+    const group = await within(picker).findByRole("group", { name: "Acme Labs" });
+    expect(within(group).getByRole("option", { name: /Acme 0/ })).toHaveAttribute("href", "/o/acme/w/a-0");
+    // A member of Acme Labs: the organization itself opens their last workspace there.
+    expect(within(group).getByRole("option", { name: /Acme Labs Organization · Member/ })).toHaveAttribute("href", "/o/acme/w/a-0");
     fireEvent.change(input, { target: { value: "Team 5" } });
-    expect(await screen.findByRole("link", { name: /Team 5/ })).toBeInTheDocument();
-    expect(screen.queryByText("Organizations")).toBeNull();
+    expect(await within(picker).findByRole("option", { name: /Team 5/ })).toBeInTheDocument();
+    expect(within(picker).queryByRole("group", { name: "Acme Labs" })).toBeNull();
     fireEvent.change(input, { target: { value: "zzz" } });
-    expect(await screen.findByText(/Nothing matches/)).toBeInTheDocument();
+    expect(await within(picker).findByText(/Nothing matches/)).toBeInTheDocument();
   });
 
-  it("an organization result opens its workspaces, and the back arrow returns", async () => {
+  it("choosing another organization opens your last workspace there", async () => {
+    window.localStorage.setItem("aurora.recent-scopes:u1", JSON.stringify(["acme/a-3"]));
     onWorkspace({ usersCount: 2, acmeCount: 7 });
-    const input = await openSwitcher();
-    fireEvent.change(input, { target: { value: "acme" } });
-    fireEvent.click(await screen.findByRole("button", { name: /Acme Labs/ }));
-    // A member of Acme Labs: the rest of the list opens here.
-    expect(await screen.findByRole("button", { name: "All 7 in Acme Labs" })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: /Acme \d/ })).toHaveLength(5);
-    fireEvent.click(screen.getByRole("button", { name: "Acme Labs" }));
-    expect(await screen.findByRole("link", { name: /Your workspace/ })).toBeInTheDocument();
+    const picker = await openSwitcher();
+    expect(await within(picker).findByRole("link", { name: /Acme Labs/ })).toHaveAttribute("href", "/o/acme/w/a-3");
   });
 
-  it("more than three organizations: 'All n organizations' lists them all", async () => {
+  it("more than three other organizations: 'All n organizations' lists them all", async () => {
     onWorkspace({ usersCount: 2, acmeCount: 1, extraOrgs: 3 });
-    await openSwitcher();
+    const picker = await openSwitcher();
     // Three other organizations are listed; Users, Acme and three more make five.
-    const all = await screen.findByRole("button", { name: "All 5 organizations" });
+    const all = await within(picker).findByRole("button", { name: "All 5 organizations" });
+    expect(within(picker).getAllByRole("link", { name: /opens your last workspace there/ })).toHaveLength(3);
     fireEvent.click(all);
-    expect(await screen.findByRole("button", { name: /Org x3 · 1 workspace/ })).toBeInTheDocument();
+    expect(within(picker).getAllByRole("link", { name: /opens your last workspace there/ })).toHaveLength(4);
   });
 
   it("New workspace only when the viewer may create one", async () => {
     onWorkspace({ usersCount: 2, acmeCount: 1 });
-    await openSwitcher();
-    await screen.findAllByRole("link", { name: /Team 2/ });
-    expect(screen.queryByRole("button", { name: /New workspace/ })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Manage Users" })).toBeNull();
+    const picker = await openSwitcher();
+    await within(picker).findByRole("link", { name: /Team 2/ });
+    expect(within(picker).queryByRole("button", { name: /New workspace/ })).toBeNull();
+    expect(within(picker).queryByRole("link", { name: /Manage Users/ })).toBeNull();
     cleanup();
     onWorkspace({ usersCount: 2, acmeCount: 1, orgRole: "owner" });
-    await openSwitcher();
-    expect(await screen.findByRole("button", { name: "New workspace in Users" })).toBeInTheDocument();
+    const owners = await openSwitcher();
+    expect(await within(owners).findByRole("button", { name: "New workspace in Users" })).toBeInTheDocument();
     // (P5-REFINE-17, rec 8) The row opens the organization's Manage area on its Overview.
-    expect(screen.getByRole("link", { name: "Manage Users" })).toHaveAttribute("href", "/o/users");
+    expect(within(owners).getByRole("link", { name: /Manage Users/ })).toHaveAttribute("href", "/o/users");
   });
 
-  // (P5-REFINE-17 #17, G3, C-1082) What waits in the organization is on its Manage row and on the closed switcher.
-  it("(G3) the Manage row and the switcher carry the organization's count, for its owners and admins only", async () => {
+  // (P5-REFINE-17 #17, G3, C-1082; D-508(g)) What waits in the organization is on its Manage row and on the rail's foot.
+  it("(G3) the Manage row and the rail's foot carry the organization's count, for its owners and admins only", async () => {
     onWorkspace({ usersCount: 2, acmeCount: 1, orgRole: "owner", orgAttention: 3 });
-    const trigger = await screen.findByTestId("switcher-attention-badge");
-    expect(trigger).toHaveTextContent("3");
-    await openSwitcher();
-    const row = await screen.findByRole("link", { name: /^Manage Users/ });
+    const foot = await screen.findByTestId("rail-manage-badge");
+    expect(foot).toHaveTextContent("3");
+    const picker = await openSwitcher();
+    const row = await within(picker).findByRole("link", { name: /Manage Users/ });
     await waitFor(() => expect(within(row).getByTestId("manage-switcher-badge")).toHaveTextContent("3"));
     expect(within(row).getByText("3 need your attention")).toBeInTheDocument();
     cleanup();
@@ -278,35 +283,35 @@ describe("scope switcher", () => {
     onWorkspace({ usersCount: 2, acmeCount: 1, orgRole: "member", orgAttention: 3 });
     await screen.findByRole("button", { name: /Bob Builder/ });
     await new Promise((r) => setTimeout(r, 50));
-    expect(screen.queryByTestId("switcher-attention-badge")).toBeNull();
+    expect(screen.queryByTestId("rail-manage-badge")).toBeNull();
+    expect(screen.queryByRole("link", { name: /Manage Users/ })).toBeNull();
     cleanup();
     onWorkspace({ usersCount: 2, acmeCount: 1, orgRole: "owner", orgAttention: 0 });
-    await openSwitcher();
-    await screen.findByRole("link", { name: /^Manage Users/ });
+    await within(await openSwitcher()).findByRole("link", { name: /Manage Users/ });
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByTestId("manage-switcher-badge")).toBeNull();
-    expect(screen.queryByTestId("switcher-attention-badge")).toBeNull();
+    expect(screen.queryByTestId("rail-manage-badge")).toBeNull();
   });
 
   it("(org-5) New organization is the last row only where sign-up lets this person create one", async () => {
     onWorkspace({ usersCount: 2, acmeCount: 1 });
-    await openSwitcher();
-    await screen.findAllByRole("link", { name: /Team 2/ });
-    expect(screen.queryByRole("button", { name: "New organization" })).toBeNull();
+    const picker = await openSwitcher();
+    await within(picker).findByRole("link", { name: /Team 2/ });
+    expect(within(picker).queryByRole("button", { name: "New organization" })).toBeNull();
     cleanup();
     onWorkspace({ usersCount: 2, acmeCount: 1, orgCreation: "anyone" });
-    await openSwitcher();
-    fireEvent.click(await screen.findByRole("button", { name: "New organization" }));
+    fireEvent.click(await within(await openSwitcher()).findByRole("button", { name: "New organization" }));
     expect(await screen.findByRole("dialog", { name: "New organization" })).toBeInTheDocument();
   });
 
   it("keyboard: typing goes to the search field, arrow keys move through the rows, Escape closes", async () => {
-    onWorkspace({ usersCount: 3, acmeCount: 1 });
-    const input = await openSwitcher();
-    await screen.findAllByRole("link", { name: /Team 2/ });
-    expect(document.activeElement).toBe(input);
+    onWorkspace({ usersCount: 7, acmeCount: 1 });
+    const picker = await openSwitcher();
+    const input = await searchField(picker);
+    await within(picker).findByRole("link", { name: /Team 2/ });
+    await waitFor(() => expect(document.activeElement).toBe(input));
     fireEvent.keyDown(input, { key: "ArrowDown" });
-    const first = screen.getAllByRole("link", { name: /Your workspace|Team/ })[0]!;
+    const first = within(picker).getAllByRole("link", { name: /Your workspace|Team/ })[0]!;
     expect(document.activeElement).toBe(first);
     fireEvent.keyDown(first, { key: "ArrowUp" });
     expect(document.activeElement).toBe(input);
@@ -328,13 +333,13 @@ const placeRecord = (path: string, over: Record<string, unknown> = {}) =>
   );
 
 describe("Administration rail", () => {
-  it("has the back line (where you came from), its place card and no switcher", async () => {
+  it("has the back line (where you came from) and its place card, which opens the picker", async () => {
     placeRecord("/o/acme/w/a-0/agents");
     render("/admin/people", {}, { admin: true, acmeCount: 1 });
     const back = await screen.findByRole("link", { name: "Back to Acme 0" });
     expect(back).toHaveAttribute("href", "/o/acme/w/a-0/agents");
-    expect(screen.getAllByTestId("place-card")[0]).toHaveTextContent("Administration This Aurora");
-    expect(screen.queryByTestId("scope-switcher")).toBeNull();
+    await waitFor(() => expect(screen.getAllByTestId("place-card")[0]).toHaveTextContent("Administration This Aurora"));
+    expect(within(switcher()).getByTestId("place-card").tagName).toBe("BUTTON");
     expect(screen.queryByText("Select organization")).toBeNull();
     expect((await screen.findByRole("link", { name: "People & sign-in" })).getAttribute("aria-current")).toBe("page");
     // (P5-REFINE-18 #1) The rail is in two halves, then the footer entry.
@@ -500,11 +505,10 @@ describe("navigation entries", () => {
     expect(screen.queryByRole("link", { name: "Members" })).toBeNull();
   });
 
-  it("shows the account navigation on account pages, under the person's place card with a way back, and no switcher", async () => {
+  it("shows the account navigation on account pages, under the person's place card with a way back", async () => {
     render("/account", {});
     expect(await screen.findByRole("link", { name: "Profile" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByTestId("place-card")[0]).toHaveTextContent("Bob Builder Your account"));
-    expect(screen.queryByTestId("scope-switcher")).toBeNull();
     // (P5-REFINE-2) The last scope is kept: it is where the back line goes.
     expect(await screen.findByRole("link", { name: "Back to Your workspace" })).toHaveAttribute("href", "/o/users/w/bob");
   });
