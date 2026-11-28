@@ -8,10 +8,15 @@
 //! edit is never uploaded — the file is restored (0444) and the agent is told the change was undone.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::os::fd::AsFd as _;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::MEMORY_CONTENT_MAX;
+use rustix::fs::FileType;
 
+use crate::home::may_lock;
 use crate::nofollow;
 
 /// (FIX-114) Largest memory file the harvest reads (four times the content limit, in bytes —
@@ -21,11 +26,22 @@ pub const MEMORY_FILE_READ_MAX: u64 = 4 * MEMORY_CONTENT_MAX as u64;
 /// Read at most `max` bytes of `path`: `Ok(None)` when the file is larger (never read whole).
 /// Only a regular file is read: a link or a FIFO at `path` is an error.
 pub fn read_bounded(path: &std::path::Path, max: u64) -> std::io::Result<Option<Vec<u8>>> {
+    read_capped(crate::nofollow::open_regular(path)?, max)
+}
+
+/// [`read_bounded`] of `rel` below `home`: no component of `rel` may be a link either.
+pub fn read_bounded_beneath(
+    home: &std::path::Path,
+    rel: &std::path::Path,
+    max: u64,
+) -> std::io::Result<Option<Vec<u8>>> {
+    read_capped(crate::nofollow::open_regular_beneath(home, rel)?, max)
+}
+
+fn read_capped(file: std::fs::File, max: u64) -> std::io::Result<Option<Vec<u8>>> {
     use std::io::Read as _;
     let mut buf = Vec::new();
-    crate::nofollow::open_regular(path)?
-        .take(max + 1)
-        .read_to_end(&mut buf)?;
+    file.take(max + 1).read_to_end(&mut buf)?;
     Ok((buf.len() as u64 <= max).then_some(buf))
 }
 use aurora_protocol::common::Validate;
@@ -41,6 +57,11 @@ const KEY_MAX: usize = 128;
 
 fn sha_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+pub(crate) fn tests_sha_hex(bytes: &[u8]) -> String {
+    sha_hex(bytes)
 }
 
 /// Appends the checksum trailer to projected memory `content`.
@@ -164,18 +185,30 @@ pub fn valid_key(key: &str) -> bool {
 /// once per changed digest.
 #[derive(Debug)]
 pub struct Harvester {
+    /// Everything below it is listed and opened from its descriptor.
+    root: PathBuf,
+    /// `memory/` in the root, for [`Self::real_memory_dir`].
     dir: PathBuf,
     uploaded: HashMap<String, String>,
     notices: Vec<String>,
+    /// The uid the agent runs as: the only files whose mode is changed.
+    agent_uid: u32,
 }
 
 impl Harvester {
     pub fn new(root: &Path) -> Self {
         Self {
+            root: root.to_path_buf(),
             dir: root.join(MEMORY_DIR),
             uploaded: HashMap::new(),
             notices: Vec::new(),
+            agent_uid: rustix::process::getuid().as_raw(),
         }
+    }
+
+    /// The agent runs as another uid than the supervisor (the root supervisor mode).
+    pub fn set_agent_uid(&mut self, uid: u32) {
+        self.agent_uid = uid;
     }
 
     /// Notices for the next turn (invalid keys, oversized files); drains them.
@@ -203,17 +236,30 @@ impl Harvester {
             .is_ok()
     }
 
+    /// The memory file `name`, bounded; a link at `memory/` or at the file is not followed.
+    /// With it, judged on the same open file: whether its content may be uploaded, which asks
+    /// for the agent's own file with this one name.
+    fn read_memory(&self, name: &str) -> std::io::Result<(Option<Vec<u8>>, bool)> {
+        let rel = Path::new(MEMORY_DIR).join(name);
+        let file = nofollow::open_regular_beneath(&self.root, &rel)?;
+        let meta = file.metadata()?;
+        let own = may_lock(meta.nlink(), meta.uid(), self.agent_uid);
+        Ok((read_capped(file, MEMORY_FILE_READ_MAX)?, own))
+    }
+
     pub fn scan(&mut self, locked: &HashMap<String, Vec<u8>>) -> Vec<MemoryWrite> {
         if !self.real_memory_dir(!locked.is_empty()) {
             return Vec::new();
         }
-        let Ok(rd) = std::fs::read_dir(&self.dir) else {
+        let Ok(list) = nofollow::open_dir_beneath(&self.root, Path::new(MEMORY_DIR))
+            .and_then(|dir| nofollow::entries(dir.as_fd()))
+        else {
             return Vec::new();
         };
-        let mut names: Vec<String> = rd
-            .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-            .filter_map(|e| e.file_name().into_string().ok())
+        let mut names: Vec<String> = list
+            .into_iter()
+            .filter(|(_, kind)| *kind == FileType::RegularFile)
+            .filter_map(|(name, _)| name.into_string().ok())
             .filter(|n| n.ends_with(".md") && n != INDEX_FILE)
             .collect();
         names.sort();
@@ -223,20 +269,19 @@ impl Harvester {
             if let Some(recorded) = locked.get(key) {
                 // (P6-MEMLOCK, C-1149) Never uploaded: the recorded install is the truth. A file
                 // that is gone or oversized counts as changed and is restored from the bytes.
-                let current = read_bounded(&self.dir.join(name), MEMORY_FILE_READ_MAX)
-                    .ok()
-                    .flatten();
+                // It is only compared, never uploaded.
+                let current = self.read_memory(name).ok().and_then(|(bytes, _)| bytes);
                 self.guard_locked(key, name, recorded, current.as_deref());
                 continue;
             }
             // (FIX-114) The agent writes these files: never read one whole before checking its
             // size (a multi-gigabyte file would kill the supervisor on the memory limit).
-            let text = match read_bounded(&self.dir.join(name), MEMORY_FILE_READ_MAX) {
-                Ok(Some(b)) => match String::from_utf8(b) {
-                    Ok(t) => t,
+            let (text, own) = match self.read_memory(name) {
+                Ok((Some(b), own)) => match String::from_utf8(b) {
+                    Ok(t) => (t, own),
                     Err(_) => continue,
                 },
-                Ok(None) => {
+                Ok((None, _)) => {
                     let digest = format!("oversized:{name}");
                     if self.uploaded.get(name) != Some(&digest) {
                         self.notice(format!(
@@ -255,6 +300,14 @@ impl Harvester {
             }
             let digest = sha_hex(text.as_bytes());
             if self.uploaded.get(name) == Some(&digest) {
+                continue;
+            }
+            if !own {
+                self.notice(format!(
+                    "memory file `{name}` was not saved: it belongs to another user or has \
+                     another name (a hard link); write it as a new file"
+                ));
+                self.uploaded.insert(name.clone(), digest);
                 continue;
             }
             if !valid_key(key) {
@@ -301,11 +354,10 @@ impl Harvester {
     /// anything else (an edit, a deleted file) is restored from the recorded bytes with a notice
     /// per changed digest.
     fn guard_locked(&mut self, key: &str, name: &str, recorded: &[u8], current: Option<&[u8]>) {
-        let path = self.dir.join(name);
         match current {
             // The unmodified projection (the recorded bytes verify by construction).
             Some(b) if b == recorded => {
-                let _ = nofollow::open_regular(&path).and_then(|f| nofollow::set_mode(&f, 0o444));
+                self.keep_read_only(name, recorded);
                 self.uploaded.remove(name);
             }
             current => {
@@ -322,9 +374,31 @@ impl Harvester {
         }
     }
 
+    /// An unmodified locked memory stays 0444. The mode is changed only on a file that is the
+    /// agent's own with this one name; any other one is replaced by a new file.
+    fn keep_read_only(&self, name: &str, recorded: &[u8]) {
+        let rel = Path::new(MEMORY_DIR).join(name);
+        let Ok(file) = nofollow::open_regular_beneath(&self.root, &rel) else {
+            return;
+        };
+        let Ok(meta) = file.metadata() else { return };
+        if meta.mode() & 0o7777 == 0o444 {
+            return;
+        }
+        if may_lock(meta.nlink(), meta.uid(), self.agent_uid) {
+            let _ = nofollow::set_mode(&file, 0o444);
+        } else {
+            self.restore_locked(name, recorded);
+        }
+    }
+
     /// Rewrites a locked memory file from its recorded (sealed) bytes, 0444.
     fn restore_locked(&self, name: &str, recorded: &[u8]) {
-        if let Err(e) = nofollow::write_atomic(&self.dir.join(name), recorded, 0o444) {
+        let written =
+            nofollow::open_dir_beneath(&self.root, Path::new(MEMORY_DIR)).and_then(|dir| {
+                nofollow::write_atomic_at(dir.as_fd(), OsStr::new(name), recorded, 0o444)
+            });
+        if let Err(e) = written {
             tracing::warn!(name = %name, error = %e, "locked memory file not restored");
         }
     }
@@ -402,6 +476,65 @@ mod tests {
 
     fn write_keys(writes: &[MemoryWrite]) -> Vec<&str> {
         writes.iter().map(|w| w.key.as_str()).collect()
+    }
+
+    /// (FIX-297) What is uploaded is the agent's own file with this one name: a hard link in
+    /// `memory/` may be a file only the supervisor can read, and so may another user's file.
+    #[test]
+    fn only_the_agents_own_singly_named_memory_files_are_uploaded() {
+        let dir = std::env::temp_dir().join(format!("aurora-harvest-{}", Uuid::now_v7()));
+        let home = dir.join("home");
+        std::fs::create_dir_all(home.join(MEMORY_DIR)).unwrap();
+        std::fs::write(dir.join("secret"), "not the agent's to read\n").unwrap();
+        std::fs::hard_link(dir.join("secret"), home.join("memory/linked.md")).unwrap();
+        std::fs::write(home.join("memory/mine.md"), "agent text\n").unwrap();
+
+        let mut h = Harvester::new(&home);
+        let uploaded: Vec<String> = h.scan(&HashMap::new()).into_iter().map(|w| w.key).collect();
+        assert_eq!(uploaded, ["mine"]);
+        let notices = h.take_notices();
+        assert!(
+            notices.len() == 1 && notices[0].contains("`linked.md` was not saved"),
+            "{notices:?}"
+        );
+        // Said once, not at every scan.
+        assert!(h.scan(&HashMap::new()).is_empty() && h.take_notices().is_empty());
+
+        // The test's files are not those of the uid named here as the agent's.
+        let mut other = Harvester::new(&home);
+        other.set_agent_uid(rustix::process::getuid().as_raw() + 1);
+        assert!(other.scan(&HashMap::new()).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) A locked memory that holds the recorded bytes but is a hard link to another
+    /// file: that file's mode is not touched; the memory is written anew, read-only.
+    #[test]
+    fn a_hard_linked_locked_memory_is_replaced_not_chmodded() {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        let dir = std::env::temp_dir().join(format!("aurora-harvest-{}", Uuid::now_v7()));
+        let home = dir.join("home");
+        std::fs::create_dir_all(home.join(MEMORY_DIR)).unwrap();
+        let sealed = seal("the person's text\n");
+        let victim = dir.join("victim");
+        std::fs::write(&victim, &sealed).unwrap();
+        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let memory = home.join(MEMORY_DIR).join("pinned.md");
+        std::fs::hard_link(&victim, &memory).unwrap();
+        let locked = HashMap::from([("pinned".to_owned(), sealed.clone().into_bytes())]);
+
+        let mut h = Harvester::new(&home);
+        assert!(h.scan(&locked).is_empty());
+
+        let of_victim = std::fs::metadata(&victim).unwrap();
+        assert_eq!(of_victim.mode() & 0o777, 0o600, "outside file chmodded");
+        let installed = std::fs::metadata(&memory).unwrap();
+        assert_ne!(installed.ino(), of_victim.ino());
+        assert_eq!(installed.mode() & 0o777, 0o444);
+        assert_eq!(std::fs::read_to_string(&memory).unwrap(), sealed);
+        // Its content never changed: there is nothing to tell the agent.
+        assert!(h.take_notices().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// (P6-MEMLOCK, C-1149) `scan` with locked keys: an edited, deleted or chmod-ed locked file is

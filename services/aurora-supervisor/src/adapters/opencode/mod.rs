@@ -90,15 +90,16 @@ fn render_root(opts: &SessionOptions, root: &Path) -> Result<(), HarnessError> {
             format!("cannot render OpenCode's configuration: {e}"),
         )
     };
-    render::ensure_dir(root).map_err(fail)?;
+    let home = &opts.working_dir;
+    render::ensure_dir(home, root).map_err(fail)?;
     // Whatever an agent put in the configuration directory (agents, plugins, a second
     // `opencode.json`) is gone: only the rendered files are there.
-    render::remove_any(&root.join("config")).map_err(fail)?;
+    render::remove_any(home, &root.join("config")).map_err(fail)?;
     for d in config::STATE_DIRS {
-        render::ensure_dir(&root.join(d)).map_err(fail)?;
+        render::ensure_dir(home, &root.join(d)).map_err(fail)?;
     }
     let files = config::render_files(opts)?;
-    render::render_dir(root, &files, &config::CREDENTIAL_FILES).map_err(fail)
+    render::render_dir(home, root, &files, &config::CREDENTIAL_FILES).map_err(fail)
 }
 
 #[async_trait]
@@ -175,8 +176,9 @@ impl HarnessAdapter for OpenCodeAdapter {
                 "unsafe session reference",
             ));
         }
+        let home = working_dir.to_path_buf();
         let dir = render::session_dir(working_dir, ID, session_ref);
-        tokio::task::spawn_blocking(move || render::remove_any(&dir))
+        tokio::task::spawn_blocking(move || render::remove_any(&home, &dir))
             .await
             .map_err(|e| HarnessError::new("purge_failed", e.to_string()))?
             .map_err(|e| HarnessError::new("purge_failed", e.to_string()))

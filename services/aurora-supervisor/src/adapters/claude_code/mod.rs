@@ -46,6 +46,7 @@ use crate::harness::{
     BackgroundWork, HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEvent,
     HarnessEventStream, HarnessSession, SessionOptions, SteerAck, SteerInput, TurnInput,
 };
+use crate::nofollow;
 use launcher::{ChildIo, ChildProcs, Launcher, ProcessLauncher};
 use stream::StreamMapper;
 
@@ -165,55 +166,46 @@ impl HarnessAdapter for ClaudeCodeAdapter {
                 "unsafe session reference",
             ));
         }
-        let mut roots = Vec::new();
+        // The homes that may hold a `.claude/`.
+        let mut homes = Vec::new();
         match &self.config_home {
-            Some(h) => roots.push(h.join(".claude")),
+            Some(h) => homes.push(h.clone()),
             None => {
                 if let Some(h) = std::env::var_os("HOME") {
-                    roots.push(std::path::PathBuf::from(h).join(".claude"));
+                    homes.push(std::path::PathBuf::from(h));
                 }
             }
         }
-        roots.push(working_dir.join(".claude"));
-        roots.dedup();
+        homes.push(working_dir.to_path_buf());
+        homes.dedup();
         let session_ref = session_ref.to_owned();
-        tokio::task::spawn_blocking(move || purge_claude_files(&roots, &session_ref))
+        tokio::task::spawn_blocking(move || purge_claude_files(&homes, &session_ref))
             .await
             .map_err(|e| HarnessError::new("purge_failed", e.to_string()))?
             .map_err(|e| HarnessError::new("purge_failed", e.to_string()))
     }
 }
 
-fn remove_any(p: &std::path::Path) -> std::io::Result<()> {
-    let r = match std::fs::symlink_metadata(p) {
-        Ok(m) if m.is_dir() => std::fs::remove_dir_all(p),
-        Ok(_) => std::fs::remove_file(p),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e),
-    };
-    match r {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
-}
-
-fn purge_claude_files(roots: &[std::path::PathBuf], session_ref: &str) -> std::io::Result<()> {
-    for root in roots {
+/// The agent's uid owns these folders, and the session reference comes from the harness's own
+/// output: everything is listed and removed from the home's descriptor, following no link.
+fn purge_claude_files(homes: &[std::path::PathBuf], session_ref: &str) -> std::io::Result<()> {
+    for home in homes {
+        let remove = |rel: &std::path::Path| nofollow::remove_tree_beneath(home, rel);
+        let root = std::path::Path::new(".claude");
         // projects/<encoded cwd>/<ref>.jsonl and projects/<encoded cwd>/<ref>/
-        if let Ok(rd) = std::fs::read_dir(root.join("projects")) {
-            for proj in rd.flatten() {
-                remove_any(&proj.path().join(format!("{session_ref}.jsonl")))?;
-                remove_any(&proj.path().join(session_ref))?;
-            }
+        let projects = root.join("projects");
+        for (project, _) in nofollow::list_beneath(home, &projects) {
+            let project = projects.join(project);
+            remove(&project.join(format!("{session_ref}.jsonl")))?;
+            remove(&project.join(session_ref))?;
         }
-        remove_any(&root.join("session-env").join(session_ref))?;
-        remove_any(&root.join("file-history").join(session_ref))?;
-        if let Ok(rd) = std::fs::read_dir(root.join("todos")) {
-            let prefix = format!("{session_ref}-");
-            for f in rd.flatten() {
-                if f.file_name().to_string_lossy().starts_with(&prefix) {
-                    remove_any(&f.path())?;
-                }
+        remove(&root.join("session-env").join(session_ref))?;
+        remove(&root.join("file-history").join(session_ref))?;
+        let todos = root.join("todos");
+        let prefix = format!("{session_ref}-");
+        for (name, _) in nofollow::list_beneath(home, &todos) {
+            if name.to_string_lossy().starts_with(&prefix) {
+                remove(&todos.join(name))?;
             }
         }
     }

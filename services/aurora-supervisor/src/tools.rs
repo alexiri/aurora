@@ -18,7 +18,6 @@
 //! probe call per `probe_interval` is let through, and a success closes the breaker.
 
 use std::collections::HashMap;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -65,6 +64,8 @@ pub struct ToolsConfig {
     pub probe_interval: Duration,
     /// Workspace root: `send_file` reads only below it.
     pub home: PathBuf,
+    /// The uid the agent runs as: `send_file` sends only its files.
+    pub agent_uid: u32,
     /// How long `send_file` waits for the runner's `file.result` after the last chunk.
     pub file_timeout: Duration,
     /// (FIX-114) Tool calls in flight per socket connection; above it `tools_unavailable`.
@@ -83,6 +84,7 @@ impl Default for ToolsConfig {
             max_failures: limits::TOOL_CONSECUTIVE_FAILURES,
             probe_interval: Duration::from_secs(5),
             home: PathBuf::from("/workspace"),
+            agent_uid: rustix::process::getuid().as_raw(),
             file_timeout: FILE_RESULT_TIMEOUT,
             registry: None,
         }
@@ -322,8 +324,14 @@ impl ToolHub {
     /// Remote tools from `.aurora/tools.json` (the API catalogue never holds `process_*`).
     fn remote_catalogue(&self) -> Vec<ToolDescriptor> {
         // (FIX-114) The agent can write this file: bounded read, an oversized one is ignored.
-        let Ok(Some(bytes)) = crate::harvest::read_bounded(&self.catalogue, CATALOGUE_READ_MAX)
-        else {
+        // Below the home no folder on the way may be a link either.
+        let read = match self.catalogue.strip_prefix(&self.cfg.home) {
+            Ok(rel) => {
+                crate::harvest::read_bounded_beneath(&self.cfg.home, rel, CATALOGUE_READ_MAX)
+            }
+            Err(_) => crate::harvest::read_bounded(&self.catalogue, CATALOGUE_READ_MAX),
+        };
+        let Ok(Some(bytes)) = read else {
             return Vec::new();
         };
         let Ok(Value::Array(items)) = serde_json::from_slice::<Value>(&bytes) else {
@@ -375,6 +383,7 @@ impl ToolHub {
         let upload_id = send_file(
             &self.out,
             &self.cfg.home,
+            self.cfg.agent_uid,
             OutboundFile {
                 path: PathBuf::from(path),
                 conversation_id,
@@ -389,6 +398,11 @@ impl ToolHub {
             }
             OutboundError::Reserved => {
                 "files under .aurora/ are platform-managed and cannot be sent".to_owned()
+            }
+            OutboundError::NotOwned => {
+                "only a file you own, with no other hard link, can be sent; copy it and send the \
+                 copy"
+                    .to_owned()
             }
             OutboundError::TooLarge(max) => format!("file is larger than {max} bytes"),
             OutboundError::Io(e) => format!("cannot read the file: {}", e.kind()),
@@ -588,7 +602,8 @@ impl ToolHub {
         }
         let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
+        // The folder may be the agent's to write: the name can be something else by now.
+        crate::nofollow::set_socket_mode(path, 0o666, rustix::process::getuid().as_raw())?;
         loop {
             let (conn, _) = listener.accept().await?;
             tokio::spawn(self.clone().connection(conn));

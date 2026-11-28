@@ -1071,6 +1071,37 @@ The home (`/workspace`) holds:
   generations (each as sent) until the resend. A commit that stops for any reason
   after its first check locks the managed trees again, and the harvest protects
   the memories as they were installed, a newly locked one included.
+- (FIX-297, SEC-173) The supervisor may run as root while the agent owns the
+  home, so nothing it writes or removes under `.aurora/` (the staging area, the
+  `.aurora` documents, the app and helper roots, `pg/`, `links.json`,
+  `servers.json`, `inbox/`, `terminal/` with its owner and mode, and
+  `harness/`) is reached by a joined path. Links on the way are removed (from
+  the parent's descriptor, never followed), every folder is opened from its
+  parent's descriptor with no-follow, and files are created, renamed and removed
+  relative to those descriptors. A link at `.aurora` before part 0 is removed
+  and the generation installs into a real `.aurora`; one planted while a
+  generation is staged loses the staged files, so the generation is refused and
+  sent again. Nothing is read back from the home to decide anything: the
+  database relay, the bridge's core-only mode and the catalogue digest come from
+  the bytes this process installed (a generation without render inputs renders
+  the last ones again). The digest is empty until the process has committed a
+  generation. The one read of an earlier process's `render_inputs.json`, at
+  boot, is bounded and follows no link; a link, a FIFO or a larger file counts
+  as none (no databases). The other reads of files in the home (memory harvest,
+  tool catalogue, outbound files, boot files kept unless managed) follow no link
+  in the last component and never wait on a FIFO; what is not a regular file is
+  not opened at all. The same descriptor rule covers what the supervisor lists,
+  writes and removes elsewhere in the home (the Claude Code and Codex session
+  purges, Codex's `config.toml`, the fake harness's markers, boot files) and
+  `/run/aurora/harness.env`, whose folder the agent can write. A boot file is
+  replaced by a temp file and a rename, never opened for writing, and keeps the
+  owner of the file it replaces (a regular file with one name); a folder linked
+  to another folder of the home is resolved first and stays a link.
+  Restoring a locked memory changes the mode only of a file that is the agent's
+  and has one name; any other is replaced. The harvest uploads only such a file
+  too (a hard link may be a file only the supervisor can read); the agent is
+  told once about one it leaves. The tools socket's mode is set without
+  following its name, and only on a socket the supervisor's uid owns.
 - (FIX-258) The skills and helpers roots are pruned **before** the staged files
   are installed, so a path may turn from a file into a folder, or back, between
   two generations. A skill file the home cannot hold (a file where a folder is
@@ -1432,6 +1463,11 @@ treats both identically.
 (tool catalogue cache, inbox attachments, home projection state), size ≤
 `ATTACH_OUT_FILE_MAX`, then uploads in `file.part` chunks (≤ 144 KiB (S-06)) with a
 final `file.commit`; the API enforces per-turn and per-conversation caps.
+(FIX-297, SEC-173) It opens the file along the resolved path from the home's
+descriptor, and sends it only when the open file is the agent uid's. When the
+supervisor runs as another uid (root mode) the file must also have one name (no
+other hard link), since the supervisor reads more than the agent may; with one
+uid, hard links are sent. The tool's error tells the agent to send a copy.
 
 ## Logging
 

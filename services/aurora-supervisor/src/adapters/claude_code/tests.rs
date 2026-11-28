@@ -10,6 +10,51 @@ use super::*;
 use crate::harness::McpBridgeSpec;
 use config::LaunchSpec;
 
+/// (FIX-297) A link planted anywhere the purge walks: nothing it points at is listed or
+/// removed. `etc` is a safe session reference, so a followed link would remove such an entry.
+#[tokio::test]
+async fn a_session_purge_removes_nothing_through_a_planted_link() {
+    use std::fs;
+    for link in [
+        ".claude",
+        ".claude/projects",
+        ".claude/projects/p",
+        ".claude/session-env",
+        ".claude/file-history",
+        ".claude/todos",
+    ] {
+        let dir = std::env::temp_dir().join(format!("claude-purge-{}", Uuid::now_v7()));
+        let (home, outside) = (dir.join("home"), dir.join("outside"));
+        // Whatever the link stands for, the folder outside holds what a purge would remove.
+        let victims = [
+            "etc/keep",
+            "etc.jsonl",
+            "etc-1.json",
+            "p/etc/keep",
+            "p/etc.jsonl",
+            "session-env/etc/keep",
+            "file-history/etc/keep",
+            "todos/etc-1.json",
+            "projects/p/etc/keep",
+        ];
+        for victim in victims {
+            let path = outside.join(victim);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "outside").unwrap();
+        }
+        let at = home.join(link);
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &at).unwrap();
+
+        let adapter = ClaudeCodeAdapter::default().config_home(home.clone());
+        let _ = adapter.purge_session(&home, "etc").await;
+        for victim in victims {
+            assert!(outside.join(victim).exists(), "{link}: {victim} removed");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
 const INIT_OK: &str = r#"{"type":"system","subtype":"init","session_id":"sess-A","tools":["mcp__aurora__memory_save"],"mcp_servers":[{"name":"aurora","status":"connected"}]}"#;
 const INIT_BAD: &str = r#"{"type":"system","subtype":"init","session_id":"sess-A","tools":["Bash"],"mcp_servers":[{"name":"aurora","status":"failed"}]}"#;
 const REPLY: &str = include_str!("fixtures/text_turn.jsonl");

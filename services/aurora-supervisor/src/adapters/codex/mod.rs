@@ -35,12 +35,15 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
 use aurora_protocol::runner::SendNowOutcome;
+use rustix::fs::FileType;
 use tokio::sync::{Notify, mpsc};
 
+use crate::adapters::render;
 use crate::harness::{
     HarnessAdapter, HarnessCapabilities, HarnessError, HarnessEvent, HarnessEventStream,
     HarnessSession, SessionOptions, SteerAck, SteerInput, TurnInput,
 };
+use crate::nofollow;
 use launcher::{Launcher, ProcessLauncher};
 use stream::StreamMapper;
 
@@ -95,30 +98,14 @@ fn safe_ref(r: &str) -> bool {
 /// removes any `auth.json`: Aurora never offers sign-in and a planted file must not win over the
 /// API key.
 fn write_home(home: &Path, config_toml: &str) -> std::io::Result<()> {
-    use std::io::Write as _;
-    std::fs::create_dir_all(home)?;
-    let path = home.join("config.toml");
-    // Replace whatever is there (a read-only file, a symlink, a directory) and create the new
-    // file exclusively so a link planted in between is not followed.
-    match std::fs::symlink_metadata(&path) {
-        Ok(m) if m.is_dir() => std::fs::remove_dir_all(&path)?,
-        Ok(_) => std::fs::remove_file(&path)?,
-        Err(_) => {}
-    }
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)?;
-    f.write_all(config_toml.as_bytes())?;
-    f.sync_all()?;
-    drop(f);
-    if std::fs::read_to_string(&path)? != config_toml {
-        return Err(std::io::Error::other("config.toml changed while written"));
-    }
-    match std::fs::remove_file(home.join("auth.json")) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
+    // The folder `CODEX_HOME` is in is the sandbox home: nothing below it is followed. The
+    // write replaces whatever is there, creates the file exclusively and reads it back.
+    let base = home
+        .parent()
+        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    render::ensure_dir(base, home)?;
+    render::write_exclusive(base, &home.join("config.toml"), config_toml)?;
+    render::remove_any(base, &home.join("auth.json"))
 }
 
 #[async_trait]
@@ -205,13 +192,6 @@ impl HarnessAdapter for CodexAdapter {
     }
 }
 
-fn remove_file_if_present(p: &Path) -> std::io::Result<()> {
-    match std::fs::remove_file(p) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
-}
-
 /// `rollout-<YYYY-MM-DDThh-mm-ss>-<ref>.jsonl` for exactly this reference: the timestamp is a
 /// fixed 19-character field, so a short reference cannot match the tail of another thread id.
 fn is_rollout_of(name: &str, session_ref: &str) -> bool {
@@ -227,36 +207,38 @@ fn is_rollout_of(name: &str, session_ref: &str) -> bool {
     }) && rest.get(19..).and_then(|t| t.strip_prefix('-')) == Some(session_ref)
 }
 
-/// Removes `rollout-<timestamp>-<ref>.jsonl` below `dir` (the date-sharded `sessions/` tree).
-fn remove_rollouts(dir: &Path, session_ref: &str, depth: u8) -> std::io::Result<()> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Ok(());
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        let Ok(ft) = e.file_type() else { continue };
-        if ft.is_dir() && depth < 5 {
-            remove_rollouts(&p, session_ref, depth + 1)?;
-        } else if ft.is_file() {
-            let n = e.file_name();
-            if is_rollout_of(&n.to_string_lossy(), session_ref) {
-                remove_file_if_present(&p)?;
-            }
+/// Removes `rollout-<timestamp>-<ref>.jsonl` below `dir` (the date-sharded `sessions/` tree),
+/// a folder below `home`.
+fn remove_rollouts(home: &Path, dir: &Path, session_ref: &str, depth: u8) -> std::io::Result<()> {
+    for (name, kind) in nofollow::list_beneath(home, dir) {
+        let rel = dir.join(&name);
+        if kind == FileType::Directory && depth < 5 {
+            remove_rollouts(home, &rel, session_ref, depth + 1)?;
+        } else if kind == FileType::RegularFile
+            && is_rollout_of(&name.to_string_lossy(), session_ref)
+        {
+            nofollow::remove_file_beneath(home, &rel)?;
         }
     }
     Ok(())
 }
 
+/// `roots` are the `CODEX_HOME` folders. The agent's uid owns them, and the session reference
+/// comes from the harness's own output: everything is listed and removed from the descriptor of
+/// the folder each root is in, following no link.
 fn purge_codex_files(roots: &[PathBuf], session_ref: &str) -> std::io::Result<()> {
     for root in roots {
-        remove_rollouts(&root.join("sessions"), session_ref, 0)?;
-        remove_rollouts(&root.join("archived_sessions"), session_ref, 0)?;
-        if let Ok(rd) = std::fs::read_dir(root.join("shell_snapshots")) {
-            let prefix = format!("{session_ref}.");
-            for f in rd.flatten() {
-                if f.file_name().to_string_lossy().starts_with(&prefix) {
-                    remove_file_if_present(&f.path())?;
-                }
+        let Some((home, root)) = root.parent().zip(root.file_name()) else {
+            continue;
+        };
+        let root = Path::new(root);
+        remove_rollouts(home, &root.join("sessions"), session_ref, 0)?;
+        remove_rollouts(home, &root.join("archived_sessions"), session_ref, 0)?;
+        let snapshots = root.join("shell_snapshots");
+        let prefix = format!("{session_ref}.");
+        for (name, _) in nofollow::list_beneath(home, &snapshots) {
+            if name.to_string_lossy().starts_with(&prefix) {
+                nofollow::remove_file_beneath(home, &snapshots.join(name))?;
             }
         }
     }

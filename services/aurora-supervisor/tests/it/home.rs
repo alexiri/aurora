@@ -434,6 +434,7 @@ async fn outbound_file_is_split_with_correct_sha256() {
     let id = send_file(
         &out,
         d.path(),
+        me(),
         OutboundFile {
             path: "out.bin".into(),
             conversation_id: conv,
@@ -469,6 +470,59 @@ async fn outbound_file_is_split_with_correct_sha256() {
     assert_eq!((commit.conversation_id, commit.turn_id), (conv, turn));
 }
 
+fn me() -> u32 {
+    rustix::process::getuid().as_raw()
+}
+
+/// (FIX-297) The supervisor may read with more rights than the agent has: it sends only a file
+/// that is the agent's.
+#[tokio::test]
+async fn outbound_sends_only_the_agents_own_files() {
+    let d = TempDir::new();
+    fs::write(d.path().join("own"), "own").unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let out = ChannelSender::from_mpsc(tx);
+    // `own` belongs to the test's user, which is not the agent named here.
+    let r = send_file(
+        &out,
+        d.path(),
+        me() + 1,
+        OutboundFile {
+            path: "own".into(),
+            conversation_id: Uuid::now_v7(),
+            turn_id: Uuid::now_v7(),
+            caption: None,
+        },
+    )
+    .await;
+    assert!(matches!(r, Err(OutboundError::NotOwned)), "{r:?}");
+    assert!(rx.try_recv().is_err(), "bytes left the sandbox");
+}
+
+/// (FIX-297) With one uid for the supervisor and the agent, a hard link opens nothing the
+/// agent could not read itself, and package stores and local git clones are full of them.
+#[tokio::test]
+async fn outbound_sends_a_hard_linked_file_when_there_is_one_uid() {
+    let d = TempDir::new();
+    fs::write(d.path().join("store"), "packed").unwrap();
+    fs::hard_link(d.path().join("store"), d.path().join("linked")).unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(8);
+    let out = ChannelSender::from_mpsc(tx);
+    let r = send_file(
+        &out,
+        d.path(),
+        me(),
+        OutboundFile {
+            path: "linked".into(),
+            conversation_id: Uuid::now_v7(),
+            turn_id: Uuid::now_v7(),
+            caption: None,
+        },
+    )
+    .await;
+    assert!(r.is_ok(), "{r:?}");
+}
+
 #[tokio::test]
 async fn outbound_refuses_paths_outside_home() {
     let d = TempDir::new();
@@ -486,6 +540,7 @@ async fn outbound_refuses_paths_outside_home() {
         let r = send_file(
             &out,
             d.path(),
+            me(),
             OutboundFile {
                 path,
                 conversation_id: Uuid::now_v7(),
@@ -519,6 +574,7 @@ async fn outbound_refuses_platform_dir() {
         let r = send_file(
             &out,
             d.path(),
+            me(),
             OutboundFile {
                 path,
                 conversation_id: Uuid::now_v7(),

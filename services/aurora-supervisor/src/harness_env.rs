@@ -15,8 +15,6 @@
 //! terminal open (`pty.open`) and from each turn's session start for the agent's own harness.
 //! The wrappers add their own state directories; nothing here points at the agent harness's.
 
-use std::io::Write as _;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -25,6 +23,7 @@ use aurora_protocol::runner::{
 };
 
 use crate::adapters::claude_code::config::PLACEHOLDER;
+use crate::nofollow;
 
 /// Where the file lives (tmpfs `/run/aurora`; agent-writable at one uid, so agent code can rewrite it — the
 /// wrappers parse it as data and the terminal is the agent's environment, see `17`).
@@ -265,15 +264,14 @@ fn terminal_values(
     })
 }
 
-/// Writes the file atomically with mode 0644 (world-readable: it holds nothing secret).
+/// Writes the file atomically with mode 0644 (world-readable: it holds nothing secret). The
+/// agent can write its folder: the temp file has a random name, is created exclusively from the
+/// folder's descriptor and is renamed over whatever is at `path`.
 pub fn write(path: &Path, content: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension("env.tmp");
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(content.as_bytes())?;
-        f.set_permissions(std::fs::Permissions::from_mode(0o644))?;
-    }
-    std::fs::rename(&tmp, path)
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    };
+    nofollow::write_beneath(dir, Path::new(name), content.as_bytes(), 0o644)
 }
 
 /// Names of the per-harness state directories under `.aurora/terminal` (`/workspace/.aurora/terminal/<id>`).
@@ -284,15 +282,17 @@ pub const TERMINAL_STATE_DIRS: [&str; 5] = ["claude", "codex", "pi", "goose", "o
 /// itself belongs to the supervisor. A terminal harness never reads or changes the agent
 /// harness's own state (FIX-095). Best effort: a failure is the caller's warning.
 pub fn ensure_state_dirs(home: &Path, uid: u32, gid: u32) -> std::io::Result<()> {
-    let base = home.join(".aurora/terminal");
+    let base = Path::new(".aurora/terminal");
     // One directory per terminal harness (`claude`, `codex`, `pi`, `goose`, `opencode`; C-1015).
     let dirs =
-        std::iter::once(base.clone()).chain(TERMINAL_STATE_DIRS.iter().map(|d| base.join(d)));
+        std::iter::once(base.to_path_buf()).chain(TERMINAL_STATE_DIRS.iter().map(|d| base.join(d)));
     for d in dirs {
-        std::fs::create_dir_all(&d)?;
-        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755))?;
+        // The home is the agent's and outlives a boot: each folder is reached from its
+        // descriptor, following no link, and its mode and owner are set on the folder held.
+        let dir = nofollow::ensure_dir_beneath(home, &d)?;
+        rustix::fs::fchmod(&dir, rustix::fs::Mode::from_raw_mode(0o755))?;
         // Not root (tests): the directories are already ours.
-        let _ = std::os::unix::fs::chown(&d, Some(uid), Some(gid));
+        let _ = std::os::unix::fs::fchown(&dir, Some(uid), Some(gid));
     }
     Ok(())
 }
@@ -300,6 +300,7 @@ pub fn ensure_state_dirs(home: &Path, uid: u32, gid: u32) -> std::io::Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
 
     fn cfg() -> HarnessEnvConfig {
         HarnessEnvConfig {

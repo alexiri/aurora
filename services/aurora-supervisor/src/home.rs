@@ -33,10 +33,11 @@ use std::sync::Arc;
 
 use aurora_protocol::runner::{HomeSync, HomeSyncKind};
 use base64::Engine as _;
+use rustix::fs::FileType;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use crate::harvest::{INDEX_FILE, MEMORY_DIR, seal, verify};
+use crate::harvest::{INDEX_FILE, MEMORY_DIR, read_bounded_beneath, seal, verify};
 use crate::instructions::{RenderInputs, render_with};
 use crate::nofollow;
 use crate::pg::PgDatabase;
@@ -186,6 +187,22 @@ pub struct HomeProjector {
     locked_bytes: Arc<HashMap<String, Vec<u8>>>,
     /// (FIX-258) The uid the agent runs as: the only files whose mode a lock changes.
     agent_uid: u32,
+    /// (FIX-297) What this process installed, from the bytes it installed: the files are in
+    /// the agent's home and are not read back.
+    installed: Installed,
+}
+
+#[derive(Debug, Default)]
+struct Installed {
+    /// A generation was committed.
+    committed: bool,
+    tools: Option<Vec<u8>>,
+    /// The render inputs last rendered: from a commit, or from the one read at boot.
+    render_inputs: Option<Vec<u8>>,
+    /// The text of every instruction file, once all were written.
+    instructions: Option<String>,
+    core_only: bool,
+    databases: bool,
 }
 
 /// Relative, normal components only.
@@ -197,11 +214,6 @@ fn clean_rel(p: &str) -> Option<PathBuf> {
     path.components()
         .all(|c| matches!(c, Component::Normal(_)))
         .then(|| path.to_path_buf())
-}
-
-fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> std::io::Result<()> {
-    fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
-    nofollow::write_atomic(path, bytes, mode)
 }
 
 /// (C-643) Root of the app folders in the home.
@@ -290,33 +302,9 @@ fn discard(root: &Path, keep: &mut BTreeSet<PathBuf>, rel: &Path) {
     }
 }
 
-fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = fs::read_dir(dir) else { return };
-    for e in rd.filter_map(Result::ok) {
-        let Ok(t) = e.file_type() else { continue };
-        if t.is_dir() {
-            walk_files(&e.path(), out);
-        } else if t.is_file() || t.is_symlink() {
-            out.push(e.path());
-        }
-    }
-}
-
-/// Removes every file under `dir` that `keep` (paths relative to `root`) does not name, then
-/// every folder that is left empty.
-fn prune_to(root: &Path, dir: &Path, keep: &BTreeSet<PathBuf>) {
-    let mut files = Vec::new();
-    walk_files(dir, &mut files);
-    for f in files {
-        if f.strip_prefix(root).is_ok_and(|r| !keep.contains(r)) {
-            let _ = fs::remove_file(&f);
-        }
-    }
-    let mut dirs = Vec::new();
-    walk_dirs(dir, &mut dirs);
-    for d in dirs {
-        let _ = fs::remove_dir(&d); // only succeeds when empty
-    }
+/// Where a staged file is, relative to the home.
+fn staged_rel(rel: &Path) -> PathBuf {
+    Path::new(SYNC_DIR).join("files").join(rel)
 }
 
 fn too_large() -> std::io::Error {
@@ -349,26 +337,14 @@ fn install_staged(
     };
     let outside = || std::io::Error::from(std::io::ErrorKind::InvalidInput);
     let rel = dst.strip_prefix(root).map_err(|_| outside())?;
-    let (parent, name) = rel.parent().zip(rel.file_name()).ok_or_else(outside)?;
+    let staged = src.strip_prefix(root).map_err(|_| outside())?;
     // Every managed destination: no link in the chain from the home down. The folders are
     // then made and held open from the home's descriptor, so that a link planted after the
     // sweep is not followed either.
-    clear_link_chain(root, parent);
-    let dir = nofollow::create_dir_beneath(root, parent)?;
-    nofollow::write_atomic_at(dir.as_fd(), name, &bytes, mode)?;
+    nofollow::write_beneath(root, rel, &bytes, mode)?;
     // The whole staging area is removed after the commit anyway.
-    let _ = fs::remove_file(src);
+    let _ = nofollow::remove_file_beneath(root, staged);
     Ok(Some(bytes))
-}
-
-fn walk_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = fs::read_dir(dir) else { return };
-    for e in rd.filter_map(Result::ok) {
-        if e.file_type().is_ok_and(|t| t.is_dir()) {
-            walk_dirs(&e.path(), out);
-            out.push(e.path());
-        }
-    }
 }
 
 impl HomeProjector {
@@ -384,6 +360,7 @@ impl HomeProjector {
             skipped: BTreeSet::new(),
             locked_bytes: Arc::new(HashMap::new()),
             agent_uid: rustix::process::getuid().as_raw(),
+            installed: Installed::default(),
         }
     }
 
@@ -392,12 +369,9 @@ impl HomeProjector {
         self.agent_uid = uid;
     }
 
-    fn sync_dir(&self) -> PathBuf {
-        self.cfg.root.join(SYNC_DIR)
-    }
-
-    fn staged_files(&self) -> PathBuf {
-        self.sync_dir().join("files")
+    /// Writes one file of the staging area, from the home's descriptor.
+    fn write_staged(&self, rel: &Path, body: &[u8]) -> std::io::Result<()> {
+        nofollow::write_beneath(&self.cfg.root, &staged_rel(rel), body, 0o600)
     }
 
     fn skills_prefix(&self) -> Option<PathBuf> {
@@ -439,7 +413,7 @@ impl HomeProjector {
     /// neither remembered nor left in the staging area, so it is not installed.
     fn skip(&mut self, rel: PathBuf) {
         if self.staged.remove(&rel).is_some() {
-            let staged = Path::new(SYNC_DIR).join("files").join(&rel);
+            let staged = staged_rel(&rel);
             if let Err(error) = nofollow::remove_file_beneath(&self.cfg.root, &staged) {
                 // The commit then finds a file nobody sent and refuses the generation.
                 tracing::warn!(path = %rel.display(), %error, "staged version of a skipped file not removed");
@@ -451,21 +425,23 @@ impl HomeProjector {
     /// The staged document `name`, checked against what was last written to it. `None` when no
     /// part brought one.
     fn read_doc(&self, generation: u64, name: &'static str) -> Result<Option<Vec<u8>>, HomeError> {
-        let path = self.sync_dir().join(name);
+        let rel = Path::new(SYNC_DIR).join(name);
         let Some(expected) = self.staged_docs.get(name) else {
-            return match fs::symlink_metadata(&path) {
-                Ok(_) => Err(swapped(generation, Path::new(name))),
-                Err(_) => Ok(None),
+            return if nofollow::exists_beneath(&self.cfg.root, &rel) {
+                Err(swapped(generation, Path::new(name)))
+            } else {
+                Ok(None)
             };
         };
-        match crate::harvest::read_bounded(&path, STAGED_READ_MAX) {
+        match read_bounded_beneath(&self.cfg.root, &rel, STAGED_READ_MAX) {
             Ok(Some(bytes)) if digest_of(&bytes) == *expected => Ok(Some(bytes)),
             _ => Err(swapped(generation, Path::new(name))),
         }
     }
 
     fn write_doc(&mut self, name: &'static str, bytes: &[u8]) -> Result<(), HomeError> {
-        write_atomic(&self.sync_dir().join(name), bytes, 0o600)?;
+        let rel = Path::new(SYNC_DIR).join(name);
+        nofollow::write_beneath(&self.cfg.root, &rel, bytes, 0o600)?;
         self.staged_docs.insert(name, digest_of(bytes));
         Ok(())
     }
@@ -473,16 +449,15 @@ impl HomeProjector {
     /// (SEC-171) The whole staging area against what was sent, before anything installed is
     /// touched: every staged entry is there with its bytes, and nothing else is.
     fn verify_staged(&self, generation: u64) -> Result<StagedDocs, HomeError> {
-        let files = self.staged_files();
-        if !fs::symlink_metadata(&files).is_ok_and(|m| m.is_dir()) {
+        let root = &self.cfg.root;
+        let Ok(found) = nofollow::open_dir_beneath(root, &staged_rel(Path::new("")))
+            .and_then(nofollow::list_files)
+        else {
             return Err(swapped(generation, Path::new("files")));
-        }
-        let mut found = Vec::new();
-        walk_files(&files, &mut found);
-        for path in found {
-            let rel = path.strip_prefix(&files).unwrap_or(&path);
-            if !self.staged.contains_key(rel) {
-                return Err(swapped(generation, rel));
+        };
+        for rel in found {
+            if !self.staged.contains_key(&rel) {
+                return Err(swapped(generation, &rel));
             }
         }
         for (rel, entry) in &self.staged {
@@ -490,8 +465,8 @@ impl HomeProjector {
             let Some(expected) = &entry.digest else {
                 continue;
             };
-            let sent =
-                nofollow::open_regular(&files.join(rel)).and_then(|file| read_sent(file, expected));
+            let sent = nofollow::open_regular_beneath(root, &staged_rel(rel))
+                .and_then(|file| read_sent(file, expected));
             if !matches!(sent, Ok(Some(_))) {
                 return Err(swapped(generation, rel));
             }
@@ -512,8 +487,14 @@ impl HomeProjector {
     pub fn apply_part(&mut self, sync: &HomeSync) -> Result<PartOutcome, HomeError> {
         if sync.part_index == 0 {
             self.staging = None;
-            let _ = fs::remove_dir_all(self.sync_dir());
-            fs::create_dir_all(self.staged_files())?;
+            // (FIX-297) The agent can put a link at `.aurora` at any time: it is removed, and
+            // the wipe and every write go from the home's descriptor.
+            nofollow::clear_link_chain(&self.cfg.root, Path::new(SYNC_DIR));
+            if let Err(error) = nofollow::remove_tree_beneath(&self.cfg.root, Path::new(SYNC_DIR)) {
+                // The commit finds what nobody sent and refuses the generation.
+                tracing::warn!(%error, "old staging area not removed");
+            }
+            nofollow::ensure_dir_beneath(&self.cfg.root, &staged_rel(Path::new("")))?;
             self.failed = None;
             self.staged.clear();
             self.staged_docs.clear();
@@ -542,7 +523,7 @@ impl HomeProjector {
             if let Some(why) = self.failed {
                 return Err(HomeError::Incomplete(sync.generation, why));
             }
-            if !self.sync_dir().join("manifest.json").exists() {
+            if !self.staged_docs.contains_key(MANIFEST_DOC) {
                 return Err(HomeError::Incomplete(sync.generation, "no manifest part"));
             }
             return Ok(PartOutcome::ReadyToCommit(sync.generation));
@@ -606,7 +587,7 @@ impl HomeProjector {
                     if memory && e.locked {
                         self.locked_keys.insert(rel.clone());
                     }
-                    match write_atomic(&self.staged_files().join(&rel), &body, 0o600) {
+                    match self.write_staged(&rel, &body) {
                         Ok(()) => {
                             self.skipped.remove(&rel);
                             self.record(rel, &body, e.exec && !memory);
@@ -633,7 +614,7 @@ impl HomeProjector {
                     match clean_rel(&e.path) {
                         Some(r) if is_app_path(&r) => {
                             let body = e.content.unwrap_or_default().into_bytes();
-                            write_atomic(&self.staged_files().join(&r), &body, 0o600)?;
+                            self.write_staged(&r, &body)?;
                             self.record(r, &body, false);
                         }
                         _ => {
@@ -655,7 +636,7 @@ impl HomeProjector {
                             // One helper the home cannot hold (a file that is also a folder)
                             // is skipped: it must not stall the whole sync.
                             let body = e.content.unwrap_or_default().into_bytes();
-                            match write_atomic(&self.staged_files().join(&r), &body, 0o600) {
+                            match self.write_staged(&r, &body) {
                                 Ok(()) => {
                                     self.skipped.remove(&r);
                                     self.record(r, &body, e.exec);
@@ -746,6 +727,7 @@ impl HomeProjector {
             return Err(error);
         }
         self.current = Some(generation);
+        self.installed.committed = true;
         // (P6-MEMLOCK) What the harvest protects from now on; an empty map unlocks everything.
         let locked = memories
             .into_iter()
@@ -758,13 +740,12 @@ impl HomeProjector {
     /// The install of a generation [`Self::verify_staged`] passed. `memories` gets every memory
     /// file as it is installed: its key, and its bytes when it is a locked one.
     fn install_verified(
-        &self,
+        &mut self,
         generation: u64,
         docs: &StagedDocs,
         memories: &mut Vec<(String, Option<Vec<u8>>)>,
     ) -> Result<(), HomeError> {
         let root = self.cfg.root.clone();
-        let sync = self.sync_dir();
         let manifest: Vec<String> = serde_json::from_slice(&docs.manifest)?;
         let mut keep: BTreeSet<PathBuf> = manifest
             .iter()
@@ -772,40 +753,34 @@ impl HomeProjector {
             .filter(|p| self.managed(p))
             .collect();
 
-        let skills_root = self.skills_prefix().map(|s| root.join(s));
-        if let (Some(rel), Some(s)) = (self.skills_prefix(), &skills_root) {
-            // (SEC-150) The agent's uid owns the home: a link in any component from the home down
-            // to the skills root, or anywhere inside it, would let the supervisor's chmod, mkdir
-            // and rename write outside the managed tree. Links are removed (never followed) first.
-            clear_link_chain(&root, &rel);
-            unlink_tree_symlinks(s);
-            set_dirs(&root, &rel, 0o755);
+        let skills = self.skills_prefix();
+        // (SEC-150) The agent's uid owns the home: a link in any component from the home down
+        // to a managed root, or anywhere inside it, would let the supervisor's chmod, mkdir
+        // and rename write outside the managed tree. Links are removed (never followed) first.
+        // The same for the app folders and (P6-TPL-6, C-1143) the helpers root.
+        for rel in skills
+            .iter()
+            .map(PathBuf::as_path)
+            .chain([Path::new(APPS_DIR), Path::new(HELPERS_DIR)])
+        {
+            nofollow::unlink_tree_links(&root, rel);
+            set_dirs(&root, rel, 0o755);
         }
-        let apps_root = root.join(APPS_DIR);
-        clear_link_chain(&root, Path::new(APPS_DIR));
-        unlink_tree_symlinks(&apps_root);
-        set_dirs(&root, Path::new(APPS_DIR), 0o755);
-        // (P6-TPL-6, C-1143) The same link discipline for the helpers root: a link anywhere in
-        // the chain or the tree is removed, never followed.
-        let helpers_root = root.join(HELPERS_DIR);
-        clear_link_chain(&root, Path::new(HELPERS_DIR));
-        unlink_tree_symlinks(&helpers_root);
-        set_dirs(&root, Path::new(HELPERS_DIR), 0o755);
         // A file that could not be staged goes now, whatever the manifest says.
         for rel in &self.skipped {
             discard(&root, &mut keep, rel);
         }
         // The skills and the helpers are pruned before the install, so that a name can turn
         // from a file into a folder (or back) between two generations.
-        if let Some(s) = &skills_root {
-            prune_to(&root, s, &keep);
+        if let Some(rel) = &skills {
+            nofollow::prune_beneath(&root, rel, &keep);
         }
-        prune_to(&root, &helpers_root, &keep);
+        nofollow::prune_beneath(&root, Path::new(HELPERS_DIR), &keep);
 
         // Install.
         for (rel, entry) in &self.staged {
             let rel = rel.clone();
-            let src = self.staged_files().join(&rel);
+            let src = root.join(staged_rel(&rel));
             let dst = root.join(&rel);
             let locked = self.locked_keys.contains(&rel);
             let mode = if rel.starts_with(MEMORY_DIR) {
@@ -824,7 +799,7 @@ impl HomeProjector {
             // and only with the bytes that were sent.
             let installed = match &entry.digest {
                 Some(expected) => {
-                    let Ok(file) = nofollow::open_regular(&src) else {
+                    let Ok(file) = nofollow::open_regular_beneath(&root, &staged_rel(&rel)) else {
                         return Err(swapped(generation, &rel));
                     };
                     install_staged(&root, file, &src, &dst, mode, expected)
@@ -862,68 +837,60 @@ impl HomeProjector {
 
         // Prune the other managed roots.
         // A link at `memory` must not let the prune remove files elsewhere.
-        clear_link_chain(&root, Path::new(MEMORY_DIR));
-        if let Ok(rd) = fs::read_dir(root.join(MEMORY_DIR)) {
-            for e in rd.filter_map(Result::ok) {
-                let p = e.path();
-                let Ok(rel) = p.strip_prefix(&root) else {
-                    continue;
-                };
-                if !self.managed(rel)
-                    || keep.contains(rel)
-                    || !e.file_type().is_ok_and(|t| t.is_file())
-                {
+        nofollow::clear_link_chain(&root, Path::new(MEMORY_DIR));
+        if let Ok(list) = nofollow::open_dir_beneath(&root, Path::new(MEMORY_DIR))
+            .and_then(|dir| nofollow::entries(dir.as_fd()))
+        {
+            for (name, kind) in list {
+                let rel = Path::new(MEMORY_DIR).join(name);
+                if !self.managed(&rel) || keep.contains(&rel) || kind != FileType::RegularFile {
                     continue;
                 }
                 let intact = rel.file_name().is_some_and(|n| n == INDEX_FILE)
-                    || crate::harvest::read_bounded(&p, crate::harvest::MEMORY_FILE_READ_MAX)
+                    || read_bounded_beneath(&root, &rel, crate::harvest::MEMORY_FILE_READ_MAX)
                         .ok()
                         .flatten()
                         .and_then(|b| String::from_utf8(b).ok())
                         .is_some_and(|t| verify(&t));
                 if intact {
-                    let _ = fs::remove_file(&p);
+                    let _ = nofollow::remove_file_beneath(&root, &rel);
                 }
             }
         }
-        if let Some(rel) = self.skills_prefix() {
-            lock_tree(&root, &rel, self.agent_uid);
+        if let Some(rel) = &skills {
+            lock_tree(&root, rel, self.agent_uid);
         }
         // The app folders: pruned to the manifest like skills (a revoked grant removes its folder).
-        {
-            let mut files = Vec::new();
-            walk_files(&apps_root, &mut files);
-            for f in files {
-                if f.strip_prefix(&root).is_ok_and(|r| !keep.contains(r)) {
-                    let _ = fs::remove_file(&f);
-                }
-            }
-            let mut dirs = Vec::new();
-            walk_dirs(&apps_root, &mut dirs);
-            for d in dirs {
-                let _ = fs::remove_dir(&d);
-            }
-            lock_tree(&root, Path::new(APPS_DIR), self.agent_uid);
-        }
+        nofollow::prune_beneath(&root, Path::new(APPS_DIR), &keep);
+        lock_tree(&root, Path::new(APPS_DIR), self.agent_uid);
         // (P6-TPL-6, C-1143) The helper files (pruned to the manifest before the install, so a
         // removed helper is gone): locked read-only (0555/0444 files, 0555 dirs).
         lock_tree(&root, Path::new(HELPERS_DIR), self.agent_uid);
 
         // .aurora cache + instruction files, from the bytes checked above.
-        let aurora = root.join(AURORA_DIR);
+        let aurora = Path::new(AURORA_DIR);
         if let Some(tools) = &docs.tools {
-            write_atomic(&aurora.join(TOOLS_DOC), tools, 0o600)?;
+            nofollow::write_beneath(&root, &aurora.join(TOOLS_DOC), tools, 0o600)?;
+            self.installed.tools = Some(tools.clone());
         }
         match &docs.render_inputs {
             Some(raw) => {
-                write_atomic(&aurora.join(RENDER_INPUTS_DOC), raw, 0o600)?;
+                nofollow::write_beneath(&root, &aurora.join(RENDER_INPUTS_DOC), raw, 0o600)?;
                 // Never read back: the installed file is the agent's to rewrite.
                 self.render(raw)?;
             }
-            None => self.render_installed()?,
+            None => match self.installed.render_inputs.clone() {
+                Some(raw) => self.render(&raw)?,
+                None => self.render_installed()?,
+            },
         }
-        let _ = fs::remove_dir_all(&sync);
+        let _ = nofollow::remove_tree_beneath(&root, Path::new(SYNC_DIR));
         Ok(())
+    }
+
+    /// Whether the installed render inputs name databases (the relay runs only then).
+    pub fn has_databases(&self) -> bool {
+        self.installed.databases
     }
 
     /// (P6-MEMLOCK, C-1149) The sealed bytes of every installed locked memory, key → file bytes.
@@ -937,32 +904,26 @@ impl HomeProjector {
     /// installed render inputs say `on_demand` and the sandbox has `aurora-agent`. Anything else
     /// (no inputs, an older API, mode `all`, no command) lists everything, as before.
     pub fn bridge_core_only(&self) -> bool {
-        let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");
-        let Ok(Some(raw)) = crate::harvest::read_bounded(&path, RENDER_INPUTS_READ_MAX) else {
-            return false;
-        };
-        serde_json::from_slice::<RenderInputs>(&raw).is_ok_and(|i| {
-            crate::instructions::PlatformToolsInfo::on_demand(
-                i.platform_tools.as_ref(),
-                self.cfg.agent_cli,
-            )
-        })
+        self.installed.core_only
     }
 
     /// (P5-GUIDE-7, C-654) What a harness session captured at its start: the tool descriptors its
     /// bridge lists (the core ones when the bridge is core-only, else all) and the rendered
     /// instruction files. A change of this value is what releases idle sessions; an on-demand
-    /// tool changing in a core-only sandbox does not move it. `None` when nothing is installed.
+    /// tool changing in a core-only sandbox does not move it. `None` until this process has
+    /// committed a generation (no session runs before that), and when nothing is installed.
     pub fn catalogue_digest(&self) -> Option<String> {
         use sha2::{Digest, Sha256};
-        let aurora = self.cfg.root.join(AURORA_DIR);
-        let tools: Vec<Value> =
-            crate::harvest::read_bounded(&aurora.join("tools.json"), STAGED_READ_MAX)
-                .ok()
-                .flatten()
-                .and_then(|b| serde_json::from_slice(&b).ok())
-                .unwrap_or_default();
-        let core_only = self.bridge_core_only();
+        if !self.installed.committed {
+            return None;
+        }
+        let tools: Vec<Value> = self
+            .installed
+            .tools
+            .as_deref()
+            .and_then(|b| serde_json::from_slice(b).ok())
+            .unwrap_or_default();
+        let core_only = self.installed.core_only;
         let listed: Vec<&Value> = tools
             .iter()
             .filter(|t| !core_only || t.get("exposure").and_then(Value::as_str) == Some("core"))
@@ -970,26 +931,27 @@ impl HomeProjector {
         let mut h = Sha256::new();
         h.update(serde_json::to_vec(&listed).ok()?);
         let mut any = !listed.is_empty();
-        for name in &self.cfg.instruction_files {
-            let Some(rel) = clean_rel(name) else { continue };
-            if let Ok(Some(b)) =
-                crate::harvest::read_bounded(&self.cfg.root.join(rel), RENDER_INPUTS_READ_MAX)
-            {
+        if let Some(text) = &self.installed.instructions {
+            for name in &self.cfg.instruction_files {
+                if clean_rel(name).is_none() {
+                    continue;
+                }
                 any = true;
                 h.update([0u8]);
                 h.update(name.as_bytes());
                 h.update([0u8]);
-                h.update(&b);
+                h.update(text.as_bytes());
             }
         }
         any.then(|| h.finalize().iter().map(|b| format!("{b:02x}")).collect())
     }
 
-    /// Re-renders instruction files from the installed render inputs (boot and every sync).
-    pub fn render_installed(&self) -> Result<(), HomeError> {
-        let path = self.cfg.root.join(AURORA_DIR).join("render_inputs.json");
+    /// The boot render, from the render inputs an earlier process left in the home: the one
+    /// time they are read. A link, a FIFO or an oversized file is as if there were none.
+    pub fn render_installed(&mut self) -> Result<(), HomeError> {
+        let rel = Path::new(AURORA_DIR).join(RENDER_INPUTS_DOC);
         // (FIX-114) Bounded read: the agent's uid owns this directory.
-        match crate::harvest::read_bounded(&path, RENDER_INPUTS_READ_MAX) {
+        match read_bounded_beneath(&self.cfg.root, &rel, RENDER_INPUTS_READ_MAX) {
             Ok(Some(raw)) => self.render(&raw),
             _ => Ok(()),
         }
@@ -997,8 +959,14 @@ impl HomeProjector {
 
     /// Writes what the render inputs `raw` describe: the instruction files and the files beside
     /// them.
-    fn render(&self, raw: &[u8]) -> Result<(), HomeError> {
+    fn render(&mut self, raw: &[u8]) -> Result<(), HomeError> {
+        self.installed.databases = !installed_databases(raw).is_empty();
         let inputs: RenderInputs = serde_json::from_slice(raw)?;
+        self.installed.render_inputs = Some(raw.to_vec());
+        self.installed.core_only = crate::instructions::PlatformToolsInfo::on_demand(
+            inputs.platform_tools.as_ref(),
+            self.cfg.agent_cli,
+        );
         if let Some(port) = self.cfg.pg {
             // A failure here must not block the sync: the agent only loses `psql service=`.
             if let Err(e) = crate::pg::write(&self.cfg.root, port, &installed_databases(raw)) {
@@ -1027,45 +995,14 @@ impl HomeProjector {
                 tracing::warn!("instruction file name refused");
                 continue;
             };
-            write_atomic(&self.cfg.root.join(rel), text.as_bytes(), 0o444)?;
+            nofollow::write_beneath(&self.cfg.root, &rel, text.as_bytes(), 0o444)?;
         }
+        self.installed.instructions = Some(text);
         Ok(())
     }
 
     pub fn current_generation(&self) -> Option<u64> {
         self.current
-    }
-}
-
-/// Removes a symlink found at any component of `rel` below `root` (`rel` is relative and clean):
-/// `root/.claude` as a link, then `root/.claude/skills`, and so on. A real directory or a missing
-/// component is left alone. The link is unlinked, its target never touched.
-fn clear_link_chain(root: &Path, rel: &Path) {
-    let mut p = root.to_path_buf();
-    for c in rel.components() {
-        p.push(c);
-        if fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
-            let _ = fs::remove_file(&p);
-        }
-    }
-}
-
-/// Removes every symlink under `dir` (and `dir` itself when it is one), without following any.
-/// The agent's uid owns these folders: a link put where Aurora keeps a folder or a file must not
-/// be written, chmodded or renamed through.
-fn unlink_tree_symlinks(dir: &Path) {
-    if fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
-        let _ = fs::remove_file(dir);
-        return;
-    }
-    let Ok(rd) = fs::read_dir(dir) else { return };
-    for e in rd.filter_map(Result::ok) {
-        let Ok(t) = e.file_type() else { continue };
-        if t.is_symlink() {
-            let _ = fs::remove_file(e.path());
-        } else if t.is_dir() {
-            unlink_tree_symlinks(&e.path());
-        }
     }
 }
 
@@ -1077,9 +1014,10 @@ fn set_dirs(home: &Path, rel: &Path, mode: u32) {
     }
 }
 
-/// Whether the lock may change a file's mode: it has this one name and is the agent's. A hard
-/// link may be another user's file (`fs.protected_hardlinks=0`).
-fn may_lock(links: u64, owner: u32, agent: u32) -> bool {
+/// Whether a file may be treated as the agent's (the lock changes its mode, `send_file` reads
+/// it): it has this one name and is the agent's. A hard link may be another user's file
+/// (`fs.protected_hardlinks=0`).
+pub(crate) fn may_lock(links: u64, owner: u32, agent: u32) -> bool {
     links <= 1 && owner == agent
 }
 
@@ -1722,6 +1660,573 @@ mod tests {
             assert_eq!(fs::read_to_string(home.join(SKILL)).unwrap(), "skill two");
             cleanup(&dir, &home);
         }
+    }
+
+    /// Every entry below `dir` with its mode, link target or bytes: what "untouched" means.
+    fn snapshot(dir: &Path) -> BTreeMap<PathBuf, (u32, u32, Vec<u8>)> {
+        fn walk(base: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, (u32, u32, Vec<u8>)>) {
+            for e in fs::read_dir(dir).unwrap().map(Result::unwrap) {
+                let path = e.path();
+                let meta = fs::symlink_metadata(&path).unwrap();
+                let body = if meta.is_file() {
+                    fs::read(&path).unwrap()
+                } else if meta.is_symlink() {
+                    fs::read_link(&path)
+                        .unwrap()
+                        .into_os_string()
+                        .into_encoded_bytes()
+                } else {
+                    Vec::new()
+                };
+                let rel = path.strip_prefix(base).unwrap().to_path_buf();
+                out.insert(rel, (meta.mode(), meta.uid(), body));
+                if meta.is_dir() {
+                    walk(base, &path, out);
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        walk(dir, dir, &mut out);
+        out
+    }
+
+    /// A folder outside the home laid out like an `.aurora` of its own, with a file at every
+    /// name the supervisor writes or removes there.
+    fn decoy(dir: &Path) -> PathBuf {
+        let outside = dir.join("decoy");
+        for rel in [
+            "sync/keep",
+            "sync/files/keep",
+            "sync/manifest.json",
+            "tools.json",
+            "render_inputs.json",
+            "links.json",
+            "servers.json",
+            "pg/pgpass",
+            "pg/pg_service.conf",
+            "apps/demo/stale.md",
+            "helpers/stale.sh",
+            "harness/pi/sessions/r1/state",
+            "harness/pi/config/auth.json",
+        ] {
+            let path = outside.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "outside").unwrap();
+        }
+        fs::create_dir_all(outside.join("terminal/claude")).unwrap();
+        fs::set_permissions(
+            outside.join("terminal/claude"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        outside
+    }
+
+    /// What the agent does with `.aurora`: it moves it away and puts a link in its place.
+    fn link_aurora(home: &Path, outside: &Path) {
+        let aurora = home.join(AURORA_DIR);
+        if fs::symlink_metadata(&aurora).is_ok() {
+            let away = format!("moved-away-{}", uuid::Uuid::now_v7());
+            fs::rename(&aurora, home.join(away)).unwrap();
+        }
+        std::os::unix::fs::symlink(outside, &aurora).unwrap();
+    }
+
+    fn is_real_dir(path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+    }
+
+    /// (FIX-297) The root mode: `.aurora` is a link out of the home before a generation starts.
+    /// The link is removed, never followed, and the generation installs into a real `.aurora`.
+    #[test]
+    fn a_linked_aurora_is_replaced_and_never_followed() {
+        let (dir, home, _) = scratch();
+        let outside = decoy(&dir);
+        let before = snapshot(&outside);
+        link_aurora(&home, &outside);
+        let mut p = projector(&home);
+        apply(&mut p, &sync_parts(1, "one"));
+        assert_eq!(snapshot(&outside), before, "after the parts");
+        p.commit(1).unwrap();
+        assert_eq!(snapshot(&outside), before, "after the commit");
+        assert!(is_real_dir(&home.join(AURORA_DIR)));
+        assert_first_generation(&home, &p);
+        cleanup(&dir, &home);
+    }
+
+    /// (FIX-297) The link planted while a generation is staged (before any later part, or before
+    /// the commit): nothing outside is written or removed, and the generation is refused.
+    #[test]
+    fn a_link_planted_mid_generation_refuses_it_and_is_never_followed() {
+        for upto in [2, 3, 5, 8, 10] {
+            let (dir, home, _) = scratch();
+            let outside = decoy(&dir);
+            let before = snapshot(&outside);
+            let mut p = projector(&home);
+            let parts = sync_parts(1, "one");
+            apply(&mut p, &parts[..upto]);
+            link_aurora(&home, &outside);
+            let mut refused = false;
+            for part in &parts[upto..] {
+                if p.apply_part(part).is_err() {
+                    refused = true;
+                    break;
+                }
+            }
+            assert_eq!(snapshot(&outside), before, "parts, planted at {upto}");
+            if !refused {
+                refused = p.commit(1).is_err();
+            }
+            assert_eq!(snapshot(&outside), before, "commit, planted at {upto}");
+            assert!(refused, "planted at {upto}");
+            // Sent again from its first part, it installs.
+            apply(&mut p, &sync_parts(1, "one"));
+            p.commit(1).unwrap();
+            assert_eq!(snapshot(&outside), before, "resend, planted at {upto}");
+            assert_first_generation(&home, &p);
+            cleanup(&dir, &home);
+        }
+    }
+
+    /// (FIX-297) The files rendered beside the instructions, written or removed through a
+    /// linked `.aurora`.
+    #[test]
+    fn the_rendered_files_are_never_written_or_removed_through_a_link() {
+        let (dir, home, _) = scratch();
+        let outside = decoy(&dir);
+        let before = snapshot(&outside);
+        let id = uuid::Uuid::now_v7();
+        let dbs = [PgDatabase {
+            service: "prod".into(),
+            connection_id: id,
+        }];
+        let links = crate::links::installed_links(
+            format!(r#"{{"links":[{{"name":"a","app_id":"ics","connection_id":"{id}"}}]}}"#)
+                .as_bytes(),
+        );
+        let servers = crate::servers::installed_servers(
+            br#"{"servers":[{"name":"a","app_id":"caldav","url":"https://x.test/"}]}"#,
+        );
+        assert!(!links.is_empty() && !servers.is_empty());
+        for round in ["written", "removed"] {
+            let empty = round == "removed";
+            link_aurora(&home, &outside);
+            let _ = crate::pg::write(&home, 3130, if empty { &[] } else { &dbs });
+            assert_eq!(snapshot(&outside), before, "pg {round}");
+            let _ = fs::remove_file(home.join(AURORA_DIR));
+            link_aurora(&home, &outside);
+            let _ = crate::links::write(&home, if empty { &[] } else { &links });
+            assert_eq!(snapshot(&outside), before, "links {round}");
+            let _ = fs::remove_file(home.join(AURORA_DIR));
+            link_aurora(&home, &outside);
+            let _ = crate::servers::write(&home, if empty { &[] } else { &servers });
+            assert_eq!(snapshot(&outside), before, "servers {round}");
+            let _ = fs::remove_file(home.join(AURORA_DIR));
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) The wipe goes through a tree however deep the agent made it, and through
+    /// nothing it links to.
+    #[test]
+    fn a_deep_staging_tree_is_removed_without_following_links() {
+        let (dir, home, _) = scratch();
+        let outside = decoy(&dir);
+        let before = snapshot(&outside);
+        let mut deep = home.join(SYNC_DIR);
+        for _ in 0..200 {
+            deep.push("d");
+        }
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("file"), "x").unwrap();
+        std::os::unix::fs::symlink(&outside, deep.join("link")).unwrap();
+        std::os::unix::fs::symlink(&outside, home.join(SYNC_DIR).join("link")).unwrap();
+        nofollow::remove_tree_beneath(&home, Path::new(SYNC_DIR)).unwrap();
+        assert!(fs::symlink_metadata(home.join(SYNC_DIR)).is_err());
+        assert_eq!(snapshot(&outside), before);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) Purging a harness session removes nothing through a linked `.aurora`.
+    #[tokio::test]
+    async fn a_session_purge_never_follows_a_link() {
+        use crate::harness::HarnessAdapter as _;
+        let (dir, home, _) = scratch();
+        let outside = decoy(&dir);
+        let before = snapshot(&outside);
+        link_aurora(&home, &outside);
+        let _ = crate::adapters::pi::PiAdapter::default()
+            .purge_session(&home, "r1")
+            .await;
+        assert_eq!(snapshot(&outside), before);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) Nor is a harness's configuration rendered, or a credential store removed,
+    /// through one.
+    #[test]
+    fn a_harness_configuration_is_never_rendered_through_a_link() {
+        let (dir, home, _) = scratch();
+        let outside = decoy(&dir);
+        let before = snapshot(&outside);
+        link_aurora(&home, &outside);
+        let _ = crate::adapters::render::render_dir(
+            &home,
+            &crate::adapters::render::config_dir(&home, "pi"),
+            &[("models.json", "{}".into())],
+            &["auth.json"],
+        );
+        assert_eq!(snapshot(&outside), before);
+        let rendered = home.join(".aurora/harness/pi/config/models.json");
+        assert_eq!(fs::read_to_string(rendered).unwrap(), "{}");
+        assert!(is_real_dir(&home.join(AURORA_DIR)));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) A FIFO where a boot file may be kept as the agent's own: it is left alone, and
+    /// the boot does not wait on it.
+    #[test]
+    fn a_fifo_at_a_boot_file_does_not_block_the_boot() {
+        let (dir, home, _) = scratch();
+        let fifo = home.join("notes");
+        make_fifo(&fifo);
+        let doc: crate::boot::BootDocument = serde_json::from_value(serde_json::json!({
+            "v": 1, "sandbox_id": uuid::Uuid::now_v7(), "boot_id": uuid::Uuid::now_v7(),
+            "agent": {"id": uuid::Uuid::now_v7(), "handle": "ada", "name": "Ada"},
+            "harness": {"id": "fake"},
+            "runner_url": "ws://runner:1", "bootstrap_token": "t",
+            "gateway": {"proxy": "gw:1", "tls": true, "boot_token": "t"},
+            "ca_pem": "ca",
+            "files": [{"path": fifo, "content_b64": "eA==", "only_if_absent_or_sentinel": true}]
+        }))
+        .unwrap();
+        let (root, ca) = (home.clone(), dir.join("ca.pem"));
+        let skipped = promptly(&fifo, move || {
+            crate::boot::write_boot_files_in(&doc, &ca, &root)
+        })
+        .unwrap();
+        assert_eq!(skipped, vec![fifo]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) A boot file replaces what is at its name: a FIFO is not waited on, and a hard
+    /// link's other name keeps its content. A folder linked to another folder of the home (the
+    /// agent's own dotfiles, say) stays a link.
+    #[test]
+    fn a_boot_file_replaces_what_is_there_and_writes_into_nothing() {
+        let (dir, home, victim) = scratch();
+        fs::hard_link(&victim, home.join("linked")).unwrap();
+        make_fifo(&home.join("fifo"));
+        fs::create_dir_all(home.join("dotfiles")).unwrap();
+        std::os::unix::fs::symlink("dotfiles", home.join(".config")).unwrap();
+        let files: Vec<_> = ["linked", "fifo", ".config/tool/rc"]
+            .iter()
+            .map(|name| serde_json::json!({"path": home.join(name), "content_b64": "eA=="}))
+            .collect();
+        let doc: crate::boot::BootDocument = serde_json::from_value(serde_json::json!({
+            "v": 1, "sandbox_id": uuid::Uuid::now_v7(), "boot_id": uuid::Uuid::now_v7(),
+            "agent": {"id": uuid::Uuid::now_v7(), "handle": "ada", "name": "Ada"},
+            "harness": {"id": "fake"},
+            "runner_url": "ws://runner:1", "bootstrap_token": "t",
+            "gateway": {"proxy": "gw:1", "tls": true, "boot_token": "t"},
+            "ca_pem": "ca", "files": files
+        }))
+        .unwrap();
+        let (root, ca) = (home.clone(), dir.join("ca.pem"));
+        promptly(&home.join("fifo"), move || {
+            crate::boot::write_boot_files_in(&doc, &ca, &root)
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "outside");
+        assert_eq!(mode_of(&victim), 0o600);
+        for name in ["linked", "fifo", "dotfiles/tool/rc"] {
+            let path = home.join(name);
+            assert!(fs::symlink_metadata(&path).unwrap().is_file(), "{name}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), "x", "{name}");
+            assert_eq!(mode_of(&path), 0o644, "{name}");
+        }
+        assert!(
+            fs::symlink_metadata(home.join(".config"))
+                .unwrap()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(dir.join("ca.pem")).unwrap(), "ca");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) What is not a regular file is not opened at all (opening a device node can
+    /// act on the device): seen here by a FIFO's writer, which any open for reading lets go.
+    #[test]
+    fn what_is_not_a_regular_file_is_never_opened() {
+        let (dir, home, _) = scratch();
+        let fifo = home.join("fifo");
+        make_fifo(&fifo);
+        let path = fifo.clone();
+        let writer = std::thread::spawn(move || fs::OpenOptions::new().write(true).open(path));
+        let pause = || std::thread::sleep(std::time::Duration::from_millis(300));
+        pause();
+        let by_path = nofollow::open_regular(&fifo).is_err();
+        pause();
+        let released_by_path = writer.is_finished();
+        let beneath = nofollow::open_regular_beneath(&home, Path::new("fifo")).is_err();
+        pause();
+        let released_beneath = writer.is_finished();
+        // Let the writer go.
+        let reader = fs::File::open(&fifo).unwrap();
+        writer.join().unwrap().unwrap();
+        drop(reader);
+        assert!(by_path && beneath);
+        assert!(!released_by_path, "opened by path");
+        assert!(!released_beneath, "opened beneath");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) The terminal wrappers' file is in a folder the agent can write: a link at the
+    /// name of its temp file, or at its own, is not written through.
+    #[test]
+    fn the_harness_env_file_is_never_written_through_a_link() {
+        let (dir, home, victim) = scratch();
+        for name in ["harness.env.tmp", "harness.env"] {
+            let _ = fs::remove_file(home.join("harness.env"));
+            std::os::unix::fs::symlink(&victim, home.join(name)).unwrap();
+            let _ = crate::harness_env::write(&home.join("harness.env"), "A='1'\n");
+            assert_eq!(fs::read_to_string(&victim).unwrap(), "outside", "{name}");
+            assert_eq!(mode_of(&victim), 0o600, "{name}");
+            let _ = fs::remove_file(home.join(name));
+        }
+        crate::harness_env::write(&home.join("harness.env"), "A='1'\n").unwrap();
+        assert_eq!(
+            fs::read_to_string(home.join("harness.env")).unwrap(),
+            "A='1'\n"
+        );
+        assert_eq!(mode_of(&home.join("harness.env")), 0o644);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) The tools socket's mode is set on a socket the supervisor made and on nothing
+    /// else: its folder may be the agent's to write, so another entry can take its name.
+    #[test]
+    fn a_socket_mode_is_never_set_through_a_link() {
+        let (dir, home, victim) = scratch();
+        let socket = home.join("tools.sock");
+        let at = home.join("at");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        // A link to a file outside, a link to a socket, a plain file and a hard link to one.
+        for how in ["link", "link to a socket", "file", "hard link"] {
+            let _ = fs::remove_file(&at);
+            match how {
+                "link" => std::os::unix::fs::symlink(&victim, &at).unwrap(),
+                "link to a socket" => std::os::unix::fs::symlink(&socket, &at).unwrap(),
+                "file" => fs::write(&at, "x").unwrap(),
+                _ => fs::hard_link(&victim, &at).unwrap(),
+            }
+            assert!(
+                nofollow::set_socket_mode(&at, 0o666, me()).is_err(),
+                "{how}"
+            );
+            assert_eq!(mode_of(&victim), 0o600, "{how}");
+            assert_eq!(mode_of(&socket), 0o600, "{how}");
+        }
+        // Another user's socket (the test's is not the uid named here).
+        assert!(nofollow::set_socket_mode(&socket, 0o666, me() + 1).is_err());
+        assert_eq!(mode_of(&socket), 0o600);
+        nofollow::set_socket_mode(&socket, 0o666, me()).unwrap();
+        assert_eq!(mode_of(&socket), 0o666);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) A boot file that replaces a file keeps its owner and group: a root supervisor
+    /// does not take the agent's files over. Without root only the group can be told apart, so
+    /// this needs a second group (nothing is checked for a user with one).
+    #[test]
+    fn a_rewritten_boot_file_keeps_its_owner() {
+        let (dir, home, _) = scratch();
+        let primary = rustix::process::getgid().as_raw();
+        let Some(other) = rustix::process::getgroups()
+            .unwrap()
+            .into_iter()
+            .map(|g| g.as_raw())
+            .find(|g| *g != primary)
+        else {
+            eprintln!("no second group: not checked");
+            return;
+        };
+        let file = home.join("rc");
+        fs::write(&file, "old").unwrap();
+        std::os::unix::fs::chown(&file, None, Some(other)).unwrap();
+        let doc: crate::boot::BootDocument = serde_json::from_value(serde_json::json!({
+            "v": 1, "sandbox_id": uuid::Uuid::now_v7(), "boot_id": uuid::Uuid::now_v7(),
+            "agent": {"id": uuid::Uuid::now_v7(), "handle": "ada", "name": "Ada"},
+            "harness": {"id": "fake"},
+            "runner_url": "ws://runner:1", "bootstrap_token": "t",
+            "gateway": {"proxy": "gw:1", "tls": true, "boot_token": "t"},
+            "ca_pem": "ca",
+            "files": [{"path": file, "content_b64": "eA==", "mode": "0600"}]
+        }))
+        .unwrap();
+        crate::boot::write_boot_files_in(&doc, &dir.join("ca.pem"), &home).unwrap();
+        let meta = fs::metadata(&file).unwrap();
+        assert_eq!((meta.uid(), meta.gid()), (me(), other));
+        assert_eq!(meta.mode() & 0o777, 0o600);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "x");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) The terminal state folders are made, chmodded and chowned (as root) in the
+    /// home only.
+    #[test]
+    fn the_terminal_state_folders_are_never_made_through_a_link() {
+        let (dir, home, _) = scratch();
+        let outside = decoy(&dir);
+        let before = snapshot(&outside);
+        link_aurora(&home, &outside);
+        let _ = crate::harness_env::ensure_state_dirs(&home, me(), me());
+        assert_eq!(snapshot(&outside), before);
+        for name in crate::harness_env::TERMINAL_STATE_DIRS {
+            assert!(is_real_dir(&home.join(".aurora/terminal").join(name)));
+        }
+        assert!(is_real_dir(&home.join(AURORA_DIR)));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) An inbound attachment lands in the home, not wherever `.aurora` points.
+    #[tokio::test]
+    async fn an_inbound_file_is_never_written_through_a_link() {
+        let (dir, home, _) = scratch();
+        let outside = decoy(&dir);
+        let before = snapshot(&outside);
+        link_aurora(&home, &outside);
+        let turn = uuid::Uuid::now_v7();
+        let attachment = uuid::Uuid::now_v7();
+        let mut inbox = crate::inbox::Inbox::new(&home);
+        let sha = crate::harvest::tests_sha_hex(b"hello");
+        let frame: aurora_protocol::supervisor::FileIn =
+            serde_json::from_value(serde_json::json!({
+                "turn_id": turn, "attachment_id": attachment, "filename": "a.txt",
+                "size": 5, "sha256": sha, "index": 0, "last": true, "data_b64": "aGVsbG8="
+            }))
+            .unwrap();
+        inbox.accept(frame).await;
+        assert_eq!(snapshot(&outside), before);
+        let landed = home.join(format!(".aurora/inbox/{turn}/a.txt"));
+        assert_eq!(fs::read_to_string(&landed).unwrap(), "hello");
+        assert!(is_real_dir(&home.join(AURORA_DIR)));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Runs `f` on its own thread; a call stuck opening the FIFO at `fifo` is released and the
+    /// test fails.
+    fn promptly<T: Send + 'static>(fifo: &Path, f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || tx.send(f()));
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(value) => {
+                thread.join().unwrap().unwrap();
+                value
+            }
+            Err(_) => {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                let writer = fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
+                    .open(fifo);
+                drop(writer);
+                panic!("blocked on the FIFO");
+            }
+        }
+    }
+
+    fn make_fifo(path: &Path) {
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            path,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+    }
+
+    const WITH_DATABASE: &str = r#"{"agent":{"name":"Ada","handle":"ada","workspace":"x"},
+        "platform_tools":{"mode":"on_demand","families":[]},
+        "databases":[{"service":"prod","connection_id":"0192f3a0-aaaa-7bbb-8ccc-ddddeeeeffff"}]}"#;
+
+    /// (FIX-297) The boot read of the installed render inputs: a FIFO there answers "no
+    /// databases" at once.
+    #[test]
+    fn a_fifo_at_the_render_inputs_does_not_block_the_boot_read() {
+        let (dir, home, _) = scratch();
+        fs::create_dir_all(home.join(AURORA_DIR)).unwrap();
+        let fifo = home.join(".aurora/render_inputs.json");
+        make_fifo(&fifo);
+        let root = home.clone();
+        let (databases, core_only) = promptly(&fifo, move || {
+            let mut p = projector(&root);
+            let _ = p.render_installed();
+            (p.has_databases(), p.bridge_core_only())
+        });
+        assert!(!databases && !core_only);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) A link at the render inputs, or at `.aurora` itself, is not read.
+    #[test]
+    fn linked_render_inputs_are_not_read() {
+        for whole_dir in [false, true] {
+            let (dir, home, _) = scratch();
+            let outside = dir.join("outside");
+            fs::create_dir_all(&outside).unwrap();
+            fs::write(outside.join(RENDER_INPUTS_DOC), WITH_DATABASE).unwrap();
+            if whole_dir {
+                link_aurora(&home, &outside);
+            } else {
+                fs::create_dir_all(home.join(AURORA_DIR)).unwrap();
+                std::os::unix::fs::symlink(
+                    outside.join(RENDER_INPUTS_DOC),
+                    home.join(".aurora/render_inputs.json"),
+                )
+                .unwrap();
+            }
+            let mut p = projector(&home);
+            let _ = p.render_installed();
+            assert!(!p.has_databases(), "whole_dir {whole_dir}");
+            assert!(!p.bridge_core_only(), "whole_dir {whole_dir}");
+            assert!(!home.join("AGENTS.md").exists(), "whole_dir {whole_dir}");
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    /// (FIX-297) What the supervisor decides from the installed documents comes from the bytes
+    /// it installed: rewriting the files, or putting a FIFO there, changes nothing.
+    #[test]
+    fn installed_documents_are_not_read_back() {
+        let (dir, home, _) = scratch();
+        let mut p = projector(&home);
+        apply(&mut p, &sync_parts(1, "one"));
+        p.commit(1).unwrap();
+        let digest = p.catalogue_digest();
+        assert!(digest.is_some() && !p.has_databases() && !p.bridge_core_only());
+        for rel in [".aurora/tools.json", "AGENTS.md"] {
+            rewrite(&home.join(rel), r#"[{"name":"forged"}]"#);
+        }
+        rewrite(&home.join(".aurora/render_inputs.json"), WITH_DATABASE);
+        assert_eq!(p.catalogue_digest(), digest);
+        assert!(!p.has_databases() && !p.bridge_core_only());
+        // A generation without render inputs renders what was last installed, not the file.
+        apply(&mut p, &generation_of(2, vec![], &[]));
+        p.commit(2).unwrap();
+        assert!(!p.has_databases() && !p.bridge_core_only());
+        let agents = fs::read_to_string(home.join("AGENTS.md")).unwrap();
+        assert!(agents.contains("brief one"), "{agents}");
+        let fifo = home.join(".aurora/render_inputs.json");
+        fs::remove_file(&fifo).unwrap();
+        make_fifo(&fifo);
+        let (after, databases, _p) =
+            promptly(&fifo, move || (p.catalogue_digest(), p.has_databases(), p));
+        assert_eq!(after, digest);
+        assert!(!databases);
+        cleanup(&dir, &home);
     }
 
     /// (P6-MEMLOCK, C-1149) `locked` is optional on a file entry: an older API never sends it and

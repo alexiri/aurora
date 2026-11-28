@@ -254,14 +254,18 @@ impl Supervisor {
             )),
         });
         // (FIX-258) The same rule as for its processes: a root supervisor runs them as this uid.
-        if rustix::process::getuid().is_root()
-            && let Some(uid) = cfg.process.uid
-        {
-            projector.set_agent_uid(uid);
-        }
+        let own_uid = rustix::process::getuid();
+        let agent_uid = cfg
+            .process
+            .uid
+            .filter(|_| own_uid.is_root())
+            .unwrap_or_else(|| own_uid.as_raw());
+        projector.set_agent_uid(agent_uid);
+        let mut harvester = Harvester::new(&cfg.working_dir);
+        harvester.set_agent_uid(agent_uid);
         let home = Arc::new(StdMutex::new(HomeCtl {
             projector,
-            harvester: Harvester::new(&cfg.working_dir),
+            harvester,
         }));
         let mut process = cfg.process.clone();
         // (P5-SKILLDIR, D-454) Set last, so it wins over an image or profile value.
@@ -276,6 +280,7 @@ impl Supervisor {
         let procs = ProcessManager::new(process, out.clone());
         let mut tools = cfg.tools.clone();
         tools.home = cfg.working_dir.clone();
+        tools.agent_uid = agent_uid;
         let hub = ToolHub::new(
             tools,
             cfg.working_dir.join(".aurora/tools.json"),
@@ -321,10 +326,8 @@ impl Supervisor {
     /// when none remain (boot and after every committed sync).
     async fn sync_db_relay(&mut self) {
         let Some(port) = self.cfg.pg else { return };
-        let path = self.cfg.working_dir.join(".aurora/render_inputs.json");
-        let any = std::fs::read(path)
-            .map(|b| !crate::home::installed_databases(&b).is_empty())
-            .unwrap_or(false);
+        // From the bytes the projector rendered: nothing in the home is read here.
+        let any = self.home.lock().is_ok_and(|h| h.projector.has_databases());
         if !any {
             self.db_relay = None;
         } else if self.db_relay.is_none() {
@@ -376,7 +379,7 @@ impl Supervisor {
         // Instruction files are a projection re-rendered on every boot.
         let home = self.home.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            if let Ok(h) = home.lock()
+            if let Ok(mut h) = home.lock()
                 && let Err(e) = h.projector.render_installed()
             {
                 tracing::warn!(error = %e, "boot render of instruction files failed");

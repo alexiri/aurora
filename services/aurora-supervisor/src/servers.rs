@@ -5,13 +5,12 @@
 //! The address is visible to the agent on purpose; the credential never is: nothing here, or in the
 //! sync that feeds it, carries one. The file is `0600` and removed when the list is empty.
 
-use std::fs;
-use std::io::Write as _;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::nofollow;
 
 /// The file, relative to the home.
 pub const SERVERS_FILE: &str = ".aurora/servers.json";
@@ -85,25 +84,14 @@ pub fn render(servers: &[ServerInput]) -> String {
     text
 }
 
-/// Writes `root/.aurora/servers.json` (`0600`) or, with no servers, removes it.
+/// Writes `root/.aurora/servers.json` (`0600`) or, with no servers, removes it; no link in the
+/// home is followed.
 pub fn write(root: &Path, servers: &[ServerInput]) -> std::io::Result<()> {
-    let path = root.join(SERVERS_FILE);
+    let path = Path::new(SERVERS_FILE);
     if servers.is_empty() {
-        return match fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        };
+        return nofollow::remove_file_beneath(root, path);
     }
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    let _ = fs::remove_file(&tmp);
-    let mut f = fs::File::create(&tmp)?;
-    f.write_all(render(servers).as_bytes())?;
-    f.set_permissions(fs::Permissions::from_mode(0o600))?;
-    f.sync_all()?;
-    fs::rename(&tmp, &path)
+    nofollow::write_beneath(root, path, render(servers).as_bytes(), 0o600)
 }
 
 #[cfg(test)]

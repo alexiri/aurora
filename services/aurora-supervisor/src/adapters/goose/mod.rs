@@ -80,7 +80,7 @@ fn render_root(opts: &SessionOptions, root: &Path) -> Result<(), HarnessError> {
         .map(|f| format!("config/{f}"))
         .collect();
     let forbidden: Vec<&str> = forbidden.iter().map(String::as_str).collect();
-    render::render_dir(root, &files, &forbidden).map_err(|e| {
+    render::render_dir(&opts.working_dir, root, &files, &forbidden).map_err(|e| {
         HarnessError::new(
             "harness_failed",
             format!("cannot render goose's configuration: {e}"),
@@ -161,8 +161,9 @@ impl HarnessAdapter for GooseAdapter {
                 "unsafe session reference",
             ));
         }
+        let home = working_dir.to_path_buf();
         let dir = render::session_dir(working_dir, ID, session_ref);
-        tokio::task::spawn_blocking(move || render::remove_any(&dir))
+        tokio::task::spawn_blocking(move || render::remove_any(&home, &dir))
             .await
             .map_err(|e| HarnessError::new("purge_failed", e.to_string()))?
             .map_err(|e| HarnessError::new("purge_failed", e.to_string()))
