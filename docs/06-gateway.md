@@ -678,7 +678,7 @@ minted.
    Cloud-metadata addresses (169.254.169.254, fd00:ec2::254, and their translated
    forms) only by exact-IP entry.
 
-   (FIX-290, D-511, SEC-169) **A self-hosted app's own host** needs no entry. The
+   (FIX-290, D-511, SEC-170) **A self-hosted app's own host** needs no entry. The
    allowance travels with one request, never with a host name, and a request
    carries it only when all of this holds: it is `https`; it goes to the exact
    host of a registration an instance administrator made (`app_instances` with

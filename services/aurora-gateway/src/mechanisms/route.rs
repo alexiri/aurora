@@ -98,7 +98,7 @@ pub fn instance_guard(
     }
 }
 
-/// (FIX-290, D-511, SEC-169) The allowance to reach a self-hosted app's host on a private
+/// (FIX-290, D-511, SEC-170) The allowance to reach a self-hosted app's host on a private
 /// address, for a request that **won the granted connection** `conn_instance` belongs to; call it
 /// nowhere else. `serving` is the registration whose app match serves the request (`None` when
 /// the match did not come from a registration). It must be an instance administrator's own, be

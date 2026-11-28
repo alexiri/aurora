@@ -328,7 +328,7 @@ impl Env {
         self.names.store(Arc::new(names));
     }
 
-    /// (FIX-290, D-511, SEC-169) What a request that belongs to this registration may reach
+    /// (FIX-290, D-511, SEC-170) What a request that belongs to this registration may reach
     /// beyond `gateway.allowed_private`: its own host on 443, only for an active registration of
     /// an instance administrator (instance-wide and not a package's preset). Read the row for
     /// each request, so a removed or disabled one opens nothing.

@@ -564,7 +564,7 @@ oauth_clients:
   these checks are per host and ignore the base path, so a path never gets
   around them (`instance_host_conflict`). The optional `probe` runs through the gateway's
   destination guard. A private address is reachable where the operator allows
-  it (`gateway.allowed_private`, `06`), and (FIX-290, D-511, SEC-169) without
+  it (`gateway.allowed_private`, `06`), and (FIX-290, D-511, SEC-170) without
   an entry for an instance administrator's own registration: the API's
   registration probe made by an instance administrator for all organizations, and
   the connect probe, OAuth code exchange, sign-in app test and account test of
