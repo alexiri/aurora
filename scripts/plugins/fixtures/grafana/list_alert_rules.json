@@ -1,10 +1,12 @@
 [
   {"id": 11, "uid": "tripwire-p95", "title": "p95 over 2s", "folderUID": "night-folder", "ruleGroup": "agent-night", "for": "5m",
    "labels": {"managed_by": "night", "expires": "2026-11-20", "service": "api"},
-   "annotations": {"summary": "p95 over 2s", "expires": "2026-11-20"}},
+   "annotations": {"summary": "p95 over 2s", "expires": "2026-11-20"},
+   "data": [{"refId": "A", "datasourceUid": "prom-main", "model": {"editorMode": "code", "expr": "up", "instant": true, "legendFormat": "__auto", "refId": "A"}}, {}, {}]},
   {"id": 12, "uid": "tripwire-5xx", "title": "5xx rate over 1%", "folderUID": "night-folder", "ruleGroup": "agent-night", "for": "5m",
    "labels": {"managed_by": "night", "expires": "2027-12-20", "service": "api"},
-   "annotations": {"summary": "5xx rate over 1%", "expires": "2027-12-20"}},
+   "annotations": {"summary": "5xx rate over 1%", "expires": "2027-12-20"},
+   "data": [{"refId": "A", "datasourceUid": "os-logs", "model": {"refId": "A", "queryType": "lucene", "query": "status:500", "metrics": [{"id": "1", "type": "count"}], "bucketAggs": [{"id": "2", "type": "date_histogram", "settings": {"interval": "1m", "min_doc_count": "0"}}]}}, {}, {}]},
   {"id": 13, "uid": "cpu-watch", "title": "CPU watch", "folderUID": "ops-folder", "ruleGroup": "ops", "for": "10m",
    "labels": {"team": "platform"}, "annotations": {"summary": "CPU watch"}}
 ]

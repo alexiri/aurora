@@ -291,7 +291,24 @@ path (member names and indexes) the way `only_keys` does — no keys but the lis
 when `value` is set, its `key` with exactly that scalar — and an `entry_at` rule pins one
 entry's key, on the entry itself or along such a path, to exactly that scalar; a `value` rule
 pins a top-level key the body must carry with exactly that scalar (a body without it is refused
-too). A `kinds` rule checks a top-level key's JSON type when the body carries it — one of
+too). A pin (an `entry_at` pin or an `entry_member` `value`) names either `value`, one
+scalar, or `values`, a list of at most 8 scalars of which the key carries one. Two more entry
+rules read along a `member` path from an entry, and refuse whatever they cannot find (the
+array, the entry or any member on the way): `entry_len: { key: [{ at, member, len }] }` wants an
+array of exactly `len` entries there (one metric, one bucket: a second one would run without
+any card field showing it), and `entry_max_len: { key: [{ at, member, max, optional? }] }`
+wants a string of 1 to `max` characters there; `max` is at most the 200 characters an approval
+card shows of a value, so a value held to it is shown in full, and a value that is not a
+string (which the card would leave out) is refused. The string must also be one the card's
+text cleaning leaves unchanged: no control or invisible format characters, no whitespace but
+a plain space, and no space at either end or two together (the card drops or folds these, so
+the approver would read something other than what runs). With `optional`, only the last member may
+be absent. `entry_greater: { key: [{ at, member, key, than }] }` wants an object there whose
+`key` and `than` are whole numbers (0 or more) with `key` the larger (a time range in seconds
+before now that is neither empty nor inverted). Last, `one_of: [check, …]` (at most 4) declares further shapes: the body must pass
+the check itself **and** at least one variant, each a check of the same parts without a
+`one_of` of its own (a variant never loosens the base), and a refusal names why each variant
+failed. A `kinds` rule checks a top-level key's JSON type when the body carries it — one of
 `string`, `number`, `integer` or `boolean` (an integer is a number without a fractional part);
 a key the body does not carry is allowed, and a value of another kind, such as an object where
 a duration belongs, is refused. Fail
@@ -304,14 +321,21 @@ read — and a body that repeats a key anywhere is refused (receivers do not agr
 means). Every part is a refusal, never an allowance; key names are identifiers of at
 most 64 characters, the lists are small (`refuse_keys` at most 8, `allow_keys` at most 16,
 `only_keys` and `entry_keys` at most 8 keys of at most 16 allowed, `entry_member` at most 8
-members of at most 16 keys, `entry_at` at most 16 pins, `value` at most 8 keys, member paths at
+members of at most 16 keys, `entry_at` at most 16 pins, `entry_len`, `entry_max_len` and
+`entry_greater` at most 16 rules each, `value` at most 8 keys, member paths at
 most 8 segments, `entry_value` and pin values at most
-64 characters of JSON, lengths at least 1), and an absent `body_check`
-checks nothing and changes no hash. Additive in contract 1. Built-in user: `grafana` (1.8.0: the
+64 characters of JSON, a pin's `values` at most 8, `one_of` at most 4 variants (each held to
+these limits on its own, none empty or nested), lengths at least 1 and a `max` at most 200),
+and an absent `body_check`, or an absent new part, checks nothing and changes no hash.
+Additive in contract 1. Built-in user: `grafana` (1.8.0: the
 alert-rule tools accept only the top-level keys the grafana-alert script sends, every `data` step
 is the object the script sends, the steps after the first are the server's own expression steps
 whose refIds, expression links and the top-level `condition` are pinned to the script's values,
-and any spelling the receiver would fold onto one of these keys is refused).
+and any spelling the receiver would fold onto one of these keys is refused; 1.9.0: the query
+step is one of two `one_of` shapes, one Prometheus query, or one OpenSearch Lucene query with
+exactly one metric and one date histogram, every value of which the card shows in full or the
+gateway pins). (D-514(f): when no line matches at all, an `avg`, `max` or `min` log rule fires
+with no value on Grafana 11.0 and stays normal on 13.3, whatever its no-data state.)
 
 **No query parameters (`refuse_query: true`).** A read tool that serves only a fixed path may
 declare that it sends no query parameters; the gateway then refuses any request on the tool that
@@ -1316,7 +1340,9 @@ rejected by the validator.
 Outputs are validated against the manifest: credential/metadata keys must be
 declared; `tenant-host` must fall in the declared zone; `continue.url` must be
 https on a declared host or an `oauth_clients` authorize host; summaries are
-clamped to `SUMMARY_LIMITS`.
+clamped to `SUMMARY_LIMITS` (title 120 characters, at most 33 fields, each value 200,
+text 1 000; a template `approvals.<tool>` declaring more than 32 fields is refused at load, so
+that the Warning row a card may put first never pushes a declared row off the end).
 
 **Reserved key `aurora_access` (FIX-133, D-240).** A hook learns the connection's access
 (`read` | `write`, §3.4, `07`) without any WIT change: the API adds `aurora_access` to the

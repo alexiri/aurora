@@ -88,3 +88,33 @@ test("390 px: no horizontal scroll", async ({ page }) => {
   await open(page, "light", [ACCESS, RULE]);
   expect(await overflow(page)).toBeFalsy();
 });
+
+// The longest card there is: an alert rule on a log count shows every part of the rule, and its query is up to 200
+// characters, here without a single space to break at.
+const LOG_QUERY = `message:${"upstream_timed_out.".repeat(10)}`;
+const ALERT_RULE = question(3, {
+  sentence: { agent: { id: id(11), name: "Daneel" }, action: "create an alert rule", app: { app_id: "grafana", name: "Grafana" } },
+  summary: {
+    source: "template", title: "create an alert rule",
+    fields: [
+      ["Title", "web 500s"], ["Folder", "night-folder"], ["Group", "agent-night"], ["Evaluate for", "120s"], ["Data source", "os-logs"],
+      ["Query language", "lucene"], ["Log query", LOG_QUERY], ["Metric", "avg"], ["Metric field", "http_response_duration_milliseconds"],
+      ["Buckets", "1m"], ["Bucket field", "@timestamp"], ["Time field", "@timestamp"], ["Looks back (seconds)", "960"],
+      ["Ends before now (seconds)", "60"], ["Comparison", "gt"], ["Threshold", "25"], ["Reducer", "mean"], ["Second threshold", "50"],
+      ["Condition step", "C"], ["No data state", "NoData"], ["On query error", "Error"], ["Paused", "false"], ["Managed by", "night"],
+      ["Service", "web"], ["Expires", "2026-12-02"], ["Summary", "web 500s"], ["Expires annotation", "2026-12-02"], ["Receiver", "oncall"],
+      ["Evaluations to resolve", "2"],
+    ].map(([label, value]) => ({ label, value })),
+  },
+});
+
+test("390 px: a log alert rule's card shows every row and its whole query, without horizontal scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await open(page, "light", [ALERT_RULE]);
+  await expect(page.getByText("Evaluations to resolve")).toBeVisible();
+  const query = page.getByText(LOG_QUERY);
+  await expect(query).toBeVisible();
+  expect(await overflow(page), "horizontal scroll").toBeFalsy();
+  // Wrapped inside the viewport, not clipped by a parent.
+  const box = (await query.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(390);});

@@ -1,0 +1,14 @@
+{"id": 11, "uid": "tripwire-p95", "orgID": 1, "title": "web 500s", "folderUID": "night-folder", "ruleGroup": "agent-night",
+ "condition": "C", "for": "2m", "keep_firing_for": "0s", "record": null, "noDataState": "OK", "execErrState": "Error",
+ "isPaused": false,
+ "labels": {"managed_by": "night", "expires": "2026-11-20", "service": "web"},
+ "annotations": {"summary": "web 500s", "expires": "2026-11-20"},
+ "notification_settings": {"receiver": "oncall"},
+ "data": [
+   {"refId": "A", "datasourceUid": "os-logs", "queryType": "lucene", "relativeTimeRange": {"from": 960, "to": 60},
+    "model": {"bucketAggs": [{"field": "@timestamp", "id": "2", "settings": {"interval": "1m", "min_doc_count": "0"}, "type": "date_histogram"}], "intervalMs": 1000, "maxDataPoints": 43200, "metrics": [{"id": "1", "type": "count"}], "query": "status:500", "queryType": "lucene", "refId": "A", "timeField": "@timestamp"}},
+   {"refId": "B", "datasourceUid": "__expr__", "queryType": "", "relativeTimeRange": {"from": 960, "to": 60},
+    "model": {"conditions": [{"evaluator": {"params": [], "type": "gt"}, "operator": {"type": "and"}, "query": {"params": ["B"]}, "reducer": {"params": [], "type": "last"}, "type": "query"}], "datasource": {"type": "__expr__", "uid": "__expr__"}, "expression": "A", "reducer": "sum", "refId": "B", "type": "reduce", "intervalMs": 1000, "maxDataPoints": 43200}},
+   {"refId": "C", "datasourceUid": "__expr__", "queryType": "", "relativeTimeRange": {"from": 960, "to": 60},
+    "model": {"conditions": [{"evaluator": {"params": [5], "type": "gt"}, "operator": {"type": "and"}, "query": {"params": ["C"]}, "reducer": {"params": [], "type": "last"}, "type": "query"}], "datasource": {"type": "__expr__", "uid": "__expr__"}, "expression": "B", "refId": "C", "type": "threshold", "intervalMs": 1000, "maxDataPoints": 43200}}
+ ]}

@@ -399,6 +399,8 @@
         Service: "api"
         Expires: "2026-12-02"
         Summary: "p95 over 3s"
+        Keep firing for: "0s"
+        Evaluations to resolve: "2"
         Receiver: "nightmanager"
 # The keys a newer server answers with are scalars: a body that carries either as an object
 # (or the count with a fractional part) is refused before the approval.
@@ -564,4 +566,415 @@
     url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-p95"
     headers: { content-type: application/json }
     body: '{"orgID":1,"title":"p95 over 3s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"prom-main","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"expr":"vector(1)","editorMode":"code","expr":"max(rate(http_request_duration_seconds_count{job=\"api\"}[5m]))","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"last","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":300,"to":0},"model":{"conditions":[{"evaluator":{"params":[3],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"600s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"api"},"annotations":{"summary":"p95 over 3s","expires":"2026-12-02"},"notification_settings":{"receiver":"nightmanager"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+# An OpenSearch rule counts log documents: one Lucene query, one metric, one date histogram,
+# every value of which the card shows or the gateway pins.
+- name: "create_alert_rule: a log count rule shows the query, metric, buckets and time range"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect:
+    app: grafana
+    tool: create_alert_rule
+    summary:
+      title: "create an alert rule"
+      fields:
+        Title: "web 500s"
+        Folder: "night-folder"
+        Group: "agent-night"
+        Evaluate for: "120s"
+        Data source: "os-logs"
+        Query language: "lucene"
+        Log query: "status:500 AND service:web"
+        Metric: "count"
+        Buckets: "1m"
+        Bucket field: "@timestamp"
+        Time field: "@timestamp"
+        Looks back (seconds): "960"
+        Ends before now (seconds): "60"
+        Comparison: "gt"
+        Threshold: "25"
+        Reducer: "sum"
+        Condition step: "C"
+        No data state: "OK"
+        On query error: "Error"
+        Paused: "false"
+        Managed by: "night"
+        Service: "web"
+        Expires: "2026-12-02"
+        Summary: "web 500s"
+        Expires annotation: "2026-12-02"
+        Receiver: "oncall"
+- name: "update_alert_rule: a stored log average (the step names its query type) is held for approval"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-logs"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"lucene","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"avg","field":"duration_ms"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"1"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"mean","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"},"uid":"tripwire-logs","keep_firing_for":"0s"}'
+  expect:
+    app: grafana
+    tool: update_alert_rule
+    summary:
+      title: "change an alert rule"
+      fields:
+        Rule: "tripwire-logs"
+        Metric: "avg"
+        Metric field: "duration_ms"
+        Query language: "lucene"
+        Buckets: "1m"
+        Bucket field: "@timestamp"
+        Time field: "@timestamp"
+        Reducer: "mean"
+        No data state: "NoData"
+        Log query: "status:500 AND service:web"
+        Looks back (seconds): "960"
+        Ends before now (seconds): "60"
+        Expires annotation: "2026-12-02"
+        Keep firing for: "0s"
+- name: "create_alert_rule: a log rule on the data source's own time field"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"}}]}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect:
+    app: grafana
+    tool: create_alert_rule
+    summary:
+      title: "create an alert rule"
+      fields:
+        Log query: "status:500 AND service:web"
+- name: "refused create_alert_rule: a second metric"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"},{"id":"3","type":"max","field":"duration_ms"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a terms bucket beside the histogram"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"3","type":"terms","field":"host","settings":{"size":"10"}},{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a terms bucket instead of the histogram"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"terms","field":"host"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a bucket_script metric"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"bucket_script","field":"duration_ms"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a raw_data metric"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"raw_data"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: the PPL query language"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"PPL","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a step that names the PPL query type"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"PPL","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a SQL key in the log model"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp","rawSql":"select 1"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a PromQL expression in the log model"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp","expr":"up"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: an extra histogram setting"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0","missing":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a script setting on the metric"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count","settings":{"script":"doc.ms.value"}}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: metrics as an object"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":{"0":{"id":"1","type":"count"}},"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a query longer than the card shows"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"message:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a query that is not a string"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":{"query":"status:500"},"metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: an empty query"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a time field that is not a string"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":["@timestamp"]}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a bucket field that is not a string"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":{"a":1}}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: an interval longer than the card shows"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: another metric id"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"7","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: another bucket id"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"7","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a count that leaves empty buckets out"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"1"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a histogram that drops quiet buckets"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"5"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a second threshold condition"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"},{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: another key in the time range"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60,"shift":3600},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a reducer the script never picks"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"count","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: an average that counts empty buckets as values"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"avg","field":"duration_ms"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"mean","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"NoData","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a metric field longer than the card shows"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"sum","field":"fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a metric field that is a script object"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"sum","field":{"script":"x"}}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: a second metric"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/tripwire-logs"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"},{"id":"3","type":"max","field":"duration_ms"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a Prometheus model with a query key"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"editorMode":"code","expr":"up","instant":true,"legendFormat":"__auto","refId":"A","query":"status:500"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "create_alert_rule: a log sum shows its metric field"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"sum","field":"bytes"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect:
+    app: grafana
+    tool: create_alert_rule
+    summary:
+      title: "create an alert rule"
+      fields:
+        Metric: "sum"
+        Metric field: "bytes"
+        Reducer: "sum"
+- name: "refused create_alert_rule: an empty time range"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":60,"to":60},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: an inverted time range"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":300,"to":900},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a time range with no end"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":300},"model":{"refId":"A","queryType":"lucene","query":"status:500 AND service:web","metrics":[{"id":"1","type":"count"}],"bucketAggs":[{"id":"2","type":"date_histogram","settings":{"interval":"1m","min_doc_count":"0"},"field":"@timestamp"}],"timeField":"@timestamp"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+# The Prometheus expression is held to what the card shows, and a model without one is no shape.
+- name: "refused create_alert_rule: an expression longer than the card shows"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"editorMode":"code","instant":true,"legendFormat":"__auto","refId":"A","expr":"sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + vector(0000000000000000000"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: a model without an expression"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"editorMode":"code","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused create_alert_rule: an expression with a zero-width space"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: POST
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"editorMode":"code","instant":true,"legendFormat":"__auto","refId":"A","expr":"up\u200b == 0"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: create_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: an expression longer than the card shows"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/rule-1"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"editorMode":"code","instant":true,"legendFormat":"__auto","refId":"A","expr":"sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + sum(rate(x_total[5m])) + vector(0000000000000000000"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: a model without an expression"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/rule-1"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"editorMode":"code","instant":true,"legendFormat":"__auto","refId":"A"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
+  expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }
+- name: "refused update_alert_rule: an expression with a zero-width space"
+  connection: { instance_host: grafana.example.org, credentials: { access_token: "tok-fixture-1" } }
+  request:
+    method: PUT
+    url: "https://grafana.example.org/api/v1/provisioning/alert-rules/rule-1"
+    headers: { content-type: application/json }
+    body: '{"orgID":1,"title":"web 500s","ruleGroup":"agent-night","folderUID":"night-folder","condition":"C","data":[{"refId":"A","datasourceUid":"os-logs","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"editorMode":"code","instant":true,"legendFormat":"__auto","refId":"A","expr":"up\u200b == 0"}},{"refId":"B","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[],"type":"gt"},"operator":{"type":"and"},"query":{"params":["B"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"A","reducer":"sum","refId":"B","type":"reduce"}},{"refId":"C","datasourceUid":"__expr__","queryType":"","relativeTimeRange":{"from":960,"to":60},"model":{"conditions":[{"evaluator":{"params":[25],"type":"gt"},"operator":{"type":"and"},"query":{"params":["C"]},"reducer":{"params":[],"type":"last"},"type":"query"}],"datasource":{"type":"__expr__","uid":"__expr__"},"expression":"B","refId":"C","type":"threshold"}}],"for":"120s","noDataState":"OK","execErrState":"Error","isPaused":false,"labels":{"managed_by":"night","expires":"2026-12-02","service":"web"},"annotations":{"summary":"web 500s","expires":"2026-12-02"},"notification_settings":{"receiver":"oncall"}}'
   expect: { app: grafana, tool: update_alert_rule, refused: tool_body_refused }

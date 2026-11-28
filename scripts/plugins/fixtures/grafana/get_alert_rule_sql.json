@@ -1,0 +1,11 @@
+{"id": 11, "uid": "tripwire-p95", "orgID": 1, "title": "slow queries", "folderUID": "night-folder", "ruleGroup": "agent-night",
+ "condition": "C", "for": "5m", "noDataState": "NoData", "execErrState": "Error", "isPaused": false,
+ "labels": {"managed_by": "night", "expires": "2026-11-20"},
+ "annotations": {"summary": "slow queries", "expires": "2026-11-20"},
+ "notification_settings": {"receiver": "oncall"},
+ "data": [
+   {"refId": "A", "datasourceUid": "sql-main", "queryType": "", "relativeTimeRange": {"from": 300, "to": 0},
+    "model": {"rawSql": "select count(*) from slow", "format": "table", "refId": "A"}},
+   {"refId": "B", "datasourceUid": "__expr__", "relativeTimeRange": {"from": 300, "to": 0}, "model": {"type": "reduce", "refId": "B"}},
+   {"refId": "C", "datasourceUid": "__expr__", "relativeTimeRange": {"from": 300, "to": 0}, "model": {"type": "threshold", "refId": "C"}}
+ ]}
