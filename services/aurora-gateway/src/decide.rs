@@ -5,7 +5,7 @@
 //! candidates), [`PlaintextCache`] (lazy plaintext, after the decision),
 //! `MemoryCounter` (rate limits) and [`RequestLog`].
 
-use crate::account_health::{AccountHealth, AccountId};
+use crate::account_health::{AccountHealth, AccountId, Observed};
 use crate::apps::{self, Cand, Exec, Pick};
 use crate::auth::{CredentialKind, RequestIdentity as Ident};
 use crate::db::{DbAuthorizer, DbEndpoint, DbOpenError, DbOpened, DbVerdict};
@@ -1916,6 +1916,16 @@ impl PolicyHandler {
                             &refreshed
                         }
                         Err(e) => {
+                            // (FIX-295) A refused token endpoint is the account's health line.
+                            if matches!(e, RefreshError::Refused(_))
+                                && let Some(pool) = &self.touch_pool
+                            {
+                                self.account_health.record(
+                                    pool,
+                                    AccountId::Connection(conn.id),
+                                    Observed::Unreachable,
+                                );
+                            }
                             return Outcome::Respond(self.refuse(
                                 ctx,
                                 &self.refresh_error(&rv, conn, e),
@@ -2787,6 +2797,7 @@ impl PolicyHandler {
                 guidance::gateway_degraded("credential_store_unavailable")
             }
             RefreshError::Unavailable => credential_unavailable("connection"),
+            RefreshError::Refused(host) => guidance::token_endpoint_refused(&host),
         }
     }
 

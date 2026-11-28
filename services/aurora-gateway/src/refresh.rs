@@ -3,13 +3,21 @@
 //! a session-level Postgres advisory lock, with compare-and-set persistence. The whole locked
 //! section runs in a spawned task so a client hang-up cannot leave the lock held or lose a
 //! rotated refresh token.
+//!
+//! (FIX-295, SEC-172) The token endpoint is called through an [`Upstream`]: the destination
+//! guard judges every resolved address and only those are dialled, with the egress proxy and
+//! `tls.extra_ca_bundle` of agent requests. No redirect is followed.
 
 use crate::apps::ConnCand;
+use crate::mechanisms::route::self_hosted_allowance;
 use crate::mechanisms::template::{Dest, Vars, render};
 use crate::mint::{MintError, MintInput, Minter};
+use crate::pipeline::{PreparedRequest, Scheme};
 use crate::snapshot::Loaded;
+use crate::upstream::Upstream;
 use aurora_core::Secret;
 use aurora_core::limits::{REFRESH_LOCK_WAIT, REFRESH_MARGIN};
+use aurora_core::ranges::{AppHost, LogThrottle};
 use aurora_db::PgPool;
 use aurora_db::repo::gateway as repo;
 use aurora_registry::instance::InstanceBase;
@@ -18,6 +26,7 @@ use aurora_registry::snapshot::OauthClientEntry;
 use aurora_secrets::{Purpose, SealContext, SecretRef, SecretVault, ValueSource};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{DateTime, Utc};
+use http_body_util::{BodyExt, Limited};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -26,8 +35,11 @@ use uuid::Uuid;
 
 const STRIPES: usize = 64;
 const LOCK_POLL: Duration = Duration::from_millis(25);
-const TOKEN_CALL_WALL: Duration = Duration::from_secs(15);
+/// The wall clock of one token endpoint call.
+pub const TOKEN_CALL_WALL: Duration = Duration::from_secs(15);
 const DEFAULT_LIFETIME_SECS: i64 = 3600;
+/// The most of a token endpoint's answer that is read.
+const TOKEN_RESPONSE_MAX: usize = 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RefreshError {
@@ -37,6 +49,8 @@ pub enum RefreshError {
     Unavailable,
     /// External secret store unreachable.
     StoreUnavailable(String),
+    /// The destination guard refused the token endpoint's host; nothing was sent.
+    Refused(String),
 }
 
 /// Owned inputs of one locked refresh (the work outlives the request future).
@@ -53,7 +67,9 @@ struct Job {
 pub struct TokenManager {
     pool: PgPool,
     vault: Arc<SecretVault>,
-    http: reqwest::Client,
+    upstream: Arc<Upstream>,
+    /// How often a refused token endpoint is logged, per host.
+    refused_log: LogThrottle,
     minter: Option<Arc<dyn Minter>>,
     stripes: Vec<tokio::sync::Mutex<()>>,
     lock_wait: Duration,
@@ -67,35 +83,24 @@ pub fn expiring(expires_at: Option<DateTime<Utc>>, margin: Duration) -> bool {
 }
 
 impl TokenManager {
-    /// Tests: a client that cannot be built is a bug there.
-    #[allow(clippy::expect_used)]
-    pub fn new(pool: PgPool, vault: Arc<SecretVault>, minter: Option<Arc<dyn Minter>>) -> Self {
-        Self::try_new(pool, vault, minter).expect("token client")
-    }
-
-    /// (FIX-104) The token client is built with its timeout and without redirects, or not at
-    /// all: there is no fallback to a default client (no timeout, redirects followed), so a
-    /// failure here is a startup error.
-    pub fn try_new(
+    /// `upstream` carries the token endpoint calls: there is no other client to fall back to.
+    pub fn new(
         pool: PgPool,
         vault: Arc<SecretVault>,
         minter: Option<Arc<dyn Minter>>,
-    ) -> Result<Self, String> {
-        let http = reqwest::Client::builder()
-            .timeout(TOKEN_CALL_WALL)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| format!("token client: {e}"))?;
-        Ok(Self {
+        upstream: Arc<Upstream>,
+    ) -> Self {
+        Self {
             pool,
             vault,
-            http,
+            upstream,
+            refused_log: LogThrottle::default(),
             minter,
             stripes: (0..STRIPES).map(|_| tokio::sync::Mutex::new(())).collect(),
             lock_wait: REFRESH_LOCK_WAIT,
             margin: REFRESH_MARGIN,
             health: None,
-        })
+        }
     }
 
     /// (RFE-014) Refuse refreshes while the database is unreachable.
@@ -425,26 +430,99 @@ impl TokenManager {
             job.conn.tenant_host.as_deref(),
             job.conn.instance_base(),
         )?;
-        let mut req = self
-            .http
-            .post(&plan.url)
-            .header("accept", "application/json");
-        if let Some(a) = &plan.authorization {
-            req = req.header("authorization", a);
-        }
-        req = match plan.body_format {
-            BodyFormat::Form => req.form(&plan.params),
-            BodyFormat::Json => req.json(&plan.params.iter().cloned().collect::<BTreeMap<_, _>>()),
-        };
-        let resp = req.send().await.map_err(|_| RefreshError::Unavailable)?;
-        let status = resp.status();
-        let body: Value = resp.json().await.unwrap_or(Value::Null);
-        match interpret_exchange(&job.token, current, status.as_u16(), &body) {
+        let (status, body) = self.call(&job.conn, &plan).await?;
+        match interpret_exchange(&job.token, current, status, &body) {
             Ok((creds, secs)) => Ok((creds, Self::lifetime(job, secs))),
             Err(RefreshError::Reauth) => Err(self.reauth(job.conn.id, "invalid_grant").await),
             Err(e) => Err(e),
         }
     }
+
+    /// Sends one token request through the guard: the status and the body (`Null` when it is not
+    /// JSON). Nothing the endpoint says is logged or kept in an error.
+    async fn call(
+        &self,
+        conn: &ConnCand,
+        plan: &ExchangeRequest,
+    ) -> Result<(u16, Value), RefreshError> {
+        let mut req = token_request(plan).ok_or(RefreshError::Unavailable)?;
+        let host = req.host.clone();
+        req.app_host = self.allowance(conn, req.scheme, &host, req.port).await;
+        let answer = tokio::time::timeout(TOKEN_CALL_WALL, async {
+            let resp = self.upstream.send(req).await.map_err(|e| {
+                if e.code() == "destination_refused" {
+                    RefreshError::Refused(host.clone())
+                } else {
+                    RefreshError::Unavailable
+                }
+            })?;
+            let status = resp.status().as_u16();
+            let body = Limited::new(resp.into_body(), TOKEN_RESPONSE_MAX)
+                .collect()
+                .await
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b.to_bytes()).ok())
+                .unwrap_or(Value::Null);
+            Ok((status, body))
+        })
+        .await
+        .unwrap_or(Err(RefreshError::Unavailable));
+        if matches!(answer, Err(RefreshError::Refused(_))) && self.refused_log.allow(&host) {
+            tracing::warn!(
+                connection_id = %conn.id,
+                host = %host,
+                "token refresh refused: the token endpoint's address is not permitted"
+            );
+        }
+        answer
+    }
+
+    /// (D-511) The allowance of the registration the connection is bound to, judged by the one
+    /// rule of agent requests: an instance administrator's own, and `https` to its host on 443.
+    /// The registration is read now, so a removed or disabled one opens nothing; when it cannot
+    /// be read there is no allowance.
+    async fn allowance(
+        &self,
+        conn: &ConnCand,
+        scheme: Scheme,
+        host: &str,
+        port: u16,
+    ) -> Option<AppHost> {
+        let id = conn.instance_id?;
+        let visible = repo::visible_instances(&self.pool, conn.org_id)
+            .await
+            .ok()?;
+        let own = visible
+            .iter()
+            .find(|i| i.id == id && i.app_id == conn.app_id);
+        self_hosted_allowance(own, conn.instance_id, scheme, host, port)
+    }
+}
+
+/// The built exchange as a request of the guarded upstream.
+fn token_request(plan: &ExchangeRequest) -> Option<PreparedRequest> {
+    let (content_type, body) = match plan.body_format {
+        BodyFormat::Form => {
+            // The `application/x-www-form-urlencoded` serializer, borrowed from a URL's query.
+            let mut form = reqwest::Url::parse("http://form.invalid/").ok()?;
+            form.query_pairs_mut().extend_pairs(&plan.params);
+            (
+                "application/x-www-form-urlencoded",
+                form.query().unwrap_or_default().as_bytes().to_vec(),
+            )
+        }
+        BodyFormat::Json => {
+            let params: BTreeMap<_, _> = plan.params.iter().cloned().collect();
+            ("application/json", serde_json::to_vec(&params).ok()?)
+        }
+    };
+    let mut req = http::Request::post(&plan.url)
+        .header("accept", "application/json")
+        .header("content-type", content_type);
+    if let Some(a) = &plan.authorization {
+        req = req.header("authorization", a);
+    }
+    crate::llm_mint::prepared(req.body(body).ok()?)
 }
 
 /// One refresh-token request, built but not yet sent (shared by the live exchange and the

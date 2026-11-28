@@ -278,7 +278,7 @@ impl LlmMint {
 }
 
 /// The built request as a guarded upstream request (scheme, host, port, path, query, headers, body).
-fn prepared(req: http::Request<Vec<u8>>) -> Option<PreparedRequest> {
+pub(crate) fn prepared(req: http::Request<Vec<u8>>) -> Option<PreparedRequest> {
     let (parts, body) = req.into_parts();
     let scheme = match parts.uri.scheme_str()? {
         "https" => Scheme::Https,

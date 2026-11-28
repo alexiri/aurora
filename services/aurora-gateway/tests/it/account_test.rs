@@ -53,6 +53,7 @@ async fn start_test(fresh_role: bool, guard_allows_loopback: bool) -> Fx {
             env.db.pool().clone(),
             env.vault.clone(),
             None,
+            crate::common::loopback_token_upstream(),
         )),
         plaintext: env.plaintext.clone(),
         guard: Arc::new(Guard::new(&allowed, vec![]).unwrap()),

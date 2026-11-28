@@ -48,7 +48,8 @@ the other internal routes (API replicas only, never a sandbox); a per-organizati
 * `mint`: one `token.mint` of a hook-minted token through the token manager (the same call a request would
   make; the refreshed credentials are stored as for any refresh). `fresh`: refresh a token that is expiring so
   the API's probe does not judge a stale one. A mint or refresh that asks for re-authorization is `rejected`
-  (and marks the connection, as it always does).
+  (and marks the connection, as it always does). (FIX-295) A refresh whose token endpoint the destination guard
+  refuses is `unreachable` with that host.
 
 The route writes no health itself: the API stores the result (`last_test_*`, C-1033). It answers 404
 `connection_not_found` for a connection outside the named organization and 400 for a malformed request.
@@ -689,7 +690,10 @@ minted.
    is judged as before: the open lane, a request without such a connection,
    another app or registration on the same host, an organization's registration,
    a preset, a generic secret, webhooks, secret links, LDAP, databases and token
-   minting. With the allowance an address the table refuses passes only if it is
+   minting. (FIX-295, SEC-172) The one other request that gets it is the OAuth
+   refresh of a connection bound to such a registration (step 10): the
+   registration is read at refresh time, and the token URL must be `https` on its
+   host on 443. With the allowance an address the table refuses passes only if it is
    private unicast (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`,
    `100.64.0.0/10`, `fc00::/7`; never a metadata service inside them:
    `100.100.100.200`, `fd00:ec2::/32`, `fd20:ce::254`); every other row, the
@@ -822,7 +826,16 @@ minted.
     refresh when `credentials_expires_at < now + REFRESH_MARGIN` (`08 §OAuth
     refresh`). For `token: hook`, call `token.mint` through the hook host under
     the same lock discipline (`09`). `reauth_required` connections → 403
-    `connection_reauth_required` (with the dashboard URL).
+    `connection_reauth_required` (with the dashboard URL). (FIX-295, SEC-172) The
+    refresh call to the token endpoint is an upstream request like an agent's: the
+    destination guard (step 2) judges every resolved address and only those are
+    dialled, with `gateway.egress_proxy` (never the proxy environment variables)
+    and `tls.extra_ca_bundle`; no redirect is followed and at most 1 MiB of the
+    answer is read. A refused endpoint answers 403 `destination_refused` (with the
+    endpoint's host), leaves the connection active and records `unreachable` as the
+    account's health (an agent's call only, never a Test); the gateway logs the
+    connection and host, at most once a minute per host, and nothing the provider
+    said.
 11. **Injection.** Apply the host entry's mechanisms (`09 §Mechanisms`) or the
     secret's injection recipe (`08`). Agent-supplied values for injected
     headers/params are overwritten, never merged. (phase 5 (D-138, moved from phase 4), P4-LLM) LLM recipes add
