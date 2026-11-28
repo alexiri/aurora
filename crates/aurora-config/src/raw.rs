@@ -1000,6 +1000,10 @@ pub struct GatewaySection {
     /// (startup logs a warning when it overlaps the proxy listener).
     pub internal_bind: Option<String>,
     pub allowed_private: Vec<String>,
+    /// (FIX-290, SEC-170) CIDRs that the automatic allowance of a self-hosted app's host never
+    /// reaches (a cluster's pod and Service ranges). Read by the gateway and the API; empty by
+    /// default. It does not narrow `allowed_private`.
+    pub self_hosted_refused_ranges: Vec<String>,
     pub egress_proxy: Option<String>,
     pub condition_body_bytes: u64,
     pub upstream_header_timeout_secs: u64,
@@ -1058,6 +1062,7 @@ impl Default for GatewaySection {
             sandbox_proxy_url: None,
             internal_bind: None,
             allowed_private: vec![],
+            self_hosted_refused_ranges: vec![],
             egress_proxy: None,
             condition_body_bytes: aurora_core::limits::CONDITION_BODY_BUFFER as u64,
             upstream_header_timeout_secs: aurora_core::limits::UPSTREAM_HEADER_TIMEOUT.as_secs(),

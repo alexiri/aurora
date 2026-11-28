@@ -1,6 +1,6 @@
 //! Destination guard (06 step 2): SEC-06.
 
-use aurora_core::ranges::AppHost;
+use aurora_core::ranges::{AppHost, RefusedRanges};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -42,6 +42,8 @@ pub struct Guard {
     /// (FIX-290, D-511) Hosts of Aurora's other services, from this process's configuration. A
     /// self-hosted app's host that resolves to any address of one of them gets no allowance.
     services: arc_swap::ArcSwap<Vec<String>>,
+    /// (FIX-290, SEC-170) `gateway.self_hosted_refused_ranges`: closed to every allowance.
+    refused_ranges: arc_swap::ArcSwap<RefusedRanges>,
     /// Fixed answers for names (tests only; empty in a running gateway).
     names: arc_swap::ArcSwap<StaticNames>,
 }
@@ -208,7 +210,13 @@ impl Guard {
             local: arc_swap::ArcSwap::from_pointee(local),
             services: arc_swap::ArcSwap::from_pointee(Vec::new()),
             names: arc_swap::ArcSwap::from_pointee(Vec::new()),
+            refused_ranges: arc_swap::ArcSwap::from_pointee(RefusedRanges::default()),
         })
+    }
+
+    /// (FIX-290, SEC-170) Set the ranges no self-hosted app's allowance reaches.
+    pub fn set_refused_ranges(&self, ranges: RefusedRanges) {
+        self.refused_ranges.store(Arc::new(ranges));
     }
 
     /// (FIX-290) Name Aurora's other services (host names or addresses).
@@ -425,7 +433,8 @@ impl Guard {
             return Ok(());
         }
         let ip = canon(ip);
-        let opened = app_address_opens(ip, &b.absolute, &b.services)
+        let refused = self.refused_ranges.load();
+        let opened = app_address_opens(ip, &b.absolute, &b.services, &refused)
             && !self.is_own(ip, app.port())
             && !self.local.load().contains(&ip);
         if opened {

@@ -323,6 +323,7 @@ NetworkPolicy and its key is a secret root.
 | `byo.default_source_cidrs` | `[]` | api, gateway | (phase 2, RFE-025) default source CIDR list of every BYO agent without its own or an org list (e.g. corporate networks and CI runners); orgs and agents may only narrow it. Empty = unrestricted |
 | `byo.require_context_credentials` | `false` | api, gateway | (phase 2, RFE-025) when `true` every BYO agent must use context credentials for credentialed requests (`08 §11.9`) |
 | `gateway.egress_proxy` | — | gateway | upstream forward proxy |
+| `gateway.self_hosted_refused_ranges` | `[]` | gateway and API (restart to change) | (FIX-290, SEC-170) CIDRs that the automatic allowance of a self-hosted app's host (`06` §Destination guard) never reaches, whatever the host resolves to: set the cluster's pod and Service CIDRs and, on a managed cluster, the range of its private Kubernetes API endpoint. An entry that is no CIDR refuses to start. It does not narrow `allowed_private` |
 | `gateway.condition_body_bytes` | 262144 | gateway | 4 KiB–8 MiB |
 | `gateway.upstream_header_timeout_secs` | 300 | gateway | |
 | `gateway.ca_dir` | `/var/lib/aurora/ca` | gateway | `ca.pem`, `ca.key` |

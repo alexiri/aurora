@@ -109,15 +109,52 @@ pub fn app_host_may_reach(ip: IpAddr) -> bool {
     }
 }
 
+/// (FIX-290, SEC-170) `gateway.self_hosted_refused_ranges`: CIDRs no self-hosted app's
+/// allowance reaches, whatever the app's host resolves to (a cluster's pod and Service ranges).
+#[derive(Debug, Clone, Default)]
+pub struct RefusedRanges(Vec<(IpAddr, u8)>);
+
+impl RefusedRanges {
+    /// Every entry is a CIDR; anything else is an error, so a typo never leaves a range open.
+    pub fn parse(entries: &[String]) -> Result<Self, String> {
+        entries
+            .iter()
+            .map(|e| {
+                let e = e.trim();
+                let (ip, bits) = e.split_once('/')?;
+                let ip: IpAddr = ip.parse().ok()?;
+                let bits: u8 = bits.parse().ok()?;
+                let max = if ip.is_ipv4() { 32 } else { 128 };
+                // An IPv4-mapped network would be compared as IPv4 with an IPv6 prefix length.
+                (bits <= max && canon(ip).is_ipv4() == ip.is_ipv4()).then_some((ip, bits))
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Self)
+            .ok_or_else(|| format!("not a list of CIDRs: {entries:?}"))
+    }
+
+    #[must_use]
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        let ip = canon(ip);
+        self.0.iter().any(|(n, b)| cidr_contains(*n, *b, ip))
+    }
+}
+
 /// (FIX-290, D-511) Does a self-hosted app's allowance open `ip`, one resolved address of its
 /// host? It must be [`app_host_may_reach`], be an address of the fully qualified name too
-/// (`absolute`: a name that only a DNS search domain completes has none there) and not belong
-/// to another of Aurora's services (`services`). Shared by the gateway and the API.
+/// (`absolute`: a name that only a DNS search domain completes has none there), not belong
+/// to another of Aurora's services (`services`) and lie in none of the operator's `refused`
+/// ranges. Shared by the gateway and the API.
 #[must_use]
-pub fn app_address_opens(ip: IpAddr, absolute: &[IpAddr], services: &[IpAddr]) -> bool {
+pub fn app_address_opens(
+    ip: IpAddr,
+    absolute: &[IpAddr],
+    services: &[IpAddr],
+    refused: &RefusedRanges,
+) -> bool {
     let ip = canon(ip);
     let has = |list: &[IpAddr]| list.iter().any(|a| canon(*a) == ip);
-    app_host_may_reach(ip) && has(absolute) && !has(services)
+    app_host_may_reach(ip) && has(absolute) && !has(services) && !refused.contains(ip)
 }
 
 /// (FIX-290, D-511) The one host and port an instance-registered self-hosted app may reach on a
@@ -358,13 +395,46 @@ mod tests {
     #[test]
     fn an_allowance_opens_a_private_address_of_the_qualified_name_that_is_no_service_of_ours() {
         let a = ip("10.1.2.3");
-        assert!(app_address_opens(a, &[a], &[]));
-        assert!(app_address_opens(ip("::ffff:10.1.2.3"), &[a], &[]));
-        assert!(!app_address_opens(a, &[], &[]));
-        assert!(!app_address_opens(a, &[ip("10.1.2.4")], &[]));
-        assert!(!app_address_opens(a, &[a], &[ip("::ffff:10.1.2.3")]));
+        let none = RefusedRanges::default();
+        let opens = |ip, absolute: &[IpAddr], services: &[IpAddr]| {
+            app_address_opens(ip, absolute, services, &none)
+        };
+        assert!(opens(a, &[a], &[]));
+        assert!(opens(ip("::ffff:10.1.2.3"), &[a], &[]));
+        assert!(!opens(a, &[], &[]));
+        assert!(!opens(a, &[ip("10.1.2.4")], &[]));
+        assert!(!opens(a, &[a], &[ip("::ffff:10.1.2.3")]));
         let loopback = ip("127.0.0.1");
-        assert!(!app_address_opens(loopback, &[loopback], &[]));
+        assert!(!opens(loopback, &[loopback], &[]));
+    }
+
+    /// (FIX-290, SEC-170) The operator's refused ranges close what the allowance would open.
+    #[test]
+    fn an_allowance_opens_nothing_in_a_refused_range() {
+        let refused =
+            RefusedRanges::parse(&["10.244.0.0/16".into(), "fd00:10::/64".into()]).unwrap();
+        for p in [
+            "10.244.0.1",
+            "10.244.255.254",
+            "::ffff:10.244.3.4",
+            "fd00:10::9",
+        ] {
+            assert!(refused.contains(ip(p)), "{p}");
+            assert!(!app_address_opens(ip(p), &[ip(p)], &[], &refused), "{p}");
+        }
+        for p in ["10.245.0.1", "192.168.0.9", "fd00:11::9"] {
+            assert!(app_address_opens(ip(p), &[ip(p)], &[], &refused), "{p}");
+        }
+        for bad in [
+            "10.0.0.1",
+            "10.0.0.0/33",
+            "fd00::/129",
+            "svc.cluster.local",
+            "",
+            "::ffff:10.0.0.0/104",
+        ] {
+            assert!(RefusedRanges::parse(&[bad.into()]).is_err(), "{bad}");
+        }
     }
 
     #[test]

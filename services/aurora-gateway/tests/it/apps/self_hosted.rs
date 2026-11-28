@@ -6,7 +6,7 @@
 //! in a running gateway, and only the TCP connection goes to the test server's port.
 
 use super::*;
-use aurora_core::ranges::AppHost;
+use aurora_core::ranges::{AppHost, RefusedRanges};
 use aurora_gateway::guard::Guard;
 use aurora_gateway::invalidation::Invalidatable;
 use std::net::IpAddr;
@@ -362,6 +362,25 @@ async fn auroras_own_services_are_never_opened() {
     s.guard().set_local_addresses(vec![ip]);
     assert_refused(&s.get(MINE).await);
     s.guard().set_local_addresses(Vec::new());
+    assert_reached(&s.get(MINE).await);
+}
+
+/// The operator's refused ranges (a cluster's pod and Service CIDRs) close an address that the
+/// allowance would otherwise open. (The ranges are read at start-up, so each gateway here gets
+/// them before its first request: no pooled connection predates them.)
+#[tokio::test]
+async fn an_allowed_host_that_resolves_into_a_refused_range_is_refused() {
+    let s = setup().await;
+    let own = format!("{}/32", s.at.ip());
+    s.guard()
+        .set_refused_ranges(RefusedRanges::parse(&[own]).unwrap());
+    assert!(s.guard().resolve_app(&s.app()).await.is_err());
+    assert!(s.guard().judge_app_name(&s.app()).await.is_err());
+    assert_refused(&s.get(MINE).await);
+    // A range elsewhere closes nothing here.
+    let s = setup().await;
+    s.guard()
+        .set_refused_ranges(RefusedRanges::parse(&["203.0.113.0/24".to_owned()]).unwrap());
     assert_reached(&s.get(MINE).await);
 }
 

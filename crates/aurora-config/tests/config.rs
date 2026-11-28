@@ -3022,6 +3022,50 @@ fn push_validation_follows_the_switch_and_the_override_rules() {
     }
 }
 
+/// (FIX-290, SEC-170) The refused ranges reach the gateway's and the API's configuration, empty
+/// by default; an entry that is no CIDR refuses to start either.
+#[test]
+fn self_hosted_refused_ranges_reach_the_gateway_and_the_api_and_must_be_cidrs() {
+    let load = |extra: &str| load_with(&format!("{BASE}{extra}"), &[]).unwrap();
+    let empty = load("");
+    assert!(
+        empty
+            .api_config()
+            .unwrap()
+            .gateway_self_hosted_refused_ranges
+            .is_empty()
+    );
+    let set = "[gateway]\nself_hosted_refused_ranges = [\"10.244.0.0/16\", \"fd00:10::/64\"]\n";
+    let want = ["10.244.0.0/16", "fd00:10::/64"];
+    assert_eq!(
+        load(set)
+            .api_config()
+            .unwrap()
+            .gateway_self_hosted_refused_ranges,
+        want
+    );
+    assert_eq!(
+        load(set)
+            .gateway_config()
+            .unwrap()
+            .gateway
+            .self_hosted_refused_ranges,
+        want
+    );
+    for bad in ["10.244.0.1", "10.244.0.0/33", "cluster.local"] {
+        let cfg = format!("[gateway]\nself_hosted_refused_ranges = [\"{bad}\"]\n");
+        for e in [
+            load(&cfg).api_config().map(|_| ()).unwrap_err(),
+            load(&cfg).gateway_config().map(|_| ()).unwrap_err(),
+        ] {
+            assert!(
+                e.has_key("gateway.self_hosted_refused_ranges[0]"),
+                "{bad}: {e}"
+            );
+        }
+    }
+}
+
 /// (FIX-290) The services a self-hosted app's allowance must never reach are read from the
 /// configuration: the URLs given, and every configured secret store.
 #[test]

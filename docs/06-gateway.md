@@ -701,7 +701,13 @@ minted.
    knows: from its configuration the database, hook host, counters Redis and
    configured secret stores, plus, for the gateway, the egress proxy and, for the
    API, the gateway; and the Kubernetes API (`KUBERNETES_SERVICE_HOST`). If one of
-   those does not resolve, nothing is opened (logged). The fully qualified name (`host.`)
+   those does not resolve, nothing is opened (logged). That
+   list is **defence in depth and not complete** (it has no pod addresses, and of the
+   Kubernetes API only the Service address): what really bounds the allowance is
+   port 443, TLS verification of the registered name, and the NetworkPolicies. The
+   operator closes whole networks with `gateway.self_hosted_refused_ranges` (CIDRs,
+   gateway and API; the cluster's pod and Service ranges): an address in one is never
+   opened. The fully qualified name (`host.`)
    must resolve to the same address, so a short cluster name completed by a DNS
    search domain gets nothing. These requests use their own upstream connection
    pool, so no other request can reuse such a connection. Removing, disabling or

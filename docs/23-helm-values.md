@@ -113,6 +113,10 @@ a conflicting `config` entry is merged away or fails the render:
 | `ratelimit.counters` | `counters.*` | rendered only when `backend ≠ memory` |
 | `secrets.stores[]` (Vault) | `vault.*` | api and gateway each get their own store config |
 
+(FIX-290, SEC-170) Worth setting in a cluster: `config.gateway.self_hosted_refused_ranges`,
+the pod and Service CIDRs that a self-hosted app's automatic private-host
+allowance must never reach (`15` §Configuration reference; empty by default).
+
 Everything else in `config` is passed through verbatim — the full key list and
 their semantics live in
 [15 §Configuration reference](15-deployment-operations.md#configuration-reference-keys-and-defaults)

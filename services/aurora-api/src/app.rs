@@ -190,6 +190,9 @@ impl AppState {
             config.tls.extra_ca_bundle.as_deref(),
         )?);
         connect.set_own_services(own_services(&config));
+        connect.set_refused_ranges(aurora_core::ranges::RefusedRanges::parse(
+            &config.gateway_self_hosted_refused_ranges,
+        )?);
         let card_requests: Arc<dyn crate::domains::channels::card_requests::CardRequests> =
             Arc::new(crate::domains::channels::cards::requests::CardsImpl::new(
                 derived.clone(),
@@ -586,6 +589,12 @@ impl AppState {
         ) {
             let mut env = env;
             env.set_own_services(own_services(&self.config));
+            // Validated at load: a list that does not parse never gets here.
+            if let Ok(r) = aurora_core::ranges::RefusedRanges::parse(
+                &self.config.gateway_self_hosted_refused_ranges,
+            ) {
+                env.set_refused_ranges(r);
+            }
             env.override_origin = reqwest::Url::parse(origin).ok();
             self.connect = Arc::new(env);
             // The live `allowed_private` follows the replaced client.

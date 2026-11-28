@@ -3,7 +3,7 @@
 //! server (tests only).
 use super::hooks::HookClient;
 use arc_swap::ArcSwap;
-use aurora_core::ranges::{AppHost, app_address_opens};
+use aurora_core::ranges::{AppHost, RefusedRanges, app_address_opens};
 use aurora_db::repo::app_instances::InstanceRow;
 use aurora_secrets::tls::with_extra_roots;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
@@ -34,6 +34,8 @@ pub struct Env {
     /// `tls.extra_ca_bundle`, for the clients built per self-hosted request.
     extra_ca_bundle: Option<String>,
     admissions: Arc<std::sync::atomic::AtomicU64>,
+    /// (FIX-290, SEC-170) `gateway.self_hosted_refused_ranges`: closed to every allowance.
+    refused_ranges: Arc<ArcSwap<RefusedRanges>>,
 }
 
 type StaticNames = Vec<(String, Vec<IpAddr>)>;
@@ -175,6 +177,7 @@ struct GuardedApp {
     allow: Arc<PrivateAllow>,
     names: Arc<StaticNames>,
     services: Arc<Vec<String>>,
+    refused: Arc<RefusedRanges>,
     admissions: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -202,6 +205,7 @@ impl Resolve for GuardedApp {
     fn resolve(&self, name: Name) -> Resolving {
         let (app, allow) = (self.app.clone(), self.allow.clone());
         let (names, services) = (self.names.clone(), self.services.clone());
+        let refused = self.refused.clone();
         let admissions = self.admissions.clone();
         Box::pin(async move {
             let host = name.as_str().to_owned();
@@ -219,7 +223,7 @@ impl Resolve for GuardedApp {
                 let opened = named
                     && services
                         .as_ref()
-                        .is_some_and(|s| app_address_opens(ip, &absolute, s));
+                        .is_some_and(|s| app_address_opens(ip, &absolute, s, &refused));
                 if opened {
                     admissions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -289,6 +293,7 @@ impl Env {
             names,
             extra_ca_bundle: extra_ca_bundle.map(str::to_owned),
             admissions: Arc::default(),
+            refused_ranges: Arc::default(),
             http,
             http_instance,
             allow,
@@ -319,6 +324,11 @@ impl Env {
     /// (FIX-290) Name Aurora's other services (host names or addresses).
     pub fn set_own_services(&self, hosts: Vec<String>) {
         self.services.store(Arc::new(hosts));
+    }
+
+    /// (FIX-290, SEC-170) Set the ranges no self-hosted app's allowance reaches.
+    pub fn set_refused_ranges(&self, ranges: RefusedRanges) {
+        self.refused_ranges.store(Arc::new(ranges));
     }
 
     /// Answer these names with these addresses instead of the system resolver (tests only). A
@@ -373,6 +383,7 @@ impl Env {
             allow: self.allow.load_full(),
             names: self.names.load_full(),
             services: self.services.load_full(),
+            refused: self.refused_ranges.load_full(),
             admissions: self.admissions.clone(),
         };
         match guarded_client(Arc::new(resolver), self.extra_ca_bundle.as_deref()) {
@@ -582,6 +593,16 @@ mod tests {
             reason("https://wiki.corp.example/x").await,
             "destination_refused"
         );
+        // The operator's refused ranges (a cluster's pod and Service CIDRs).
+        point("10.255.255.1", true);
+        env.set_refused_ranges(RefusedRanges::parse(&["10.255.0.0/16".to_owned()]).unwrap());
+        assert_eq!(
+            reason("https://wiki.corp.example/x").await,
+            "destination_refused"
+        );
+        env.set_refused_ranges(RefusedRanges::parse(&["10.244.0.0/16".to_owned()]).unwrap());
+        assert!(opened(reason("https://wiki.corp.example/x").await));
+        env.set_refused_ranges(RefusedRanges::default());
         // One of Aurora's own services at the address.
         point("10.255.255.1", true);
         env.set_own_services(vec!["10.255.255.1".to_owned()]);
