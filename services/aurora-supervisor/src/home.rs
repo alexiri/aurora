@@ -1908,6 +1908,51 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// (FIX-297) A boot file replaces what is at its name: a FIFO is not waited on, and a hard
+    /// link's other name keeps its content. A folder linked to another folder of the home (the
+    /// agent's own dotfiles, say) stays a link.
+    #[test]
+    fn a_boot_file_replaces_what_is_there_and_writes_into_nothing() {
+        let (dir, home, victim) = scratch();
+        fs::hard_link(&victim, home.join("linked")).unwrap();
+        make_fifo(&home.join("fifo"));
+        fs::create_dir_all(home.join("dotfiles")).unwrap();
+        std::os::unix::fs::symlink("dotfiles", home.join(".config")).unwrap();
+        let files: Vec<_> = ["linked", "fifo", ".config/tool/rc"]
+            .iter()
+            .map(|name| serde_json::json!({"path": home.join(name), "content_b64": "eA=="}))
+            .collect();
+        let doc: crate::boot::BootDocument = serde_json::from_value(serde_json::json!({
+            "v": 1, "sandbox_id": uuid::Uuid::now_v7(), "boot_id": uuid::Uuid::now_v7(),
+            "agent": {"id": uuid::Uuid::now_v7(), "handle": "ada", "name": "Ada"},
+            "harness": {"id": "fake"},
+            "runner_url": "ws://runner:1", "bootstrap_token": "t",
+            "gateway": {"proxy": "gw:1", "tls": true, "boot_token": "t"},
+            "ca_pem": "ca", "files": files
+        }))
+        .unwrap();
+        let (root, ca) = (home.clone(), dir.join("ca.pem"));
+        promptly(&home.join("fifo"), move || {
+            crate::boot::write_boot_files_in(&doc, &ca, &root)
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "outside");
+        assert_eq!(mode_of(&victim), 0o600);
+        for name in ["linked", "fifo", "dotfiles/tool/rc"] {
+            let path = home.join(name);
+            assert!(fs::symlink_metadata(&path).unwrap().is_file(), "{name}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), "x", "{name}");
+            assert_eq!(mode_of(&path), 0o644, "{name}");
+        }
+        assert!(
+            fs::symlink_metadata(home.join(".config"))
+                .unwrap()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(dir.join("ca.pem")).unwrap(), "ca");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     /// (FIX-297) The terminal state folders are made, chmodded and chowned (as root) in the
     /// home only.
     #[test]
