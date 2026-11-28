@@ -87,11 +87,27 @@ pub async fn build_summary_hooked(
     build_summary(l, app, tool_id, r)
 }
 
+/// `body` after any leading white space and byte order marks.
+fn past_space_and_bom(mut body: &[u8]) -> &[u8] {
+    loop {
+        body = body.trim_ascii_start();
+        match body.strip_prefix(b"\xef\xbb\xbf") {
+            Some(rest) => body = rest,
+            None => return body,
+        }
+    }
+}
+
 /// A hook reads the body with its own parser, which may read what the core's refuses, and the
-/// core cannot tell which names it reads. So a hook gets JSON only when it has one reading:
-/// where the body is meant to be JSON (its content type says so, or it starts like an object),
-/// and the metadata part of a multipart body, it must parse and repeat no name anywhere, also
-/// in another case. A cut-off body does not parse. Anything else is a guess.
+/// core cannot tell which names it reads. A receiver may read JSON whatever the content type
+/// says. So:
+///
+/// - a body the core reads as JSON goes to a hook only if it repeats no name anywhere, also in
+///   another case;
+/// - one the core cannot read is a guess when its content type says JSON, or it starts like an
+///   object or an array (behind white space or a byte order mark too); a cut-off body does not
+///   parse. An empty body has nothing to read;
+/// - the metadata part of a multipart body must have one reading.
 fn hook_would_guess(r: &SummaryRequest<'_>) -> bool {
     let one_reading =
         |json: &[u8]| aurora_policy::json::parse(json).is_some_and(|d| !d.has_colliding_names());
@@ -106,10 +122,16 @@ fn hook_would_guess(r: &SummaryRequest<'_>) -> bool {
     if content_types > 1 {
         return true;
     }
-    let body = r.body_prefix.trim_ascii_start();
     let media = lower.split(';').next().unwrap_or_default();
-    let meant_as_json = !body.is_empty() && (media.contains("json") || body.starts_with(b"{"));
-    if meant_as_json && !one_reading(r.body_prefix) {
+    let guess = match aurora_policy::json::parse(r.body_prefix) {
+        Some(doc) => doc.has_colliding_names(),
+        None => {
+            let body = past_space_and_bom(r.body_prefix);
+            !body.is_empty()
+                && (media.contains("json") || matches!(body.first(), Some(b'{' | b'[')))
+        }
+    };
+    if guess {
         return true;
     }
     lower.contains("boundary=")

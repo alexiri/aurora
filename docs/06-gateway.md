@@ -890,12 +890,14 @@ upstreams on random ports keep working.
    saying so (the generic summary does the same for a repeated name anywhere,
    naming it). A template field that reads JSON from a body that is not valid
    JSON, or is longer than what was read, adds a `Warning` saying which; its
-   values never just vanish. The hook gets JSON only when it has one reading: where the body
-   is meant as JSON (a JSON content type, or it starts with `{`), and the first
-   part of a multipart body, it must parse and repeat no name anywhere, also in
-   another case. A body that does not parse, a cut-off one included, one with
-   two content types, and a multipart body that does not start at its
-   delimiter with a JSON part go to the template.
+   values never just vanish. The hook gets JSON only when it has one reading,
+   whatever the content type says: a body the core reads as JSON must repeat no
+   name anywhere, also in another case; one it cannot read, a cut-off one
+   included, stays with the template when its content type says JSON or it
+   starts with `{` or `[` (behind white space or a byte order mark too; an empty
+   body has nothing to read). So do a request with two content types and a
+   multipart body that does not start at its delimiter with a JSON part of one
+   reading.
 2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
    gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
    effective timeout comes from the matching rules (`07 §Approval deadlines`,

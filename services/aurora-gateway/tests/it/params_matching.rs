@@ -499,6 +499,92 @@ async fn a_summary_hook_is_not_asked_about_a_body_the_core_cannot_read() {
     }
 }
 
+/// What the summarize hook was sent for a request, `None` when it was not asked.
+async fn sent_to_hook(content_type: Option<&str>, body: &[u8], truncated: bool) -> Option<Vec<u8>> {
+    use aurora_gateway::hold::{SummaryRequest, build_summary_hooked};
+    use aurora_gateway::summarize_client::{SummarizeCall, Summarizer};
+    use aurora_summary::{ApprovalSummary, SummarySource};
+
+    #[derive(Default)]
+    struct Hook(std::sync::Mutex<Option<Vec<u8>>>);
+    #[async_trait::async_trait]
+    impl Summarizer for Hook {
+        async fn summarize(&self, call: SummarizeCall<'_>) -> Option<ApprovalSummary> {
+            *self.0.lock().unwrap() = Some(call.body_prefix.to_vec());
+            Some(ApprovalSummary {
+                title: "from the hook".into(),
+                fields: Vec::new(),
+                text: None,
+                link: None,
+                group: None,
+                source: SummarySource::Hook,
+            })
+        }
+    }
+    let mut v: Value = serde_json::from_slice(&snapshot_json()).unwrap();
+    v["apps"][0]["approvals"] = serde_json::json!({"send": {
+        "title": "Send", "summarize": "hook",
+        "fields": [{"label": "To", "source": "body", "steps": [{"json": "/to"}]}]
+    }});
+    let l = parse("h", v).unwrap();
+    let app = identify_app(&l, "ec2.eu-west-1.amazonaws.com", 443, "/").unwrap();
+    let header = |_: &str| None;
+    let request = SummaryRequest {
+        method: "POST",
+        host: "ec2.eu-west-1.amazonaws.com",
+        base_path: None,
+        path: "/",
+        query: None,
+        content_type,
+        header: &header,
+        body_prefix: body,
+        truncated,
+        headers: &[],
+    };
+    let hook = Hook::default();
+    build_summary_hooked(Some(&hook), Some(&l), Some(&app), Some("send"), &request).await;
+    hook.0.into_inner().unwrap()
+}
+
+/// A receiver may read JSON whatever the content type says: a body that is JSON for the core
+/// and repeats a name never reaches the hook, and one that only looks like JSON, behind a byte
+/// order mark too, is a guess.
+#[tokio::test]
+async fn json_under_any_content_type_is_the_hooks_only_with_one_reading() {
+    let array = r#"[{"to":"ok@example.com","To":"evil@example.org"}]"#;
+    let bom = "\u{feff}{\"to\":\"ok@example.com\",\"to\":\"evil@example.org\"}";
+    for (content_type, body) in [
+        (Some("text/plain"), array.to_owned()),
+        (None, array.to_owned()),
+        (Some("text/plain"), r#""a string, {"#.to_owned()),
+        (Some("text/plain"), bom.to_owned()),
+        (None, format!("  \u{feff} {bom}")),
+        (Some("text/plain"), "[1, oops".to_owned()),
+        (None, " \n\u{feff}\n[{".to_owned()),
+    ] {
+        // (The third is not JSON at all and starts like neither: it is the hook's.)
+        let asked = sent_to_hook(content_type, body.as_bytes(), false).await;
+        if body.starts_with('"') {
+            assert!(asked.is_some(), "{content_type:?}: {body}");
+        } else {
+            assert!(asked.is_none(), "{content_type:?}: {body}");
+        }
+    }
+    for (content_type, body) in [
+        (Some("text/plain"), r#"[{"to":"ok@example.com"}]"#),
+        (None, r#"{"to":"ok@example.com"}"#),
+        (Some("application/json"), "  "),
+        (Some("text/csv"), "a,b"),
+    ] {
+        assert!(
+            sent_to_hook(content_type, body.as_bytes(), false)
+                .await
+                .is_some(),
+            "{content_type:?}: {body}"
+        );
+    }
+}
+
 #[test]
 fn the_body_is_buffered_only_when_a_form_params_tool_may_match() {
     let l = loaded();
