@@ -1306,7 +1306,7 @@ rejected by the validator.
 | `connect.authorize` | API | Connect clicked (method `hook` with `authorize: true`) | client non-secret fields, permitted context | none |
 | `connect.exchange` | API | OAuth callback or form submit | callback params / form fields, client incl. secret, PKCE verifier, continuation, context | declared |
 | `token.mint` | gateway → hook host | credential expired (under the refresh lock) | one connection's credentials + metadata, client, context | declared |
-| `approval.summarize` | gateway → hook host | a request is held | tool, method, host, path, safe headers, body prefix | **none** |
+| `approval.summarize` | gateway → hook host | a request is held | tool, method, host, path, safe headers, body prefix (of a multipart body the first part only; not asked at all when the body has more than one reading, `06 §Approval holds`) | **none** |
 
 Outputs are validated against the manifest: credential/metadata keys must be
 declared; `tenant-host` must fall in the declared zone; `continue.url` must be

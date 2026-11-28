@@ -585,6 +585,60 @@ async fn json_under_any_content_type_is_the_hooks_only_with_one_reading() {
     }
 }
 
+/// A multipart body is recognised however its boundary is spelled, a boundary two readers may
+/// read differently is a guess, and the hook gets the first part only: what the core checked.
+#[tokio::test]
+async fn a_hook_gets_the_checked_first_part_of_a_multipart_body_and_nothing_else() {
+    let body = |boundary: &str| {
+        format!(
+            "--{boundary}\r\ncontent-type: application/json\r\n\r\n{{\"to\":\"ok@example.com\"}}\r\n--{boundary}\r\ncontent-type: application/json\r\n\r\n{{\"to\":\"x\",\"To\":\"SECOND PART\"}}\r\n--{boundary}--"
+        )
+    };
+    for (content_type, boundary) in [
+        ("multipart/related; boundary*=utf-8''BND", "BND"),
+        ("multipart/related; boundary = BND", "BND"),
+        ("multipart/related; boundary =BND", "BND"),
+        ("multipart/mixed", "BND"),
+        ("MULTIPART/related; charset=utf-8", "BND"),
+        (r#"multipart/related; boundary="a\"b""#, r"a\"),
+        (r#"multipart/related; boundary="BND"#, "BND"),
+        (r#"multipart/related; boundary="BND"x"#, "BND"),
+        ("multipart/related; boundary=B@D", "B@D"),
+        ("multipart/related; boundary=BND x", "BND"),
+        ("multipart/related; boundary=\"BND \"", "BND "),
+        ("multipart/related; xboundary=BND", "BND"),
+        ("text/plain; boundary*=BND", "BND"),
+    ] {
+        assert!(
+            sent_to_hook(Some(content_type), body(boundary).as_bytes(), false)
+                .await
+                .is_none(),
+            "{content_type}"
+        );
+    }
+    for (content_type, boundary) in [
+        ("multipart/related; boundary=BND", "BND"),
+        ("multipart/related; boundary=\"BND\"; charset=utf-8", "BND"),
+        (
+            "Multipart/Related; Boundary=a'(b)+_,-./:=?z",
+            "a'(b)+_,-./:=?z",
+        ),
+        ("multipart/related; boundary=\"two words\"", "two words"),
+    ] {
+        let sent = sent_to_hook(Some(content_type), body(boundary).as_bytes(), false)
+            .await
+            .unwrap_or_else(|| panic!("not asked: {content_type}"));
+        let sent = String::from_utf8(sent).unwrap();
+        assert_eq!(
+            sent,
+            format!(
+                "--{boundary}\r\ncontent-type: application/json\r\n\r\n{{\"to\":\"ok@example.com\"}}\r\n--{boundary}--\r\n"
+            ),
+            "{content_type}"
+        );
+    }
+}
+
 #[test]
 fn the_body_is_buffered_only_when_a_form_params_tool_may_match() {
     let l = loaded();

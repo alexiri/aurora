@@ -895,9 +895,13 @@ upstreams on random ports keep working.
    name anywhere, also in another case; one it cannot read, a cut-off one
    included, stays with the template when its content type says JSON or it
    starts with `{` or `[` (behind white space or a byte order mark too; an empty
-   body has nothing to read). So do a request with two content types and a
-   multipart body that does not start at its delimiter with a JSON part of one
-   reading.
+   body has nothing to read). So does a request with two content types. **A
+   hook sees only the first part of a multipart body** (a `multipart/` type, or
+   any mention of a boundary): the body is cut after that part and closed
+   again. It gets that only when the body starts at the delimiter, the part is
+   declared JSON and has one reading, and every reader reads the same boundary:
+   one `;boundary=` parameter (no `boundary*=`, no space around `=`), a closed
+   quote, RFC 2046's characters and no backslash.
 2. `INSERT INTO approvals (…, status='pending', deadline=now()+<effective timeout>,
    gateway_instance_id)`; `NOTIFY aurora_approval created`. (phase 2, RFE-011a) The
    effective timeout comes from the matching rules (`07 §Approval deadlines`,
