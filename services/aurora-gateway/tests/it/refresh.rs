@@ -748,6 +748,55 @@ async fn allowed_private_opens_a_token_endpoint() {
     assert_eq!(prov.lock().unwrap().calls, 1);
 }
 
+/// The dashboard's Test of such an account answers `unreachable` with the endpoint's host, not
+/// `unexpected`.
+#[tokio::test]
+async fn the_account_test_calls_a_refused_token_endpoint_unreachable() {
+    use aurora_crypto::{RingKind, SecretRing};
+    use tower::ServiceExt;
+    let fx = fixture("oauth2_refresh", "http://localhost:9/token", "r0").await;
+    let key = base64::engine::general_purpose::STANDARD.encode([1u8; 32]);
+    let ring =
+        Arc::new(SecretRing::parse(&format!("a1:{key}"), Some("a1"), RingKind::Internal).unwrap());
+    let snapshots = aurora_gateway::snapshot::SnapshotStore::new();
+    snapshots.install(snapshot("oauth2_refresh", "http://localhost:9/token"));
+    let guard = Arc::new(Guard::new(&[], Vec::new()).unwrap());
+    let test = Arc::new(aurora_gateway::account_test::AccountTest {
+        ring: ring.clone(),
+        snapshots,
+        pool: fx.db.pool().clone(),
+        tokens: manager(&fx, token_upstream(guard.clone(), None)),
+        plaintext: Arc::new(aurora_gateway::plaintext::PlaintextCache::new(
+            fx.vault.clone(),
+        )),
+        guard,
+        egress: None,
+        external_url: "https://aurora.test".into(),
+        limiter: aurora_gateway::limiter::Limiter::default(),
+    });
+    let request = http::Request::builder()
+        .method("POST")
+        .uri("/internal/v1/account-test")
+        .header("authorization", format!("Bearer {}", ring.active_bearer()))
+        .header("x-aurora-key-id", ring.active_id())
+        .body(axum::body::Body::from(
+            json!({"org_id": fx.org, "connection_id": fx.cand.id, "check": "fresh"}).to_string(),
+        ))
+        .unwrap();
+    let res = aurora_gateway::account_test::router(test)
+        .oneshot(request)
+        .await
+        .unwrap();
+    let body = http_body_util::BodyExt::collect(res.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"result": "unreachable", "detail": {"host": "localhost"}})
+    );
+}
+
 /// A certificate signed by a CA that only `tls.extra_ca_bundle` holds is trusted.
 #[tokio::test]
 async fn the_token_call_trusts_the_extra_ca_bundle() {
