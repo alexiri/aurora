@@ -27,6 +27,9 @@ const MAX_TRACKED: usize = 50_000;
 pub enum Observed {
     Rejected,
     Ok,
+    /// (FIX-295) The account could not be used because the gateway may not connect to its token
+    /// endpoint. No upstream status says this.
+    Unreachable,
 }
 
 impl Observed {
@@ -44,6 +47,7 @@ impl Observed {
     pub fn error(self) -> Option<&'static str> {
         match self {
             Self::Rejected => Some("rejected"),
+            Self::Unreachable => Some("unreachable"),
             Self::Ok => None,
         }
     }
@@ -110,9 +114,14 @@ impl AccountHealth {
     /// Records one upstream answer to a request with `account`'s credential injected. Never blocks the
     /// response: the write is spawned and its failure ignored.
     pub fn observe(&self, pool: &aurora_db::PgPool, account: AccountId, status: u16) {
-        let Some(observed) = Observed::of_status(status) else {
-            return;
-        };
+        if let Some(observed) = Observed::of_status(status) {
+            self.record(pool, account, observed);
+        }
+    }
+
+    /// Records what an agent's call showed about `account`, with the same spacing and the same
+    /// spawned write.
+    pub fn record(&self, pool: &aurora_db::PgPool, account: AccountId, observed: Observed) {
         if !self.should_write(account.id(), observed, Instant::now()) {
             return;
         }

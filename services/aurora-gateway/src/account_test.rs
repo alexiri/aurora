@@ -206,6 +206,7 @@ async fn check(t: &AccountTest, req: &Request) -> Response {
                 Ok(_) => answer("ok", None, None),
                 // The refresh or mint itself says the sign-in cannot be renewed (it also marks the connection).
                 Err(RefreshError::Reauth) => answer("rejected", None, None),
+                Err(RefreshError::Refused(host)) => answer("unreachable", Some(&host), None),
                 Err(_) => answer("unexpected", None, None),
             }
         }
@@ -217,6 +218,9 @@ async fn check(t: &AccountTest, req: &Request) -> Response {
                 match t.tokens.ensure_fresh(&loaded, &conn, &context, false).await {
                     Ok(c) => c,
                     Err(RefreshError::Reauth) => return answer("rejected", None, None),
+                    Err(RefreshError::Refused(host)) => {
+                        return answer("unreachable", Some(&host), None);
+                    }
                     Err(_) => return answer("unexpected", None, None),
                 }
             } else {

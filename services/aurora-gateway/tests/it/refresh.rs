@@ -1,13 +1,17 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! GW-011: token freshness: refresh with advisory lock + CAS, reauth, token.mint.
 
+use crate::common::{loopback_token_upstream, token_upstream};
 use aurora_config::SecretsSection;
 use aurora_core::Secret;
+use aurora_core::ranges::RefusedRanges;
 use aurora_db::repo::gateway::AppConnectionRow;
 use aurora_gateway::apps::ConnCand;
+use aurora_gateway::guard::Guard;
 use aurora_gateway::mint::{HttpMinter, MintError, MintInput, MintOutput, Minter};
 use aurora_gateway::refresh::{RefreshError, TokenManager};
 use aurora_gateway::snapshot::{Loaded, parse};
+use aurora_gateway::upstream::Upstream;
 use aurora_secrets::{Purpose, SealContext, SecretVault, StoreRegistry};
 use aurora_testkit::TestDb;
 use axum::Router;
@@ -216,11 +220,13 @@ async fn two_gateways_one_provider_call() {
         fx.db.pool().clone(),
         fx.vault.clone(),
         None,
+        loopback_token_upstream(),
     ));
     let m2 = Arc::new(TokenManager::new(
         fx.db.pool().clone(),
         fx.vault.clone(),
         None,
+        loopback_token_upstream(),
     ));
     let ctx = HashMap::new();
     let (a, b) = tokio::join!(
@@ -268,6 +274,7 @@ async fn invalid_grant_marks_reauth_required() {
         fx.db.pool().clone(),
         fx.vault.clone(),
         None,
+        loopback_token_upstream(),
     ));
     let e = m
         .ensure_fresh(&fx.loaded, &fx.cand, &HashMap::new(), false)
@@ -296,6 +303,7 @@ async fn provider_5xx_is_transient() {
         fx.db.pool().clone(),
         fx.vault.clone(),
         None,
+        loopback_token_upstream(),
     ));
     let e = m
         .ensure_fresh(&fx.loaded, &fx.cand, &HashMap::new(), false)
@@ -332,6 +340,7 @@ async fn mint_under_the_same_lock() {
             fx.db.pool().clone(),
             fx.vault.clone(),
             Some(stub.clone()),
+            loopback_token_upstream(),
         ))
     };
     let (m1, m2) = (mk(), mk());
@@ -377,6 +386,7 @@ async fn mint_metadata_carries_the_connection_access() {
             fx.db.pool().clone(),
             fx.vault.clone(),
             Some(probe.clone()),
+            loopback_token_upstream(),
         ));
         let ctx = HashMap::from([("org_id".to_owned(), "o1".to_owned())]);
         m.ensure_fresh(&fx.loaded, &fx.cand, &ctx, false)
@@ -396,6 +406,7 @@ async fn reseal_records_credential_key_names() {
         fx.db.pool().clone(),
         fx.vault.clone(),
         Some(stub.clone()),
+        loopback_token_upstream(),
     ));
     let ctx = HashMap::from([("org_id".to_owned(), "o1".to_owned())]);
     m.ensure_fresh(&fx.loaded, &fx.cand, &ctx, false)
@@ -425,6 +436,7 @@ async fn reseal_records_credential_key_names() {
         fx.db.pool().clone(),
         fx.vault.clone(),
         None,
+        loopback_token_upstream(),
     ));
     m.ensure_fresh(&fx.loaded, &fx.cand, &HashMap::new(), false)
         .await
@@ -453,6 +465,7 @@ async fn flipped_connection_is_never_minted_or_refreshed() {
         fx.db.pool().clone(),
         fx.vault.clone(),
         Some(stub.clone()),
+        loopback_token_upstream(),
     ));
     let ctx = HashMap::from([("org_id".to_owned(), "o1".to_owned())]);
     let e = m
@@ -594,4 +607,328 @@ async fn minter_presents_active_key_id_and_status_checks_the_ring() {
             );
         }
     }
+}
+
+// ---- FIX-295 (SEC-172): the token call goes through the destination guard ----
+
+/// The self-hosted app's host of these tests.
+const SELF_HOSTED: &str = "idp.corp.test";
+
+struct Idp {
+    at: std::net::SocketAddr,
+    /// Connections accepted: zero means nothing was dialled.
+    accepted: Arc<std::sync::atomic::AtomicUsize>,
+    provider: Arc<Mutex<Provider>>,
+    ca_pem: String,
+}
+
+/// The single-use-token provider over TLS on `ip`, with a certificate for `host` signed by a CA
+/// that only `ca_pem` trusts.
+async fn tls_idp(ip: std::net::IpAddr, host: &str) -> Idp {
+    let (cfg, ca_pem) = crate::common::private_ca_server(host);
+    let provider = Arc::new(Mutex::new(Provider {
+        calls: 0,
+        current: "r0".into(),
+    }));
+    let app = Router::new()
+        .route("/token", post(token_endpoint))
+        .with_state(provider.clone());
+    let l = tokio::net::TcpListener::bind((ip, 0)).await.unwrap();
+    let at = l.local_addr().unwrap();
+    let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (count, acceptor) = (accepted.clone(), tokio_rustls::TlsAcceptor::from(cfg));
+    tokio::spawn(async move {
+        loop {
+            let (s, _) = l.accept().await.unwrap();
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let (acceptor, app) = (acceptor.clone(), app.clone());
+            tokio::spawn(async move {
+                let Ok(tls) = acceptor.accept(s).await else {
+                    return;
+                };
+                let _ = hyper_util::server::conn::auto::Builder::new(
+                    hyper_util::rt::TokioExecutor::new(),
+                )
+                .serve_connection(
+                    hyper_util::rt::TokioIo::new(tls),
+                    hyper_util::service::TowerToHyperService::new(app),
+                )
+                .await;
+            });
+        }
+    });
+    Idp {
+        at,
+        accepted,
+        provider,
+        ca_pem,
+    }
+}
+
+impl Idp {
+    fn accepted(&self) -> usize {
+        self.accepted.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn calls(&self) -> usize {
+        self.provider.lock().unwrap().calls
+    }
+
+    /// A guard (no `allowed_private`) for which `host` is this server, as asked and fully
+    /// qualified.
+    fn guard_naming(&self, host: &str, allowed: &[&str]) -> Arc<Guard> {
+        let allowed: Vec<String> = allowed.iter().map(|s| (*s).to_owned()).collect();
+        let guard = Guard::new(&allowed, Vec::new()).unwrap();
+        guard.set_static_names(vec![
+            (host.to_owned(), vec![self.at]),
+            (format!("{host}."), vec![self.at]),
+        ]);
+        // The test server is on one of this machine's own interfaces, which no allowance opens.
+        guard.set_local_addresses(Vec::new());
+        Arc::new(guard)
+    }
+}
+
+fn manager(fx: &Fx, upstream: Arc<Upstream>) -> Arc<TokenManager> {
+    Arc::new(TokenManager::new(
+        fx.db.pool().clone(),
+        fx.vault.clone(),
+        None,
+        upstream,
+    ))
+}
+
+async fn refresh(m: &Arc<TokenManager>, fx: &Fx) -> Result<ConnCand, RefreshError> {
+    m.ensure_fresh(&fx.loaded, &fx.cand, &HashMap::new(), false)
+        .await
+}
+
+/// A name that resolves to a private address, with no allowance: nothing is connected to and
+/// the connection stays active.
+#[tokio::test]
+async fn a_token_endpoint_that_resolves_to_a_private_address_is_not_connected_to() {
+    let prov = Arc::new(Mutex::new(Provider {
+        calls: 0,
+        current: "r0".into(),
+    }));
+    let base = serve(
+        Router::new()
+            .route("/token", post(token_endpoint))
+            .with_state(prov.clone()),
+    )
+    .await;
+    let url = format!("{}/token", base.replace("127.0.0.1", "localhost"));
+    let fx = fixture("oauth2_refresh", &url, "r0").await;
+    let guard = Arc::new(Guard::new(&[], Vec::new()).unwrap());
+    let m = manager(&fx, token_upstream(guard, None));
+    let out = refresh(&m, &fx).await;
+    assert_eq!(prov.lock().unwrap().calls, 0, "the endpoint was called");
+    assert_eq!(out.unwrap_err(), RefreshError::Refused("localhost".into()));
+    assert_eq!(status(&fx).await, ("active".into(), 1));
+}
+
+/// The operator's `gateway.allowed_private` opens the same name.
+#[tokio::test]
+async fn allowed_private_opens_a_token_endpoint() {
+    let prov = Arc::new(Mutex::new(Provider {
+        calls: 0,
+        current: "r0".into(),
+    }));
+    let base = serve(
+        Router::new()
+            .route("/token", post(token_endpoint))
+            .with_state(prov.clone()),
+    )
+    .await;
+    let url = format!("{}/token", base.replace("127.0.0.1", "localhost"));
+    let fx = fixture("oauth2_refresh", &url, "r0").await;
+    let guard = Arc::new(Guard::new(&["localhost".to_owned()], Vec::new()).unwrap());
+    let m = manager(&fx, token_upstream(guard, None));
+    assert_eq!(refresh(&m, &fx).await.unwrap().version, 2);
+    assert_eq!(prov.lock().unwrap().calls, 1);
+}
+
+/// The dashboard's Test of such an account answers `unreachable` with the endpoint's host, not
+/// `unexpected`.
+#[tokio::test]
+async fn the_account_test_calls_a_refused_token_endpoint_unreachable() {
+    use aurora_crypto::{RingKind, SecretRing};
+    use tower::ServiceExt;
+    let fx = fixture("oauth2_refresh", "http://localhost:9/token", "r0").await;
+    let key = base64::engine::general_purpose::STANDARD.encode([1u8; 32]);
+    let ring =
+        Arc::new(SecretRing::parse(&format!("a1:{key}"), Some("a1"), RingKind::Internal).unwrap());
+    let snapshots = aurora_gateway::snapshot::SnapshotStore::new();
+    snapshots.install(snapshot("oauth2_refresh", "http://localhost:9/token"));
+    let guard = Arc::new(Guard::new(&[], Vec::new()).unwrap());
+    let test = Arc::new(aurora_gateway::account_test::AccountTest {
+        ring: ring.clone(),
+        snapshots,
+        pool: fx.db.pool().clone(),
+        tokens: manager(&fx, token_upstream(guard.clone(), None)),
+        plaintext: Arc::new(aurora_gateway::plaintext::PlaintextCache::new(
+            fx.vault.clone(),
+        )),
+        guard,
+        egress: None,
+        external_url: "https://aurora.test".into(),
+        limiter: aurora_gateway::limiter::Limiter::default(),
+    });
+    let request = http::Request::builder()
+        .method("POST")
+        .uri("/internal/v1/account-test")
+        .header("authorization", format!("Bearer {}", ring.active_bearer()))
+        .header("x-aurora-key-id", ring.active_id())
+        .body(axum::body::Body::from(
+            json!({"org_id": fx.org, "connection_id": fx.cand.id, "check": "fresh"}).to_string(),
+        ))
+        .unwrap();
+    let res = aurora_gateway::account_test::router(test)
+        .oneshot(request)
+        .await
+        .unwrap();
+    let body = http_body_util::BodyExt::collect(res.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"result": "unreachable", "detail": {"host": "localhost"}})
+    );
+}
+
+/// A certificate signed by a CA that only `tls.extra_ca_bundle` holds is trusted.
+#[tokio::test]
+async fn the_token_call_trusts_the_extra_ca_bundle() {
+    let idp = tls_idp("127.0.0.1".parse().unwrap(), "localhost").await;
+    let url = format!("https://localhost:{}/token", idp.at.port());
+    let fx = fixture("oauth2_refresh", &url, "r0").await;
+    let guard = Arc::new(Guard::new(&["localhost".to_owned()], Vec::new()).unwrap());
+    // Without the bundle the certificate is refused, and that is not a refused destination.
+    let m = manager(&fx, token_upstream(guard.clone(), None));
+    assert_eq!(
+        refresh(&m, &fx).await.unwrap_err(),
+        RefreshError::Unavailable
+    );
+    assert_eq!(idp.calls(), 0);
+    let m = manager(&fx, token_upstream(guard, Some(idp.ca_pem.as_bytes())));
+    assert_eq!(refresh(&m, &fx).await.unwrap().version, 2);
+    assert_eq!(idp.calls(), 1);
+}
+
+/// One registration of the app `demo` for [`SELF_HOSTED`], and the fixture's connection bound
+/// to it, with a token URL on the connection's own instance.
+async fn self_hosted_fixture(token_url: &str, org_owned: bool, builtin: bool, status: &str) -> Fx {
+    let mut fx = fixture("oauth2_refresh", token_url, "r0").await;
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO app_instances (id, org_id, package_id, app_id, host, label, builtin, status) \
+         VALUES ($1,$2,'pkg','demo',$3,'l',$4,$5)",
+    )
+    .bind(id)
+    .bind(org_owned.then_some(fx.org))
+    .bind(SELF_HOSTED)
+    .bind(builtin)
+    .bind(status)
+    .execute(fx.db.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE app_connections SET instance_id=$2 WHERE id=$1")
+        .bind(fx.cand.id)
+        .bind(id)
+        .execute(fx.db.pool())
+        .await
+        .unwrap();
+    fx.cand.instance_id = Some(id);
+    fx.cand.instance_host = Some(SELF_HOSTED.to_owned());
+    fx
+}
+
+/// (D-511) An instance administrator's registration opens its host's private address to the
+/// refresh of an account bound to it, on 443.
+#[tokio::test]
+async fn an_instance_wide_registration_may_refresh_on_its_private_host() {
+    let idp = tls_idp(crate::common::private_ip(), SELF_HOSTED).await;
+    let fx = self_hosted_fixture("https://{instance}/token", false, false, "active").await;
+    let guard = idp.guard_naming(SELF_HOSTED, &[]);
+    let m = manager(&fx, token_upstream(guard, Some(idp.ca_pem.as_bytes())));
+    assert_eq!(refresh(&m, &fx).await.unwrap().version, 2);
+    assert_eq!(idp.calls(), 1);
+}
+
+/// An organization's registration, a preset and a disabled one open nothing, and neither does the
+/// operator's refused range.
+#[tokio::test]
+async fn no_other_registration_opens_a_private_token_endpoint() {
+    let ip = crate::common::private_ip();
+    for (org_owned, builtin, state, refused) in [
+        (true, false, "active", false),
+        (false, true, "active", false),
+        (false, false, "disabled", false),
+        (false, false, "active", true),
+    ] {
+        let idp = tls_idp(ip, SELF_HOSTED).await;
+        let fx = self_hosted_fixture("https://{instance}/token", org_owned, builtin, state).await;
+        let guard = idp.guard_naming(SELF_HOSTED, &[]);
+        if refused {
+            guard.set_refused_ranges(RefusedRanges::parse(&[format!("{ip}/32")]).unwrap());
+        }
+        let m = manager(&fx, token_upstream(guard, Some(idp.ca_pem.as_bytes())));
+        let case = (org_owned, builtin, state, refused);
+        assert_eq!(
+            refresh(&m, &fx).await.unwrap_err(),
+            RefreshError::Refused(SELF_HOSTED.into()),
+            "{case:?}"
+        );
+        assert_eq!(idp.accepted(), 0, "{case:?}");
+    }
+}
+
+/// When the connection's registration cannot be read, whether it opens the address is unknown:
+/// the refresh is unavailable for now, not refused as a private address, and nothing is dialled.
+#[tokio::test]
+async fn an_unreadable_registration_is_unavailable_not_refused() {
+    let idp = tls_idp(crate::common::private_ip(), SELF_HOSTED).await;
+    let fx = self_hosted_fixture("https://{instance}/token", false, false, "active").await;
+    sqlx::query("ALTER TABLE app_instances RENAME TO app_instances_away")
+        .execute(fx.db.pool())
+        .await
+        .unwrap();
+    let guard = idp.guard_naming(SELF_HOSTED, &[]);
+    let m = manager(&fx, token_upstream(guard, Some(idp.ca_pem.as_bytes())));
+    assert_eq!(
+        refresh(&m, &fx).await.unwrap_err(),
+        RefreshError::Unavailable
+    );
+    assert_eq!(idp.accepted(), 0);
+}
+
+/// The allowance is for the registration's own host: a token URL elsewhere is judged as usual,
+/// and so is an account that is not bound to the registration.
+#[tokio::test]
+async fn the_allowance_covers_only_the_bound_accounts_own_instance_host() {
+    const ELSEWHERE: &str = "other.corp.test";
+    let ip = crate::common::private_ip();
+    let idp = tls_idp(ip, ELSEWHERE).await;
+    let url = format!("https://{ELSEWHERE}/token");
+    let fx = self_hosted_fixture(&url, false, false, "active").await;
+    let guard = idp.guard_naming(ELSEWHERE, &[]);
+    let m = manager(&fx, token_upstream(guard, Some(idp.ca_pem.as_bytes())));
+    assert_eq!(
+        refresh(&m, &fx).await.unwrap_err(),
+        RefreshError::Refused(ELSEWHERE.into())
+    );
+    assert_eq!(idp.accepted(), 0);
+
+    let idp = tls_idp(ip, SELF_HOSTED).await;
+    let url = format!("https://{SELF_HOSTED}/token");
+    let mut fx = self_hosted_fixture(&url, false, false, "active").await;
+    fx.cand.instance_id = None;
+    let guard = idp.guard_naming(SELF_HOSTED, &[]);
+    let m = manager(&fx, token_upstream(guard, Some(idp.ca_pem.as_bytes())));
+    assert_eq!(
+        refresh(&m, &fx).await.unwrap_err(),
+        RefreshError::Refused(SELF_HOSTED.into())
+    );
+    assert_eq!(idp.accepted(), 0);
 }
