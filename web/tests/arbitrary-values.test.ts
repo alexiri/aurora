@@ -22,11 +22,11 @@ const ALLOWED: Record<string, [string, string][]> = {
     ["w-[min(", "the `size` map: each width is capped at the viewport minus a 1 rem gutter (the only place)"],
   ],
   "src/components/chat/chat-panel.tsx": [
-    ["h-[calc(100dvh-", "on a phone the chat panel is the viewport less the page's chrome; from 768 px it is the full-height pane (no calc)"],
+    ["max-md:h-[calc(100dvh-", "on a phone only (`max-md:`) the chat panel is the viewport less the page's chrome; from 768 px it is the full-height pane (no calc)"],
     ["min-h-[560px]", "the chat panel's minimum height (docs/14 agent page: at least 560 px)"],
   ],
   "src/components/agents/files/viewer/file-viewer.tsx": [
-    ["h-[min(65dvh,40rem)]", "on a phone the editor card is 65 % of the viewport, at most 40 rem (P5-FILES-3); from 768 px it is the full-height pane"],
+    ["max-md:h-[min(65dvh,40rem)]", "on a phone only (`max-md:`) the editor card is 65 % of the viewport, at most 40 rem (P5-FILES-3); from 768 px it is the full-height pane"],
   ],
   "src/components/app-shell.tsx": [
     ["w-[min(18rem,calc(100vw-3rem))]", "the mobile navigation drawer leaves a 3 rem strip of page visible"],

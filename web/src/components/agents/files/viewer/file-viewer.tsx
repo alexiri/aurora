@@ -274,9 +274,9 @@ function EditorPane({
         <CsvTable name={name} text={initial} downloadHref={downloadUrl(agent, path)} onShowText={() => setAsText(true)} />
       ) : (
       <div
-        // From 768 px it is the page's full-height pane; the height here is the phone's.
+        // From 768 px it is the page's full-height pane; the height here is the phone's (`max-md:`), the min-height both.
         data-fill-pane=""
-        className="h-[min(65dvh,40rem)] min-h-64 overflow-hidden rounded-card border border-line bg-surface"
+        className="max-md:h-[min(65dvh,40rem)] min-h-64 overflow-hidden rounded-card border border-line bg-surface"
         // Esc, then Tab leaves the editor (Tab on its own indents).
         onKeyDownCapture={(e) => {
           if (e.key === "Escape") {
