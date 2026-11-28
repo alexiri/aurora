@@ -28,7 +28,8 @@ function Snippet({ label, text }: { label: string; text: string }) {
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium text-ink">{label}</p>
-      <pre className="overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">{text}</pre>
+      {/* It scrolls: reachable by keyboard, and named. */}
+      <pre tabIndex={0} role="region" aria-label={label} className="overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">{text}</pre>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => copy(text)}>
           Copy {label}
@@ -122,7 +123,7 @@ export function ConnectTab({ agent, wsId, canOwn = false }: { agent: Agent; wsId
         {config.isPending ? <Loading /> : null}
         {config.isError ? <ErrorState error={config.error} onRetry={() => config.refetch()} /> : null}
         {config.data ? (
-          <pre data-testid="container-config" className="max-h-64 overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">
+          <pre tabIndex={0} role="region" aria-label="Container config file" data-testid="container-config" className="max-h-64 overflow-auto rounded-control border border-line bg-subtle p-3 font-mono text-xs text-ink">
             {JSON.stringify(config.data, null, 2)}
           </pre>
         ) : null}

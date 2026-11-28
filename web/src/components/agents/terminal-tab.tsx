@@ -210,7 +210,7 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
       </div>
       <TerminalPane agentId={agentId} frozen={frozen} exitFocusRef={exitRef} />
       {/* Where Esc, then Tab lands (the pop-out button is Expert and not on a phone): visible only while focused. */}
-      <button ref={exitRef} type="button" className="sr-only focus-visible:not-sr-only focus-visible:text-xs focus-visible:underline">
+      <button ref={exitRef} type="button" className="sr-only focus-visible:not-sr-only focus-visible:self-start focus-visible:text-xs focus-visible:underline">
         Leave the terminal (Esc, then Tab)
       </button>
     </div>
@@ -218,9 +218,9 @@ export function TerminalTab({ agentId, frozen }: { agentId: string; frozen: bool
 }
 
 /**
- * The terminal itself (used by the tab and by the standalone window route). The pane has a bounded height (CSS,
- * `.term-pane`), so `autoResize` derives a fixed grid from it and output scrolls inside the pane's scrollback instead
- * of growing the page. `variant="window"` fills the viewport.
+ * The terminal itself (used by the tab and by the standalone window route). The pane has a bounded height (CSS: the
+ * tab's is the page's full-height pane, `data-fill-pane`), so `autoResize` derives a fixed grid from it and output
+ * scrolls inside the pane's scrollback instead of growing the page. `variant="window"` fills the viewport.
  */
 export function TerminalPane({
   agentId,
@@ -659,7 +659,9 @@ export function TerminalPane({
       >
         <Terminal
           ref={ref}
-          className={variant === "window" ? "term-pane term-pane-window border-line" : "term-pane border-line"}
+          className={variant === "window" ? "term-pane term-pane-window border-line" : "term-pane border-line md:min-h-72"}
+          // The tab's pane takes the room the page leaves (at least ~16 rows); not while it is hidden after the last retry.
+          data-fill-pane={variant === "tab" && !gaveUp ? "" : undefined}
           core={core}
           autoResize
           announceOutput

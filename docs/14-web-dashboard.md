@@ -383,6 +383,17 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   beside it). `web/tests/arbitrary-values.test.ts` fails on any other
   arbitrary Tailwind value (`[12px]`, `[80%]`, `[min(…)]`) except the few on its
   commented allow-list.
+- **Full-height panes** (the agent page's Terminal, Files and Chat): the pane fills
+  exactly what the header, the tab rows and whatever sits under it (the "Showing more
+  controls" line included) leave, so from 768 px the page does not scroll. It is a
+  layout, never a height computed from the chrome: the pane's element carries
+  `data-fill-pane` (`DropZone` takes `fillPane`) and `globals.css` makes `main` and
+  every box down to it a flex column. The pane sets its own smallest height with a
+  `min-h-*` class (Terminal and the file list 18 rem, the file editor 16 rem, Chat
+  560 px) and scrolls inside itself; on a window too short for that the page scrolls.
+  Every box between `main` and a pane must work as a column. Below 768 px each pane
+  has its own height and the page may scroll to it. `e2e/agent-fill-pane.spec.ts`
+  checks it with "Show more controls" on and off.
 - **Lists follow their cursors** (`docs/05` list convention, FIX-117): the API pages
   at 50 by default and 200 at most, so a dashboard list that must be complete
   (pickers, approvals, keys, members, organizations, connections, conversations)
@@ -2131,9 +2142,9 @@ every other topic is owners/admins and is not listed for a member.)
     UTF-8 **Binary** WebSocket frames, at most one 16 KiB `TERMINAL_CHUNK` each (a paste is
     chunked); Text frames are resize-control only (FIX-054, `16 §W19`). An open session keeps the
     sandbox awake ("awake because…" says "Terminal in use") up to the 4 h cap.
-    (Phase 5, FIX-138, web half) **Pane size and scrolling:** the pane has a bounded height (at
-    least 18 rem, otherwise the viewport minus the page chrome; 60 % of the viewport below
-    768 px), so `autoResize` derives a fixed grid and output scrolls inside the pane's
+    (Phase 5, FIX-138, web half) **Pane size and scrolling:** the pane has a bounded height (a
+    full-height pane, see Components: at least 18 rem, otherwise the room the page leaves; 60 %
+    of the viewport below 768 px), so `autoResize` derives a fixed grid and output scrolls inside the pane's
     scrollback (5,000 lines), never by growing the page. The view follows the cursor; once the
     person has scrolled up it stays put and a **Jump to latest** button appears. (Owner
     2026-11-14) While a full-screen app (`claude`, `vim`, `less`: the alternate screen) runs, the
