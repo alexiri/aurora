@@ -2178,7 +2178,7 @@ Data (add to `docs/03-data-model.md` `user_onboarding`): row `| more_controls | 
   - `GET /v1/orgs/{org}/attention?state=open|done` (organization owners and admins; others 404/403 as the org routes). Kinds: `app_request`, `chat_platform_request`, `ai_key_request` whose resolving level is `organization` (below), plus `ownerless_org` is **not** here (it stays in Administration). **Amended by C-1179:** also `library_update` and `org_account_broken` (open only).
   - `GET /v1/admin/attention?state=open|done` (instance admins; 403 otherwise; amends C-1022). The six kinds of C-1022 are unchanged, plus `app_request` and `chat_platform_request` whose resolving level is `administration`.
   - **Item** `AttentionItem` (the C-1022 fields are kept, so today's Administration page and badge read it unchanged): `{ id: string, kind, level: "workspace" | "organization" | "administration", topic: string, subject_id: string, title: string, detail: string, since: string (date-time), href: string, decision: boolean, actors: { user_id: string, display_name: string }[] (at most 5 askers, oldest first), actors_total: integer, reason: string | null, own: boolean, action: { label: string, href: string } | null, can_decline: boolean, state: "open" | "done" | "declined", closed_at: string | null, message: string | null, closed_by_role: "org_admin" | "instance_admin" | "system" | null, closed_by: { display_name: string } | null }`.
-    - `id` is stable: the request id for request kinds, `<kind>:<subject_id>` for the rest. `topic` names the page of the level's rail that resolves the item (`chat-platforms`, `apps`, `ai-models`, `people`, `approvals`, `accounts`), so a rail can badge a topic.
+    - `id` is stable: the request id for request kinds, `<kind>:<subject_id>` for the rest. `topic` names the page of the level's rail that resolves the item (`chat-platforms`, `apps`, `ai-models`, `people`, `approvals`, `accounts`), so a rail can badge a topic. **Amended by C-1179:** for the organization level a topic is a Manage rail entry id (it adds `skills`).
     - `title` and `detail` are the fixed sentences of `14 §9` filled with display names and subject names only (SEC-135). Text that points to an administrator names the **role** ("Ask an admin", D-407). `title` for requests: "Bob Builder wants Jira", "Bob Builder and Carol Member want a chat platform", "Bob Builder, Carol Member and 2 others want an AI key".
     - `reason` is the **first asker's** reason (C-1081) or null; the other askers' reasons are on the request (C-1081). `own` is true only on `my_request`.
     - `action` is the one primary action: `{ label: "Set up", href }`, `"Connect a chat platform"`, `"Add an AI key"`, `"Review"` (approvals: opens the conversation), `"Sign in again"` / `"Fix"` (accounts). `href` is the existing field and equals `action.href` when `action` is set. `can_decline` is true on request kinds the caller may decline (C-1081).
@@ -3061,7 +3061,10 @@ and copy them into `14`.
     (`own: false`) in the feed's `count` and in `GET /v1/attention/counts` `organization.count` and `.topics`. The route's
     authorization is unchanged (owners and admins by effective role; 404 for a non-member, 403 for a member; the counts
     answer `null`). Both are open only: `state=done` still lists requests. Neither can be declined, neither has
-    `actors` or a `reason`. The workspace and Administration feeds do not list them.
+    `actors` or a `reason`. The workspace and Administration feeds do not list them. In the organization's feed and
+    counts a `topic` is the id of a **Manage rail entry** (`apps`, `chat-platforms`, `ai-models`, `skills`): the rail
+    badges an entry with `topics[<its id>]`, so an organization account is `apps`, not the workspace level's
+    `accounts`.
     - **`library_update`**: one item per skill library with a `pending` update to an **organization-tier** skill of
       `{org}` (no workspace and no agent; those are decided at their own level). The organization is the skill's, so an
       instance library counts this organization's skills only. "Can decide" is the library pages' rule for the
