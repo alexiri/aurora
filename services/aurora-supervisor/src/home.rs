@@ -112,6 +112,9 @@ pub struct HomeProjector {
     /// A part of the current generation was invalid or failed; the generation must not be acked.
     failed: Option<&'static str>,
     current: Option<u64>,
+    /// The generation this process is staging and the lowest part index it has not been given.
+    /// Set by part 0 only: what an earlier process staged is never finished by this one.
+    staging: Option<(u64, u32)>,
     /// (P6-MEMLOCK, C-1149) The memory files staged as locked in the current generation (their
     /// rel paths); reset with the staging area. Only a memory file entry arrives with the flag.
     locked_keys: BTreeSet<PathBuf>,
@@ -305,6 +308,7 @@ impl HomeProjector {
             cfg,
             failed: None,
             current: None,
+            staging: None,
             locked_keys: BTreeSet::new(),
             skipped: BTreeSet::new(),
             locked_bytes: Arc::new(HashMap::new()),
@@ -354,20 +358,31 @@ impl HomeProjector {
         )
     }
 
-    /// Applies one `home.sync` part. Part 0 (or a new generation) resets staging.
+    /// Applies one `home.sync` part. Part 0 resets staging; any other part is taken only when
+    /// this process staged every part before it (a replay of one is fine). The locked set lives
+    /// in this process, so a generation staged by an earlier one, or with a part missing, would
+    /// install a locked memory writable: it is refused, not acked, and sent again from part 0.
     pub fn apply_part(&mut self, sync: &HomeSync) -> Result<PartOutcome, HomeError> {
-        let gen_file = self.sync_dir().join("generation");
-        let staged_gen = fs::read_to_string(&gen_file)
-            .ok()
-            .and_then(|s| s.trim().parse::<u64>().ok());
-        if sync.part_index == 0 || staged_gen != Some(sync.generation) {
+        if sync.part_index == 0 {
+            self.staging = None;
             let _ = fs::remove_dir_all(self.sync_dir());
             fs::create_dir_all(self.staged_files())?;
-            fs::write(&gen_file, sync.generation.to_string())?;
             self.failed = None;
             // (P6-MEMLOCK) The locked set belongs to the generation being staged.
             self.locked_keys.clear();
             self.skipped.clear();
+            self.staging = Some((sync.generation, 0));
+        }
+        match self.staging {
+            Some((g, next)) if g == sync.generation && sync.part_index <= next => {
+                self.staging = Some((g, next.max(sync.part_index.saturating_add(1))));
+            }
+            _ => {
+                return Err(HomeError::Incomplete(
+                    sync.generation,
+                    "an earlier part was not staged; waiting for the generation from part 0",
+                ));
+            }
         }
         self.current = Some(sync.generation);
         if let Err(e) = self.stage(sync) {
