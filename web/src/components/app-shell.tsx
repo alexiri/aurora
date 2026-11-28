@@ -3,7 +3,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { useCallback, useState, useSyncExternalStore, type ComponentType, type ReactNode, type SVGProps } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type ReactNode, type RefObject, type SVGProps } from "react";
 
 import { clearDrafts } from "@/components/chat/composer/drafts";
 import { logout, useInstance, useMe, useOrg, useResolve, useWorkspace } from "@/lib/api/queries";
@@ -13,7 +13,7 @@ import { visibleTopics } from "@/lib/api/roles";
 import { loginUrl, useUnauthorizedRedirect } from "@/lib/auth/use-unauthorized-redirect";
 import { ApiError } from "@/lib/api/client";
 import { personName, workspaceDisplayName } from "@/lib/workspace-name";
-import { backLink, lastWorkspace, usePlaceRecord, useRecordPlace } from "@/lib/nav/manage-return";
+import { backLink, lastWorkspace, usePlaceRecord, useRecordPlace, type PlaceRecord } from "@/lib/nav/manage-return";
 import { removeThisDevicePush, usePushResync } from "@/lib/web-push";
 import { accountRoutes, ADMIN_RAIL_GROUPS, ADMIN_RAIL_LABEL, adminRoutes, ORG_RAIL_GROUPS, orgRoutes, TOPIC_LABEL, topicHref, wsRoutes } from "@/lib/routes";
 import { useTimezoneAutofill } from "@/lib/timezone";
@@ -485,6 +485,58 @@ function RailManage({ place }: { place: Place }) {
 }
 
 /**
+ * The answer of a recorded emergency reader's workspace, for the back line: `null` when it can't be read, `undefined`
+ * until it answers. Asked again on every page of the place: a grant runs out without anyone doing anything here.
+ */
+function useRecordedReading(record: PlaceRecord | null, pathname: string) {
+  const resolved = useResolve(record?.orgSlug, record?.wsSlug);
+  const id = record ? resolved.data?.workspace?.id : undefined;
+  const answer = useWorkspace(id);
+  const { refetch } = answer;
+  useEffect(() => {
+    // Not cancelling: the first read of this page may be on its way already.
+    if (id) void refetch({ cancelRefetch: false });
+  }, [id, pathname, refetch]);
+  if (!record) return undefined;
+  // A failed re-read keeps the old data, so the error decides first.
+  return resolved.isError || answer.isError ? null : answer.data;
+}
+
+/**
+ * On a short window the rail's menu scrolls: when a page opens, its entry is brought into view. The menu and the foot
+ * under it fill in as their data arrives, so this holds until the person touches the menu. Only the menu scrolls, never
+ * the page.
+ */
+function useRevealCurrent(menu: RefObject<HTMLDivElement | null>, pathname: string) {
+  useEffect(() => {
+    const el = menu.current;
+    if (!el) return;
+    const reveal = () => {
+      const current = el.querySelector("[aria-current='page']");
+      if (!current) return;
+      const box = el.getBoundingClientRect();
+      const entry = current.getBoundingClientRect();
+      // `scrollBy` on the menu itself: `scrollIntoView` would scroll the page too. (jsdom has no element `scrollBy`.)
+      if (entry.top < box.top) el.scrollBy?.(0, entry.top - box.top);
+      else if (entry.bottom > box.bottom) el.scrollBy?.(0, entry.bottom - box.bottom);
+    };
+    const entries = new MutationObserver(reveal);
+    const height = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(reveal);
+    const touched = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+    const stop = () => {
+      entries.disconnect();
+      height?.disconnect();
+      for (const e of touched) el.removeEventListener(e, stop);
+    };
+    entries.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-current"] });
+    height?.observe(el);
+    for (const e of touched) el.addEventListener(e, stop, { passive: true });
+    reveal();
+    return stop;
+  }, [menu, pathname]);
+}
+
+/**
  * (D-508(a)) The rail shows exactly one place — a workspace, its organization (Manage <org>), Administration or Your
  * account — and its top says which: the place card, with a back line outside a workspace.
  */
@@ -512,17 +564,24 @@ function SidebarContent({
   // (D-508(h)) A workspace is remembered as the way back only when its pages open for this person: an administrator
   // who is not one of its people is on the way to its manage page (the workspace layout's own rule, FIX-277).
   const opens = !!workspace && !(workspace.my_role == null && workspace.administers === true && !isEmergencyReader(workspace));
+  // The workspace's own answer doesn't say it is the viewer's own: their membership does, as for the place card.
+  const personal = me.data?.memberships?.find((m) => m.org.slug === orgSlug)?.workspaces.find((w) => w.slug === wsSlug)?.personal;
   useRecordPlace(
     orgSlug && wsSlug && viewer?.id && workspace && opens
-      ? { userId: viewer.id, orgSlug, wsSlug, wsName: workspaceDisplayName(workspace, viewer), reader: isEmergencyReader(workspace) }
+      ? { userId: viewer.id, orgSlug, wsSlug, wsName: workspaceDisplayName({ ...workspace, personal }, viewer), reader: isEmergencyReader(workspace) }
       : null,
     pathname,
   );
   const record = usePlaceRecord();
   const inAdmin = pathname.startsWith("/admin");
   const place = placeOf(pathname, orgSlug, wsSlug, isInstanceAdmin);
+  const reading = useRecordedReading(place.kind !== "workspace" && record?.reader && record.userId === viewer?.id ? record : null, pathname);
   const back =
-    place.kind === "workspace" ? undefined : backLink(record, viewer?.id, me.data?.memberships, place.kind === "org" ? place.orgSlug : undefined);
+    place.kind === "workspace"
+      ? undefined
+      : backLink(record, viewer?.id, me.data?.memberships, place.kind === "org" ? place.orgSlug : undefined, reading);
+  const menu = useRef<HTMLDivElement>(null);
+  useRevealCurrent(menu, pathname);
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 p-4">
       <Link href="/" className="block self-start rounded-md" aria-label="Aurora home">
@@ -532,7 +591,7 @@ function SidebarContent({
         {back ? <PlaceBack back={back} /> : null}
         <ScopeSwitcher place={place} />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={menu} className="min-h-0 flex-1 overflow-y-auto">
         {place.kind === "admin" ? (
           <AdminNavList pathname={pathname} />
         ) : place.kind === "account" ? (

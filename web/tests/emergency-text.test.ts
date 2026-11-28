@@ -69,6 +69,15 @@ describe("emergencyPeopleBannerText", () => {
     );
   });
 
+  it("a reason that already ends its sentence gets no second full stop", () => {
+    expect(emergencyPeopleBannerText(grant({ reason: "Looking into a report (test cluster)." }))).toBe(
+      "Ada Lovelace, an organization owner, has emergency read access to this workspace until 18:00. Reason: Looking into a report (test cluster).",
+    );
+    expect(emergencyPeopleBannerText(grant({ active: false, ended_at: "2026-11-20T16:00:00Z", reason: "Is the export complete? " }))).toBe(
+      "Ada Lovelace, an organization owner, had emergency read access from 14:00 to 16:00. Reason: Is the export complete?",
+    );
+  });
+
   it("a name is never shown raw", () => {
     const text = emergencyPeopleBannerText(grant({ by: { id: "u1", display_name: "Ann <b> & Co" } }));
     expect(text).toContain("Ann <b> & Co");

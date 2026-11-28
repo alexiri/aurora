@@ -5,6 +5,7 @@
  */
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 
+import { isEmergencyReader } from "@/lib/emergency";
 import { readRecent, type ScopeMembership } from "@/lib/nav/recent-scopes";
 import { wsRoutes } from "@/lib/routes";
 import { workspaceDisplayName } from "@/lib/workspace-name";
@@ -105,17 +106,26 @@ export interface BackLink {
 /**
  * Where a place's back line goes: the recorded page, while it is still this person's to open; else their last workspace
  * (in `orgSlug` for Manage <org>); else nowhere, and the line is hidden. Nothing while the session loads.
+ *
+ * A reader's workspace is not among their memberships, so its record holds only while `reading`, the recorded
+ * workspace's own answer, still says the grant is open (`null`: it can't be read any more; `undefined`: not answered
+ * yet, and the line waits).
  */
 export function backLink(
   record: PlaceRecord | null,
   userId: string | undefined,
   memberships: ScopeMembership[] | undefined,
   orgSlug?: string,
+  reading?: { emergency_reader?: boolean } | null,
 ): BackLink | undefined {
   if (!userId || !memberships) return undefined;
   if (record && record.userId === userId) {
     const known = memberships.some((m) => m.org.slug === record.orgSlug && m.workspaces.some((w) => w.slug === record.wsSlug));
-    if (known || record.reader) return { href: record.path, name: record.wsName };
+    if (known) return { href: record.path, name: record.wsName };
+    if (record.reader) {
+      if (reading === undefined) return undefined;
+      if (isEmergencyReader(reading)) return { href: record.path, name: record.wsName };
+    }
   }
   const w = lastWorkspace(userId, memberships, orgSlug);
   return w ? { href: wsRoutes(w.orgSlug, w.wsSlug).home(), name: w.wsName } : undefined;

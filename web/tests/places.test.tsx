@@ -33,6 +33,8 @@ interface World {
   instanceAdmin: boolean;
   /** The caller's own workspaces in Acme. */
   mine: { slug: string; name: string; personal: boolean }[];
+  /** The caller's own emergency grant on Bob's workspace is open. */
+  grantOpen?: boolean;
 }
 let world: World;
 
@@ -45,6 +47,16 @@ const allWorkspaces = () => [
   wsRow("w-alice", "alice", "Alice Admin", "owner", { personal_of: { id: ME, name: "Alice Admin" } }),
   wsRow("w-bob", "bob", "Bob Builder", null, { personal_of: { id: "u2", name: "Bob Builder" } }),
 ];
+
+/**
+ * One workspace as `/v1/workspaces/{ws}` and `/v1/resolve` really answer: no `personal_of` (only the organization's list
+ * carries it), so nothing in it says the workspace is the viewer's own.
+ */
+const single = (w: ReturnType<typeof wsRow>) => {
+  const answer: Record<string, unknown> = { ...w, emergency_reader: w.slug === "bob" && world.grantOpen === true };
+  delete answer.personal_of;
+  return answer;
+};
 
 const item = {
   id: "broken_account:s1", kind: "broken_account", topic: "accounts", subject_id: "s1", level: "organization", state: "open", own: false,
@@ -77,14 +89,14 @@ function serve() {
       }
       if (p === "/v1/resolve") {
         const slug = url.searchParams.get("workspace");
-        return json(200, { org, workspace: slug ? allWorkspaces().find((w) => w.slug === slug) : null });
+        return json(200, { org, workspace: slug ? single(allWorkspaces().find((w) => w.slug === slug)!) : null });
       }
       if (p === "/v1/orgs/o1") return json(200, org);
       if (p === "/v1/orgs/o1/workspaces") return json(200, { items: allWorkspaces(), next_cursor: null });
       const one = p.match(/^\/v1\/workspaces\/([^/]+)$/);
       if (one) {
         const w = allWorkspaces().find((x) => x.id === one[1]) ?? allWorkspaces()[0]!;
-        return json(200, { ...w, audience: { people: 3, owners: [{ id: "u3", display_name: "Grace Hopper" }], owners_total: 3, emergency: null, emergency_active_more: 0 } });
+        return json(200, { ...single(w), audience: { people: 3, owners: [{ id: "u3", display_name: "Grace Hopper" }], owners_total: 3, emergency: null, emergency_active_more: 0 } });
       }
       if (p === "/v1/orgs/o1/members") return json(200, { items: [{ user_id: ME }, { user_id: "u2" }], next_cursor: null });
       if (p === "/v1/orgs/o1/agents") {
@@ -196,12 +208,41 @@ describe("the back line (D-508(h), C-1178)", () => {
     expect(parsePlaceRecord(JSON.stringify({ ...base, path: "/o/acme/w/ops2?tab=a" }))?.path).toBe("/o/acme/w/ops2?tab=a");
   });
 
-  it("drops a record whose workspace is gone, unless it was read under emergency access", () => {
+  it("drops a record whose workspace is gone, unless it is read under an emergency grant that is still open", () => {
     const memberships = [{ org: { slug: "acme" }, workspaces: [{ slug: "ops2", name: "Ops two" }] }];
     const gone = { userId: ME, orgSlug: "acme", wsSlug: "gone", wsName: "Gone", path: "/o/acme/w/gone", reader: false };
+    const reader = { ...gone, reader: true };
     expect(backLink(gone, ME, memberships, "acme")?.href).toBe("/o/acme/w/ops2");
-    expect(backLink({ ...gone, reader: true }, ME, memberships, "acme")?.href).toBe("/o/acme/w/gone");
+    expect(backLink(reader, ME, memberships, "acme", { emergency_reader: true })?.href).toBe("/o/acme/w/gone");
+    // The grant has ended, or the workspace can't be read any more: the last workspace.
+    expect(backLink(reader, ME, memberships, "acme", { emergency_reader: false })?.href).toBe("/o/acme/w/ops2");
+    expect(backLink(reader, ME, memberships, "acme", null)?.href).toBe("/o/acme/w/ops2");
+    // Not answered yet: no line, rather than one that may be wrong.
+    expect(backLink(reader, ME, memberships, "acme", undefined)).toBeUndefined();
     expect(backLink(gone, ME, undefined, "acme")).toBeUndefined();
+  });
+
+  it("goes back to the workspace read under emergency access while the grant is open", async () => {
+    record({ wsSlug: "bob", wsName: "Bob Builder", path: "/o/acme/w/bob/agents", reader: true });
+    shell("/o/acme", { org: "acme" }, { grantOpen: true });
+    expect(await within(sidebar()).findByRole("link", { name: "Back to Bob Builder" })).toHaveAttribute("href", "/o/acme/w/bob/agents");
+  });
+
+  it("once the grant has ended, goes to your last workspace instead", async () => {
+    window.localStorage.setItem(`aurora.recent-scopes:${ME}`, JSON.stringify(["acme/bob", "acme/ops2"]));
+    record({ wsSlug: "bob", wsName: "Bob Builder", path: "/o/acme/w/bob/agents", reader: true });
+    shell("/o/acme", { org: "acme" }, { grantOpen: false });
+    expect(await within(sidebar()).findByRole("link", { name: "Back to Ops two" })).toHaveAttribute("href", "/o/acme/w/ops2");
+    expect(within(sidebar()).queryByRole("link", { name: "Back to Bob Builder" })).toBeNull();
+  });
+
+  it("from your own workspace, says 'Your workspace' though its own answer doesn't mark it as yours", async () => {
+    window.history.replaceState(null, "", "/o/acme/w/alice/agents");
+    shell("/o/acme/w/alice/agents", { org: "acme", ws: "alice" });
+    await waitFor(() => expect(window.sessionStorage.getItem("aurora.place-return")).toContain("/o/acme/w/alice/agents"));
+    cleanup();
+    shell("/account", {});
+    expect(await within(sidebar()).findByRole("link", { name: "Back to Your workspace" })).toHaveAttribute("href", "/o/acme/w/alice/agents");
   });
 
   it("the last workspace is the one used last, else the personal one, else the first", () => {
