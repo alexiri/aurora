@@ -801,7 +801,7 @@ fn skills_defs() -> Vec<SettingDef> {
             S,
             "skills.library.bytes_per_agent",
             1_073_741_824,
-            1024 * 1024,
+            4 * 1024 * 1024,
         ),
     ]
 }

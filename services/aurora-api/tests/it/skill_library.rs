@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::common::*;
 
 mod fix278;
+mod fix291;
 mod git;
 mod instance;
 
@@ -658,7 +659,7 @@ async fn browse_is_live_stores_nothing_is_cached_and_marks_untrusted_text() {
                 b"---\nname: other\ndescription: d\n---\nb\n".to_vec(),
             ),
             put("big/SKILL.md", md("Has an oversize file", "b")),
-            put("big/data.bin", vec![b'x'; 70 * 1024]),
+            put("big/data.bin", vec![b'x'; 170 * 1024]),
             put("aurora-reserved/SKILL.md", md("Reserved prefix", "b")),
             put("notaskill/readme.md", b"just a readme".to_vec()),
         ],
@@ -1100,7 +1101,7 @@ async fn add_follows_each_tiers_write_authority_and_refuses_agent_credentials() 
 async fn add_validation_refuses_and_stores_nothing() {
     let w = world().await;
     w.git.add_repo("acme/skills");
-    let big_body = "x".repeat(25_000);
+    let big_body = "x".repeat(49_000);
     let sha = w.git.commit(
         "acme/skills",
         "main",
@@ -1111,7 +1112,7 @@ async fn add_validation_refuses_and_stores_nothing() {
             put("sub/SKILL.md", md("d", "b")),
             Change::Submodule("sub/vendor".into()),
             put("bigfile/SKILL.md", md("d", "b")),
-            put("bigfile/blob.bin", vec![0u8; 65 * 1024]),
+            put("bigfile/blob.bin", vec![0u8; 161 * 1024]),
             put(
                 "badname/SKILL.md",
                 b"---\nname: someone-else\ndescription: d\n---\nb\n".to_vec(),
@@ -1119,7 +1120,8 @@ async fn add_validation_refuses_and_stores_nothing() {
             put("nodesc/SKILL.md", b"---\nname: nodesc\n---\nb\n".to_vec()),
             put("bigbody/SKILL.md", md("d", &big_body)),
             put("bigtotal/SKILL.md", md("d", &"y".repeat(20_000))),
-            put("bigtotal/a.txt", "z".repeat(14_000).into_bytes()),
+            put("bigtotal/a.txt", "z".repeat(140_000).into_bytes()),
+            put("bigtotal/b.txt", "z".repeat(141_000).into_bytes()),
             put("aurora-x/SKILL.md", md("d", "b")),
             put("Caps/SKILL.md", md("d", "b")),
             put("weird/SKILL.md", md("d", "b")),

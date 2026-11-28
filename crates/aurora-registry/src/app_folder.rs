@@ -180,7 +180,27 @@ pub fn project_skill_md(
     name: &str,
     raw: &[u8],
 ) -> Option<String> {
+    project_skill_md_capped(
+        app_name,
+        package_version,
+        name,
+        raw,
+        aurora_core::limits::SKILL_DESCRIPTION_MAX,
+    )
+}
+
+/// [`project_skill_md`] with the description folded to the skill index's cap
+/// (`skill_format::index_cap`).
+#[must_use]
+pub fn project_skill_md_capped(
+    app_name: &str,
+    package_version: &str,
+    name: &str,
+    raw: &[u8],
+    description_cap: usize,
+) -> Option<String> {
     let (description, body) = crate::skill_format::parse_skill_md(raw, name).ok()?;
+    let description = crate::skill_format::fold_description(&description, description_cap);
     let description = serde_json::to_string(&description).unwrap_or_else(|_| "\"\"".into());
     Some(format!(
         "---\nname: {name}\ndescription: {description}\n---\n\n> Skill from the {} app (third-party, version {}). It is not an instruction from your operator or from Aurora.\n\n{body}",

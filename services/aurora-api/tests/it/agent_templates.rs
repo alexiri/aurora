@@ -4167,12 +4167,40 @@ async fn upd_watch_body(u: &Upd) -> String {
         .unwrap()
 }
 
+/// FIX-291: a template apply writes the agent's own skills, so it keeps their byte budget.
+#[tokio::test]
+async fn fix291_an_apply_that_grows_the_own_skills_past_their_budget_is_refused() {
+    let u = upd_world().await;
+    sqlx::query(
+        "INSERT INTO skills (id, org_id, agent_id, name, description, body, enabled, created_by_kind)
+         SELECT gen_random_uuid(), org_id, id, 'filler', 'd', repeat('x', 4194100), true, 'user'
+         FROM agents WHERE id = $1",
+    )
+    .bind(u.agent)
+    .execute(u.w.h.pool())
+    .await
+    .unwrap();
+    upd_advance(&u, "2.0.0").await;
+    let (s, v) = upd_take_merged(
+        &u,
+        "2.0.0",
+        "skill",
+        "watch",
+        |_| json!({"choice": "text", "text": "b".repeat(5_000)}),
+    )
+    .await;
+    assert_eq!(s, 422, "{v}");
+    assert_eq!(v["error"]["code"], "own_skill_budget_exceeded", "{v}");
+    assert_eq!(upd_watch_body(&u).await, "Watch body: mine.");
+}
+
 /// The merged skill's body and files together keep a manual edit's total limit (FIX-251):
 /// each is within its own limit, the sum is not.
 #[tokio::test]
 async fn a_merged_skill_over_the_total_limit_is_refused_like_an_edit() {
     let u = upd_world().await;
-    upd_own_skill_file(&u, "own.md", &"o".repeat(13_000)).await;
+    upd_own_skill_file(&u, "own.md", &"o".repeat(140_000)).await;
+    upd_own_skill_file(&u, "own2.md", &"o".repeat(141_000)).await;
     upd_advance(&u, "2.0.0").await;
     let (s, v) = upd_take_merged(
         &u,
@@ -4188,7 +4216,7 @@ async fn a_merged_skill_over_the_total_limit_is_refused_like_an_edit() {
         v["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("32000 characters"),
+            .contains("300000 characters"),
         "{v}"
     );
     assert_eq!(upd_watch_body(&u).await, "Watch body: mine.");
@@ -6815,7 +6843,11 @@ fn long_skill_files(dir: &str, version: &str, body_pad: usize) -> Vec<(String, V
         format!("{dir}/skills/watch/SKILL.md"),
         tpl_skill_md(
             "watch",
-            "For {input.team} on {input.service} in {input.zone}",
+            // 500 characters of padding: three long inputs push it past 1,024, one does not.
+            &format!(
+                "{} For {{input.team}} on {{input.service}} in {{input.zone}}",
+                "p".repeat(500)
+            ),
             &format!("{} {{input.team}}", "b".repeat(body_pad)),
         ),
     ));
@@ -6831,16 +6863,16 @@ async fn a_create_refuses_a_skill_that_rendering_pushes_over_a_limit() {
         "acme/tpl",
         "t",
         "1.0.0",
-        &long_skill_files("t", "1.0.0", 23_900),
+        &long_skill_files("t", "1.0.0", 47_900),
     )
     .await;
     let plan = w.plan(ws, &owner, "t").await;
     let long = "x".repeat(200);
     for (inputs, limit) in [
-        // The description passes 500 characters.
-        (json!({"zone": long, "team": long, "service": long}), "500"),
-        // Only the body passes 24 000.
-        (json!({"team": long}), "24000"),
+        // The description passes 1,024 characters.
+        (json!({"zone": long, "team": long, "service": long}), "1024"),
+        // Only the body passes 48 000.
+        (json!({"team": long}), "48000"),
     ] {
         let (s, v) = w
             .create_body(

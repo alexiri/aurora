@@ -13,9 +13,9 @@ export type UpdateSkillRequest = components["schemas"]["UpdateSkillRequest"];
 
 /** Limits from docs/02; the API stays authoritative. */
 export const SKILL_NAME_MAX = 64;
-export const SKILL_DESCRIPTION_MAX = 500;
-export const SKILL_BODY_MAX = 24_000;
-export const SKILL_TOTAL_MAX = 32_000;
+export const SKILL_DESCRIPTION_MAX = 1_024;
+export const SKILL_BODY_MAX = 48_000;
+export const SKILL_TOTAL_MAX = 300_000;
 export const SKILL_TITLE_MAX = 80;
 export const SKILL_PATH_MAX_DEPTH = 4;
 export const SKILL_PATH_MAX_LENGTH = 200;

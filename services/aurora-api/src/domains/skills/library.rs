@@ -991,7 +991,14 @@ async fn detach_skill(
             "This skill is not linked to a library.",
         ));
     }
+    // (D-513) It becomes one of the tier's own skills, and must fit their budget.
+    let owner = Owner {
+        agent: row.agent_id,
+        workspace: row.workspace_id,
+    };
+    let before = service::own_before(&mut tx, row.org_id, owner).await?;
     repo::detach_skill(&mut tx, id).await?;
+    service::check_own_budget(&mut tx, row.org_id, owner, before).await?;
     let ev = AuditEvent::by(&c, "skill.library.detach")
         .org(row.org_id)
         .target("skill", id)

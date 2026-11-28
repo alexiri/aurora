@@ -1874,8 +1874,11 @@ fn resolve_parts(
                 let body = resolved_text(&plan.units[bi], &per_unit[bi])?;
                 let files = resolved_files(&plan.units[2..], &per_unit[2..], &plan.own_files)?;
                 // The merged skill keeps the limits of an edit, with the same errors.
-                let contents: Vec<&[u8]> = files.iter().map(|f| f.bytes.as_slice()).collect();
-                skills_domain::service::check_composed(&description, &body, &contents)?;
+                let contents: Vec<(&str, &[u8])> = files
+                    .iter()
+                    .map(|f| (f.path.as_str(), f.bytes.as_slice()))
+                    .collect();
+                skills_domain::service::check_composed(&k.1, &description, &body, &contents)?;
                 ResolvedPart::Skill {
                     description,
                     body,
@@ -2284,6 +2287,13 @@ async fn apply_in_tx(
     let mut notes: Vec<dto::ApplyNote> = Vec::new();
     let mut events: Vec<AuditEvent> = Vec::new();
     let mut recorded: Vec<trepo::PartRow> = Vec::new();
+    // The skill parts write the agent's own skills (the agent's row is already held): their
+    // byte budget is checked once, on what the whole apply leaves.
+    let own = Owner {
+        agent: Some(agent.id),
+        workspace: None,
+    };
+    let own_before = skills_domain::service::own_before(tx, agent.org_id, own).await?;
 
     for ((kind, key), st) in taken {
         let st: &str = st;
@@ -2512,6 +2522,7 @@ async fn apply_in_tx(
     // The part rows of everything the apply took (C-1112: a row for every part taken), then
     // the provenance moves to the applied version, with the merged inputs — also when no part
     // was taken ("skip this version").
+    skills_domain::service::check_own_budget(tx, agent.org_id, own, own_before).await?;
     for part in &recorded {
         trepo::insert_part(tx, part).await?;
     }

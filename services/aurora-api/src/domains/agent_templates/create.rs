@@ -193,8 +193,12 @@ async fn current_version_changed(
 /// A rendered skill keeps the limits of an edit: filling in the inputs and names can push a
 /// text over them after the version was validated (422 `template_too_large`).
 pub(crate) fn rendered_skill_ok(s: &aurora_template::RenderedSkill) -> Result<(), ApiError> {
-    let files: Vec<&[u8]> = s.files.iter().map(|f| f.bytes.as_slice()).collect();
-    skills_domain::service::check_composed(&s.use_it_when, &s.body, &files)
+    let files: Vec<(&str, &[u8])> = s
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.bytes.as_slice()))
+        .collect();
+    skills_domain::service::check_composed(&s.name, &s.use_it_when, &s.body, &files)
         .and_then(|()| skills_domain::service::clean_title(s.title.as_deref()).map(|_| ()))
         .map_err(|e| {
             // An empty description is not a size problem: it keeps the edit's own error.
@@ -876,7 +880,13 @@ async fn create_in_tx(
         content_sha256: instructions_hash(&rendered.instructions),
     });
 
-    // The agent's own skills from the template: ordinary editable skills (C-1111).
+    // The agent's own skills from the template: ordinary editable skills (C-1111). Their
+    // files are written after each skill, so the byte budget is checked again after all.
+    let own = Owner {
+        agent: Some(agent.id),
+        workspace: None,
+    };
+    let own_before = skills_domain::service::own_before(tx, org, own).await?;
     for s in &rendered.skills {
         let view = skills_domain::service::create_in_tx(
             tx,
@@ -920,6 +930,7 @@ async fn create_in_tx(
         });
         skills_out.push(skills_domain::service::view(tx, view.row).await?.into());
     }
+    skills_domain::service::check_own_budget(tx, org, own, own_before).await?;
 
     // The chosen library skills, through the library add path at the agent tier (C-1111,
     // C-1142): pinned, read-only, with their budgets — `library_budget_exceeded` rolls back.

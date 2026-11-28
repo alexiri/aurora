@@ -1566,7 +1566,7 @@ impl Validate for MemoryWrite {
             check_chars("title", t, 200)?;
         }
         if let Some(d) = &self.description {
-            check_chars("description", d, limits::SKILL_DESCRIPTION_MAX)?;
+            check_chars("description", d, limits::MEMORY_WRITE_DESCRIPTION_MAX)?;
         }
         Ok(())
     }

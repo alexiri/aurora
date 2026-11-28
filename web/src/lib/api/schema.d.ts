@@ -10254,7 +10254,7 @@ export interface components {
         CreateSkillRequest: {
             /** @description Required unless `from_library` is given. */
             body?: string | null;
-            /** @description Single line, at most 500 characters. Required unless `from_library` is given. */
+            /** @description Single line, at most 1,024 characters. Required unless `from_library` is given. */
             description?: string | null;
             enabled?: boolean | null;
             from_library?: components["schemas"]["FromLibrary"] | null;

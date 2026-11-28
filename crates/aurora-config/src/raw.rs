@@ -682,7 +682,7 @@ impl Default for SkillsLibrarySection {
         Self {
             enabled: true,
             refresh_interval_secs: 900,
-            bytes_per_agent: 1024 * 1024,
+            bytes_per_agent: 4 * 1024 * 1024,
         }
     }
 }

@@ -105,7 +105,8 @@ each with its own job (the old agent guide, `agent.guide`, is gone: it is ignore
   (`docs/10 §Skills`):
   - **a skill per task**: the task a person asks for ("Find a free room and book it"), as numbered
     steps with the exact requests (or `aurora-agent` calls), the pitfalls, and how to confirm the
-    result. The `description` is the task, in one line (at most 500 characters).
+    result. The `description` is the task, in one line (at most 1,024 characters; keep it short,
+    it is listed to the agent with every other skill's).
   - **a reference skill** for what several tasks share (how the API is addressed, paginated and
     rate-limited, what its errors mean): one topic per skill, the first screen says what is in it,
     and the `description` starts with what it is for ("How the GitLab REST API is addressed,
