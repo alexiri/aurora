@@ -89,3 +89,13 @@ down.
 - No direct fixes and no product code changed, so no tests or fail-first evidence of this lane's own.
 - Cluster `aurora-mem5` (:4530) **kept up** for P5-SKILLS-5 pass 2. PROGRESS and FEATURES not edited
   (`P5/14§agent-tabs` is not done).
+
+**Pass 2 (2026-11-28, on `f7e5769b`, with `579cbf0f`): 11 Match, 0 Minor, 1 Needs changes.**
+
+- Report: `docs/design/navigation/verify/NAV-2A-REPORT-pass2.md` (no non-Match captures: the open row is CI).
+- C-1 and C-2 are fixed on the live stack: no page scroll for Terminal, Files, the editor or Chat at 1280×800 and
+  1256×900 with more controls on or off (notice dismissed), and no axe finding on BYO Connect or the token dialog.
+- To send back: T-1 (broken, CI red: the fix's unlayered `main … [data-fill-pane]` rules fail `design-guards`, so CI
+  never reaches Playwright; `terminal.spec` and `agent-fill-pane.spec` pass 53/53 locally).
+- Merged fixes since pass 1: `579cbf0f`. Owner questions still open.
+- No product code changed. Cluster `aurora-mem5` **kept up** for P5-SKILLS-5 pass 3.
