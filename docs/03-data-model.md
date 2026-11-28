@@ -859,6 +859,18 @@ Pruning: the API's `counters_prune` due-work arm (every 60 s, any replica, `FOR 
 | expires_at | timestamptz not null | |
 | partial unique | (from_agent_id, to_agent_id) WHERE status in (`open`,`waiting`) | a waiting task holds the pair's slot (FIX-253, migration `20261201000287`) |
 
+(FIX-288, D-509, migration `20261201000293`) The SQL function `peer_task_card_home(task uuid, max_depth integer) → uuid` is the conversation a task's approval is reported to: up the task origins while the same person asked (`07`). A live task opened from a task conversation also holds that conversation's task `waiting`.
+
+### `peer_held_wakes`
+(FIX-288, D-509) Wake-ups of a delegating task held while its agent is frozen; a row is deleted when it is delivered, or when its task has ended.
+
+| Column | Type | Notes |
+|---|---|---|
+| task_id | uuid FK→peer_tasks (cascade) | the task to wake |
+| source | text not null | `approval:<id>` or `report:<task id>`; primary key with `task_id` |
+| about_task | uuid not null | the task the event is about (the wake turn's door) |
+| text | text not null | the wake turn's text (a report in it is fenced and sanitized, as in `peer_tasks.report`) |
+
 ---
 
 ## 5. Agents, gateway credentials (owner doc: `10`, `08`)
@@ -1248,7 +1260,7 @@ A lock writes no `memory_revisions` row (it is not a content change); it is audi
 | workspace_id | uuid null FK→workspaces (cascade) | (phase 3, RFE-020, D-64) non-null ⇒ **workspace-tier** skill (`10 §Skills`). CHECK `skills_one_tier`: `workspace_id IS NULL OR agent_id IS NULL` (agent skills keep it null; their workspace is the agent's). Tier = agent (`agent_id` set) \| workspace (`workspace_id` set) \| org (both null). Deleting the workspace deletes its skills |
 | name | text not null | `[a-z0-9]+(-[a-z0-9]+)*` ≤64, immutable; `aurora-*` reserved |
 | title | text null | (P5-SKILLS-1, C-1173, D-498) the display name: 1..80 characters of plain text on one line (`CHECK`: no control character); null ⇒ the folder name made readable. Library and app skills have none |
-| description | text not null | single line ≤500 |
+| description | text not null | single line ≤1024 |
 | body | text not null | `SKILL.md` body |
 | enabled | bool not null default true | |
 | created_by_kind | text CHECK in (`user`,`agent`) | |

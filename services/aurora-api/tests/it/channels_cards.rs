@@ -1455,6 +1455,102 @@ impl W {
     }
 }
 
+impl W {
+    /// (FIX-288) Puts a task above the one `peer_approval` made: its `origin` becomes the
+    /// conversation of a task `requester` also asked for, and the thread link moves up to the new
+    /// first conversation, which is returned.
+    async fn add_hop_above(&self, origin: Uuid, requester: Uuid) -> Uuid {
+        let p = self.pool();
+        let root = Uuid::now_v7();
+        sqlx::query(
+            "INSERT INTO conversations (id, agent_id, workspace_id, kind, external_ref, last_activity_at)
+             VALUES ($1,$2,$3,'api',$1::text, now())",
+        )
+        .bind(root)
+        .bind(self.agent)
+        .bind(self.ws)
+        .execute(p)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE conversations SET kind = 'peer' WHERE id = $1")
+            .bind(origin)
+            .execute(p)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE thread_links SET conversation_id = $2, agent_id = $3 WHERE conversation_id = $1")
+            .bind(origin)
+            .bind(root)
+            .bind(self.agent)
+            .execute(p)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO peer_tasks (id, link_id, from_agent_id, to_agent_id, requester_user_id,
+                origin_conversation_id, task_conversation_id, status, message_budget, expires_at)
+             SELECT $1, id, $2, $3, $4, $5, $6, 'open', 20, now() + interval '1 day'
+               FROM agent_links LIMIT 1",
+        )
+        .bind(Uuid::now_v7())
+        .bind(self.agent)
+        .bind(self.agent2)
+        .bind(requester)
+        .bind(root)
+        .bind(origin)
+        .execute(p)
+        .await
+        .unwrap();
+        root
+    }
+}
+
+/// (FIX-288) An approval two levels down posts one card in the thread of the first conversation of
+/// the chain, with D-489's buttons: Approve and Deny for a requester who may decide in the
+/// approval's workspace, otherwise Ask an approver and Cancel the task. D-178 follows that
+/// thread's kind.
+#[tokio::test]
+async fn peer_approval_two_levels_down_cards_the_persons_thread_with_their_buttons() {
+    for (may_decide, labels) in [
+        (true, ["Approve", "Deny"]),
+        (false, ["Ask an approver", "Cancel the task"]),
+    ] {
+        let w = W::new(&FULL).await;
+        let requester = if may_decide { w.member } else { w.outsider };
+        let (id, _task, origin) = w.peer_approval("group", requester).await;
+        w.add_hop_above(origin, requester).await;
+        if !may_decide {
+            // Can use the workspace of the first conversation, cannot approve there.
+            sqlx::query(
+                "INSERT INTO workspace_access (workspace_id, user_id, role) VALUES ($1,$2,'member')",
+            )
+            .bind(w.ws)
+            .bind(requester)
+            .execute(w.pool())
+            .await
+            .unwrap();
+        }
+        w.fanout().await;
+        w.fanout().await;
+        let posts = w.ops("message.post").await;
+        assert_eq!(posts.len(), 1, "may_decide={may_decide}");
+        let (_, op, dedupe) = &posts[0];
+        assert_eq!(dedupe.as_deref(), Some(format!("approval:{id}").as_str()));
+        assert_eq!(op["target"], json!({"space_ref": "C9", "thread_ref": "T9"}));
+        let got: Vec<_> = W::tokens(op).into_iter().map(|t| t.0).collect();
+        assert_eq!(got, labels);
+        assert!(!serde_json::to_string(&op).unwrap().contains("x/y"));
+    }
+}
+
+/// (FIX-288, D-509) A thread above the point where the requester changes gets no card.
+#[tokio::test]
+async fn peer_approval_card_does_not_pass_a_change_of_requester() {
+    let w = W::new(&FULL).await;
+    let (_id, _task, origin) = w.peer_approval("direct", w.outsider).await;
+    w.add_hop_above(origin, w.member).await;
+    w.fanout().await;
+    assert_eq!(w.ops("message.post").await.len(), 0);
+}
+
 /// (FIX-252) An approval raised in a peer task conversation is surfaced at the origin thread the
 /// person asked in — not at the peer conversation (which has no thread link of its own) — with the
 /// delegating agent named. In a shared space the card carries no request details (D-178).

@@ -244,7 +244,7 @@ fn skill_md_frontmatter_rules() {
         ["app_skill_frontmatter"],
         "anchors"
     );
-    let long = "d".repeat(501);
+    let long = "d".repeat(1_025);
     assert_eq!(
         bad(&format!("---\ndescription: {long}\n---\n\nb\n")),
         ["app_skill_frontmatter"]
@@ -304,24 +304,27 @@ fn files_are_utf8_text_without_nul_or_bom() {
 #[test]
 fn size_and_count_limits() {
     let with = |rel: &str, n: usize| lint(&[md(N), f(N, rel, &vec![b'x'; n])]);
-    assert!(
-        with("a.txt", 64 * 1024 - 100).contains(&"app_skill_too_large"),
-        "total 32000"
+    assert!(with("a.txt", 160 * 1024).is_empty(), "a file of 160 KiB");
+    assert_eq!(with("a.txt", 160 * 1024 + 1), ["app_skill_file_too_large"]);
+    // a text within the file limit that would not fit one home-sync entry as JSON
+    assert_eq!(
+        lint(&[md(N), f(N, "a.txt", &vec![b'\n'; 100_000])]),
+        ["app_skill_file_too_large"]
     );
-    assert_eq!(with("a.txt", 64 * 1024 + 1), ["app_skill_file_too_large"]);
-    // body over 24000 characters
-    let body = "x".repeat(24_001);
+    // body over 48000 characters
+    let body = "x".repeat(48_001);
     let big = lint(&[f(N, "SKILL.md", skill_md(N, "d", &body).as_bytes())]);
     assert_eq!(big, ["app_skill_body_too_large"]);
-    let body = "x".repeat(24_000);
+    let body = "x".repeat(48_000);
     assert!(lint(&[f(N, "SKILL.md", skill_md(N, "d", &body).as_bytes())]).is_empty());
-    // body + files over 32000 characters
-    let body = "x".repeat(20_000);
+    // body + files over 300000 characters (such a skill is over the app's 256 KiB too)
+    let body = "x".repeat(40_000);
     let total = lint(&[
         f(N, "SKILL.md", skill_md(N, "d", &body).as_bytes()),
-        f(N, "a.txt", &vec![b'y'; 13_000]),
+        f(N, "a.txt", &vec![b'y'; 130_000]),
+        f(N, "b.txt", &vec![b'y'; 131_000]),
     ]);
-    assert_eq!(total, ["app_skill_too_large"]);
+    assert!(total.contains(&"app_skill_too_large"), "{total:?}");
     // file count: 50 fine, 51 not
     let files = |n: usize| -> Vec<(String, Vec<u8>)> {
         let mut v = vec![md(N)];

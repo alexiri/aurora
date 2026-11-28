@@ -98,15 +98,19 @@ async fn post_approval(state: &AppState, id: Uuid) -> Result<bool, ApiError> {
     };
     let mut tx = state.pool.begin().await.map_err(DbError::from)?;
     // (FIX-252) An approval raised in a peer task conversation has no thread link of its own; its
-    // card goes to the origin conversation the request came from. The card carries the same facts
-    // as every approval card plus the delegating agent ("asked for by …"); D-178 redaction follows
-    // the origin link's kind. Deciding stays `can_approve` at the approval's workspace (the action
-    // handler re-checks at click time); the card's buttons change nothing about that.
+    // card goes to the origin conversation the request came from, (FIX-288) up the delegation
+    // chain while the same person asked (`card_home`). The card carries the same facts as every
+    // approval card plus the delegating agent ("asked for by …"); D-178 redaction follows that
+    // conversation's link kind. Deciding stays `can_approve` at the approval's workspace (the
+    // action handler re-checks at click time); the card's buttons change nothing about that.
     let peer = peer_tasks::by_task_conversation(&mut *tx, conv).await?;
     let link = match repo::latest_thread_link(&mut *tx, conv).await? {
         Some(l) => Some(l),
         None => match peer.as_ref() {
-            Some(pt) => repo::latest_thread_link(&mut *tx, pt.origin_conversation_id).await?,
+            Some(pt) => match peer_tasks::card_home(&mut *tx, pt.id).await? {
+                Some(home) => repo::latest_thread_link(&mut *tx, home).await?,
+                None => None,
+            },
             None => None,
         },
     };

@@ -280,8 +280,8 @@ export function SkillsList({ page }: { page: SkillPage }) {
         >
           {comparing?.replaces ? (
             <div className="space-y-4">
-              <DiffView old={comparing.replaces.skill.description} next={comparing.skill.description} label="Diff of when to use it" fileName="When to use it" wrap />
-              <DiffView old={comparing.replaces.skill.body} next={comparing.skill.body} label="Diff of the instructions" fileName="SKILL.md" wrap />
+              <DiffView old={comparing.replaces.skill.description} next={comparing.skill.description} label="Diff of when to use it" fileName="When to use it" />
+              <DiffView old={comparing.replaces.skill.body} next={comparing.skill.body} label="Diff of the instructions" fileName="SKILL.md" />
             </div>
           ) : null}
         </DialogContent>

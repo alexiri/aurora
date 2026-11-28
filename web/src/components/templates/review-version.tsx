@@ -107,16 +107,15 @@ function changeWords(c: TemplateChange): string {
 
 const preClass = "max-w-full overflow-x-auto whitespace-pre-wrap rounded-control border border-line bg-canvas p-2 text-sm text-ink [overflow-wrap:anywhere]";
 
-/** One text part in place (FIX-250): the folded diff when it changed — with **Show the current
- * text** for the full text of this version — and one line "Unchanged" that expands when it did not. */
+/** One text part in place (FIX-250): the folded diff when it changed — with its folds opened it is
+ * the current text and the change (FIX-289) — and one line "Unchanged" that expands to the text when
+ * it did not. */
 function PartText({ change, label, current, ariaLabel }: { change: TemplateChange | null; label: string; current: string; ariaLabel?: string }) {
-  const [show, setShow] = useState(false);
-  const named = ariaLabel ?? label;
   if (!change) {
     return (
       <Fold summary="Unchanged" data-testid="diff-unchanged">
         <div className="pt-2">
-          <pre aria-label={named} className={preClass}>
+          <pre aria-label={ariaLabel ?? label} className={preClass}>
             {current}
           </pre>
         </div>
@@ -124,18 +123,8 @@ function PartText({ change, label, current, ariaLabel }: { change: TemplateChang
     );
   }
   return (
-    <div className="space-y-2" data-testid="part-diff">
+    <div data-testid="part-diff">
       <DiffView old={change.old ?? ""} next={change.new ?? ""} label={`Diff of ${label}`} fileName={label} status={change.kind === "added" ? "added" : change.kind === "removed" ? "removed" : null} />
-      <div className="space-y-2">
-        <Button type="button" size="sm" variant="outline" aria-expanded={show} onClick={() => setShow(!show)}>
-          {show ? "Hide the current text" : "Show the current text"}
-        </Button>
-        {show ? (
-          <pre aria-label={named} className={preClass}>
-            {current}
-          </pre>
-        ) : null}
-      </div>
     </div>
   );
 }

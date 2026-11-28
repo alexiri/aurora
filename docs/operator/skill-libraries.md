@@ -60,7 +60,7 @@ setting one under `config.skills.library.*` in Helm locks it.
 |-----|---------|---------|
 | `skills.library.enabled` | `true` | Kill-switch. `false` hides the feature (every route answers 404 `skill_libraries_disabled`) and stops the refresh job; stored skills keep working. |
 | `skills.library.refresh_interval_secs` | `900` | How often each library with added skills is checked. At least `300` (startup refuses a lower value, naming the key). |
-| `skills.library.bytes_per_agent` | `1048576` | Library-sourced bytes per agent (an operator may only lower it, 1 to 1 048 576). Workspace (2 MiB / 50 skills) and organization (4 MiB / 100) budgets are fixed. |
+| `skills.library.bytes_per_agent` | `4194304` | Library-sourced bytes per agent (an operator may only lower it, 1 to 4 194 304). Workspace (8 MiB / 50 skills) and organization (16 MiB / 100) budgets are fixed. |
 | `gateway.allowed_private` | (empty) | Private addresses the API may reach, for libraries and addon sources on a private network. |
 
 In Helm put the keys under `config.skills.library` and `config.gateway`.
@@ -76,7 +76,7 @@ works on one harness only and stops working when the agent's harness is changed.
 ## What is stored, what is read
 
 - **Read** (by the API itself, with the git smart-HTTP protocol, nothing cloned or written to disk): the repository's refs, and the files of the skills people browsed or added. A library with added skills costs **one** discovery and one ref listing per interval while the repository is unchanged, plus a tree and a file read after a push. Browsing costs the same plus one read of each skill's `SKILL.md` (at most 200), cached in memory for five minutes; members opening the picker at the same time share one read. A 429 or 503 from the git host is not counted as a failure: the library keeps its state and is tried again after the host's `Retry-After` (default 5 minutes, at most 1 hour). Self-hosted servers apply their own rate limits: raise the interval if needed. Every answer is capped (32 MiB of body, 64 MiB inflated, 500 object ids per request, 20 s per read) and every object's id is checked.
-- **Stored**: only skills that were added (content, commit, blob ids, content hash), open proposed updates (at most 4 MiB per organization) and the sealed token. Symlinks, submodules, files over 64 KiB, skill folders with more than 50 files and unusable names are refused. A skill's oversize extra file is only found when the skill is read for adding, not in the list.
+- **Stored**: only skills that were added (content, commit, blob ids, content hash), open proposed updates (at most 4 MiB per organization) and the sealed token. Symlinks, submodules, files over 160 KiB, texts over 190 KiB written as JSON (each text travels to the agent as one piece), instructions over 48 000 characters, skills over 300 000 characters in all, skill folders with more than 50 files and unusable names are refused. Binary files are stored and counted but not yet copied into the agent's home. A skill's oversize extra file is only found when the skill is read for adding, not in the list.
 - **Never applied automatically.** A push creates a *proposed update*; a person with the tier's write authority (agent: can use the agent; workspace: workspace owner; organization: owner or admin) reads the **whole diff** in the dashboard and approves that exact content. There is no "track the branch" mode.
 
 ## Operating it

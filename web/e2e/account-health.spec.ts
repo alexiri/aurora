@@ -64,6 +64,33 @@ async function open(page: Page, path: string, scheme: "light" | "dark") {
   expect(errors, `${path} threw`).toEqual([]);
 }
 
+/**
+ * What sticks out of its box on the account cards: a card out of the list, or a health line's words or fix out of the
+ * card's text column (the page can stay unscrolled while either reaches into the gap or the gutter).
+ */
+const sticksOut = (page: Page) =>
+  page.getByRole("listitem", { name: /^(analytics|platform-prod)$/ }).evaluateAll((cards) =>
+    cards.flatMap((card) => {
+      const out: string[] = [];
+      const past = (what: string, el: Element | Range, box: Element) => {
+        const by = Math.max(...[...el.getClientRects()].map((r) => Math.max(r.right - box.getBoundingClientRect().right, box.getBoundingClientRect().left - r.left)));
+        if (by > 0.5) out.push(`${card.getAttribute("aria-label")}: ${what} by ${Math.round(by)} px`);
+      };
+      past("the card", card, card.parentElement!);
+      const column = card.querySelector("h3")!.parentElement!.parentElement!;
+      for (const line of column.querySelectorAll("p.flex")) {
+        const words = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+        for (let n = words.nextNode(); n; n = words.nextNode()) {
+          const range = document.createRange();
+          range.selectNodeContents(n);
+          past(`"${n.textContent}"`, range, column);
+        }
+        for (const button of line.querySelectorAll("button")) past(`the ${button.textContent} button`, button, column);
+      }
+      return out;
+    }),
+  );
+
 async function check(page: Page) {
   expect(await overflow(page), "horizontal page scroll").toBeLessThanOrEqual(0);
   expect(await serious(page)).toEqual([]);
@@ -83,6 +110,7 @@ for (const scheme of ["light", "dark"] as const) {
         const aws = page.getByRole("listitem", { name: "platform-prod" });
         await expect(aws.getByText("Sign-in expired")).toBeVisible();
         await expect(aws.getByRole("button", { name: "Sign in again" })).toBeVisible();
+        expect.soft(await sticksOut(page), "nothing sticks out of its box").toEqual([]);
         await check(page);
       });
 

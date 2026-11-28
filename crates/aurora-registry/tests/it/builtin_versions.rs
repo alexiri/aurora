@@ -48,7 +48,7 @@ fn github_2_0_0_still_upgrades_to_the_shipped_version_without_widening() {
 #[test]
 fn github_2_2_0_and_atlassian_1_1_0_declare_families_without_widening() {
     check("github", "2.1.0", "2.5.1");
-    check("atlassian", "1.0.3", "1.6.0");
+    check("atlassian", "1.0.3", "1.6.1");
     for (id, fams) in [
         ("github", vec![("github", vec!["github", "github-ghes"])]),
         (

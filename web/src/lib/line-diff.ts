@@ -174,7 +174,7 @@ export function expandFold(rows: DiffRow[], id: number): DiffRow[] {
   return fold ? replaceFold(rows, fold, foldLines(fold)) : rows;
 }
 
-/** **Show the whole file**: every fold expands, nothing stays hidden. */
+/** Every fold expands, nothing stays hidden (to count the changed lines). */
 export function expandAll(rows: DiffRow[]): DiffRow[] {
   const out: DiffRow[] = [];
   for (const row of rows) out.push(...(row.type === "fold" ? foldLines(row) : [row]));

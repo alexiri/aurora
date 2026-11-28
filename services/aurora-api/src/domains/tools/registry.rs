@@ -14,7 +14,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Result bound (serialized), docs/12 §Platform tools.
-const MAX_RESULT_BYTES: usize = 64 * 1024;
+pub(super) const MAX_RESULT_BYTES: usize = 64 * 1024;
 
 /// Agent-level facts a tool may depend on (availability, descriptions).
 #[derive(Clone)]

@@ -44,6 +44,20 @@ export const libraryKeys = {
   info: (skill: string) => ["skills", skill, "library"] as const,
 };
 
+/**
+ * A library that has added skills and whose head the server has not compared them with: right after its source changed
+ * (the server clears `last_head_sha` until the next refresh), when whether an update waits is not known yet.
+ */
+export function awaitsCheck(l: SkillLibrary): boolean {
+  const counts = l.skill_counts;
+  const used = (l.orgs_using ?? 0) > 0 || (!!counts && counts.agent + counts.workspace + counts.org > 0);
+  return l.status === "active" && l.last_head_sha === null && used;
+}
+
+/** How often a list with a library that awaits its check is read again. */
+const AWAITING_REFETCH_MS = 5_000;
+const awaitingInterval = (data: { items: SkillLibrary[] } | undefined) => (data?.items.some(awaitsCheck) ? AWAITING_REFETCH_MS : false);
+
 /** Admins get every field; other members who can use a workspace get `id`, `label` and `status` of active libraries. */
 export function useSkillLibraries(org: string | undefined) {
   return useQuery({
@@ -51,6 +65,7 @@ export function useSkillLibraries(org: string | undefined) {
     queryFn: () => unwrap(api.GET("/v1/orgs/{org}/skill-libraries", { params: { path: { org: org! } } })),
     enabled: !!org,
     retry: false,
+    refetchInterval: (q) => awaitingInterval(q.state.data),
   });
 }
 
@@ -60,6 +75,7 @@ export function useInstanceSkillLibraries() {
     queryKey: libraryKeys.instance(),
     queryFn: () => unwrap(api.GET("/v1/admin/skill-libraries")),
     retry: false,
+    refetchInterval: (q) => awaitingInterval(q.state.data),
   });
 }
 

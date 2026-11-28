@@ -140,13 +140,13 @@ async fn fix278_browse_judges_the_real_content_like_the_add() {
         &[
             put("ok/SKILL.md", md("Fine", "Body")),
             put("ok/notes.txt", b"some notes".to_vec()),
-            // A small SKILL.md; the other files pass the 32,000-character total together.
+            // A small SKILL.md; the other files pass the 300,000-character total together.
             put("over/SKILL.md", md("Over", "Body")),
-            put("over/a.txt", vec![b'a'; 20_000]),
-            put("over/b.txt", vec![b'b'; 20_000]),
+            put("over/a.txt", vec![b'a'; 150_000]),
+            put("over/b.txt", vec![b'b'; 151_000]),
             // One file over the per-file limit.
             put("bigfile/SKILL.md", md("Big", "Body")),
-            put("bigfile/data.bin", vec![b'x'; 70 * 1024]),
+            put("bigfile/data.bin", vec![b'x'; 170 * 1024]),
         ],
     );
     let lib = w.library().await;
@@ -159,12 +159,12 @@ async fn fix278_browse_judges_the_real_content_like_the_add() {
         over["reason"]
             .as_str()
             .unwrap()
-            .contains("total more than 32000"),
+            .contains("total more than 300000"),
         "{over}"
     );
     assert_eq!(over["reason_code"], "too_large", "{over}");
     assert_eq!(over["blocked"]["reason"], "invalid", "{over}");
-    assert_eq!(over["size"].as_u64(), Some(body_chars + 40_000), "{over}");
+    assert_eq!(over["size"].as_u64(), Some(body_chars + 301_000), "{over}");
     assert_eq!(over["files"], 3, "{over}");
 
     let big = item(&v, "bigfile");
@@ -173,12 +173,12 @@ async fn fix278_browse_judges_the_real_content_like_the_add() {
         big["reason"]
             .as_str()
             .unwrap()
-            .contains("larger than 65536 bytes"),
+            .contains("larger than 163840 bytes"),
         "{big}"
     );
     assert_eq!(big["reason_code"], "file_too_large", "{big}");
     assert_eq!(big["blocked"]["reason"], "invalid", "{big}");
-    assert_eq!(big["size"].as_u64(), Some(body_chars + 70 * 1024), "{big}");
+    assert_eq!(big["size"].as_u64(), Some(body_chars + 170 * 1024), "{big}");
 
     // The sizes are the ones the add computes.
     let ok = item(&v, "ok");
@@ -226,11 +226,12 @@ async fn fix278_every_invalid_cause_has_a_reason_code() {
         .collect();
     let mut changes = vec![
         put("toolarge/SKILL.md", md("d", "b")),
-        put("toolarge/a.txt", vec![b'a'; 40_000]),
-        put("longbody/SKILL.md", md("d", &"b".repeat(24_100))),
+        put("toolarge/a.txt", vec![b'a'; 150_000]),
+        put("toolarge/b.txt", vec![b'a'; 151_000]),
+        put("longbody/SKILL.md", md("d", &"b".repeat(48_100))),
         put("bigfile/SKILL.md", md("d", "b")),
-        put("bigfile/x.bin", vec![b'x'; 65 * 1024]),
-        put("bigskillmd/SKILL.md", md("d", &"b".repeat(70 * 1024))),
+        put("bigfile/x.bin", vec![b'x'; 161 * 1024]),
+        put("bigskillmd/SKILL.md", md("d", &"b".repeat(170 * 1024))),
         put("many/SKILL.md", md("d", "b")),
         put("badpath/SKILL.md", md("d", "b")),
         put("badpath/a b.txt", b"x".to_vec()),
@@ -308,7 +309,10 @@ async fn fix278_an_invalid_proposal_has_a_reason_code() {
     w.git.commit(
         "acme/skills",
         "main",
-        &[put("alpha/big.txt", vec![b'a'; 40_000])],
+        &[
+            put("alpha/big.txt", vec![b'a'; 150_000]),
+            put("alpha/big2.txt", vec![b'a'; 151_000]),
+        ],
     );
     w.refresh(lib).await;
     let p = w.pending(alpha).await;

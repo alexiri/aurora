@@ -9,6 +9,12 @@ use http::Method;
 mod app_tier;
 #[path = "skills_library.rs"]
 mod library_tier;
+#[path = "skills_budget.rs"]
+mod own_budget;
+#[path = "skills_get.rs"]
+mod result_bound;
+#[path = "skills_index.rs"]
+mod skill_index;
 #[path = "skills_use.rs"]
 mod switch_and_use;
 #[path = "skills_workspace.rs"]
@@ -107,7 +113,7 @@ async fn crud_limits_and_names() {
             .await;
         assert_eq!(s, 400, "{bad}");
     }
-    for d in ["", "two\nlines", &"d".repeat(501)] {
+    for d in ["", "two\nlines", &"d".repeat(1_025)] {
         let (s, _) = r
             .user(
                 Method::POST,
@@ -121,26 +127,35 @@ async fn crud_limits_and_names() {
         .user(
             Method::POST,
             &base,
-            Some(json!({"name": "okay", "description": "d", "body": "b".repeat(24_001)})),
+            Some(json!({"name": "okay", "description": "d", "body": "b".repeat(48_001)})),
         )
         .await;
     assert_eq!(s, 400);
 
-    // Total limit: body 24k + files.
+    // Total limit: body 48k + files.
     let uri = format!("/v1/skills/{id}");
     let (s, _) = r
         .user(
             Method::PATCH,
             &uri,
-            Some(json!({"body": "b".repeat(24_000)})),
+            Some(json!({"body": "b".repeat(48_000)})),
         )
         .await;
     assert_eq!(s, 200);
-    let f = format!("{uri}/files/scripts/run.sh");
-    let (s, v) = r.raw_put(&r.cookie, &f, "x".repeat(8_000).as_bytes()).await;
+    let more = format!("{uri}/files/scripts/more.sh");
+    let (s, v) = r
+        .raw_put(&r.cookie, &more, "x".repeat(150_000).as_bytes())
+        .await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(v["total_size"], 32_000);
-    let (s, v) = r.raw_put(&r.cookie, &f, "x".repeat(8_001).as_bytes()).await;
+    let f = format!("{uri}/files/scripts/run.sh");
+    let (s, v) = r
+        .raw_put(&r.cookie, &f, "x".repeat(102_000).as_bytes())
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["total_size"], 300_000);
+    let (s, v) = r
+        .raw_put(&r.cookie, &f, "x".repeat(102_001).as_bytes())
+        .await;
     assert_eq!((s, code(&v)), (422, Some("skill_too_large")));
     // Replacing a file accounts for the old size.
     assert_eq!(r.raw_put(&r.cookie, &f, b"small").await.0, 200);
@@ -767,6 +782,56 @@ async fn projection_entries_in_home_sync() {
     );
 }
 
+/// FIX-291 (D-513): a text that would not fit one home-sync entry as JSON is refused when it is
+/// written (a bigger one would be stored and then silently missing from the agent's home): the
+/// `SKILL.md` on create and edit, and each text file. Binary files are never projected.
+#[tokio::test]
+async fn fix291_text_that_would_not_fit_a_sync_entry_is_refused() {
+    let r = rig().await;
+    let a = r.agent("a1").await;
+    let base = format!("/v1/agents/{a}/skills");
+    // A control character takes six bytes as JSON: 33,000 of them pass the body limit but
+    // not the 190 KiB entry limit.
+    let ctrl = "\u{1}".repeat(33_000);
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &base,
+            Some(json!({"name": "wide", "description": "d", "body": ctrl})),
+        )
+        .await;
+    assert_eq!((s, code(&v)), (422, Some("file_too_large")), "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("SKILL.md") && msg.contains("as JSON"), "{v}");
+    let (s, v) = r
+        .user(
+            Method::POST,
+            &base,
+            Some(json!({"name": "wide", "description": "d", "body": "b"})),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let uri = format!("/v1/skills/{}", v["id"].as_str().unwrap());
+    let (s, v) = r
+        .user(Method::PATCH, &uri, Some(json!({"body": ctrl})))
+        .await;
+    assert_eq!((s, code(&v)), (422, Some("file_too_large")), "{v}");
+    let f = format!("{uri}/files/lines.txt");
+    let (s, v) = r
+        .raw_put(&r.cookie, &f, "\n".repeat(100_000).as_bytes())
+        .await;
+    assert_eq!((s, code(&v)), (422, Some("file_too_large")), "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("lines.txt") && msg.contains("as JSON"), "{v}");
+    // The same bytes as a binary file are never sent to the agent: not held to the entry.
+    let mut bin = vec![b'\n'; 100_000];
+    bin[0] = 0xff;
+    let (s, v) = r
+        .raw_put(&r.cookie, &format!("{uri}/files/blob.bin"), &bin)
+        .await;
+    assert_eq!(s, 200, "{v}");
+}
+
 /// TEST-014: parts stay within `HOME_SYNC_PART_MAX` at worst-case encodings (docs/12 §Sync
 /// protocol: CJK x3 bytes, JSON-escaped controls x6) with every entry delivered exactly once.
 #[tokio::test]
@@ -774,7 +839,8 @@ async fn home_sync_parts_pack_within_the_wire_max_at_worst_case_encodings() {
     let r = rig().await;
     let b = r.booted("pk1").await;
     // Skill bodies of control characters: each is escaped to `\u0001` (6 bytes) on the wire.
-    let ctrl = "\u{1}".repeat(aurora_core::limits::SKILL_BODY_MAX);
+    // The most a `SKILL.md` may take as one entry (FIX-291).
+    let ctrl = "\u{1}".repeat((aurora_core::limits::SKILL_ENTRY_JSON_MAX - 200) / 6);
     for i in 0..3 {
         sqlx::query(
             "INSERT INTO skills (id, org_id, agent_id, name, description, body, enabled, created_by_kind)

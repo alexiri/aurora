@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MemoryTab } from "@/components/memory/memory-tab";
@@ -237,6 +237,20 @@ describe("the reading view (mem-1)", () => {
     expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull();
   });
 
+  it("shows an untitled memory's first line once: the heading that repeats it is for screen readers only", async () => {
+    serve([learned]);
+    page();
+    const a = await reading("Carol drinks green tea, no sugar.");
+    expect(within(a).getByRole("heading", { level: 3, name: "Carol drinks green tea, no sugar." })).toHaveClass("sr-only");
+    // The text is shown whole, as written.
+    expect(within(a).getByText(/Always\./)).toHaveTextContent("Carol drinks green tea, no sugar.");
+    cleanup();
+    serve([mem()]);
+    page();
+    const titled = await reading("Aurora migration project");
+    expect(within(titled).getByRole("heading", { level: 3, name: "Aurora migration project" })).not.toHaveClass("sr-only");
+  });
+
   it("copies the key", async () => {
     const writeText = vi.fn(async () => undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
@@ -337,6 +351,19 @@ describe("editing (mem-2)", () => {
     // Back to reading, with the saved flash.
     expect(await screen.findByTestId("save-bar-saved")).toBeInTheDocument();
     expect(await reading("Aurora migration project")).toBeInTheDocument();
+  });
+
+  it("draws the Preview by the reading view's rule: the reading size, ticked boxes drawn and their lines struck through", async () => {
+    serve([mem()]);
+    page();
+    const form = await openEdit();
+    fireEvent.click(within(form).getByRole("tab", { name: "Preview" }));
+    const done = within(form).getByRole("checkbox", { name: "Pilot workspace set up" });
+    // The reading view's styles hang from `.md-reading` (globals.css).
+    expect(done.closest(".md-reading .md")).not.toBeNull();
+    expect(done).toBeChecked();
+    // As in the reading view, the space after the box is its margin, so the strike doesn't cross it.
+    expect(done.nextSibling?.textContent).toBe("Pilot workspace set up");
   });
 
   it("Discard drops the changes and shows the memory again", async () => {

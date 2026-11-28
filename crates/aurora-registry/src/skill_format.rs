@@ -10,6 +10,7 @@
 use aurora_core::limits;
 use aurora_core::sanitize::{is_stripped, one_line};
 use base64::Engine as _;
+use std::borrow::Cow;
 
 /// More files than this in one skill directory is refused (bounds the blob reads of an add).
 pub const FILES_PER_SKILL_MAX: usize = 50;
@@ -224,11 +225,73 @@ pub fn parse_skill_md_typed(raw: &[u8], dir: &str) -> Result<(String, String), S
     Ok((description, body))
 }
 
+/// The length the descriptions of one skill index are cut to (see
+/// [`limits::SKILL_INDEX_SHARE`]), from their lengths in characters: the largest common cap
+/// with which they take at most `SKILL_INDEX_SHARE` each together.
+#[must_use]
+pub fn index_cap(lengths: &[usize]) -> usize {
+    let mut sorted = lengths.to_vec();
+    sorted.sort_unstable();
+    let mut room = sorted.len() * limits::SKILL_INDEX_SHARE;
+    for (i, len) in sorted.iter().enumerate() {
+        let share = room / (sorted.len() - i);
+        if *len > share {
+            return share;
+        }
+        room -= len;
+    }
+    limits::SKILL_DESCRIPTION_MAX
+}
+
+/// `description` as the index lists it: cut to `cap` characters, ending in "…", when longer.
+#[must_use]
+pub fn fold_description(description: &str, cap: usize) -> Cow<'_, str> {
+    if description.chars().count() <= cap {
+        return Cow::Borrowed(description);
+    }
+    let kept: String = description.chars().take(cap.saturating_sub(1)).collect();
+    Cow::Owned(format!("{}…", kept.trim_end()))
+}
+
+/// The `SKILL.md` projected into an agent's home for a stored skill.
+#[must_use]
+pub fn projected_skill_md(name: &str, description: &str, body: &str) -> String {
+    let description = serde_json::to_string(description).unwrap_or_else(|_| "\"\"".into());
+    format!("---\nname: {name}\ndescription: {description}\n---\n\n{body}")
+}
+
+/// Whether `text` fits one home-sync entry (`SKILL_ENTRY_JSON_MAX`, measured as a JSON
+/// string); `what` names it in the message.
+pub fn check_entry(what: &str, text: &str) -> Result<(), SkillError> {
+    let fits = serde_json::to_string(text).is_ok_and(|j| j.len() <= limits::SKILL_ENTRY_JSON_MAX);
+    if fits {
+        return Ok(());
+    }
+    err(
+        Kind::FileTooLarge,
+        format!(
+            "{what} is too large to send to an agent: written as JSON it may take at most {} \
+             bytes, and line breaks, quotes and control characters take extra space",
+            limits::SKILL_ENTRY_JSON_MAX
+        ),
+    )
+}
+
+/// [`check_entry`] for a skill's file: a binary file is never projected, so only text is held
+/// to it.
+pub fn check_file_entry(path: &str, content: &[u8]) -> Result<(), SkillError> {
+    match std::str::from_utf8(content) {
+        Ok(text) => check_entry(&format!("the file {path}"), text),
+        Err(_) => Ok(()),
+    }
+}
+
 /// The checks on an already-parsed skill (description, body, files as `(path, content)`): what a
 /// library approval re-runs on a stored proposal and what the linter runs on a package skill.
 /// Returns the size in the budget unit (`body` characters plus [`content_size`] of the files).
 /// `max_file` is the per-file byte limit.
 pub fn check_content(
+    name: &str,
     description: &str,
     body: &str,
     files: &[(&str, &[u8])],
@@ -295,6 +358,10 @@ pub fn check_content(
             ),
         );
     }
+    check_entry("SKILL.md", &projected_skill_md(name, description, body))?;
+    for (path, content) in files {
+        check_file_entry(path, content)?;
+    }
     Ok(size)
 }
 
@@ -318,6 +385,27 @@ mod tests {
                 "{fm}"
             );
         }
+    }
+
+    #[test]
+    fn the_index_cap_shares_the_room_and_never_cuts_a_short_description() {
+        let share = limits::SKILL_INDEX_SHARE;
+        // Room to spare: nothing is cut.
+        assert_eq!(index_cap(&[]), limits::SKILL_DESCRIPTION_MAX);
+        assert_eq!(index_cap(&[10, 10, 1_024]), limits::SKILL_DESCRIPTION_MAX);
+        // All long: back to a share each.
+        assert_eq!(index_cap(&[1_024, 1_024]), share);
+        // The long ones split what the short ones leave.
+        assert_eq!(index_cap(&[10, 1_024, 1_024]), (3 * share - 10) / 2);
+        for lengths in [vec![500; 40], vec![1, 700, 800, 900, 1_024, 1_024]] {
+            let cap = index_cap(&lengths);
+            assert!(cap >= share, "{cap}");
+            let total: usize = lengths.iter().map(|l| (*l).min(cap)).sum();
+            assert!(total <= lengths.len() * share, "{total}");
+        }
+        assert_eq!(fold_description("abc", 3), "abc");
+        assert_eq!(fold_description("ab cd", 4), "ab…");
+        assert_eq!(fold_description("éééé", 3), "éé…");
     }
 
     #[test]

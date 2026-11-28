@@ -107,7 +107,7 @@ describe("the editor (skill-4)", () => {
     expect(within(form).getByText("weekly-report")).toBeTruthy();
     expect(form.textContent).toContain("Finish “Use it to …”. Example: write the Friday status report from Jira and GitHub.");
     expect(within(form).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Write", "Preview"]);
-    expect(within(form).getByText("Markdown · 10 of 24,000 characters")).toBeTruthy();
+    expect(within(form).getByText("Markdown · 10 of 48,000 characters")).toBeTruthy();
     expect(within(form).queryByRole("switch")).toBeNull();
     expect(form.querySelector('input[type="file"]:not(.sr-only)')).toBeNull();
     expect(screen.getByRole("region", { name: "Unsaved changes" }).textContent).toContain("New skill · not saved yet");
@@ -237,9 +237,9 @@ describe("files, folded to one line", () => {
       expect(await within(dlg).findByText(words)).toBeTruthy();
     }
     fireEvent.change(name, { target: { value: "scripts/pr-diff.sh" } });
-    fireEvent.change(within(dlg).getByLabelText("Content"), { target: { value: "x".repeat(32_000) } });
+    fireEvent.change(within(dlg).getByLabelText("Content"), { target: { value: "x".repeat(300_000) } });
     fireEvent.click(add);
-    expect(await within(dlg).findByText("A skill's instructions and files can total at most 32,000 characters.")).toBeTruthy();
+    expect(await within(dlg).findByText("A skill's instructions and files can total at most 300,000 characters.")).toBeTruthy();
     expect(writes(calls)).toEqual([]);
     fireEvent.change(within(dlg).getByLabelText("Content"), { target: { value: "echo hi" } });
     fireEvent.click(within(dlg).getByRole("switch", { name: "Executable" }));
@@ -305,17 +305,26 @@ describe("reading a skill folder", () => {
     expect(result.folder.files.map((f) => [f.path, f.executable])).toEqual([["notes.md", false], ["scripts/run.sh", true]]);
   });
 
+  it("takes a description of up to 1,024 characters, the open skill format's maximum", async () => {
+    const md = (n: number) => `---\nname: release-notes\ndescription: ${"d".repeat(n)}\n---\n\nbody\n`;
+    expect(await readSkillFolder(picked({ "SKILL.md": md(1_024) }), [], "Daneel")).toMatchObject({ ok: true });
+    expect(await readSkillFolder(picked({ "SKILL.md": md(1_025) }), [], "Daneel")).toEqual({
+      ok: false,
+      problems: ["SKILL.md: the description is longer than 1024 characters."],
+    });
+  });
+
   it("names every problem per file, in plain words", async () => {
     const none = await readSkillFolder(picked({ "readme.md": "x" }), [], "Daneel");
     expect(none).toEqual({ ok: false, problems: ["The folder has no SKILL.md at its top level."] });
-    const bad = await readSkillFolder(picked({ "SKILL.md": "---\nname: release-notes\n---\nbody", "my file.md": "x", "a/b/c/d/e.md": "y", "big.txt": "z".repeat(33_000) }), ["release-notes"], "Daneel");
+    const bad = await readSkillFolder(picked({ "SKILL.md": "---\nname: release-notes\n---\nbody", "my file.md": "x", "a/b/c/d/e.md": "y", "big.txt": "z".repeat(301_000) }), ["release-notes"], "Daneel");
     expect(bad.ok).toBe(false);
     const words = bad.ok ? "" : bad.problems.join("\n");
     expect(words).toContain("SKILL.md: its front matter needs a description.");
     expect(words).toContain("my file.md: Use only letters");
     expect(words).toContain("a/b/c/d/e.md: The path may have at most 4 levels.");
     expect(words).toContain("Daneel already has a skill in the folder “release-notes”");
-    expect(words).toContain("a skill can total at most 32,000.");
+    expect(words).toContain("a skill can total at most 300,000.");
   });
 });
 

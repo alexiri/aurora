@@ -17,6 +17,19 @@ describe("rung two: ConfirmDialog needs a consequence sentence", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it("pins Cancel and the verb in the dialog's bordered footer, as FormDialog does, with the content above it", () => {
+    render(
+      <ConfirmDialog open onOpenChange={() => {}} title="Remove it?" description="It stops working." confirmLabel="Remove" onConfirm={() => {}}>
+        <p>3 agents use it.</p>
+      </ConfirmDialog>,
+    );
+    const dialog = screen.getByRole("dialog");
+    const footer = dialog.lastElementChild as HTMLElement;
+    expect(footer).toHaveClass("shrink-0", "border-t");
+    for (const name of ["Cancel", "Remove"]) expect(footer).toContainElement(within(dialog).getByRole("button", { name }));
+    expect(footer).not.toContainElement(within(dialog).getByText("3 agents use it."));
+  });
+
   it("refuses a missing description at the type level", () => {
     // @ts-expect-error `description` is required: a confirm without a consequence does not compile.
     const bad = <ConfirmDialog open onOpenChange={() => {}} title="Sure?" confirmLabel="Yes" onConfirm={() => {}} />;

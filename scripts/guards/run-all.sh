@@ -24,6 +24,7 @@ echo "== chart-ops (FIX-102: no v1 Endpoints, httpGet probes, ops-port peers, no
 bash scripts/guards/chart-ops.sh
 
 echo "== helm-gateway-role (FIX-106: the gateway's least-privilege role is automatic, required, or explicitly waived)"
+# shellcheck source=scripts/guards/lib.sh disable=SC1091  # followed only with shellcheck -x
 source scripts/guards/lib.sh
 if require_helm helm-gateway-role; then bash deploy/helm/check-gateway-role.sh; fi
 
@@ -83,6 +84,10 @@ bash scripts/guards/agent-content-advisory.sh
 echo "== no-sqlx-test (FIX-255: #[sqlx::test] reads DATABASE_URL/.env past the test kit; banned)"
 python3 -I scripts/guards/no-sqlx-test.py --self-test
 python3 -I scripts/guards/no-sqlx-test.py
+
+echo "== shipped-shell (FIX-287: shellcheck every shell script under plugins/ and templates/; else a syntax check, never in CI)"
+bash scripts/guards/shipped-shell.sh --self-test
+bash scripts/guards/shipped-shell.sh
 
 echo "== dev scripts syntax (VEL-002, FIX-255; shellcheck when installed, else bash -n)"
 dev_scripts=(scripts/dev/quick-gate.sh scripts/dev/heavy.sh scripts/dev/test-pg.sh scripts/dev/test.sh scripts/dev/test_test-runner.sh)

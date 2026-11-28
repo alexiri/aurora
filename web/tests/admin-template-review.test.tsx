@@ -153,6 +153,16 @@ describe("Agent template review (C-1114)", () => {
     expect(fold.textContent).toContain("Unchanged");
     expect(within(fold).getByLabelText("README.md source text").textContent).toContain("# Schedule manager");  });
 
+  // (FIX-289) The diff, with its folds opened, is the current text and the change.
+  it("a changed part shows its diff and no Show the current text button", async () => {
+    renderReview();
+    await screen.findByRole("region", { name: /What changed since 1.0.0/ });
+    const instructions = screen.getByRole("region", { name: "Instructions" });
+    expect(within(instructions).getByLabelText("Diff of Instructions")).toBeTruthy();
+    expect(within(instructions).queryByRole("button", { name: /current text/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /current text/ })).toBeNull();
+  });
+
   it("calls out the changes that widen what the agent can do or reach first, linking to their sections", async () => {
     renderReview({
       "GET /v1/admin/agent-templates/schedule-manager/versions/1.1.0": () =>

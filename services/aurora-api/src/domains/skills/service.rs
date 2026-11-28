@@ -141,19 +141,40 @@ fn files_limit() -> ApiError {
 }
 
 /// The limits of an edit, applied to a whole skill composed elsewhere (a template merge's
-/// result, FIX-251): the description's and body's own rules, the file count and the total —
-/// refused with the same errors.
+/// result, FIX-251): the description's and body's own rules, the file count, the total and each
+/// text's home-sync entry — refused with the same errors. `files` are `(path, content)`.
 pub(crate) fn check_composed(
+    name: &str,
     description: &str,
     body: &str,
-    files: &[&[u8]],
+    files: &[(&str, &[u8])],
 ) -> Result<(), ApiError> {
     validate_description(description)?;
     validate_body(body)?;
     if files.len() as i64 > limits::SKILL_FILES_MAX {
         return Err(files_limit());
     }
-    check_total(body, files.iter().copied())
+    check_total(body, files.iter().map(|(_, c)| *c))?;
+    check_skill_md_entry(name, description, body)?;
+    for (path, content) in files {
+        skill_format::check_file_entry(path, content).map_err(entry_too_large)?;
+    }
+    Ok(())
+}
+
+/// (D-513) 422 `file_too_large`: a text that would not fit one home-sync entry would be stored
+/// and then missing from the agent's home.
+fn entry_too_large(e: skill_format::SkillError) -> ApiError {
+    let mut message = e.message;
+    if let Some(first) = message.get_mut(..1) {
+        first.make_ascii_uppercase();
+    }
+    ApiError::unprocessable("file_too_large", format!("{message}."))
+}
+
+fn check_skill_md_entry(name: &str, description: &str, body: &str) -> Result<(), ApiError> {
+    let md = skill_format::projected_skill_md(name, description, body);
+    skill_format::check_entry("SKILL.md", &md).map_err(entry_too_large)
 }
 
 fn check_total<'a>(body: &str, files: impl Iterator<Item = &'a [u8]>) -> Result<(), ApiError> {
@@ -168,6 +189,84 @@ fn check_total<'a>(body: &str, files: impl Iterator<Item = &'a [u8]>) -> Result<
         ));
     }
     Ok(())
+}
+
+// ---- the byte budget of a tier's own skills (D-513) ------------------------------------------
+
+/// Instructions plus files of the tier's own skills, counted as the library budget counts.
+async fn own_bytes(conn: &mut PgConnection, org: Uuid, owner: Owner) -> Result<usize, ApiError> {
+    let bodies = repo::own_bodies(conn, org, owner).await?;
+    let ids: Vec<Uuid> = bodies.iter().map(|(id, _)| *id).collect();
+    let files = repo::files(conn, &ids).await?;
+    Ok(bodies
+        .iter()
+        .map(|(_, chars)| usize::try_from(*chars).unwrap_or(0))
+        .sum::<usize>()
+        + files
+            .iter()
+            .map(|f| content_size(&f.content))
+            .sum::<usize>())
+}
+
+/// What the tier's own skills hold before a write that may grow them, for
+/// [`check_own_budget`] after it. Serializes the tier's writers: for the agent tier the caller
+/// already holds the agent's row, the other tiers take a lock here.
+pub(crate) async fn own_before(
+    conn: &mut PgConnection,
+    org: Uuid,
+    owner: Owner,
+) -> Result<usize, ApiError> {
+    if owner.agent.is_none() {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("skill_own_budget:{org}:{:?}", owner.workspace))
+            .execute(&mut *conn)
+            .await
+            .map_err(DbError::from)?;
+    }
+    own_bytes(conn, org, owner).await
+}
+
+/// 422 `own_skill_budget_exceeded` when the write just made left the tier's own skills over
+/// their budget **and** bigger than `before`. A write that does not grow them always passes, so
+/// a tier that is already over (older skills, a deleted library's) can be tidied. The caller's
+/// transaction rolls back on the error.
+pub(crate) async fn check_own_budget(
+    conn: &mut PgConnection,
+    org: Uuid,
+    owner: Owner,
+    before: usize,
+) -> Result<(), ApiError> {
+    let (tier, whose, limit) = match (owner.agent, owner.workspace) {
+        (Some(_), _) => ("agent", "this agent's", limits::OWN_SKILL_BYTES_PER_AGENT),
+        (None, Some(_)) => (
+            "workspace",
+            "this workspace's",
+            limits::OWN_SKILL_BYTES_PER_WORKSPACE,
+        ),
+        (None, None) => ("org", "the organization's", limits::OWN_SKILL_BYTES_PER_ORG),
+    };
+    let after = own_bytes(conn, org, owner).await?;
+    if after <= limit || after <= before {
+        return Ok(());
+    }
+    Err(ApiError::unprocessable(
+        "own_skill_budget_exceeded",
+        format!(
+            "This would bring {whose} own skills to {after} characters of instructions and \
+             files; together they can hold at most {limit}. Remove or shorten a skill first."
+        ),
+    )
+    .with_details(serde_json::json!({
+        "tier": tier, "bytes_used": before, "bytes_adding": after - before,
+        "bytes_limit": limit,
+    })))
+}
+
+fn owner_of(row: &SkillRow) -> Owner {
+    Owner {
+        agent: row.agent_id,
+        workspace: row.workspace_id,
+    }
 }
 
 /// `agent` | `workspace` | `org`.
@@ -522,7 +621,9 @@ pub(crate) async fn create_in_tx(
             ));
         }
     }
+    check_skill_md_entry(n.name, n.description, n.body)?;
     let title = clean_title(n.title)?;
+    let before = own_before(&mut *tx, org, owner).await?;
     let row = repo::insert(
         tx,
         org,
@@ -542,6 +643,7 @@ pub(crate) async fn create_in_tx(
         ),
         e => e.into(),
     })?;
+    check_own_budget(tx, org, owner, before).await?;
     bump(tx, &row).await?;
     view(tx, row).await
 }
@@ -582,6 +684,14 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
         let files = repo::files(&mut tx, &[id]).await?;
         check_total(body, files.iter().map(|f| f.content.as_slice()))?;
     }
+    if p.body.is_some() || p.description.is_some() {
+        check_skill_md_entry(&cur.name, p.description.unwrap_or(&cur.description), body)?;
+    }
+    // Only the instructions count against the budget; a library skill's never change here.
+    let before = match p.body {
+        Some(_) => Some(own_before(&mut tx, cur.org_id, owner_of(&cur)).await?),
+        None => None,
+    };
     let row = repo::update(
         &mut tx,
         id,
@@ -591,6 +701,9 @@ pub async fn update(pool: &PgPool, id: Uuid, p: &Patch<'_>) -> Result<SkillView,
         title.as_deref(),
     )
     .await?;
+    if let Some(before) = before {
+        check_own_budget(&mut tx, cur.org_id, owner_of(&cur), before).await?;
+    }
     bump(&mut tx, &row).await?;
     let v = view(&mut tx, row).await?;
     tx.commit().await.map_err(DbError::from)?;
@@ -633,7 +746,10 @@ pub async fn put_file(
         executable: false,
     });
     check_total(&cur.body, files.iter().map(|f| f.content.as_slice()))?;
+    skill_format::check_file_entry(path, content).map_err(entry_too_large)?;
+    let before = own_before(&mut tx, cur.org_id, owner_of(&cur)).await?;
     repo::upsert_file(&mut tx, id, path, content, executable).await?;
+    check_own_budget(&mut tx, cur.org_id, owner_of(&cur), before).await?;
     repo::touch(&mut tx, id).await?;
     bump(&mut tx, &cur).await?;
     let row = repo::get(&mut tx, id).await?.ok_or_else(not_found)?;

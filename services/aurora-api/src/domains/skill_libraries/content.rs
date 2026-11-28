@@ -658,8 +658,9 @@ pub fn finish(
         .iter()
         .map(|f| (f.path.as_str(), f.content.as_slice()))
         .collect();
-    let size = skill_format::check_content(&description, &body, &refs, limits::LIBRARY_FILE_MAX)
-        .map_err(|e| LoadError::Invalid(e.into()))?;
+    let size =
+        skill_format::check_content(&name, &description, &body, &refs, limits::LIBRARY_FILE_MAX)
+            .map_err(|e| LoadError::Invalid(e.into()))?;
     let content_sha256 = content_sha256(&description, &body, &files);
     Ok(LoadedSkill {
         name,

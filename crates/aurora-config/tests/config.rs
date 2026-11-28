@@ -1925,7 +1925,7 @@ fn skills_library_defaults_and_startup_refusals() {
     let api = load_with(BASE, &[]).unwrap().api_config().unwrap();
     assert!(api.skills_library.enabled);
     assert_eq!(api.skills_library.refresh_interval_secs, 900);
-    assert_eq!(api.skills_library.bytes_per_agent, 1024 * 1024);
+    assert_eq!(api.skills_library.bytes_per_agent, 4 * 1024 * 1024);
     assert_eq!(api.gateway_internal_url, "http://aurora-gateway:4103");
     let ok = load_with(
         &format!("{BASE}[skills.library]\nenabled = false\nrefresh_interval_secs = 300\nbytes_per_agent = 4096\n[api]\ngateway_internal_url = \"http://127.0.0.1:4103\"\n"),
@@ -1944,7 +1944,7 @@ fn skills_library_defaults_and_startup_refusals() {
             "skills.library.refresh_interval_secs",
         ),
         (
-            "[skills.library]\nbytes_per_agent = 1048577\n",
+            "[skills.library]\nbytes_per_agent = 4194305\n",
             "skills.library.bytes_per_agent",
         ),
         (

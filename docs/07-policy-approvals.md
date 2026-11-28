@@ -1015,13 +1015,55 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   A task with a pending approval is not closed by the end of the receiving
   turn; it keeps the task out of cancellation until the approval is decided,
   expires or the requester cancels the task.
+- (FIX-288, D-509) **Delegation chains.** Only a person's turn opens a task,
+  so a further task (A → B → C) is opened by a person speaking in a task
+  conversation. A chain is at most `PEER_CHAIN_DEPTH_MAX` tasks deep: a message
+  that would open one more is refused with a plain line, before any approval is
+  created, and so is the opening of a message approved later.
+  **Where the card goes.** "The origin" of an approval, everywhere above, is
+  found by walking up the task origins **while the same person asked**: it is
+  the first conversation that is no task conversation (also an automation's
+  thread, when that is where the person wrote), or the task conversation where
+  somebody else asked. The waiting and outcome notices, the channel card and
+  its D-178 redaction (by that conversation's thread link) are there, and
+  nowhere in between. The requester of the approval's task is then also the
+  person of that conversation, so Ask an approver and Cancel the task stay the
+  stored requester's; Approve and Deny stay `can_approve` at the approval's
+  workspace. A walk longer than the limit (a chain opened before it) ends at
+  the task's own origin, and so does one that would reach a conversation in a
+  workspace the person can no longer use. If that task is closed with the
+  approval still pending, its close line is posted where the card stands too,
+  which settles it. The approver's name is written only into a conversation
+  that is one person's own (a `direct` channel thread, or with no thread a
+  `direct` chat), in the notice and in each follow-up (D-178).
+  **The outcome** wakes the approval's task as ever, and every delegating agent
+  from that task's origin up to the card gets a follow-up turn in its own
+  conversation, all in the one transaction that posts the outcome notice, so it
+  happens once. A task cancelled on the way sends its close report one level
+  up, and that is the upper agent's only wake for this event.
+  **A delegating task waits for its onward tasks.** A task opened from a task
+  conversation that is `queued`, `open` or `waiting` is a wake registration of
+  the task working there (below), with no notice of its own. What such an
+  onward task sends up (its report or close line, a message inside the task, an
+  outcome further down) **wakes** the delegating task through the same wake
+  helper: the requester is re-checked, and such an onward wake counts toward
+  neither of the woken task's caps and is stopped by neither (`10`, which also
+  states what bounds it). While the
+  delegating agent runs, the follow-up queues behind its turn (not when the
+  agent itself caused it in that turn: cancelling its own task, or a task
+  refused at once). While it is **frozen**, only its own wake-up is held: the
+  rest of the delivery (the approval's task, the notices, the other agents)
+  goes at once, and the 60 s sweep delivers the held one once, after the
+  unfreeze (`peer_held_wakes`).
 - (FIX-253, D-490(b)) **A peer task can wait.** When the receiving turn ends
   while a wake is registered — an armed `process_watch` in the task
-  conversation, a one-time schedule created from that conversation, or a
-  pending approval (the FIX-252 minimum) — the task goes to `waiting` instead
+  conversation, a one-time schedule created from that conversation, a
+  pending approval (the FIX-252 minimum), or (FIX-288, above) a live onward
+  task — the task goes to `waiting` instead
   of being cancelled, and the requester sees one `peer_task_waiting` notice
   (words from `14 §Vocabulary`; a pending approval adds none beyond
-  FIX-252's card, and the notice shows once per wait, not per turn). Only the
+  FIX-252's card, nor does an onward task alone, and the notice shows once per
+  wait, not per turn). Only the
   receiving agent's own registrations count: a watch or a schedule of another
   conversation never keeps the task alive, nor does a schedule a person set in
   the task conversation (the agent's own wake-up is the one that carries the
@@ -1043,9 +1085,10 @@ requires it). Unknown key at decide time → 500 and a logged error (fail loud).
   promotes the queued one. A waiting task still ends by `complete_task`,
   Cancel, or its overall expiry/budget (the expiry report reaches the requester
   as today).
-  **Bounds.** Each wake turn is charged to `PEER_TASK_BUDGET` like a task
-  message; one task is woken at most `PEER_TASK_WAKES_MAX` times without its
-  report; at most `PEER_TASK_WAITING_PER_REQUESTER_MAX` tasks of one requester
+  **Bounds.** Each of a task's own wake turns is charged to `PEER_TASK_BUDGET`
+  like a task message; one task is woken that way at most
+  `PEER_TASK_WAKES_MAX` times without its report (onward wakes are not counted,
+  FIX-288, above); at most `PEER_TASK_WAITING_PER_REQUESTER_MAX` tasks of one requester
   and `PEER_TASK_WAITING_PER_RECEIVER_MAX` tasks of one receiving agent wait at
   once. A task that would exceed a bound is closed with a line saying which.
   The two waiting bounds are soft under concurrency: turn ends that overlap

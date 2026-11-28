@@ -381,6 +381,23 @@ pub struct Owner {
     pub workspace: Option<Uuid>,
 }
 
+/// `(id, characters of the body)` of the tier's own (non-library) skills.
+pub async fn own_bodies(
+    conn: &mut PgConnection,
+    org: Uuid,
+    owner: Owner,
+) -> Result<Vec<(Uuid, i32)>, DbError> {
+    Ok(sqlx::query_as(
+        "SELECT id, char_length(body) FROM skills WHERE org_id = $1 AND library_id IS NULL
+           AND agent_id IS NOT DISTINCT FROM $2 AND workspace_id IS NOT DISTINCT FROM $3",
+    )
+    .bind(org)
+    .bind(owner.agent)
+    .bind(owner.workspace)
+    .fetch_all(conn)
+    .await?)
+}
+
 /// Own (non-library) skills of an agent (FIX-110 cap).
 pub async fn count_agent_own(conn: &mut PgConnection, agent: Uuid) -> Result<i64, DbError> {
     Ok(

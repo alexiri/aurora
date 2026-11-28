@@ -1,6 +1,6 @@
 //! Skill tools (docs/12 Phase 0 catalogue): `skill_list/get/create/update/delete`. Agent tier
 //! only: an agent edits its own skills; organization skills are readable, never writable.
-use super::registry::{PlatformTool, ToolCallContext, ToolContext, ToolError};
+use super::registry::{MAX_RESULT_BYTES, PlatformTool, ToolCallContext, ToolContext, ToolError};
 use crate::domains::skills::app_skills::{self, AppSkill};
 use crate::domains::skills::service::Owner;
 use crate::domains::skills::{NewSkill, Patch, SkillView, service};
@@ -22,6 +22,54 @@ pub fn tools() -> Vec<Box<dyn PlatformTool>> {
 
 fn out(value: Value) -> Result<Vec<ToolContent>, ToolError> {
     Ok(vec![ToolContent::Json(JsonContent { value })])
+}
+
+/// [`out`] for a result carrying one long text, in `value[field]`: the file `path` of the skill
+/// `name`. When the result would pass the tool-result limit, the text is cut here, so the
+/// result stays readable JSON that says it was cut and where the whole file is.
+/// `in_home` is false for a skill that isn't projected (the agent's own, switched off).
+fn out_fitted(
+    mut value: Value,
+    field: &str,
+    name: &str,
+    path: &str,
+    in_home: bool,
+) -> Result<Vec<ToolContent>, ToolError> {
+    let fits = |v: &Value| {
+        serde_json::to_string(&[ToolContent::Json(JsonContent { value: v.clone() })])
+            .is_ok_and(|s| s.len() <= MAX_RESULT_BYTES)
+    };
+    if fits(&value) {
+        return out(value);
+    }
+    let whole = value[field].as_str().unwrap_or_default().to_owned();
+    let elsewhere = if in_home {
+        format!("Read the whole file in your home: $SKILLS_DIR/{name}/{path}")
+    } else {
+        format!(
+            "The skill is switched off, so it isn't in your skills folder: switch it on with \
+             skill_update, then read $SKILLS_DIR/{name}/{path}"
+        )
+    };
+    value["truncated"] = json!(true);
+    value["note"] = json!(format!(
+        "Cut to fit one tool result (at most {MAX_RESULT_BYTES} bytes): this is only the start \
+         of the text. {elsewhere}"
+    ));
+    // The longest prefix, in whole characters, with which the result fits.
+    let ends: Vec<usize> = whole.char_indices().map(|(i, _)| i).collect();
+    let (mut low, mut high) = (0, ends.len());
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        value[field] = json!(&whole[..ends.get(mid).copied().unwrap_or(whole.len())]);
+        if fits(&value) {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    value[field] = json!(&whole[..ends.get(low).copied().unwrap_or(whole.len())]);
+    out(value)
 }
 
 fn parse<T: for<'de> Deserialize<'de>>(args: Value) -> Result<T, ToolError> {
@@ -60,6 +108,22 @@ fn summary(v: &SkillView) -> Value {
         "source": crate::domains::skills::dto::source_of(&v.row, v.update_pending)
             .map(|s| json!({"kind": s.kind, "repo": s.repo, "path": s.path,
                 "commit_sha": s.commit_sha, "detached": s.detached}))})
+}
+
+/// The list is a skill index like the one the harness builds: held to the same size, so long
+/// descriptions never push other skills past the result limit. `skill_get` gives the whole one.
+fn fold_index(skills: &mut [Value]) {
+    use aurora_registry::skill_format::{fold_description, index_cap};
+    let lengths: Vec<usize> = skills
+        .iter()
+        .map(|s| s["description"].as_str().map_or(0, |d| d.chars().count()))
+        .collect();
+    let cap = index_cap(&lengths);
+    for s in skills {
+        if let Some(d) = s["description"].as_str() {
+            s["description"] = json!(fold_description(d, cap));
+        }
+    }
 }
 
 /// `library_skill_readonly`: only people change what a library pinned (docs/10 §Git skill
@@ -140,7 +204,8 @@ impl PlatformTool for List {
     fn description(&self, _: &ToolContext) -> String {
         "List the skills you receive (your own, your workspace's, the organization's and the \
          skills of your apps; all but your own are read-only for you) with their tier and the \
-         tiers your own skills shadow, plus your own disabled skills."
+         tiers your own skills shadow, plus your own disabled skills. A long description may be \
+         cut here, ending in …; skill_get gives all of it."
             .into()
     }
     fn input_schema(&self) -> Value {
@@ -194,6 +259,7 @@ impl PlatformTool for List {
             skills.push(app_summary(a));
         }
         skills.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        fold_index(&mut skills);
         out(json!({"skills": skills}))
     }
 }
@@ -218,7 +284,8 @@ impl PlatformTool for Get {
     }
     fn description(&self, _: &ToolContext) -> String {
         "Read a skill from the set you receive (agent > workspace > organization > app): body \
-         and file list, or one text file when `path` is given."
+         and file list, or one text file when `path` is given. A text too long for one result \
+         is cut; the result then says so and names the whole file in your skills folder."
             .into()
     }
     fn input_schema(&self) -> Value {
@@ -272,8 +339,12 @@ impl PlatformTool for Get {
                                     })?;
                             let content = String::from_utf8(bytes)
                                 .map_err(|_| ToolError::Failed("Skill file is not text.".into()))?;
-                            return out(
+                            return out_fitted(
                                 json!({"name": sk.skill.name, "path": p, "content": content}),
+                                "content",
+                                &sk.skill.name,
+                                &p,
+                                true,
                             );
                         }
                         let mut s = app_summary(sk);
@@ -283,22 +354,30 @@ impl PlatformTool for Get {
                                 .map_err(fail)?
                                 .unwrap_or_default()
                         );
-                        return out(s);
+                        return out_fitted(s, "body", &sk.skill.name, "SKILL.md", true);
                     }
                 }
             }
             Err(e) => return Err(fail(e)),
         };
+        // Only the agent's own switched-off skill can be read without being in its home.
+        let in_home = v.row.enabled;
         if let Some(p) = a.path {
             let content = service::read_file(pool, v.row.id, &p).await.map_err(fail)?;
-            return out(json!({"name": v.row.name, "path": p, "content": content}));
+            return out_fitted(
+                json!({"name": v.row.name, "path": p, "content": content}),
+                "content",
+                &v.row.name,
+                &p,
+                in_home,
+            );
         }
         let mut s = summary(&v);
         s["body"] = json!(v.row.body);
         // (C-1175) Reading a skill's instructions is a use of it; reading one of its files is
         // not, and neither is reading a skill that does not apply (an own skill switched off).
         record_use(ctx, &v).await;
-        out(s)
+        out_fitted(s, "body", &v.row.name, "SKILL.md", in_home)
     }
 }
 

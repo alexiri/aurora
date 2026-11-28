@@ -130,6 +130,38 @@ go only to the origin conversation and carry only the words — the agent's name
 and a one-line action — never a request field. A later `peer_task_closed`
 notice settles a waiting card the same way (an abandoned approval, e.g. the
 task cancelled, fires no decision notice).
+(FIX-288, D-509) In a delegation chain "the origin" of these notices is the
+conversation reached by walking up the task origins while the same person asked
+(`07 §Agent links and peer tasks`); the task conversations in between get
+neither notice, only their agent's follow-up turn. When the approval's task is
+closed with the approval pending, `peer_task_closed` is posted there as well as
+at the task's own origin. A task with a live onward task waits for it with no
+`peer_task_waiting` notice of its own, and whatever that task sends up wakes it
+(held while its agent is frozen, delivered once after the unfreeze), once per
+event: a task cancelled by such a wake sends its close report one level up, and
+that report is the upper task's only wake for the event.
+**The walk and the name** (D-509, D-178). The walk also ends at the task's own
+origin when the conversation it would reach is in a workspace the person can no
+longer use. The approver's name appears only where the conversation is one
+person's own: a `direct` channel thread, or with no thread a `direct` chat.
+Everywhere else (a task conversation, an automation's thread, an API
+conversation, a shared thread), in the notice and in each follow-up, the line
+says only what was decided.
+**What an onward wake counts** (D-509). A wake-up caused by an event of a task
+opened from the task (its report or close line, a message inside it, an
+approval's outcome there or further down, also one held and delivered later)
+counts toward **neither** `PEER_TASK_BUDGET` **nor** `PEER_TASK_WAKES_MAX` of
+the task it wakes, and neither cap stops it: whoever is further down cannot get
+a task above cancelled. The requester re-check and the freeze apply, and the
+turn's usage is recorded like any other. The task's **own** wake-ups (its
+watch, its one-time wake-up, its own approval) count toward both, as before.
+**The bound** on onward wakes: only a person's turn opens a task; each onward
+task sends one report and its messages count against its own
+`PEER_TASK_BUDGET`; a chain is at most `PEER_CHAIN_DEPTH_MAX` deep, at most
+`PEER_TASK_QUEUE_MAX` tasks queue per pair, and every task ends by its expiry
+(`PEER_TASK_TTL`). The outcomes of the onward task's approvals are not counted
+by its budget: each needs a person's decision or its deadline, until the
+task's expiry.
 
 (FIX-253, D-490(b)) **A waiting peer task.** A task whose receiving turn ends
 while a wake is registered (an armed watch on the task conversation, a one-time
@@ -1075,9 +1107,19 @@ from searching the incoming message with score ≥ 0.1.
   was last used, naming that conversation only to its readers; workspace and organization
   skills say how many agents used them in the last 30 days.
 - Name = directory name (immutable; `aurora-*` reserved). Single-line
-description (frontmatter the harness uses to decide when to load). Body ≤
+description of at most `SKILL_DESCRIPTION_MAX` characters (frontmatter the harness uses to
+decide when to load; every harness lists them all, so the projected index is held to
+`SKILL_INDEX_SHARE` characters per skill taken together: the longest are cut with "…" when
+they would pass it, D-513). Body ≤
 `SKILL_BODY_MAX`; body + files ≤ `SKILL_TOTAL_MAX` chars (binary counted as
-base64 length).
+base64 length). `SKILL.md` with its front matter, and each text file, is also at most
+`SKILL_ENTRY_JSON_MAX` as a JSON string, because each is one home-sync entry: a write
+that would pass it is refused 422 `file_too_large` (D-513).
+A tier's own skills together (instructions plus files, counted like its library budget and
+apart from it) hold at most `OWN_SKILL_BYTES_PER_*` (4 / 8 / 16 MiB per agent / workspace /
+organization): a write that leaves the tier over it and bigger than before is refused 422
+`own_skill_budget_exceeded`, "Stop updates and edit" included. A write that does not grow the
+tier passes, and deleting a library is never blocked (D-513).
 - Files: relative paths, `[A-Za-z0-9._/-]`, depth ≤ 4, no `..`, no leading `/`,
 no name equal to `skill.md` case-insensitively; optional executable bit
 (projected 0555, else 0444).
@@ -1171,7 +1213,7 @@ org tier org owner/admin** (`04 §Permission matrix`), so SEC-56 holds unchanged
 widen who may put instructions in front of a whole workspace or org. Validation is the manual
 skills' (`name`, `SKILL_BODY_MAX`, `SKILL_TOTAL_MAX`, file rules, executable bit from file mode
 `100755`) plus library rules: **symlinks (mode `120000`), submodules (`160000`) and non-regular
-entries are refused**, a file larger than `LIBRARY_FILE_MAX` (64 KiB) is refused, a skill directory of more than 50 files is refused (D-154),
+entries are refused**, a file larger than `LIBRARY_FILE_MAX` (160 KiB), or a text over `SKILL_ENTRY_JSON_MAX` as JSON, is refused, a skill directory of more than 50 files is refused (D-154),
 `SKILL.md` frontmatter must parse (a single-line `description`) and its `name` (if present) must equal the
 directory name; control, bidi and zero-width characters are removed from repository text before it is stored; failures are 422
 `library_skill_invalid` with the reason and nothing is stored. Names stay unique per tier (409
@@ -1179,8 +1221,8 @@ directory name; control, bidi and zero-width characters are removed from reposit
 effective set, projection and wire format (`16`) do not know about libraries.
 
 **Budgets** (per tier, counting only library-sourced content: body + files, binary as base64 length):
-`LIBRARY_BYTES_PER_AGENT` 1 MiB / `LIBRARY_SKILLS_PER_AGENT` 25; per workspace 2 MiB / 50; per
-org 4 MiB / 100; a skill that would exceed a budget is refused 422 `library_budget_exceeded` (a
+`LIBRARY_BYTES_PER_AGENT` 4 MiB / `LIBRARY_SKILLS_PER_AGENT` 25; per workspace 8 MiB / 50; per
+org 16 MiB / 100; a skill that would exceed a budget is refused 422 `library_budget_exceeded` (a
 pending update larger than the headroom stays pending, flagged "over budget", until the person frees
 space or rejects it). Library skills count in the ordinary skill projection limits too.
 

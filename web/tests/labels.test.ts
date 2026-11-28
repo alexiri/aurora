@@ -52,7 +52,9 @@ describe("labels (rec 13)", () => {
     const sentences = codes.map((c) => skillInvalidWords(c));
     for (const text of sentences) expect(text).toMatch(/^\p{Lu}.*\.$/u);
     expect(new Set(sentences).size).toBe(codes.length);
-    expect(skillInvalidWords("too_large")).toBe("This skill is larger than 32,000 characters, the most a skill may hold.");
+    expect(skillInvalidWords("too_large")).toBe("This skill is larger than 300,000 characters, the most a skill may hold.");
+    expect(skillInvalidWords("body_too_large")).toBe("Its instructions are longer than 48,000 characters, the most a skill’s instructions may be.");
+    expect(skillInvalidWords("file_too_large")).toBe("One of its files is too large: a file may be at most 160 KB, and less if it has many line breaks, quotes or special characters.");
     expect(skillInvalidWords("made_up")).toBe("This skill can’t be added.");
     expect(skillInvalidWords(null)).toBe("This skill can’t be added.");
     expect(skillInvalidWords("constructor")).toBe("This skill can’t be added.");

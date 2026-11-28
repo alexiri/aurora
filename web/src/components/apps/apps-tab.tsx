@@ -88,7 +88,10 @@ function AppCard({
   const withdraw = useWithdrawSetup(workspaceId);
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState("");
-  const text = app.summary ?? app.description;
+  // A family's words are the hosted variant's, unless only one other variant is usable: then they are its own.
+  const usable = new Set(usableChoices(members, instances).map((o) => o.appId));
+  const described = (usable.size === 1 ? members.find((m) => usable.has(m.app_id)) : undefined) ?? app;
+  const text = described.summary ?? described.description;
   return (
     <li className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-card sm:p-5">
       <div className="flex items-center gap-3">
@@ -104,7 +107,7 @@ function AppCard({
         </p>
       </div>
       {/* The summary whole, or the description clamped to two lines with its full text on hover. */}
-      <p className={app.summary ? "text-sm text-ink-2" : "line-clamp-2 text-sm text-ink-2"} title={text}>
+      <p className={described.summary ? "text-sm text-ink-2" : "line-clamp-2 text-sm text-ink-2"} title={text}>
         {text}
       </p>
       <StatusLine tone={status.kind === "needs_admin" ? "idle" : status.kind === "connected" ? "ok" : "idle"} data-testid="app-status">

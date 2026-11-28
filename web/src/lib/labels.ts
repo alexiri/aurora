@@ -39,9 +39,9 @@ export const LIBRARY_STATUS = {
  * text is never shown or read: it is rule text with paths in it. The numbers are the limits of a skill.
  */
 export const SKILL_INVALID_REASON = {
-  too_large: { label: "This skill is larger than 32,000 characters, the most a skill may hold." },
-  body_too_large: { label: "Its instructions are longer than 24,000 characters, the most a skill’s instructions may be." },
-  file_too_large: { label: "One of its files is larger than 65,536 bytes, the most one file may be." },
+  too_large: { label: "This skill is larger than 300,000 characters, the most a skill may hold." },
+  body_too_large: { label: "Its instructions are longer than 48,000 characters, the most a skill’s instructions may be." },
+  file_too_large: { label: "One of its files is too large: a file may be at most 160 KB, and less if it has many line breaks, quotes or special characters." },
   too_many_files: { label: "It has more than 50 files, the most a skill may hold." },
   unsupported_path: { label: "Some of its file names use characters Aurora can’t store, or sit too many folders deep." },
   unsupported_entry: { label: "It holds a link, a submodule or another kind of file a skill can’t hold." },
