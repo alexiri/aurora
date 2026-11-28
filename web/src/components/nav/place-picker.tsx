@@ -122,7 +122,7 @@ function search(model: PickerModel, q: string): { heading: string; hits: Hit[] }
     .sort((a, b) => Number(b.slug === first) - Number(a.slug === first) || a.name.localeCompare(b.name))
     .map((o) => {
       const hits: Hit[] = o.workspaces
-        .filter((w) => has(w.label) || has(w.stored))
+        .filter((w) => has(w.label) || has(w.stored) || has(o.name))
         .map((w) => ({
           key: `ws:${o.slug}/${w.slug}`,
           href: wsRoutes(o.slug, w.slug).home(),

@@ -19,11 +19,11 @@ const FEED = {
   count: 2,
   items: [
     needs(1, {
-      kind: "template_update", topic: "skills", title: "Anthropic skills has an update to review",
+      kind: "library_update", topic: "skills", title: "Anthropic skills has an update to review",
       detail: "Shared with every workspace in Acme Labs", href: "/o/acme/skills?tab=libraries", action: { label: "Review", href: "/o/acme/skills?tab=libraries" },
     }),
     needs(2, {
-      kind: "broken_account", topic: "accounts", title: "The GitHub account for Acme Labs failed to refresh its token",
+      kind: "org_account_broken", topic: "accounts", title: "The GitHub account for Acme Labs failed to refresh its token",
       detail: "Workspaces that use it stop until it is renewed", href: "/o/acme/apps?tab=accounts", action: { label: "Fix", href: "/o/acme/apps?tab=accounts" },
     }),
   ],
@@ -77,6 +77,9 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByText("Everything Acme Labs's workspaces share")).toBeVisible();
         await expect(page.getByRole("list", { name: "Summary" }).getByRole("link")).toHaveCount(4);
         await expect(page.getByRole("link", { name: "The GitHub account for Acme Labs failed to refresh its token", exact: true })).toBeVisible();
+        const needsYou = page.getByTestId("org-needs-you");
+        await expect(needsYou.getByText("Review", { exact: true })).toBeVisible();
+        await expect(needsYou.getByText("Failed", { exact: true })).toBeVisible();
         // The page itself draws no second menu and no select.
         await expect(page.getByRole("main").getByRole("navigation", { name: /^Manage / })).toHaveCount(0);
         await expect(page.getByRole("main").getByRole("combobox")).toHaveCount(0);
@@ -135,6 +138,23 @@ for (const scheme of ["light", "dark"] as const) {
     });
   }
 }
+
+test.describe("a short window", () => {
+  test.use({ viewport: { width: 1256, height: 783 } });
+
+  test("the current page's Manage entry is in view when the place opens", async ({ page }) => {
+    const errors = await open(page, "/o/acme/settings", "dark");
+    const rail = page.getByRole("complementary", { name: "Sidebar" });
+    const entry = rail.getByRole("navigation", { name: "Manage Acme Labs" }).getByRole("link", { name: "Settings" });
+    await expect(entry).toHaveAttribute("aria-current", "page");
+    // `toBeInViewport` counts what the menu's own scroller clips away.
+    await expect(entry).toBeInViewport({ ratio: 1 });
+    // Only the menu scrolled: the page itself did not.
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    await shot(page, "rail-short-dark-1256x783");
+    expect(errors).toEqual([]);
+  });
+});
 
 test.describe("members (D-508(e))", () => {
   test("a member of the organization is sent from Manage to their workspace", async ({ page }) => {

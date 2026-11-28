@@ -79,14 +79,17 @@ export function emergencySpanText(from: string, to: string | null | undefined): 
  */
 export function emergencyPeopleBannerText(e: WorkspaceEmergency, activeMore = 0): string {
   const name = personName(e.by.display_name);
+  // The reason is the opener's own words: it may already end its sentence.
+  const said = e.reason.trim();
+  const reason = /[.!?…]$/.test(said) ? said : `${said}.`;
   const more =
     activeMore > 0
       ? `, along with ${activeMore} more organization owner${activeMore === 1 ? "" : "s"}`
       : "";
   if (e.active) {
-    return `${name}, an organization owner, has emergency read access to this workspace until ${formatTime(e.expires_at)}${more}. Reason: ${e.reason}.`;
+    return `${name}, an organization owner, has emergency read access to this workspace until ${formatTime(e.expires_at)}${more}. Reason: ${reason}`;
   }
-  return `${name}, an organization owner, had emergency read access from ${emergencySpanText(e.opened_at, e.ended_at ?? e.expires_at)}. Reason: ${e.reason}.`;
+  return `${name}, an organization owner, had emergency read access from ${emergencySpanText(e.opened_at, e.ended_at ?? e.expires_at)}. Reason: ${reason}`;
 }
 
 /** The chat's extra visibility line (brief 4, D-479's table). */

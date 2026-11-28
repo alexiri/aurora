@@ -39,6 +39,8 @@ export interface PlaceOrg {
   role?: OrgRole;
   /** They may open Manage <org>. */
   manage: boolean;
+  /** They are offered New workspace there: Manage's people, and members while the organization allows it. */
+  canCreate: boolean;
   /** Their workspaces, the ones used last first. */
   workspaces: PlaceWorkspace[];
   /** How many workspaces the organization has, for someone who may list them all. */
@@ -50,6 +52,8 @@ interface Membership {
   role?: string;
   effective_role?: string | null;
   status?: string;
+  // FIX-282 contract, typed here until `schema.d.ts` is regenerated after it merges.
+  can_create_workspaces?: boolean;
   workspaces: { id?: string; slug: string; name?: string; my_role?: string; personal?: boolean }[];
 }
 
@@ -87,12 +91,14 @@ export function buildPlaces(input: PlacesInput): PlaceOrg[] {
   const orgs: PlaceOrg[] = memberships.map((m) => {
     const active = m.status === undefined || m.status === "active";
     const role = (m.effective_role ?? m.role) as OrgRole | undefined;
+    const manage = instanceAdmin || (active && (role === "owner" || role === "admin"));
     return {
       id: m.org.id,
       slug: m.org.slug,
       name: m.org.name ?? m.org.slug,
       role,
-      manage: instanceAdmin || (active && (role === "owner" || role === "admin")),
+      manage,
+      canCreate: manage || (active && m.can_create_workspaces === true),
       // (FIX-235) Only workspaces this person is in (`my_role` set).
       workspaces: m.workspaces.flatMap((w) => (w.my_role ? [toPlace({ slug: w.slug, name: w.name ?? w.slug, personal: w.personal }, capitalised(w.my_role))] : [])),
     };
@@ -101,7 +107,7 @@ export function buildPlaces(input: PlacesInput): PlaceOrg[] {
     let at = orgs.findIndex((o) => o.slug === open.slug);
     if (at < 0) {
       // An instance admin in an organization they don't belong to: it is listed while they are there.
-      at = orgs.push({ id: open.id, slug: open.slug, name: open.name, manage: instanceAdmin, workspaces: [] }) - 1;
+      at = orgs.push({ id: open.id, slug: open.slug, name: open.name, manage: instanceAdmin, canCreate: instanceAdmin, workspaces: [] }) - 1;
     }
     const o = orgs[at]!;
     if (openList) {

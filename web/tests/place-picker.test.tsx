@@ -34,6 +34,8 @@ interface OrgFixture {
   mine: Mine[];
   /** Workspaces of the organization this person is not in: an administrator's list shows them. */
   others?: number;
+  /** `/v1/me`'s answer to "may this person create a workspace here". */
+  canCreateWorkspaces?: boolean;
 }
 interface World {
   instanceAdmin: boolean;
@@ -69,6 +71,7 @@ function serve() {
             org: { id: o.id, slug: o.slug, name: o.name },
             role: o.role,
             status: "active",
+            ...(o.canCreateWorkspaces === undefined ? {} : { can_create_workspaces: o.canCreateWorkspaces }),
             workspaces: o.mine.map((w) => ({ id: `${o.slug}-${w.slug}`, slug: w.slug, name: w.name, my_role: w.role, personal: w.personal === true })),
           })),
         });
@@ -182,6 +185,21 @@ describe("the picker for Bob (nav-3a): only what he can use", () => {
     expect(within(sidebar()).queryByRole("link", { name: /^Manage/ })).toBeNull();
   });
 
+  it("a member who may create workspaces is offered New workspace, though they can't open Manage", async () => {
+    shell({ ...bob(), orgCreation: "instance_admins", orgs: [acme({ canCreateWorkspaces: true })] });
+    const d = await open();
+    expect(await within(d).findByRole("button", { name: "New workspace in Acme" })).toBeInTheDocument();
+    expect(within(d).queryByRole("link", { name: /Manage/ })).toBeNull();
+    expect(within(d).queryByRole("button", { name: "New organization" })).toBeNull();
+  });
+
+  it("a member who may not create workspaces isn't", async () => {
+    shell({ ...bob(), orgs: [acme({ canCreateWorkspaces: false })] });
+    const d = await open();
+    await within(d).findByRole("button", { name: "New organization" });
+    expect(within(d).queryByRole("button", { name: /New workspace/ })).toBeNull();
+  });
+
   it("with nothing else to open and nothing to make, the card has no menu", async () => {
     shell({ ...bob(), orgCreation: "instance_admins" });
     await waitFor(() => expect(card()).toHaveTextContent("Your workspace Acme"));
@@ -288,6 +306,15 @@ describe("many places: search first (nav-3a)", () => {
     expect(document.activeElement).toBe(field);
     fireEvent.keyDown(field, { key: "Enter" });
     expect(clicked).toEqual(["/o/globex/w/plat"]);
+  });
+
+  it("an organization's name finds its workspaces too", async () => {
+    shell(carol(), "/o/acme/w/platform", { org: "acme", ws: "platform" });
+    const d = await open();
+    fireEvent.change(within(d).getByRole("combobox"), { target: { value: "globex" } });
+    await waitFor(() => expect(within(d).getAllByRole("option").map((o) => o.getAttribute("href"))).toContain("/o/globex/w/plat"));
+    expect(within(d).getByRole("group", { name: "Globex" })).toHaveTextContent("Platform Workspace · Member");
+    expect(headings(d)).toEqual(["Globex"]);
   });
 
   it("finds Manage only where she may open it, and no Administration without being an instance admin", async () => {

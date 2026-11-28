@@ -355,7 +355,13 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   URL; read back only if it is a path inside that workspace). Without a record
   (a link, a new tab) it goes to the workspace used last — in Manage, last in
   that organization — and with none it is hidden. A workspace an administrator
-  only manages (and is redirected from) is never recorded.
+  only manages (and is redirected from) is never recorded. Your own workspace is
+  "Your workspace" there too (from the `/v1/me` membership, as on the card). A
+  workspace read under emergency access is gone back to only while its answer
+  says the grant is open (asked again on each page of the place; the line waits
+  for the answer); after that the line goes to the last workspace. When the
+  rail's menu is too short for its entries, opening a page scrolls the menu (not
+  the page) to the current entry.
 - **The place picker** (P5-NAV-3, D-508(f); design nav-3a;
   `components/nav/place-picker.tsx`, data `lib/nav/places.ts`) opens from the
   place card in **every** place (Administration's and Your account's cards too;
@@ -364,7 +370,8 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   holds something:
   1. **Find a workspace or organization**, with more than six places (workspaces,
      Manage entries and Administration counted). It searches across
-     organizations; results are grouped by organization ("Workspace · <Role>",
+     organizations (a workspace is found by its own name or its organization's);
+     results are grouped by organization ("Workspace · <Role>",
      **Manage <org>** where they may open it, the organization itself where they
      may not, and **Administration** for instance admins), the field shows
      "<n> workspaces, <m> organizations" (from 640 px), and the foot reads
@@ -380,7 +387,9 @@ shadow. No gradient fills, no left-border accent cards, no emoji.
   5. **Other organizations**: up to 3, "<Role> · opens your last workspace
      there" (with no workspace and the right to manage it, "opens Manage
      <org>"); **All n organizations**. One with nothing to open is not listed.
-  6. **New workspace in <Org>**, **New organization**, where allowed.
+  6. **New workspace in <Org>**, **New organization**, where allowed (New
+     workspace: Manage's people, and members while their membership says
+     `can_create_workspaces`).
   Keys: the focus starts in the search field, else on the first row; arrows
   move (with a query they move the highlight), Enter opens, typing goes to the
   field, Escape closes and the focus returns to the card. With nothing else to
@@ -1791,7 +1800,8 @@ structure for every level". Members don't see Manage, D-508(e).)
   accounts); a figure not yet known reads "–". **Needs you** (`GET /v1/orgs/{org}/attention`: only what an owner or
   admin can act on, D-508(j)) with the feed's count: one row each, a mark (danger when something stopped working), the
   title, "<page> · <detail>" (and the asker's reason), the item's action, **Decline** on a request, and an arrow; the
-  whole row opens the item's page. Invitations still waiting follow as an uncounted row; a **History** fold lists what
+  whole row opens the item's page. A library update to review and a broken organization account (`library_update`,
+  `org_account_broken`) end in a word instead of a button: **Review** (waiting) or **Failed** (danger). Invitations still waiting follow as an uncounted row; a **History** fold lists what
   closed in 30 days.
 - **Workspaces** (`/o/<org>/workspaces`, C-1178): every workspace of the organization, team first (A to Z), then
   personal ones by owner, with **New workspace**: Name, Kind (Team/Personal), Owners, Agents, Created (a
@@ -1899,7 +1909,8 @@ structure for every level". Members don't see Manage, D-508(e).)
     with "enforced by instance".
   - *Egress*: posture (`open` / `credentialed_only`), org allow-list editor with
     a "recently blocked hosts" helper fed from the request log
-    (`egress_denied` decisions), instance baseline shown read-only.
+    (`egress_denied` decisions; only of the workspaces the viewer is in or reads under emergency access, and it
+    says "From the workspaces you can read." when others are left out), instance baseline shown read-only.
     (phase 1, RFE-003) **Browser tunnels (open lane)**: `enabled` /
     `allowlist_only` / `disabled`, with the sentence "Tunnels cannot be
     inspected or given credentials; `allowlist_only` limits them to the allow-list".
