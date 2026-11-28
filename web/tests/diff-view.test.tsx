@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DiffView } from "@/components/ui/diff-view";
 
 // FIX-250: the shared diff component — fold rows labelled with the lines they hide, expand buttons
-// that grant exactly the lines they name, keyboard-operable controls, the whole-file switch, and
+// that grant exactly the lines they name, keyboard-operable controls, wrapped lines, and
 // added / removed / unchanged files said in words.
 
 afterEach(cleanup);
@@ -21,25 +21,20 @@ const folds = () => screen.getAllByTestId("diff-fold");
 const lineRows = () => Array.from(document.querySelectorAll("tr[data-diff]"));
 
 describe("DiffView", () => {
-  // (P5-MEMORY-3) Long lines scroll inside the box by default; `wrap` is the narrow-column choice.
-  it("keeps long lines on one line unless wrap is asked for", () => {
-    const cell = () => screen.getByTestId("diff-view").querySelector('[data-diff="add"] td:last-child')!;
-    const { unmount } = render(<DiffView old="a" next="b" label="d" />);
-    expect(cell().className.split(" ")).toContain("whitespace-pre");
-    expect(cell().innerHTML).not.toContain("pre-wrap");
-    expect(cell().querySelector("[data-diff-text]")).toBeNull();
-    expect(cell().textContent).toBe("+ b");
-    unmount();
-    render(<DiffView old="a" next="b" label="d" wrap />);
-    const text = cell().querySelector("[data-diff-text]")!;
+  // (FIX-289) Every diff wraps its long lines; no caller chooses.
+  it("always wraps long lines, and no caller can turn wrapping off", () => {
+    // @ts-expect-error there is no `wrap` prop (the typecheck fails if one comes back)
+    render(<DiffView old="a" next={"x".repeat(300)} label="d" wrap={false} />);
+    const cell = screen.getByTestId("diff-view").querySelector('[data-diff="add"] td:last-child')!;
+    const text = cell.querySelector("[data-diff-text]")!;
     expect(text.className.split(" ")).toEqual(expect.arrayContaining(["whitespace-pre-wrap", "wrap-anywhere"]));
-    expect(cell().className.split(" ")).not.toContain("whitespace-pre");
+    expect(cell.className.split(" ")).not.toContain("whitespace-pre");
   });
 
-  // (FIX-277) With `wrap` the sign stands in its own column and the text beside it, so a continued line starts under
+  // (FIX-277) The sign stands in its own column and the text beside it, so a continued line starts under
   // the text, never under the sign. (The geometry is checked in e2e/fix-277.spec.ts.)
-  it("with wrap, puts the sign and the text side by side", () => {
-    render(<DiffView old={"keep\nSwitch the bot off"} next={"keep\nSwitch the bot off by 1 December"} label="d" wrap />);
+  it("puts the sign and the text side by side", () => {
+    render(<DiffView old={"keep\nSwitch the bot off"} next={"keep\nSwitch the bot off by 1 December"} label="d" />);
     for (const [kind, sign, words] of [
       ["same", "  ", "keep"],
       ["del", "- ", "Switch the bot off"],
@@ -112,14 +107,24 @@ describe("DiffView", () => {
     expect(folds()[0].textContent).toContain("27 unchanged lines");
   });
 
-  it("Show the whole file expands every fold at once, and switching it off folds again", () => {
+  // (FIX-289) Each fold's Show all opens it; there is no switch for the whole file.
+  it("has no Show the whole file switch", () => {
     render(<DiffView old={big().old} next={big().next} label="d" />);
-    const sw = screen.getByRole("switch", { name: "Show the whole file" });
-    fireEvent.click(sw);
-    expect(screen.queryByTestId("diff-fold")).toBeNull();
-    expect(document.querySelectorAll("tr[data-diff]")).toHaveLength(81);
-    fireEvent.click(sw);
-    expect(folds()).toHaveLength(2);
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByText("Show the whole file")).toBeNull();
+  });
+
+  // (FIX-289) The fold row sits at the left of the box and wraps, so a very long line never pushes it out of view.
+  // (The geometry is checked in e2e/fix-250-template-diff-sections.spec.ts.)
+  it("with a 300-character line, keeps the fold row and its three buttons at the left, in reach", () => {
+    const old = lines(80).replace("line 50", "y".repeat(300));
+    render(<DiffView old={old} next={old.replace("y".repeat(300), "z".repeat(300))} label="d" />);
+    const cell = folds()[0].querySelector("td")!;
+    expect(cell.className.split(" ")).toContain("text-left");
+    expect(cell.className.split(" ")).not.toContain("text-center");
+    expect(cell.firstElementChild!.className.split(" ")).toEqual(expect.arrayContaining(["flex", "flex-wrap"]));
+    const buttons = within(folds()[0]).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["Show 20 more lines above", "Show 20 more lines below", "Show all"]);
   });
 
   it("the fold buttons are keyboard-operable native buttons", () => {
@@ -190,11 +195,12 @@ describe("DiffView", () => {
     expect(screen.queryByText("Unchanged.")).toBeNull();
   });
 
-  it("long lines scroll inside the box, never the page", () => {
+  it("long lines wrap inside the box, never widening the page", () => {
     render(<DiffView old={"x".repeat(400)} next={"y".repeat(400)} label="d" />);
     const box = screen.getByTestId("diff-box");
     expect(box.className).toContain("overflow-x-auto");
     expect(box.className).toContain("max-w-full");
-    expect(document.querySelector("td.whitespace-pre")).toBeTruthy();
+    expect(document.querySelectorAll("[data-diff-text]")).toHaveLength(2);
+    expect(document.querySelector("td.whitespace-pre")).toBeNull();
   });
 });

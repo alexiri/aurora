@@ -267,7 +267,7 @@ function Changed({
         {removed ? <p className="text-sm text-muted">This version&apos;s text was removed</p> : null}
         {pruned && !removed ? <p className="text-sm text-muted">The version before is no longer kept, so there is nothing to compare with.</p> : null}
         {texts ? (
-          <DiffView wrap old={texts.old} next={texts.next} label={`Diff of version ${selected.revision}${before ? ` against version ${before.revision}` : ""}`} />
+          <DiffView old={texts.old} next={texts.next} label={`Diff of version ${selected.revision}${before ? ` against version ${before.revision}` : ""}`} />
         ) : null}
       </section>
       {counts ? (
