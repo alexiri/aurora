@@ -6,7 +6,7 @@
 
 use crate::common::*;
 use async_trait::async_trait;
-use aurora_api::secrets_migrate::{Options, Summary, run, run_unlocked};
+use aurora_api::secrets_migrate::{Options, Progress, Summary, run, run_unlocked};
 use aurora_config::{SecretStoreConfig, SecretsSection};
 use aurora_core::Secret;
 use aurora_secrets::{
@@ -14,8 +14,9 @@ use aurora_secrets::{
     StoreHealth, StoreRegistry,
 };
 use serde_json::json;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
+use tokio::sync::{Semaphore, mpsc};
 use uuid::Uuid;
 
 /// Where each purpose's ref lives: `(purpose, "SELECT <ref> FROM … WHERE id = $1")`.
@@ -679,42 +680,122 @@ async fn cas_loss_skips_and_discards_the_new_value() {
     assert_eq!(v.expose().as_slice(), b"concurrent");
 }
 
+/// A memory store that holds each `delete` until the test releases it.
+struct HeldDelete {
+    inner: Arc<MemoryStore>,
+    /// Signalled, with the time, when a `delete` arrives.
+    reached: mpsc::UnboundedSender<Instant>,
+    release: Arc<Semaphore>,
+}
+
+#[async_trait]
+impl SecretStore for HeldDelete {
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+    fn kind(&self) -> &'static str {
+        self.inner.kind()
+    }
+    fn capabilities(&self) -> StoreCapabilities {
+        self.inner.capabilities()
+    }
+    async fn put(
+        &self,
+        ctx: &SealContext,
+        plaintext: &Secret<Vec<u8>>,
+    ) -> aurora_secrets::Result<SecretRef> {
+        self.inner.put(ctx, plaintext).await
+    }
+    async fn get(
+        &self,
+        ctx: &SealContext,
+        r: &SecretRef,
+    ) -> aurora_secrets::Result<Secret<Vec<u8>>> {
+        self.inner.get(ctx, r).await
+    }
+    async fn delete(&self, ctx: &SealContext, r: &SecretRef) -> aurora_secrets::Result<()> {
+        self.reached.send(Instant::now()).unwrap();
+        self.release.acquire().await.unwrap().forget();
+        self.inner.delete(ctx, r).await
+    }
+    async fn resolve_reference(
+        &self,
+        ctx: &SealContext,
+        path: &str,
+        field: Option<&str>,
+    ) -> aurora_secrets::Result<SecretRef> {
+        self.inner.resolve_reference(ctx, path, field).await
+    }
+    async fn health(&self) -> StoreHealth {
+        self.inner.health().await
+    }
+}
+
 /// Live traffic: after the commit the new ref resolves, and the old ref stays readable until
 /// the discard (which waits for the grace period).
+///
+/// Nothing here depends on how fast the machine is: the store holds the discard open while the
+/// refs are read, and load can only lengthen the measured grace period.
 #[tokio::test]
 async fn old_ref_stays_readable_until_discard() {
-    let mem = Arc::new(MemoryStore::new("memory"));
+    let (reached_tx, mut reached) = mpsc::unbounded_channel();
+    let release = Arc::new(Semaphore::new(0));
     let mut sr = StoreRegistry::from_config(&SecretsSection::default(), keyring()).unwrap();
-    sr.register(mem.clone());
+    sr.register(Arc::new(HeldDelete {
+        inner: Arc::new(MemoryStore::new("memory")),
+        reached: reached_tx,
+        release: release.clone(),
+    }));
     let w = world(SecretVault::new(sr)).await;
+    // The old values are inline, which have nothing to delete: this run is not held.
     run(w.h.pool(), &w.vault, &World::quick("memory"))
         .await
         .unwrap();
-    let old = w.col(&w.seeds[0]).await; // memory ref
+    let seed = &w.seeds[0];
+    let old = w.col(seed).await; // memory ref
 
     let pool = w.h.pool().clone();
     let vault = w.vault.clone();
+    // Only the purpose under test: the grace period is waited out once per purpose.
     let mut o = Options::new("inline");
-    o.discard_grace = Duration::from_millis(1500);
-    let job = tokio::spawn(async move { run(&pool, &vault, &o).await.unwrap() });
-    // Wait for the commit (the row now points at inline), then read both refs.
-    let mut now = old.clone();
-    for _ in 0..100 {
-        now = w.col(&w.seeds[0]).await;
-        if now != old {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    o.purpose = Some(seed.ctx.purpose);
+    o.discard_grace = Duration::from_millis(500);
+    let grace = o.discard_grace;
+    // Reported after a page's commits and before the grace period.
+    let committed = Arc::new(OnceLock::new());
+    let seen = committed.clone();
+    o.progress = Some(Progress(Arc::new(move |_, _| {
+        let _ = seen.set(Instant::now());
+    })));
+    let mut job = tokio::spawn(async move { run(&pool, &vault, &o).await.unwrap() });
+
+    let discard_at = tokio::select! {
+        at = reached.recv() => at.unwrap(),
+        s = &mut job => panic!("the run ended without discarding the old value: {s:?}"),
+    };
+    let waited = discard_at.duration_since(*committed.get().expect("no progress report"));
+    assert!(waited >= grace, "discarded {waited:?} after the commit");
+
+    // The discard is held: the row is swapped and both refs still open.
+    let now = w.col(seed).await;
+    assert_ne!(now, old, "the row was not swapped before the discard");
+    for col in [&now, &old] {
+        let v = w
+            .vault
+            .open(&seed.ctx, &col.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(v.expose().as_slice(), seed.value.as_bytes());
     }
-    assert_ne!(now, old, "the row was never swapped");
-    let ctx = &w.seeds[0].ctx;
-    let new_v = w.vault.open(ctx, &now.parse().unwrap()).await.unwrap();
-    assert_eq!(new_v.expose().as_slice(), w.seeds[0].value.as_bytes());
-    let old_v = w.vault.open(ctx, &old.parse().unwrap()).await.unwrap();
-    assert_eq!(old_v.expose().as_slice(), w.seeds[0].value.as_bytes());
+    release.add_permits(1);
     let s = job.await.unwrap();
-    assert_eq!(s.failed(), 0);
-    assert!(w.vault.open(ctx, &old.parse().unwrap()).await.is_err());
+    assert_eq!(counts(&s, seed.ctx.purpose), (1, 0, 0, 0));
+    assert!(
+        w.vault
+            .open(&seed.ctx, &old.parse().unwrap())
+            .await
+            .is_err()
+    );
 }
 
 fn ring_vault(keys: &[(&str, u8)], active: &str) -> SecretVault {
