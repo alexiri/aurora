@@ -884,6 +884,25 @@ async fn no_other_registration_opens_a_private_token_endpoint() {
     }
 }
 
+/// When the connection's registration cannot be read, whether it opens the address is unknown:
+/// the refresh is unavailable for now, not refused as a private address, and nothing is dialled.
+#[tokio::test]
+async fn an_unreadable_registration_is_unavailable_not_refused() {
+    let idp = tls_idp(crate::common::private_ip(), SELF_HOSTED).await;
+    let fx = self_hosted_fixture("https://{instance}/token", false, false, "active").await;
+    sqlx::query("ALTER TABLE app_instances RENAME TO app_instances_away")
+        .execute(fx.db.pool())
+        .await
+        .unwrap();
+    let guard = idp.guard_naming(SELF_HOSTED, &[]);
+    let m = manager(&fx, token_upstream(guard, Some(idp.ca_pem.as_bytes())));
+    assert_eq!(
+        refresh(&m, &fx).await.unwrap_err(),
+        RefreshError::Unavailable
+    );
+    assert_eq!(idp.accepted(), 0);
+}
+
 /// The allowance is for the registration's own host: a token URL elsewhere is judged as usual,
 /// and so is an account that is not bound to the registration.
 #[tokio::test]

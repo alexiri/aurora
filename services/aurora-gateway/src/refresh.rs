@@ -447,7 +447,7 @@ impl TokenManager {
     ) -> Result<(u16, Value), RefreshError> {
         let mut req = token_request(plan).ok_or(RefreshError::Unavailable)?;
         let host = req.host.clone();
-        req.app_host = self.allowance(conn, req.scheme, &host, req.port).await;
+        req.app_host = self.allowance(conn, req.scheme, &host, req.port).await?;
         let answer = tokio::time::timeout(TOKEN_CALL_WALL, async {
             let resp = self.upstream.send(req).await.map_err(|e| {
                 if e.code() == "destination_refused" {
@@ -479,23 +479,32 @@ impl TokenManager {
 
     /// (D-511) The allowance of the registration the connection is bound to, judged by the one
     /// rule of agent requests: an instance administrator's own, and `https` to its host on 443.
-    /// The registration is read now, so a removed or disabled one opens nothing; when it cannot
-    /// be read there is no allowance.
+    /// The registration is read now, so a removed or disabled one opens nothing. When it cannot
+    /// be read, whether it opens the address is unknown: the refresh is unavailable for now,
+    /// never refused as if there were no allowance.
     async fn allowance(
         &self,
         conn: &ConnCand,
         scheme: Scheme,
         host: &str,
         port: u16,
-    ) -> Option<AppHost> {
-        let id = conn.instance_id?;
+    ) -> Result<Option<AppHost>, RefreshError> {
+        let Some(id) = conn.instance_id else {
+            return Ok(None);
+        };
         let visible = repo::visible_instances(&self.pool, conn.org_id)
             .await
-            .ok()?;
+            .map_err(|_| RefreshError::Unavailable)?;
         let own = visible
             .iter()
             .find(|i| i.id == id && i.app_id == conn.app_id);
-        self_hosted_allowance(own, conn.instance_id, scheme, host, port)
+        Ok(self_hosted_allowance(
+            own,
+            conn.instance_id,
+            scheme,
+            host,
+            port,
+        ))
     }
 }
 
