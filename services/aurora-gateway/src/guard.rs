@@ -228,13 +228,13 @@ impl Guard {
     /// name is matched exactly as asked, so a fully qualified `name.` is its own entry. An
     /// address with a port is dialled on that port (a test server cannot listen on 443); it is
     /// still judged for the port that was asked for.
-    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_static_names(&self, names: StaticNames) {
         self.names.store(Arc::new(names));
     }
 
     /// Replace this host's interface addresses (tests only: their upstream listens on one).
-    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_local_addresses(&self, local: Vec<IpAddr>) {
         self.local
             .store(Arc::new(local.into_iter().map(canon).collect()));

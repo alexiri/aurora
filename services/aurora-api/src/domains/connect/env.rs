@@ -333,7 +333,7 @@ impl Env {
 
     /// Answer these names with these addresses instead of the system resolver (tests only). A
     /// name is matched exactly as asked, so a fully qualified `name.` is its own entry.
-    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn set_static_names(&self, names: Vec<(String, Vec<IpAddr>)>) {
         self.names.store(Arc::new(names));
     }
@@ -356,8 +356,9 @@ impl Env {
         AppHost::new(host, 443)
     }
 
-    /// How many lookups a self-hosted app's allowance has admitted on a private address.
-    #[doc(hidden)]
+    /// How many lookups a self-hosted app's allowance has admitted on a private address (tests
+    /// only).
+    #[cfg(any(test, feature = "test-hooks"))]
     #[must_use]
     pub fn self_hosted_admissions(&self) -> u64 {
         self.admissions.load(std::sync::atomic::Ordering::Relaxed)
