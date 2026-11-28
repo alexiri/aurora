@@ -1340,8 +1340,9 @@ rejected by the validator.
 Outputs are validated against the manifest: credential/metadata keys must be
 declared; `tenant-host` must fall in the declared zone; `continue.url` must be
 https on a declared host or an `oauth_clients` authorize host; summaries are
-clamped to `SUMMARY_LIMITS` (title 120 characters, at most 32 fields, each value 200,
-text 1 000; a template `approvals.<tool>` declaring more than 32 fields is refused at load).
+clamped to `SUMMARY_LIMITS` (title 120 characters, at most 33 fields, each value 200,
+text 1 000; a template `approvals.<tool>` declaring more than 32 fields is refused at load, so
+that the Warning row a card may put first never pushes a declared row off the end).
 
 **Reserved key `aurora_access` (FIX-133, D-240).** A hook learns the connection's access
 (`read` | `write`, §3.4, `07`) without any WIT change: the API adds `aurora_access` to the

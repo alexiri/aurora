@@ -487,7 +487,8 @@ apps:
       update_alert_rule:
         title: change an alert rule
         # The create card's rows with the rule's uid before them, and after them the two keys
-        # a newer server answers with, which a change resends: 32 rows, the most a card holds.
+        # a newer server answers with, which a change resends: 32 rows, the most a card may
+        # declare (a card holds one more, for a Warning).
         fields:
           - { label: Rule, source: path, segment: 5 }
           - { label: Title, source: body, steps: [ { json: /title } ] }

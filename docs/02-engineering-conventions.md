@@ -331,7 +331,7 @@ overridden by the named configuration key (`15`).
 | `HOOK_MEMORY` / `HOOK_OUTPUT` | 64 MiB / 256 KiB | — | 09 |
 | `HOOK_WALL` | 15 s (connect, mint) / 1 s (`approval.summarize`) | — | 09 |
 | `HOOK_FETCH_MAX` | 16 calls, 1 MiB response each, 10 s each | — | 09 |
-| `SUMMARY_LIMITS` | title 120, ≤32 fields (20 before FIX-293, D-514(f)), value 200, text 1 000 chars | — | 09 |
+| `SUMMARY_LIMITS` | title 120, ≤33 fields, of which a template declares ≤32 (20 before FIX-293, D-514(f)), value 200, text 1 000 chars | — | 09 |
 | `PACKAGE_MAX` | 20 MiB archive, decompressed ≤ 4 × `PACKAGE_MAX`, `plugin.yaml` ≤ 256 KiB (`PACKAGE_MANIFEST_MAX`, FIX-107), icon PNG ≤ 256 KiB, setup guide ≤ 64 KiB | — | 09 |
 | `AGENT_SNIPPET_MAX` | 2 000 chars per app | — | 09 |
 | `AGENT_SUMMARY_MAX` | (phase 5, P5-GUIDE-1) 160 chars, one line (`agent.summary`) | — | 24 |

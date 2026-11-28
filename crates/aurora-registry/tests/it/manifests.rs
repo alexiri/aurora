@@ -380,6 +380,23 @@ apps:
           - { id: list_user, name: List user, host: api.example.com, path: /user, methods: [GET], connect_methods: [token] }
 "#;
 
+/// A card keeps one slot for the Warning it may put first: a template declaring as many
+/// rows as a card holds would lose its last one to it.
+#[test]
+fn an_approval_declares_one_row_fewer_than_a_card_holds() {
+    let max = aurora_core::limits::SUMMARY_FIELDS_MAX as usize;
+    let declaring = |n: usize| {
+        let rows = (0..n)
+            .map(|i| format!("          - {{ label: L{i}, source: path, segment: 1 }}\n"))
+            .collect::<String>();
+        codes(&format!(
+            "{METHODS}    approvals:\n      list_user:\n        title: list\n        fields:\n{rows}"
+        ))
+    };
+    assert_eq!(declaring(max - 1), BTreeSet::new());
+    assert_eq!(declaring(max), BTreeSet::from(["summary_too_many_fields"]));
+}
+
 fn codes(yaml: &str) -> BTreeSet<&'static str> {
     run(yaml).iter().map(|x| x.code).collect()
 }

@@ -117,15 +117,15 @@ mod tests {
     }
 
     #[test]
-    fn a_card_holds_thirty_two_fields() {
-        let vals: Vec<(String, Value)> = (0..30).map(|i| (format!("s{i}"), json!(i))).collect();
+    fn a_card_holds_thirty_three_fields() {
+        let vals: Vec<(String, Value)> = (0..31).map(|i| (format!("s{i}"), json!(i))).collect();
         let s = summary(
             "W",
             "h.example",
             "POST",
             vals.iter().map(|(k, v)| (k.as_str(), v)),
         );
-        assert_eq!(s.fields.len(), 32);
+        assert_eq!(s.fields.len(), 33);
         assert_eq!(s.text, None);
     }
 

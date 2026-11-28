@@ -861,7 +861,8 @@ fn app_rules(cx: &mut Ctx<'_>, clients: &BTreeSet<&str>, used: &mut BTreeSet<Hoo
                 "title too long",
             );
         }
-        if a.fields.len() > SUMMARY_FIELDS_MAX as usize {
+        // One slot of the card stays free for the Warning row it may put first.
+        if a.fields.len() >= SUMMARY_FIELDS_MAX as usize {
             cx.v(
                 "summary_too_many_fields",
                 &format!("{p}/fields"),
