@@ -646,6 +646,15 @@ backend is `podman` and `server.bind`, `server.external_url` and `runner.api_url
   `gateway.self_hosted_refused_ranges` to your pod and Service CIDRs. Package
   presets and organizations' own registrations get nothing, and the
   NetworkPolicies are unchanged. The chart's notes repeat this on `helm upgrade`.
+- (FIX-295) **Token refreshes no longer follow proxy environment variables.**
+  The gateway's OAuth refresh used to honour `HTTPS_PROXY`, `HTTP_PROXY` and
+  `ALL_PROXY`; like every other upstream request it now uses only
+  `gateway.egress_proxy`. **If the gateway reaches a token endpoint only through
+  one of those variables, set `gateway.egress_proxy` before upgrading.** The
+  refresh is also judged by the destination guard: a token endpoint on a private
+  address needs `gateway.allowed_private`, unless it is on the host of an
+  instance-wide self-hosted registration (port 443) that the account is bound
+  to. The chart's notes repeat this on `helm upgrade`.
 - (FIX-234, C-1163) **Run the access report before upgrading to a release with
   C-1160.** `aurora-api access-report` (JSON, or `--text`) lists, per
   organization, the workspaces with no active own-right owner, the schedules

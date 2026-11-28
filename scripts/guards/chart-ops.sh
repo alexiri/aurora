@@ -281,6 +281,14 @@ notes="$(notes_of --set config.telemetry.otlp_endpoint=http://c:4318 --set 'netw
 ! grep -q 'networkPolicy.telemetryTo is empty' <<<"$notes" || fail "NOTES.txt warns although telemetryTo is set"
 echo "chart-ops: tracing egress, web env and NOTES ok"
 
+# (FIX-295) On upgrade the notes say that token refreshes no longer follow proxy environment variables.
+notes="$(notes_of --is-upgrade)" || exit 1
+grep -q 'HTTPS_PROXY' <<<"$notes" || fail "NOTES.txt must tell an upgrade that token refreshes ignore HTTPS_PROXY"
+grep -q 'config.gateway.egress_proxy' <<<"$notes" || fail "NOTES.txt must point an upgrade at config.gateway.egress_proxy"
+notes="$(notes_of)" || exit 1
+! grep -q 'HTTPS_PROXY' <<<"$notes" || fail "NOTES.txt shows the proxy upgrade note on a fresh install"
+echo "chart-ops: upgrade notes ok"
+
 # --- half-enabled switches fail the render ---
 must_fail() {
   local what="$1"; shift
