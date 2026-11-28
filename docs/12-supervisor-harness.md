@@ -931,7 +931,9 @@ instruction files change (C-654).
   authenticated facts (runner-stamped sandbox → agent; API-validated turn ∈
   agent's active turns).
 - Results are bounded (≤ 64 KiB serialized; larger results are truncated with
-  a note).
+  a note). `skill_get` cuts its one long text itself (D-513): the result stays JSON,
+  with `truncated: true` and a `note` naming the whole file under `$SKILLS_DIR`.
+  `skill_list` folds long descriptions to the skill index's size (`SKILL_INDEX_SHARE`).
 - Bridge ⇄ supervisor socket protocol (spec fix S-09): newline-delimited JSON.
   Requests `{ "id": u64, "session": string, "method": "list" }` or
   `{ "id", "session", "method": "call", "tool": string, "arguments": object }`;
