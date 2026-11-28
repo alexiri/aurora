@@ -50,7 +50,9 @@ pub async fn git_commit_trailer(
     if truncated {
         return Ok(replay);
     }
-    let Ok(mut doc) = serde_json::from_slice::<serde_json::Value>(&prefix) else {
+    // A rewrite writes back what was parsed, and the rules read the bytes: a body with more
+    // than one reading is forwarded as it came.
+    let Ok(mut doc) = aurora_policy::json::read_unrepeated(&prefix) else {
         return Ok(replay);
     };
     let Some(msg) = doc.get("message").and_then(|m| m.as_str()) else {
@@ -78,5 +80,54 @@ mod tests {
         assert!(append_trailer(&m, t).is_none());
         let m2 = append_trailer("fix\n\nbody\n\nSigned-off-by: X", t).unwrap();
         assert_eq!(m2, "fix\n\nbody\n\nSigned-off-by: X\nCo-Authored-By: Agent");
+    }
+
+    async fn rewritten(body: &str) -> String {
+        use http_body_util::BodyExt as _;
+        let t = CommitTrailer {
+            trailer: serde_json::from_str(r#""Co-Authored-By: Agent""#).unwrap(),
+        };
+        let (credentials, optional, context) = Default::default();
+        let vars = Vars {
+            credentials: &credentials,
+            optional: &optional,
+            metadata: &serde_json::Value::Null,
+            tenant_host: None,
+            allowed_context: &[],
+            context: &context,
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        let out = git_commit_trailer(
+            &t,
+            &vars,
+            &Method::POST,
+            &mut headers,
+            crate::full_body(body.as_bytes().to_vec()),
+        )
+        .await
+        .unwrap();
+        let bytes = out.collect().await.unwrap().to_bytes();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// A rewrite writes back what was parsed. The rules read the bytes the agent sent, so a
+    /// body with more than one reading is forwarded as it came, never rewritten into one.
+    #[tokio::test]
+    async fn an_ambiguous_body_is_forwarded_as_it_came() {
+        assert!(
+            rewritten(r#"{"message":"fix"}"#)
+                .await
+                .contains("Co-Authored-By: Agent")
+        );
+        for body in [
+            r#"{"message":"fix","force":false,"force":true}"#,
+            r#"{"$serde_json::private::RawValue":"{\"message\":\"fix\",\"force\":true}"}"#,
+        ] {
+            assert_eq!(rewritten(body).await, body);
+        }
     }
 }

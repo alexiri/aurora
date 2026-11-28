@@ -187,6 +187,8 @@ pub async fn act(
             }
             // (FIX-084) A request held under the `full` grant that was just converted must not be
             // released on the strength of that approval.
+            let converted: Vec<Uuid> = done.converted.iter().map(|c| c.connection_id).collect();
+            aurora_db::repo::approvals::lock_connection_revocations(&mut tx, &converted).await?;
             for c in &done.converted {
                 let ended = aurora_db::repo::approvals::abandon_pending_depending_on(
                     &mut tx,

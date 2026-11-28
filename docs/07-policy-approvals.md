@@ -133,7 +133,10 @@ present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
   body (`{query, operationName}` or a batch array) and the GraphQL document
   (`graphql-parser`). Result is `query` only if every operation that could
   execute is a query; **missing, truncated or unparsable body, subscriptions,
-  or any doubt ⇒ `mutation`**. A block on mutations always holds on doubt; an
+  or any doubt ⇒ `mutation`**. So is a URL that carries `query`,
+  `operationName` or `extensions` (some servers let the URL override the body;
+  names are decoded and compared without case, and one that cannot be decoded
+  counts). A block on mutations always holds on doubt; an
   allow on queries never admits a mutation.
 - **Git operations** (tools tagged `git: push|fetch`): `…/git-receive-pack` and
   `…/info/refs?service=git-receive-pack` are `push`; `…/git-upload-pack` and
@@ -143,6 +146,30 @@ present), `is_llm_host`, `identity` (agent id, principals; from phase 2 also
   `json_pointer` is set) is **unknown**. Unknown resolves by the rule's
   polarity: restrictive rules (block, require approval, rate limit) treat it as
   matched; plain allow rules as not matched. Doubt only tightens.
+- **One reading of a JSON body** (FIX-284). A decision is made on a parsed body
+  and the receiver gets the bytes, so a body two parsers may read differently is
+  doubt. Member names are taken literally (`serde_json`'s private raw-value name
+  included, which its own `Value` parser would unwrap). Whatever a decision reads
+  must have one reading:
+  - on the way to a pointer, no name is held twice, and none matches the token
+    only, or also, without case (the Kelvin sign and the long s fold to `k` and
+    `s`);
+  - the value a condition compares repeats no name at any depth, and holds no
+    whole number the bytes did not write as an integer (`1e2`, `100.0`);
+  - the GraphQL kind applies the first rule to `query` and `operationName`.
+
+  In short: a whole number written as a float (`100.0`, `1e2`, `-0`) or a name
+  that also, or only, appears in another case makes a policy condition
+  **Unknown**: a rule that requires approval holds the request, a block rule
+  blocks it, and an allow rule does not match. It never makes a rule allow.
+
+  What is off the path decides nothing. The same reader serves every other place
+  that parses a request body and lets the bytes, or a rewrite of them, go on: a
+  model allow-list reads `/model` (no reading ⇒ no model); an approval card
+  shows no value from such a body and says so (`06 §Approval holds`), and a
+  `summarize` hook is not asked about it; an outgoing webhook's slot values with
+  a repeated name are refused; and `git_commit_trailer` forwards such a body
+  unchanged. Raw conditions (no `json_pointer`) match the bytes themselves.
 
 ## Injection selection
 

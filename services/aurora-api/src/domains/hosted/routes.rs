@@ -18,7 +18,7 @@ use crate::http::json::{Json, Path};
 use aurora_core::ApiError;
 use aurora_db::DbError;
 use aurora_db::repo::agents::AgentRow;
-use aurora_db::repo::{conversations as convs, hosted, secrets};
+use aurora_db::repo::{hosted, secrets};
 use axum::extract::State;
 use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -667,8 +667,11 @@ async fn restart(
         };
     }
     let mut flush = Vec::new();
-    for (turn, cid) in hosted::active_turns_of_agent(&mut tx, agent).await? {
-        convs::lock(&mut tx, cid).await?;
+    let turns = hosted::active_turns_of_agent(&mut tx, agent).await?;
+    // Every turn's locks before the first one ends: ending one takes links.
+    let conversations: Vec<Uuid> = turns.iter().map(|(_, c)| *c).collect();
+    crate::domains::peer_tasks::service::lock_for_writes_in(&mut tx, &conversations).await?;
+    for (turn, cid) in turns {
         if lifecycle::fail(
             &mut tx,
             turn,

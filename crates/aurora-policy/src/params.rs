@@ -311,7 +311,7 @@ fn pairs(raw: &[u8]) -> impl Iterator<Item = (&[u8], &[u8])> {
 }
 
 /// Percent-decodes once; `None` for a malformed escape or a result that is not valid UTF-8.
-fn decode(raw: &[u8], plus_is_space: bool) -> Option<String> {
+pub(crate) fn decode(raw: &[u8], plus_is_space: bool) -> Option<String> {
     let s = std::str::from_utf8(raw).ok()?;
     // A `%` must start a complete escape: lenient decoders would pass it through, hiding doubt.
     let b = s.as_bytes();

@@ -1000,6 +1000,7 @@ name = "aurora-summary"
 version = "0.1.0"
 dependencies = [
  "aurora-core",
+ "aurora-policy",
  "aurora-registry",
  "base64 0.23.1",
  "graphql-parser",

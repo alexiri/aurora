@@ -290,9 +290,11 @@ pub async fn abort_speaker_turns(
         if turns.is_empty() {
             break;
         }
+        // Every turn's locks before the first one ends, as a freeze takes them.
+        let conversations: Vec<Uuid> = turns.iter().map(|(_, c)| *c).collect();
+        crate::domains::peer_tasks::service::lock_for_writes_in(conn, &conversations).await?;
         let mut ended = 0;
         for (turn, conversation) in turns {
-            aurora_db::repo::conversations::lock(&mut *conn, conversation).await?;
             conv::append_event(
                 conn,
                 conversation,

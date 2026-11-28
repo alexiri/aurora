@@ -143,7 +143,7 @@ impl RequestFacts {
     pub fn graphql_kind(&self) -> Option<GraphqlKind> {
         self.tool_tags
             .graphql
-            .then(|| graphql::classify(&self.body_prefix, self.truncated))
+            .then(|| graphql::classify(&self.body_prefix, self.truncated, self.query.as_deref()))
     }
 
     /// Git operation if the tool is git-tagged.

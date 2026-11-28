@@ -1018,7 +1018,7 @@ async fn result(
         Err(x) => return Ok(x),
     };
     let cid = t.conversation_id;
-    convs::lock(tx, cid).await?;
+    crate::domains::peer_tasks::service::lock_with_task_origins(tx, cid).await?;
     let live = turns::get(&mut *tx, turn)
         .await?
         .is_some_and(|t| matches!(t.status.as_str(), "queued" | "dispatched" | "running"));

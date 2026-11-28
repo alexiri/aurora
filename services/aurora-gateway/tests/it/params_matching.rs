@@ -330,6 +330,435 @@ fn loaded() -> Loaded {
     parse("h", v).unwrap()
 }
 
+/// A summarize hook reads the body with its own parser: it is not asked about a body with more
+/// than one reading, whose card the core renders (and which says so).
+#[tokio::test]
+async fn a_summary_hook_is_not_asked_about_a_body_with_two_readings() {
+    use aurora_gateway::hold::{SummaryRequest, build_summary_hooked};
+    use aurora_gateway::summarize_client::{SummarizeCall, Summarizer};
+    use aurora_summary::{ApprovalSummary, SummarySource};
+
+    struct Hook;
+    #[async_trait::async_trait]
+    impl Summarizer for Hook {
+        async fn summarize(&self, _: SummarizeCall<'_>) -> Option<ApprovalSummary> {
+            Some(ApprovalSummary {
+                title: "from the hook".into(),
+                fields: Vec::new(),
+                text: None,
+                link: None,
+                group: None,
+                source: SummarySource::Hook,
+            })
+        }
+    }
+    let mut v: Value = serde_json::from_slice(&snapshot_json()).unwrap();
+    v["apps"][0]["approvals"] = serde_json::json!({"send": {
+        "title": "Send", "summarize": "hook",
+        "fields": [{"label": "To", "source": "body", "steps": [{"json": "/to"}]}]
+    }});
+    let l = parse("h", v).unwrap();
+    let app = identify_app(&l, "ec2.eu-west-1.amazonaws.com", 443, "/").unwrap();
+    let header = |_: &str| None;
+    let title = async |body: &str| {
+        let request = SummaryRequest {
+            method: "POST",
+            host: "ec2.eu-west-1.amazonaws.com",
+            base_path: None,
+            path: "/",
+            query: None,
+            content_type: Some("application/json"),
+            header: &header,
+            body_prefix: body.as_bytes(),
+            truncated: false,
+            headers: &[],
+        };
+        build_summary_hooked(Some(&Hook), Some(&l), Some(&app), Some("send"), &request)
+            .await
+            .title
+    };
+    assert_eq!(title(r#"{"to":"a@example.com"}"#).await, "from the hook");
+    for body in [
+        r#"{"to":"evil@example.org","to":"a@example.com"}"#,
+        r#"{"to":"a@example.com","message":{"id":1,"ID":2}}"#,
+    ] {
+        assert_eq!(title(body).await, "Send", "{body}");
+    }
+}
+
+/// What the core cannot read, a hook with a more lenient parser may: it is not asked about a
+/// JSON body, or a multipart metadata part, that does not parse.
+#[tokio::test]
+async fn a_summary_hook_is_not_asked_about_a_body_the_core_cannot_read() {
+    use aurora_gateway::hold::{SummaryRequest, build_summary_hooked};
+    use aurora_gateway::summarize_client::{SummarizeCall, Summarizer};
+    use aurora_summary::{ApprovalSummary, SummarySource};
+
+    struct Hook;
+    #[async_trait::async_trait]
+    impl Summarizer for Hook {
+        async fn summarize(&self, _: SummarizeCall<'_>) -> Option<ApprovalSummary> {
+            Some(ApprovalSummary {
+                title: "from the hook".into(),
+                fields: Vec::new(),
+                text: None,
+                link: None,
+                group: None,
+                source: SummarySource::Hook,
+            })
+        }
+    }
+    let mut v: Value = serde_json::from_slice(&snapshot_json()).unwrap();
+    v["apps"][0]["approvals"] = serde_json::json!({"send": {
+        "title": "Send", "summarize": "hook",
+        "fields": [{"label": "To", "source": "body", "steps": [{"json": "/to"}]}]
+    }});
+    let l = parse("h", v).unwrap();
+    let app = identify_app(&l, "ec2.eu-west-1.amazonaws.com", 443, "/").unwrap();
+    let header = |_: &str| None;
+    let title = async |content_type: &str, body: &str, truncated: bool| {
+        let request = SummaryRequest {
+            method: "POST",
+            host: "ec2.eu-west-1.amazonaws.com",
+            base_path: None,
+            path: "/",
+            query: None,
+            content_type: Some(content_type),
+            header: &header,
+            body_prefix: body.as_bytes(),
+            truncated,
+            headers: &[],
+        };
+        build_summary_hooked(Some(&Hook), Some(&l), Some(&app), Some("send"), &request)
+            .await
+            .title
+    };
+    let json = "application/json; charset=UTF-8";
+    // A lone surrogate: the core's parser refuses the body, a lenient one reads on.
+    let surrogate = r#"{"to":"ok@example.com","to":"evil@example.org","p":"\ud800"}"#;
+    let related = "multipart/related; boundary=BND";
+    let part = |metadata: &str| {
+        format!(
+            "--BND\r\ncontent-type: application/json\r\n\r\n{metadata}\r\n--BND\r\ncontent-type: text/plain\r\n\r\ncontent\r\n--BND--"
+        )
+    };
+    // The delimiter inside the preamble: a lenient reader takes this part for the first one.
+    let preamble = format!(
+        "x{}",
+        part(r#"{"to":"ok@example.com"}"#).replace("--BND--", "--BND")
+    );
+    for (content_type, body, truncated) in [
+        (json, surrogate.to_owned(), false),
+        ("text/plain", format!("  {surrogate}"), false),
+        (
+            json,
+            r#"{"to":"ok@example.com","padding":"aaaa"#.to_owned(),
+            true,
+        ),
+        (json, "not json at all".to_owned(), false),
+        ("application/vnd.api+json", "{oops".to_owned(), false),
+        (related, part(surrogate), false),
+        (
+            related,
+            part(r#"{"to":"ok@example.com","To":"evil@example.org"}"#),
+            false,
+        ),
+        (related, preamble, false),
+        (
+            related,
+            "--BND\r\ncontent-type: application/json\r\n\r\n{\"to\":\"o".to_owned(),
+            true,
+        ),
+        (
+            "multipart/related; boundary=BND; boundary=OTHER",
+            part(r#"{"to":"ok@example.com"}"#),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            title(content_type, &body, truncated).await,
+            "Send",
+            "{content_type}: {body}"
+        );
+    }
+    // What has one reading, and what is no JSON at all, is still the hook's.
+    let whole = part(r#"{"to":"ok@example.com"}"#);
+    let cut_media = whole.split("content\r\n--BND--").next().unwrap().to_owned();
+    for (content_type, body, truncated) in [
+        (json, r#"{"to":"ok@example.com"}"#, false),
+        (json, "", false),
+        ("text/csv", "a,b,c", false),
+        (related, whole.as_str(), false),
+        (related, cut_media.as_str(), true),
+    ] {
+        assert_eq!(
+            title(content_type, body, truncated).await,
+            "from the hook",
+            "{content_type}: {body}"
+        );
+    }
+}
+
+/// What the summarize hook was sent for a request, `None` when it was not asked.
+async fn sent_to_hook(content_type: Option<&str>, body: &[u8], truncated: bool) -> Option<Vec<u8>> {
+    let headers: Vec<(&str, &str)> = content_type
+        .map(|v| ("content-type", v))
+        .into_iter()
+        .collect();
+    sent_with_headers(&headers, body, truncated).await
+}
+
+/// [`sent_to_hook`] for a request with these headers.
+async fn sent_with_headers(
+    headers: &[(&str, &str)],
+    body: &[u8],
+    truncated: bool,
+) -> Option<Vec<u8>> {
+    use aurora_gateway::hold::{SummaryRequest, build_summary_hooked};
+    use aurora_gateway::summarize_client::{SummarizeCall, Summarizer};
+    use aurora_summary::{ApprovalSummary, SummarySource};
+
+    #[derive(Default)]
+    struct Hook(std::sync::Mutex<Option<Vec<u8>>>);
+    #[async_trait::async_trait]
+    impl Summarizer for Hook {
+        async fn summarize(&self, call: SummarizeCall<'_>) -> Option<ApprovalSummary> {
+            *self.0.lock().unwrap() = Some(call.body_prefix.to_vec());
+            Some(ApprovalSummary {
+                title: "from the hook".into(),
+                fields: Vec::new(),
+                text: None,
+                link: None,
+                group: None,
+                source: SummarySource::Hook,
+            })
+        }
+    }
+    let mut v: Value = serde_json::from_slice(&snapshot_json()).unwrap();
+    v["apps"][0]["approvals"] = serde_json::json!({"send": {
+        "title": "Send", "summarize": "hook",
+        "fields": [{"label": "To", "source": "body", "steps": [{"json": "/to"}]}]
+    }});
+    let l = parse("h", v).unwrap();
+    let app = identify_app(&l, "ec2.eu-west-1.amazonaws.com", 443, "/").unwrap();
+    let all_headers: Vec<(String, String)> = headers
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+    let header = |name: &str| {
+        all_headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+    };
+    let content_type = header("content-type");
+    let request = SummaryRequest {
+        method: "POST",
+        host: "ec2.eu-west-1.amazonaws.com",
+        base_path: None,
+        path: "/",
+        query: None,
+        content_type: content_type.as_deref(),
+        header: &header,
+        body_prefix: body,
+        truncated,
+        headers: &all_headers,
+    };
+    let hook = Hook::default();
+    build_summary_hooked(Some(&hook), Some(&l), Some(&app), Some("send"), &request).await;
+    hook.0.into_inner().unwrap()
+}
+
+/// A receiver may read JSON whatever the content type says: a body that is JSON for the core
+/// and repeats a name never reaches the hook, and one that only looks like JSON, behind a byte
+/// order mark too, is a guess.
+#[tokio::test]
+async fn json_under_any_content_type_is_the_hooks_only_with_one_reading() {
+    let array = r#"[{"to":"ok@example.com","To":"evil@example.org"}]"#;
+    let bom = "\u{feff}{\"to\":\"ok@example.com\",\"to\":\"evil@example.org\"}";
+    for (content_type, body) in [
+        (Some("text/plain"), array.to_owned()),
+        (None, array.to_owned()),
+        (Some("text/plain"), r#""a string, {"#.to_owned()),
+        (Some("text/plain"), bom.to_owned()),
+        (None, format!("  \u{feff} {bom}")),
+        (Some("text/plain"), "[1, oops".to_owned()),
+        (None, " \n\u{feff}\n[{".to_owned()),
+    ] {
+        // (The third is not JSON at all and starts like neither: it is the hook's.)
+        let asked = sent_to_hook(content_type, body.as_bytes(), false).await;
+        if body.starts_with('"') {
+            assert!(asked.is_some(), "{content_type:?}: {body}");
+        } else {
+            assert!(asked.is_none(), "{content_type:?}: {body}");
+        }
+    }
+    for (content_type, body) in [
+        (Some("text/plain"), r#"[{"to":"ok@example.com"}]"#),
+        (None, r#"{"to":"ok@example.com"}"#),
+        (Some("application/json"), "  "),
+        (Some("text/csv"), "a,b"),
+    ] {
+        assert!(
+            sent_to_hook(content_type, body.as_bytes(), false)
+                .await
+                .is_some(),
+            "{content_type:?}: {body}"
+        );
+    }
+}
+
+/// A multipart body is recognised however its boundary is spelled, a boundary two readers may
+/// read differently is a guess, and the hook gets the first part only: what the core checked.
+#[tokio::test]
+async fn a_hook_gets_the_checked_first_part_of_a_multipart_body_and_nothing_else() {
+    let body = |boundary: &str| {
+        format!(
+            "--{boundary}\r\ncontent-type: application/json\r\n\r\n{{\"to\":\"ok@example.com\"}}\r\n--{boundary}\r\ncontent-type: application/json\r\n\r\n{{\"to\":\"x\",\"To\":\"SECOND PART\"}}\r\n--{boundary}--"
+        )
+    };
+    for (content_type, boundary) in [
+        ("multipart/related; boundary*=utf-8''BND", "BND"),
+        ("multipart/related; boundary = BND", "BND"),
+        ("multipart/related; boundary =BND", "BND"),
+        ("multipart/mixed", "BND"),
+        ("MULTIPART/related; charset=utf-8", "BND"),
+        (r#"multipart/related; boundary="a\"b""#, r"a\"),
+        (r#"multipart/related; boundary="BND"#, "BND"),
+        (r#"multipart/related; boundary="BND"x"#, "BND"),
+        ("multipart/related; boundary=B@D", "B@D"),
+        ("multipart/related; boundary=BND x", "BND"),
+        ("multipart/related; boundary=\"BND \"", "BND "),
+        ("multipart/related; xboundary=BND", "BND"),
+        ("text/plain; boundary*=BND", "BND"),
+    ] {
+        assert!(
+            sent_to_hook(Some(content_type), body(boundary).as_bytes(), false)
+                .await
+                .is_none(),
+            "{content_type}"
+        );
+    }
+    for (content_type, boundary) in [
+        ("multipart/related; boundary=BND", "BND"),
+        ("multipart/related; boundary=\"BND\"; charset=utf-8", "BND"),
+        (
+            "Multipart/Related; Boundary=a'(b)+_,-./:=?z",
+            "a'(b)+_,-./:=?z",
+        ),
+        ("multipart/related; boundary=\"two words\"", "two words"),
+    ] {
+        let sent = sent_to_hook(Some(content_type), body(boundary).as_bytes(), false)
+            .await
+            .unwrap_or_else(|| panic!("not asked: {content_type}"));
+        let sent = String::from_utf8(sent).unwrap();
+        assert_eq!(
+            sent,
+            format!(
+                "--{boundary}\r\ncontent-type: application/json\r\n\r\n{{\"to\":\"ok@example.com\"}}\r\n--{boundary}--\r\n"
+            ),
+            "{content_type}"
+        );
+    }
+}
+
+/// The core checks the bytes as they are. An encoding, of the request or of the first part, is
+/// something only the hook's reader would undo, so what it reads was never checked.
+#[tokio::test]
+async fn an_encoded_body_or_first_part_never_reaches_the_hook() {
+    // The start of a gzip stream: not JSON for the core, and it starts like neither.
+    let gzip: &[u8] = &[0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff];
+    // (Types under which an unreadable body is the hook's when nothing encodes it.)
+    let octets = ("content-type", "application/octet-stream");
+    assert!(
+        sent_with_headers(&[octets], gzip, false).await.is_some(),
+        "no encoding"
+    );
+    for encodings in [
+        &["gzip"][..],
+        &["GZIP"],
+        &["identity, br"],
+        &["identity", "deflate"],
+    ] {
+        let mut headers = vec![octets];
+        headers.extend(encodings.iter().map(|v| ("Content-Encoding", *v)));
+        assert!(
+            sent_with_headers(&headers, gzip, false).await.is_none(),
+            "{encodings:?}"
+        );
+    }
+    let json = ("content-type", "application/json");
+    for encoding in ["identity", "Identity", ""] {
+        let headers = [json, ("content-encoding", encoding)];
+        assert!(
+            sent_with_headers(&headers, br#"{"to":"ok@example.com"}"#, false)
+                .await
+                .is_some(),
+            "{encoding:?}"
+        );
+    }
+    // Quoted-printable: `t=6F` is `to` once decoded, so a decoder reads the name twice.
+    let part = |headers: &str| {
+        format!(
+            "--BND\r\ncontent-type: application/json\r\n{headers}\r\n\r\n{{\"to\":\"ok@example.com\",\"t=6F\":\"evil@example.org\"}}\r\n--BND--"
+        )
+    };
+    let related = "multipart/related; boundary=BND";
+    for headers in [
+        "content-transfer-encoding: quoted-printable",
+        "Content-Transfer-Encoding: BASE64",
+        "content-transfer-encoding : quoted-printable",
+        "content-transfer-encoding:\r\n quoted-printable",
+        "content-transfer-encoding: 7bit\r\n ; quoted-printable",
+        "content-transfer-encoding: 7bit\r\ncontent-transfer-encoding: quoted-printable",
+        "content-transfer-encoding: 7bit\rquoted-printable",
+        "content-transfer-encoding:",
+    ] {
+        assert!(
+            sent_to_hook(Some(related), part(headers).as_bytes(), false)
+                .await
+                .is_none(),
+            "{headers:?}"
+        );
+    }
+    for headers in [
+        "content-transfer-encoding: 7bit",
+        "Content-Transfer-Encoding:8BIT",
+        "content-transfer-encoding:  binary ",
+        "x-other: 1",
+    ] {
+        assert!(
+            sent_to_hook(Some(related), part(headers).as_bytes(), false)
+                .await
+                .is_some(),
+            "{headers:?}"
+        );
+    }
+}
+
+/// A cut-off body whose first part has no closing delimiter: what was read may be a whole JSON
+/// value while the part the receiver gets goes on.
+#[tokio::test]
+async fn a_cut_off_first_part_never_reaches_the_hook() {
+    let related = Some("multipart/related; boundary=BND");
+    let part = "--BND\r\ncontent-type: application/json\r\n\r\n{\"to\":\"ok@example.com\"}";
+    for cut in ["", " ", "\r\n", "\r\n--BN"] {
+        let body = format!("{part}{cut}");
+        assert!(
+            sent_to_hook(related, body.as_bytes(), true).await.is_none(),
+            "{cut:?}"
+        );
+    }
+    // A delimiter in what was read ends the part, wherever the body is cut after it.
+    for rest in ["\r\n--BND", "\n--BND--", "\r\n--BND\r\ncontent-type: te"] {
+        let body = format!("{part}{rest}");
+        assert!(
+            sent_to_hook(related, body.as_bytes(), true).await.is_some(),
+            "{rest:?}"
+        );
+    }
+}
+
 #[test]
 fn the_body_is_buffered_only_when_a_form_params_tool_may_match() {
     let l = loaded();

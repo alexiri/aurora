@@ -1049,6 +1049,11 @@ The home (`/workspace`) holds:
   **final** part prunes managed roots to the manifest, re-renders instruction
   files, and acks `home.synced { generation }`. A crash mid-generation leaves
   stale bytes and no ack; the next boot starts at generation 0 with a full sync.
+  A supervisor process commits only a generation it staged itself, from part 0
+  with no part missing (a replayed part is fine). What the staging needs to
+  remember, the locked memories among it, is held by that process and never read
+  back from the home, which the agent can write. Any other part is refused, the
+  generation is not acked, and the API sends it again from part 0.
 - (FIX-258) The skills and helpers roots are pruned **before** the staged files
   are installed, so a path may turn from a file into a folder, or back, between
   two generations. A skill file the home cannot hold (a file where a folder is

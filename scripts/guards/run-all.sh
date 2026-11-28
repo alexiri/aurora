@@ -14,6 +14,9 @@ bash scripts/guards/no-integration-names.sh
 echo "== dep-graph"
 bash scripts/guards/dep-graph.sh
 
+echo "== serde-json-features (FIX-284: arbitrary_precision stays off in the workspace's tree)"
+bash scripts/guards/serde-json-features.sh
+
 echo "== edge-routes (Helm Ingress/HTTPRoute)"
 bash scripts/guards/edge-routes.sh
 
