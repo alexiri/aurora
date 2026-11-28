@@ -115,6 +115,8 @@ pub fn has_anchor_or_alias(fm: &str) -> bool {
 pub enum Kind {
     /// `SKILL.md` frontmatter or description.
     Frontmatter,
+    /// A description longer than `SKILL_DESCRIPTION_MAX`.
+    DescriptionTooLong,
     /// Body longer than `SKILL_BODY_MAX`.
     BodyTooLarge,
     /// A file path outside the grammar, or a path twice.
@@ -204,10 +206,13 @@ pub fn parse_skill_md_typed(raw: &[u8], dir: &str) -> Result<(String, String), S
         return bad("the description must not be empty");
     }
     if desc.chars().count() > limits::SKILL_DESCRIPTION_MAX {
-        return bad(&format!(
-            "the description is longer than {} characters",
-            limits::SKILL_DESCRIPTION_MAX
-        ));
+        return err(
+            Kind::DescriptionTooLong,
+            format!(
+                "the description is longer than {} characters",
+                limits::SKILL_DESCRIPTION_MAX
+            ),
+        );
     }
     // A description is one line in the projected frontmatter.
     let description = one_line(&desc, limits::SKILL_DESCRIPTION_MAX);
@@ -277,13 +282,23 @@ pub fn check_entry(what: &str, text: &str) -> Result<(), SkillError> {
     )
 }
 
-/// [`check_entry`] for a skill's file: a binary file is never projected, so only text is held
-/// to it.
+/// [`check_entry`] for a skill's file. A file that is not UTF-8 travels as base64, which is
+/// held to the same entry size.
 pub fn check_file_entry(path: &str, content: &[u8]) -> Result<(), SkillError> {
-    match std::str::from_utf8(content) {
-        Ok(text) => check_entry(&format!("the file {path}"), text),
-        Err(_) => Ok(()),
+    if let Ok(text) = std::str::from_utf8(content) {
+        return check_entry(&format!("the file {path}"), text);
     }
+    if content.len() <= limits::SKILL_BINARY_FILE_MAX {
+        return Ok(());
+    }
+    err(
+        Kind::FileTooLarge,
+        format!(
+            "the file {path} is too large to send to an agent: it isn't text, so it is sent as \
+             base64, and a file that isn't text may be at most {} bytes",
+            limits::SKILL_BINARY_FILE_MAX
+        ),
+    )
 }
 
 /// The checks on an already-parsed skill (description, body, files as `(path, content)`): what a
@@ -302,7 +317,7 @@ pub fn check_content(
     }
     if description.chars().count() > limits::SKILL_DESCRIPTION_MAX {
         return err(
-            Kind::Frontmatter,
+            Kind::DescriptionTooLong,
             format!(
                 "the description is longer than {} characters",
                 limits::SKILL_DESCRIPTION_MAX

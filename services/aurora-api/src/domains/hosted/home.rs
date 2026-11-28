@@ -12,6 +12,7 @@ use aurora_db::{
     repo::hosted::{self, HomeSyncClaim},
 };
 use aurora_protocol::runner::{HomeSync, HomeSyncKind, HomeSyncPart};
+use base64::Engine as _;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 
@@ -79,6 +80,21 @@ fn memory_file(m: &hosted::MemoryRow) -> String {
         m.content.clone()
     } else {
         format!("---\n{fm}---\n{}", m.content)
+    }
+}
+
+/// A skill file's sync entry: UTF-8 travels as `content`; anything else as `content_base64`
+/// beside a null `content` (FIX-292), which an older supervisor refuses rather than writing the
+/// file wrong.
+fn skill_file_entry(path: &str, content: Vec<u8>, executable: bool) -> Value {
+    match String::from_utf8(content) {
+        Ok(text) => json!({"path": path, "content": text, "exec": executable}),
+        Err(binary) => json!({
+            "path": path,
+            "content": null,
+            "content_base64": base64::engine::general_purpose::STANDARD.encode(binary.as_bytes()),
+            "exec": executable,
+        }),
     }
 }
 
@@ -774,13 +790,9 @@ pub async fn render(
         manifest.push(json!({"path": path}));
         skill_entries.push(json!({"path": path, "content": content}));
         for f in hosted::skill_files(conn, s.id).await? {
-            let Ok(text) = String::from_utf8(f.content) else {
-                tracing::warn!(skill = %s.name, "non-UTF-8 skill file not projected");
-                continue;
-            };
             let path = format!("{skills_root}/{}/{}", s.name, f.path);
             manifest.push(json!({"path": path}));
-            skill_entries.push(json!({"path": path, "content": text, "exec": f.executable}));
+            skill_entries.push(skill_file_entry(&path, f.content, f.executable));
         }
     }
 

@@ -222,11 +222,15 @@ pub const MEMORY_WRITE_DESCRIPTION_MAX: usize = 500;
 /// least 25 % headroom.
 pub const SKILL_BODY_MAX: usize = 48_000;
 pub const SKILL_TOTAL_MAX: usize = 300_000;
-/// (FIX-291, D-513) The most one projected text of a skill (`SKILL.md` with its front matter, or
-/// a text file) may take written as a JSON string: it travels as one home-sync entry, which must
+/// (FIX-291, D-513) The most one projected content of a skill (`SKILL.md` with its front matter,
+/// or a file) may take written as a JSON string: it travels as one home-sync entry, which must
 /// fit one part (`HOME_SYNC_PART_MAX`) with its path. A bigger one is refused when written,
-/// never silently left out of the agent's home. Binary files are not projected.
+/// never silently left out of the agent's home. (FIX-292) A file that is not UTF-8 travels as
+/// base64, so it is held to this in that form: at most 145 917 bytes.
 pub const SKILL_ENTRY_JSON_MAX: usize = 190 * KIB;
+/// (FIX-292) Bytes of a skill file that isn't UTF-8: the most whose base64 form, with its two
+/// quotes, is within `SKILL_ENTRY_JSON_MAX` (145 917).
+pub const SKILL_BINARY_FILE_MAX: usize = (SKILL_ENTRY_JSON_MAX - 2) / 4 * 3;
 /// (FIX-110, docs/02 §Limits) Own (non-library) skills per agent and files per skill: a looping
 /// `skill_create` cannot grow what every home sync projects without bound.
 pub const SKILL_PER_AGENT_MAX: i64 = 50;

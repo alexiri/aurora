@@ -47,14 +47,15 @@ describe("labels (rec 13)", () => {
   });
 
   it("says every reason a library skill can't be added in a sentence, and a plain one for a code it does not know (FIX-279)", () => {
-    const codes = ["too_large", "body_too_large", "file_too_large", "too_many_files", "unsupported_path", "unsupported_entry", "skill_md", "bad_name", "unknown_size"];
+    const codes = ["too_large", "body_too_large", "file_too_large", "too_many_files", "unsupported_path", "unsupported_entry", "skill_md", "description_too_long", "bad_name", "unknown_size"];
     expect(Object.keys(SKILL_INVALID_REASON).sort()).toEqual([...codes].sort());
     const sentences = codes.map((c) => skillInvalidWords(c));
     for (const text of sentences) expect(text).toMatch(/^\p{Lu}.*\.$/u);
     expect(new Set(sentences).size).toBe(codes.length);
     expect(skillInvalidWords("too_large")).toBe("This skill is larger than 300,000 characters, the most a skill may hold.");
     expect(skillInvalidWords("body_too_large")).toBe("Its instructions are longer than 48,000 characters, the most a skill’s instructions may be.");
-    expect(skillInvalidWords("file_too_large")).toBe("One of its files is too large: a file may be at most 160 KB, and less if it has many line breaks, quotes or special characters.");
+    expect(skillInvalidWords("file_too_large")).toBe("One of its files is too large: a text file may be at most 160 KB (less with many line breaks, quotes or special characters), and any other file about 140 KB.");
+    expect(skillInvalidWords("description_too_long")).toBe("Its description is longer than 1,024 characters, the most a skill’s description may be.");
     expect(skillInvalidWords("made_up")).toBe("This skill can’t be added.");
     expect(skillInvalidWords(null)).toBe("This skill can’t be added.");
     expect(skillInvalidWords("constructor")).toBe("This skill can’t be added.");

@@ -1114,7 +1114,9 @@ they would pass it, D-513). Body ≤
 `SKILL_BODY_MAX`; body + files ≤ `SKILL_TOTAL_MAX` chars (binary counted as
 base64 length). `SKILL.md` with its front matter, and each text file, is also at most
 `SKILL_ENTRY_JSON_MAX` as a JSON string, because each is one home-sync entry: a write
-that would pass it is refused 422 `file_too_large` (D-513).
+that would pass it is refused 422 `file_too_large` (D-513). A file that isn't UTF-8 is
+sent as base64, so it is held to the same in that form: at most `SKILL_BINARY_FILE_MAX`
+(145 917 bytes), refused the same way (FIX-292).
 A tier's own skills together (instructions plus files, counted like its library budget and
 apart from it) hold at most `OWN_SKILL_BYTES_PER_*` (4 / 8 / 16 MiB per agent / workspace /
 organization): a write that leaves the tier over it and bigger than before is refused 422
@@ -1213,7 +1215,7 @@ org tier org owner/admin** (`04 §Permission matrix`), so SEC-56 holds unchanged
 widen who may put instructions in front of a whole workspace or org. Validation is the manual
 skills' (`name`, `SKILL_BODY_MAX`, `SKILL_TOTAL_MAX`, file rules, executable bit from file mode
 `100755`) plus library rules: **symlinks (mode `120000`), submodules (`160000`) and non-regular
-entries are refused**, a file larger than `LIBRARY_FILE_MAX` (160 KiB), or a text over `SKILL_ENTRY_JSON_MAX` as JSON, is refused, a skill directory of more than 50 files is refused (D-154),
+entries are refused**, a file larger than `LIBRARY_FILE_MAX` (160 KiB), a text over `SKILL_ENTRY_JSON_MAX` as JSON, or a file that isn't UTF-8 over `SKILL_BINARY_FILE_MAX` (FIX-292), is refused, a skill directory of more than 50 files is refused (D-154),
 `SKILL.md` frontmatter must parse (a single-line `description`) and its `name` (if present) must equal the
 directory name; control, bidi and zero-width characters are removed from repository text before it is stored; failures are 422
 `library_skill_invalid` with the reason and nothing is stored. Names stay unique per tier (409

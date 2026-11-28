@@ -75872,6 +75872,7 @@
           "unsupported_path",
           "unsupported_entry",
           "skill_md",
+          "description_too_long",
           "bad_name",
           "unknown_size"
         ]

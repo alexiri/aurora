@@ -7,6 +7,8 @@ use http::Method;
 
 #[path = "skills_app.rs"]
 mod app_tier;
+#[path = "skills_binary.rs"]
+mod binary_files;
 #[path = "skills_library.rs"]
 mod library_tier;
 #[path = "skills_budget.rs"]
@@ -784,7 +786,8 @@ async fn projection_entries_in_home_sync() {
 
 /// FIX-291 (D-513): a text that would not fit one home-sync entry as JSON is refused when it is
 /// written (a bigger one would be stored and then silently missing from the agent's home): the
-/// `SKILL.md` on create and edit, and each text file. Binary files are never projected.
+/// `SKILL.md` on create and edit, and each text file. A binary file is held to it as base64
+/// (FIX-292, `skills_binary.rs`).
 #[tokio::test]
 async fn fix291_text_that_would_not_fit_a_sync_entry_is_refused() {
     let r = rig().await;
@@ -823,7 +826,7 @@ async fn fix291_text_that_would_not_fit_a_sync_entry_is_refused() {
     assert_eq!((s, code(&v)), (422, Some("file_too_large")), "{v}");
     let msg = v["error"]["message"].as_str().unwrap();
     assert!(msg.contains("lines.txt") && msg.contains("as JSON"), "{v}");
-    // The same bytes as a binary file are never sent to the agent: not held to the entry.
+    // The same bytes as a binary file travel as base64, which fits an entry.
     let mut bin = vec![b'\n'; 100_000];
     bin[0] = 0xff;
     let (s, v) = r

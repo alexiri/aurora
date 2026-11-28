@@ -872,6 +872,72 @@ fn a_sync_that_changes_only_the_folders_keeps_the_instruction_files() {
 
 // ---- (P6-TPL-6, C-1143) the helper files
 
+/// One generation of a `skills` part with the entries as given.
+fn skill_entries_generation(g: u64, entries: Value, manifest: &[&str]) -> Vec<HomeSync> {
+    let manifest: Vec<Value> = manifest.iter().map(|p| json!({"path": p})).collect();
+    vec![
+        part(g, 0, 3, "skills", entries),
+        part(g, 1, 3, "manifest", json!(manifest)),
+        part(g, 2, 3, "final", json!([])),
+    ]
+}
+
+/// FIX-292: a skill's binary file arrives as `content_base64` (with `content` null) and is
+/// installed as exactly those bytes, executable or not. One that does not decode is skipped,
+/// its old version removed, and the rest of the generation installs. Only skill files may be
+/// binary.
+#[test]
+fn fix292_binary_skill_files_are_decoded_and_installed_exactly() {
+    let d = TempDir::new();
+    let root = d.path();
+    let mut p = projector(root);
+    let bytes: Vec<u8> = (0..=255_u8).cycle().take(3_000).collect();
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let paths = [".claude/skills/s/doc.pdf", ".claude/skills/s/bin/tool"];
+    let g = skill_entries_generation(
+        1,
+        json!([
+            {"path": paths[0], "content": null, "content_base64": b64, "exec": false},
+            {"path": paths[1], "content": null, "content_base64": b64, "exec": true},
+        ]),
+        &paths,
+    );
+    apply_all(&mut p, &g);
+    p.commit(1).unwrap();
+    for (path, want) in [(paths[0], 0o444), (paths[1], 0o555)] {
+        assert_eq!(fs::read(root.join(path)).unwrap(), bytes, "{path}");
+        assert_eq!(mode(&root.join(path)), want, "{path}");
+    }
+
+    let g = skill_entries_generation(
+        2,
+        json!([
+            {"path": paths[0], "content": null, "content_base64": "not base64!"},
+            {"path": paths[1], "content": "now text"},
+        ]),
+        &paths,
+    );
+    apply_all(&mut p, &g);
+    p.commit(2).unwrap();
+    assert!(!root.join(paths[0]).exists(), "never the old one");
+    assert_eq!(fs::read_to_string(root.join(paths[1])).unwrap(), "now text");
+
+    let g = vec![
+        part(
+            3,
+            0,
+            3,
+            "memory",
+            json!([{"path": "memory/m.md", "content": null, "content_base64": b64}]),
+        ),
+        part(3, 1, 3, "manifest", json!([{"path": "memory/m.md"}])),
+        part(3, 2, 3, "final", json!([])),
+    ];
+    apply_all(&mut p, &g);
+    p.commit(3).unwrap();
+    assert!(!root.join("memory/m.md").exists());
+}
+
 /// A generation with the render inputs (optionally naming the helpers root), a `helpers` part and
 /// the manifest naming the paths.
 fn helpers_generation(g: u64, helpers: &[(&str, &str, bool)], with_inputs: bool) -> Vec<HomeSync> {

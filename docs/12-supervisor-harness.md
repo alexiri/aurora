@@ -1059,6 +1059,17 @@ The home (`/workspace`) holds:
   new rest. No report tells the API, so the skill is simply incomplete in the
   sandbox.
   Any other error on a skill file (a full disk) still fails the generation.
+- (FIX-292) A skill file that isn't UTF-8 travels in the `skills` part as
+  `{ path, content: null, content_base64, exec }` (standard base64 with
+  padding). The supervisor writes the decoded bytes exactly, with the same modes
+  as a text file. One that does not decode is skipped like a file the home
+  cannot hold. Only the `skills` part may be binary: such an entry in `memory`,
+  `apps` or `helpers` is refused. Skill files are never harvested, text or not.
+  A supervisor that predates the field refuses the entry (its `content` is
+  null), so the file is missing there, never written wrong. Each entry fits a
+  part: the API refuses such a file over `SKILL_BINARY_FILE_MAX` when it is
+  written (`02 §Limits`). One stored before that limit and over it is left out
+  of the sync with an error in the API's log.
 - (FIX-258) Folder modes under the managed roots, and the file modes of a
   locked tree, are set on descriptors opened from the parent's descriptor
   without following links, from the home down. The lock changes the mode of a
