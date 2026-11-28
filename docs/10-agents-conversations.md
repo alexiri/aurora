@@ -130,6 +130,38 @@ go only to the origin conversation and carry only the words — the agent's name
 and a one-line action — never a request field. A later `peer_task_closed`
 notice settles a waiting card the same way (an abandoned approval, e.g. the
 task cancelled, fires no decision notice).
+(FIX-288, D-509) In a delegation chain "the origin" of these notices is the
+conversation reached by walking up the task origins while the same person asked
+(`07 §Agent links and peer tasks`); the task conversations in between get
+neither notice, only their agent's follow-up turn. When the approval's task is
+closed with the approval pending, `peer_task_closed` is posted there as well as
+at the task's own origin. A task with a live onward task waits for it with no
+`peer_task_waiting` notice of its own, and whatever that task sends up wakes it
+(held while its agent is frozen, delivered once after the unfreeze), once per
+event: a task cancelled by such a wake sends its close report one level up, and
+that report is the upper task's only wake for the event.
+**The walk and the name** (D-509, D-178). The walk also ends at the task's own
+origin when the conversation it would reach is in a workspace the person can no
+longer use. The approver's name appears only where the conversation is one
+person's own: a `direct` channel thread, or with no thread a `direct` chat.
+Everywhere else (a task conversation, an automation's thread, an API
+conversation, a shared thread), in the notice and in each follow-up, the line
+says only what was decided.
+**What an onward wake counts** (D-509). A wake-up caused by an event of a task
+opened from the task (its report or close line, a message inside it, an
+approval's outcome there or further down, also one held and delivered later)
+counts toward **neither** `PEER_TASK_BUDGET` **nor** `PEER_TASK_WAKES_MAX` of
+the task it wakes, and neither cap stops it: whoever is further down cannot get
+a task above cancelled. The requester re-check and the freeze apply, and the
+turn's usage is recorded like any other. The task's **own** wake-ups (its
+watch, its one-time wake-up, its own approval) count toward both, as before.
+**The bound** on onward wakes: only a person's turn opens a task; each onward
+task sends one report and its messages count against its own
+`PEER_TASK_BUDGET`; a chain is at most `PEER_CHAIN_DEPTH_MAX` deep, at most
+`PEER_TASK_QUEUE_MAX` tasks queue per pair, and every task ends by its expiry
+(`PEER_TASK_TTL`). The outcomes of the onward task's approvals are not counted
+by its budget: each needs a person's decision or its deadline, until the
+task's expiry.
 
 (FIX-253, D-490(b)) **A waiting peer task.** A task whose receiving turn ends
 while a wake is registered (an armed watch on the task conversation, a one-time

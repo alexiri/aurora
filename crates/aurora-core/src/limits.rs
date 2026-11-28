@@ -456,6 +456,9 @@ pub const PEER_TASK_WAITING_PER_REQUESTER_MAX: i64 = 10;
 pub const PEER_TASK_WAITING_PER_RECEIVER_MAX: i64 = 5;
 /// (FIX-253) wake-ups of one task without its report; the next one cancels the task.
 pub const PEER_TASK_WAKES_MAX: i32 = 20;
+/// (FIX-288, D-509) Tasks in one delegation chain (A → B is one, B → C two): a message that
+/// would open one more is refused. Also bounds the walk up a chain.
+pub const PEER_CHAIN_DEPTH_MAX: i32 = 8;
 /// pending action approvals expire after this (docs/03 `action_approvals.expires_at`: 24 h).
 pub const ACTION_APPROVAL_TTL: Duration = Duration::from_secs(86400);
 pub const SESSION_IDLE: Duration = Duration::from_secs(1209600);

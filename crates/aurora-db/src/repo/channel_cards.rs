@@ -163,8 +163,8 @@ pub async fn claim_settle<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<bo
 }
 
 /// Pending gateway approvals that name a conversation with at least one thread link (their own,
-/// or — FIX-252 — the origin conversation of the peer task the approval was raised in) and have
-/// no card yet.
+/// or — FIX-252, FIX-288 — the conversation a peer task's approval is reported to,
+/// `peer_task_card_home`) and have no card yet.
 pub async fn approvals_without_card<'e, E: PgExecutor<'e>>(
     exec: E,
     limit: i64,
@@ -174,13 +174,15 @@ pub async fn approvals_without_card<'e, E: PgExecutor<'e>>(
           WHERE a.status='pending' AND a.conversation_id IS NOT NULL
             AND (EXISTS (SELECT 1 FROM thread_links t WHERE t.conversation_id=a.conversation_id)
               OR EXISTS (SELECT 1 FROM peer_tasks pt
-                          JOIN thread_links t2 ON t2.conversation_id=pt.origin_conversation_id
+                          JOIN thread_links t2
+                            ON t2.conversation_id=peer_task_card_home(pt.id, $2)
                           WHERE pt.task_conversation_id=a.conversation_id))
             AND NOT EXISTS (SELECT 1 FROM channel_cards c
                              WHERE c.subject_kind='approval' AND c.subject_id=a.id)
           ORDER BY a.created_at LIMIT $1",
     )
     .bind(limit)
+    .bind(aurora_core::limits::PEER_CHAIN_DEPTH_MAX)
     .fetch_all(exec)
     .await?)
 }

@@ -2,36 +2,59 @@
 //! one report, queue promotion and the 60 s expiry sweep. Everything runs in the caller's
 //! transaction.
 //!
-//! **Lock order, for every path: task conversation → link → task → other conversations.** A path
-//! takes what it needs in this order and never goes back to an earlier lock it does not already
-//! hold. A task conversation is locked before any link, also when it is only the **origin** of
-//! the task at hand (a person can open a task from inside a task conversation, even back to the
-//! requester, on the same link): writing into it after the link would be the reverse of its own
-//! turn end. Where two are needed, the task conversation comes before the one it was opened
-//! from. "Other conversations" are therefore the origins that are no task conversation (the
-//! notice and the follow-up turn) and a promoted task's new conversation.
+//! **Delegation chains** (FIX-288, D-509): a person speaking in a task conversation can have
+//! its agent open a further task (A → B → C), [`limits::PEER_CHAIN_DEPTH_MAX`] deep at most. A
+//! task with a live onward task waits for it; its report, and the outcome of an approval further
+//! down, **wake the task above** ([`follow_up`]). An approval is reported at the task's
+//! `card_home`: up the origins while the same person asked.
 //!
-//! - Conversation, its task origins, link, task ([`lock_for_task_conversation`]): a wake, the
-//!   re-check of a waiting task, the requester's cancel route. The delivery of an approval
-//!   decision locks the conversation first and wakes through the same helper.
-//! - A message sent from a task conversation (`send_message`): the conversation, for a reply to
-//!   the requester also its task origin (the reply is written there, and a used-up budget closes
-//!   the task), then the link.
+//! **Lock order, for every path: task conversations → links → task → other conversations.** A
+//! path takes what it needs in this order and never goes back to an earlier lock it does not
+//! already hold. A task conversation is locked before any link, also when it is only an
+//! **origin** of the task at hand (a person can open a task from inside a task conversation,
+//! even back to the requester, on the same link): writing into it after the link would be the
+//! reverse of its own turn end.
+//!
+//! A close can cascade: it promotes the pair's queued task, which may end at once and report
+//! into its own origin; a report wakes the task above, the wake may cancel that one, and its
+//! close does the same again. So what a task may reach is taken **whole, before the first link**
+//! (`repo::CLOSE_REACH`): the task and its pair's queued tasks, and from each of them the task
+//! it was opened from together with *that* pair's queued tasks, and so on up. "Task origins"
+//! are the origins of all of these that are task conversations; "chain links" are all their
+//! links, locked together in id order (`lock_chain_links`). A cascade inside the close then
+//! asks only for conversations and links already held. Where several conversations are needed,
+//! a task conversation comes before the one it was opened from (newest first). "Other
+//! conversations" are the origins that are no task conversation (the notice and the follow-up
+//! turn) and a promoted task's new conversation.
+//!
+//! - Conversation, its task origins, chain links, task ([`lock_for_task_conversation`]): a wake
+//!   (also the wake of a delegating task from [`follow_up`], whose locks the close or the
+//!   delivery below it already holds), the re-check of a waiting task, the requester's cancel
+//!   route, the delivery of held wake-ups.
+//! - The delivery of an approval decision or of its raising ([`approval_notice`]): the approval's
+//!   conversation, its task origins; the approval task's chain links and the task, if it is woken;
+//!   its chain links in any case when a delegating task sits above; then the notice in the card's
+//!   conversation (a task origin already held, or an "other" one); then each delegating task's
+//!   wake (all held by now but its task row).
+//! - A message sent from a task conversation (`send_message`): the conversation; for a reply to
+//!   the requester also its task origins (the reply is written there, and a used-up budget closes
+//!   the task) and chain links; then the pair's link.
 //! - A turn end holds the conversation already. Before it goes `waiting` or closes the task it
-//!   takes the task origins. A close then takes link, then task; going `waiting` updates the
-//!   task row alone and takes no link after it.
-//! - **The close** ([`close_with_promotion`]): task origins, link, task — for `complete_task`,
-//!   `cancel_peer_task`, the channel card's cancel and the expiry sweep, which never lock or
-//!   write the closed task's own conversation (they must not take it after the link: that is the
-//!   reverse of a turn end), and again, already held, for the paths above.
+//!   takes the task origins. A close then takes chain links, then task; going `waiting` updates
+//!   the task row alone and takes no link after it.
+//! - **The close** ([`close_with_promotion`]): task origins, chain links, task — for
+//!   `complete_task`, `cancel_peer_task`, the channel card's cancel and the expiry sweep, which
+//!   never lock or write the closed task's own conversation (they must not take it after the
+//!   link: that is the reverse of a turn end), and again, already held, for the paths above.
 //! - Unlinking takes the task origins of everything it ends ([`lock_link_origins`]) before the
-//!   link; approving a `message_agent` request takes the conversation it was asked in
-//!   ([`lock_if_task_conversation`]) before the link.
+//!   link; approving a `message_agent` request takes the conversation it was asked in and its
+//!   task origins ([`lock_if_task_conversation`]) before the link.
 //! - Opening a task (`open_task`) holds the link and creates the task and its conversation.
 //!
 //! The origins are read before the link is held, so a task queued between that read and the link
 //! lock is not covered: should the same close promote and at once end it, and its origin's turn
-//! end run right then, Postgres aborts one of the two.
+//! end run right then, Postgres aborts one of the two. The same holds for a path that already
+//! holds one link (a message, an approved request, unlinking) and then takes the chain links.
 
 use crate::domains::action_approvals::service as approvals;
 use crate::domains::conversations::service::{self as conv, NewMessage};
@@ -45,6 +68,8 @@ use aurora_db::repo::turns::{self, Created, TurnRow};
 use aurora_db::{DbError, PgPool, authz};
 use serde_json::{Value, json};
 use sqlx::PgConnection;
+use std::future::Future;
+use std::pin::Pin;
 use uuid::Uuid;
 
 /// Longest peer message / report accepted, in characters (keeps transcript payloads < 64 KiB).
@@ -72,6 +97,19 @@ pub enum SendOutcome {
 
 fn refuse(msg: impl Into<String>) -> SendOutcome {
     SendOutcome::Refused(msg.into())
+}
+
+/// (FIX-288, D-509) The refusal for a task that would be one level too deep, when `origin` is
+/// already [`limits::PEER_CHAIN_DEPTH_MAX`] tasks down a chain.
+async fn too_deep(conn: &mut PgConnection, origin: Uuid) -> Result<Option<String>, ApiError> {
+    let depth = repo::chain_depth(&mut *conn, origin).await?;
+    Ok((depth >= i64::from(limits::PEER_CHAIN_DEPTH_MAX)).then(|| {
+        format!(
+            "This chain of delegated tasks is already {} deep, the most allowed. Finish the work \
+             here, or say in your report what is left to do.",
+            limits::PEER_CHAIN_DEPTH_MAX
+        )
+    }))
 }
 
 /// (P5-REFINE-10, C-1085) The refusal for opening a task against a one-way link.
@@ -188,6 +226,7 @@ pub async fn send_message(
             && own.from_agent_id == target.id
         {
             lock_task_origins(conn, own.id).await?;
+            repo::lock_chain_links(conn, own.id).await?;
         }
     }
     let (link, _) = links::get_or_create(&mut *conn, r.sender.id, target.id, initial).await?;
@@ -218,6 +257,10 @@ pub async fn send_message(
         return Ok(refuse(
             "The person you are working for no longer has access to your workspace.",
         ));
+    }
+    // (FIX-288) Before any approval is created, as for the one-way link.
+    if let Some(why) = too_deep(conn, r.conversation.id).await? {
+        return Ok(refuse(why));
     }
     let asks: Vec<&AgentRow> = [(r.sender, &mine), (&target, &theirs)]
         .into_iter()
@@ -310,6 +353,10 @@ pub async fn open_task(
             "The requesting person no longer has access to the sending agent's workspace.",
         ));
     }
+    // (FIX-288) Also here: a message approved later opens its task through this path.
+    if let Some(why) = too_deep(conn, r.origin.id).await? {
+        return Ok(refuse(why));
+    }
     // (FIX-253 security review, high) A `waiting` task occupies the pair's slot like an `open`
     // one: a second task queues behind it (see `repo::open_exists`).
     let slot = repo::slot_status(&mut *conn, r.from.id, r.to.id).await?;
@@ -379,7 +426,8 @@ pub async fn open_task(
         .await?;
         return Ok(SendOutcome::Queued(task));
     }
-    match start_turn(conn, &task, r.from, r.text).await? {
+    // A cancel at once is answered to the sending agent here: no wake of its own task for it.
+    match start_turn(conn, &task, r.from, r.text, true).await? {
         Started::Yes => {
             let task = repo::get(&mut *conn, id)
                 .await?
@@ -405,6 +453,7 @@ async fn start_turn(
     task: &PeerTaskRow,
     from: &AgentRow,
     request: &str,
+    own_act: bool,
 ) -> Result<Started, ApiError> {
     if !requester_can_use(conn, task.requester_user_id, from.workspace_id).await? {
         close_inner(
@@ -413,6 +462,7 @@ async fn start_turn(
             &Close::Cancelled(Some(
                 "the requester no longer has access to the sending agent",
             )),
+            own_act,
         )
         .await?;
         return Ok(Started::Cancelled);
@@ -423,6 +473,7 @@ async fn start_turn(
             conn,
             task,
             &Close::Cancelled(Some("the receiving agent is paused by an administrator")),
+            own_act,
         )
         .await?;
         return Ok(Started::Cancelled);
@@ -432,6 +483,7 @@ async fn start_turn(
             conn,
             task,
             &Close::Cancelled(Some("its conversation no longer exists")),
+            own_act,
         )
         .await?;
         return Ok(Started::Cancelled);
@@ -468,6 +520,7 @@ async fn start_turn(
                 conn,
                 task,
                 &Close::Cancelled(Some("automated turns are paused in its conversation")),
+                own_act,
             )
             .await?;
             Ok(Started::Cancelled)
@@ -521,6 +574,22 @@ async fn message_in_task(
         fence(task.id, "AGENT-MESSAGE", text)
     );
     let label = agent_label(r.sender);
+    // (FIX-288) A requester whose own task waits (for this one) is woken for the message, so the
+    // turn is its task's own and it can answer. Not when the app-turn cap refuses the turn:
+    // that would leave it `open` with nothing to run.
+    let waiting = repo::by_task_conversation(&mut *conn, origin.id)
+        .await?
+        .is_some_and(|t| t.status == "waiting");
+    let capped =
+        u32::try_from(origin.app_turn_streak).unwrap_or(0) >= aurora_core::limits::APP_TURN_CAP;
+    if waiting
+        && !capped
+        && wake_boxed(conn, origin.id, &["waiting"])
+            .await?
+            .is_cancelled()
+    {
+        return Ok(refuse("The requester's own task has ended."));
+    }
     match conv::create_turn_capped(
         conn,
         &origin,
@@ -573,11 +642,13 @@ impl Close<'_> {
 }
 
 /// Flip the status (fenced) and post the one report. `None` when already closed. Does not
-/// promote; see [`close_with_promotion`].
+/// promote; see [`close_with_promotion`]. `own_act`: the requesting agent ended the task in its
+/// own running turn, which already tells it.
 async fn close_inner(
     conn: &mut PgConnection,
     task: &PeerTaskRow,
     how: &Close<'_>,
+    own_act: bool,
 ) -> Result<Option<PeerTaskRow>, ApiError> {
     let report = match how {
         Close::Completed(r) => Some(sanitize::block(r, MESSAGE_MAX_CHARS)),
@@ -605,7 +676,7 @@ async fn close_inner(
             format!("Task to {who} was closed: it used up its budget of {n} messages."),
         ),
     };
-    post_report(conn, &closed, code, &line, report.as_deref(), None).await?;
+    post_report(conn, &closed, code, &line, report.as_deref(), own_act).await?;
     // (FIX-252) The task ended without its approvals: any approval still pending in its
     // conversation is abandoned (the origin card settles, the outcome notices stop).
     let abandoned = aurora_db::repo::approvals::abandon_pending_of_conversation(
@@ -616,18 +687,27 @@ async fn close_inner(
     for e in &abandoned {
         tracing::info!(approval = %e.id, task = %closed.id, "peer task closed with a pending approval abandoned");
     }
+    // (FIX-288) The abandoned approval's card may stand further up the chain than the report
+    // goes: the close line settles it there too.
+    if !abandoned.is_empty()
+        && let Some(home) = repo::card_home(&mut *conn, closed.id).await?
+        && home != closed.origin_conversation_id
+    {
+        post_notice(conn, home, &closed, "peer_task_closed", &line, None).await?;
+    }
     Ok(Some(closed))
 }
 
-/// The one durable notice in the origin conversation.
+/// The one durable notice about `task` in `conversation` (its origin, or its card's home).
 async fn post_notice(
     conn: &mut PgConnection,
+    conversation: Uuid,
     task: &PeerTaskRow,
     code: &str,
     line: &str,
     extra: Option<Value>,
 ) -> Result<(), ApiError> {
-    if !convs::lock(&mut *conn, task.origin_conversation_id).await? {
+    if !convs::lock(&mut *conn, conversation).await? {
         return Ok(());
     }
     let mut payload = json!({"code": code, "text": line, "peer_task_id": task.id,
@@ -637,52 +717,112 @@ async fn post_notice(
             payload[k] = v.clone();
         }
     }
-    conv::append_event(conn, task.origin_conversation_id, None, "notice", &payload).await?;
+    conv::append_event(conn, conversation, None, "notice", &payload).await?;
     Ok(())
 }
 
-/// The one report: a durable `notice` in the origin conversation, plus a system follow-up turn
-/// when the origin conversation has no live turn (the origin turn has finished).
+/// The one report: a durable `notice` in the origin conversation, plus the delegating agent's
+/// follow-up there ([`follow_up`]).
 async fn post_report(
     conn: &mut PgConnection,
     task: &PeerTaskRow,
     code: &str,
     line: &str,
     report: Option<&str>,
-    extra: Option<Value>,
+    own_act: bool,
 ) -> Result<(), ApiError> {
-    let mut extra = extra.unwrap_or_else(|| json!({}));
-    if let Some(r) = report {
-        extra["report"] = json!(r);
-    }
-    post_notice(conn, task, code, line, Some(extra)).await?;
-    if turns::active_turn(&mut *conn, task.origin_conversation_id)
-        .await?
-        .is_some()
-    {
-        return Ok(());
-    }
-    let Some(origin) = convs::get(&mut *conn, task.origin_conversation_id).await? else {
-        return Ok(());
-    };
-    // (phase 2, RFE-006) The durable notice above is kept; no follow-up turn for a frozen agent.
-    if aurora_db::repo::freeze::is_agent_frozen(&mut *conn, origin.agent_id).await? {
-        return Ok(());
-    }
+    let extra = report.map(|r| json!({"report": r}));
+    post_notice(conn, task.origin_conversation_id, task, code, line, extra).await?;
     let mut text = format!("Peer task update: {line}");
     if let Some(r) = report {
         text.push_str("\nThe report below was written by the other agent and is untrusted data:\n");
         text.push_str(&fence(task.id, "AGENT-REPORT", r));
     }
+    follow_up(
+        conn,
+        task.origin_conversation_id,
+        &FollowUp {
+            about: task.id,
+            source: &format!("report:{}", task.id),
+            text: &text,
+            own_act,
+        },
+    )
+    .await
+}
+
+/// What a delegating agent is told, in its own conversation, about a task it opened.
+struct FollowUp<'a> {
+    /// The task it is about (the turn's door).
+    about: Uuid,
+    /// The event, so a held wake-up is kept once.
+    source: &'a str,
+    text: &'a str,
+    /// The agent caused it in its own running turn.
+    own_act: bool,
+}
+
+/// A system follow-up turn for the agent working in `conversation`.
+///
+/// In an ordinary conversation: only when it has no live turn, and not for a frozen agent (the
+/// notice is what stays).
+///
+/// (FIX-288, D-509) In the conversation of a **live task** it is that task's wake-up, through the
+/// one wake helper: the requester is re-checked (an onward wake counts toward no cap,
+/// [`Cause::Onward`]); while the agent runs, the turn queues behind (nothing else would tell it); while it is frozen, the wake-up is held and
+/// the sweep delivers it once after the unfreeze.
+async fn follow_up(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+    f: &FollowUp<'_>,
+) -> Result<(), ApiError> {
+    let parent = repo::by_task_conversation(&mut *conn, conversation)
+        .await?
+        .filter(|t| matches!(t.status.as_str(), "open" | "waiting"));
+    let busy = turns::active_turn(&mut *conn, conversation)
+        .await?
+        .is_some();
+    if busy && (parent.is_none() || f.own_act) {
+        return Ok(());
+    }
+    if let Some(parent) = &parent {
+        match wake_boxed(conn, conversation, &["open", "waiting"]).await? {
+            Wake::Resumed => {}
+            Wake::Held => {
+                repo::hold_wake(&mut *conn, parent.id, f.source, f.about, f.text).await?;
+                return Ok(());
+            }
+            Wake::Cancelled | Wake::NoLiveTask => return Ok(()),
+        }
+    }
+    let Some(origin) = convs::get(&mut *conn, conversation).await? else {
+        return Ok(());
+    };
+    // (phase 2, RFE-006) No follow-up turn for a frozen agent.
+    if parent.is_none()
+        && aurora_db::repo::freeze::is_agent_frozen(&mut *conn, origin.agent_id).await?
+    {
+        return Ok(());
+    }
+    platform_turn(conn, &origin, f.about, f.text).await
+}
+
+/// A turn the platform speaks about task `about` in `conversation`.
+async fn platform_turn(
+    conn: &mut PgConnection,
+    conversation: &ConversationRow,
+    about: Uuid,
+    text: &str,
+) -> Result<(), ApiError> {
     conv::create_turn_tx(
         conn,
-        &origin,
+        conversation,
         &NewMessage {
-            door: peer_door(task.id),
+            door: peer_door(about),
             speaker_kind: "system",
             speaker_user_id: None,
             speaker_label: "Peer task",
-            text: &text,
+            text,
             source_event_id: None,
             attachment_ids: &[],
             reply_to_seq: None,
@@ -692,21 +832,30 @@ async fn post_report(
     Ok(())
 }
 
-/// Close a task (locking its task origins, then link, then task) and promote the next queued
-/// task of the pair when a task that held the pair's slot (`open` or `waiting`) ended. Returns
-/// the closed row, or `None` when it was already closed.
+/// Close a task (locking its task origins, then chain links, then task) and promote the next
+/// queued task of the pair when a task that held the pair's slot (`open` or `waiting`) ended.
+/// Returns the closed row, or `None` when it was already closed.
 pub async fn close_with_promotion(
     conn: &mut PgConnection,
     task: &PeerTaskRow,
     how: &Close<'_>,
 ) -> Result<Option<PeerTaskRow>, ApiError> {
+    close_task(conn, task, how, false).await
+}
+
+async fn close_task(
+    conn: &mut PgConnection,
+    task: &PeerTaskRow,
+    how: &Close<'_>,
+    own_act: bool,
+) -> Result<Option<PeerTaskRow>, ApiError> {
     lock_task_origins(conn, task.id).await?;
-    links::get_for_update(&mut *conn, task.link_id).await?;
+    repo::lock_chain_links(conn, task.id).await?;
     let Some(cur) = repo::get_for_update(&mut *conn, task.id).await? else {
         return Ok(None);
     };
     let held_slot = matches!(cur.status.as_str(), "open" | "waiting");
-    let Some(closed) = close_inner(conn, &cur, how).await? else {
+    let Some(closed) = close_inner(conn, &cur, how, own_act).await? else {
         return Ok(None);
     };
     if held_slot {
@@ -724,7 +873,7 @@ async fn promote_next(conn: &mut PgConnection, from: Uuid, to: Uuid) -> Result<(
         };
         // Expired queued tasks are the sweep's to close; do not promote them.
         if q.expires_at <= chrono::Utc::now() {
-            close_inner(conn, &q, &Close::Expired).await?;
+            close_inner(conn, &q, &Close::Expired, false).await?;
             continue;
         }
         let Some(task) = repo::open_queued(&mut *conn, q.id).await? else {
@@ -732,7 +881,7 @@ async fn promote_next(conn: &mut PgConnection, from: Uuid, to: Uuid) -> Result<(
         };
         let from_a = agent(conn, from).await?;
         let request = queued_request(conn, &task).await?;
-        match start_turn(conn, &task, &from_a, &request).await? {
+        match start_turn(conn, &task, &from_a, &request, false).await? {
             Started::Yes => return Ok(()),
             Started::Cancelled => continue,
         }
@@ -797,7 +946,7 @@ pub async fn cancel(
     else {
         return Ok(Err("No such task among the tasks you requested.".into()));
     };
-    match close_with_promotion(conn, &task, &Close::Cancelled(None)).await? {
+    match close_task(conn, &task, &Close::Cancelled(None), true).await? {
         Some(t) => Ok(Ok(t)),
         None => Ok(Err("The task is already closed.".into())),
     }
@@ -919,14 +1068,49 @@ async fn ask_mail_facts(
     })
 }
 
+/// `id`, if that task still runs (`queued`, `open` or `waiting`).
+async fn live_task(conn: &mut PgConnection, id: Uuid) -> Result<Option<Uuid>, ApiError> {
+    Ok(repo::get(&mut *conn, id)
+        .await?
+        .filter(|t| matches!(t.status.as_str(), "queued" | "open" | "waiting"))
+        .map(|t| t.id))
+}
+
+/// (FIX-252 review, D-178) The approver's name is a detail: `named` only for a conversation
+/// that is one person's own, `plain` (the fact alone) for every other. With a channel thread,
+/// the thread must be `direct`; without one, the conversation itself must be a `direct` chat: a
+/// task conversation, an automation's thread or an API conversation is read by others.
+async fn line_for<'a>(
+    conn: &mut PgConnection,
+    conversation: Uuid,
+    plain: &'a str,
+    named: Option<&'a str>,
+) -> Result<&'a str, ApiError> {
+    let Some(named) = named else {
+        return Ok(plain);
+    };
+    let own =
+        match aurora_db::repo::channel_cards::latest_thread_link(&mut *conn, conversation).await? {
+            Some(link) => link.kind == "direct",
+            None => convs::get(&mut *conn, conversation)
+                .await?
+                .is_some_and(|c| c.kind == "direct"),
+        };
+    Ok(if own { named } else { plain })
+}
+
 /// (FIX-252) The origin side of an approval raised in a task conversation, called from the
 /// approval transcript writers (`approvals/transcript.rs`) so the decision transaction, the bus
 /// listener and the sweeps all reach it without duplicating: a `peer_waiting_for_approval`
 /// notice when the approval is raised (no follow-up turn — the person is already in the thread
-/// or gets the card), and a `peer_approval_decided` notice with the delegating agent's
-/// follow-up turn when it is answered or expires (as `post_report` does for completion).
-/// Idempotent: the notice's existence check makes redelivery harmless. D-178: the line carries
-/// the agent, the action in words and who asked — never the request's fields.
+/// or gets the card), and a `peer_approval_decided` notice with the delegating agents'
+/// follow-ups when it is answered or expires (as `post_report` does for completion).
+/// (FIX-288, D-509) The notices stand at the task's `card_home`, up the chain while the same
+/// person asked, and nowhere in between; every delegating agent from the task's origin up to
+/// there gets its follow-up in its own conversation.
+/// Idempotent: the notice's existence check makes redelivery harmless, and everything it starts
+/// is in the notice's transaction (a frozen delegating agent's wake-up is held in it). D-178: the
+/// line carries the agent, the action in words and who asked — never the request's fields.
 pub async fn approval_notice(
     conn: &mut PgConnection,
     row: &aurora_db::repo::approvals::ApprovalRow,
@@ -950,11 +1134,18 @@ pub async fn approval_notice(
     let Some(task) = repo::by_task_conversation(&mut *conn, cid).await? else {
         return Ok(());
     };
+    // (FIX-288) Every task conversation above, before any link: the follow-ups below wake them.
+    lock_task_origins(conn, task.id).await?;
+    let Some(home) = repo::card_home(&mut *conn, task.id).await? else {
+        return Ok(());
+    };
     let a = crate::domains::approvals::dto::Approval::from(row.clone());
     let action = sanitize::one_line(&a.sentence.action, 120);
     // The target workspace, so the web card asks the API whether its reader may decide there
     // (never inferred client-side) and can name it.
     let mut extra = json!({"approval_id": row.id, "workspace_id": row.workspace_id});
+    // The outcome line with the approver's name, for a conversation that may carry it.
+    let mut named = None;
     let (code, line) = match row.status.as_str() {
         "pending" => {
             let asker = agent(conn, task.from_agent_id).await?;
@@ -970,23 +1161,14 @@ pub async fn approval_notice(
         }
         "approved" | "denied" => {
             extra["outcome"] = json!(row.status);
-            // (FIX-252 review, D-178 Q-R5-9) The approver's name is a detail: a shared origin
-            // space (the thread link is not `direct`) gets the fact only, the name stays in a
-            // direct conversation — the same redaction the origin card follows. No thread link
-            // (a web chat) is the requester's own conversation.
-            let shared = aurora_db::repo::channel_cards::latest_thread_link(
-                &mut *conn,
-                task.origin_conversation_id,
-            )
-            .await?
-            .is_some_and(|l| l.kind != "direct");
-            let by = match row.decided_by_name.as_deref() {
-                Some(n) if !shared => format!(" by {}", sanitize::one_line(n, 120)),
-                _ => String::new(),
-            };
+            named = row.decided_by_name.as_deref().map(|n| {
+                let by = sanitize::one_line(n, 120);
+                let line = format!("The approval to {action} was {} by {by}.", row.status);
+                sanitize::one_line(&line, 240)
+            });
             (
                 "peer_approval_decided",
-                format!("The approval to {action} was {}{by}.", row.status),
+                format!("The approval to {action} was {}.", row.status),
             )
         }
         _ => {
@@ -1005,7 +1187,7 @@ pub async fn approval_notice(
         "SELECT EXISTS (SELECT 1 FROM transcript_events WHERE conversation_id = $1 \
          AND type = 'notice' AND payload->>'code' = $2 AND payload->>'approval_id' = $3)",
     )
-    .bind(task.origin_conversation_id)
+    .bind(home)
     .bind(code)
     .bind(row.id.to_string())
     .fetch_one(&mut *conn)
@@ -1016,15 +1198,38 @@ pub async fn approval_notice(
     }
     if row.status == "pending" {
         // The person is already in the thread or gets the card: no follow-up turn.
-        post_notice(conn, &task, code, &line, Some(extra)).await
+        post_notice(conn, home, &task, code, &line, Some(extra)).await
     } else {
+        // With a delegating task above, its wake below takes links: they come before the notice's
+        // conversation (a close of that task holds its link and then writes there). Without one,
+        // only a woken task needs links.
+        if repo::by_task_conversation(&mut *conn, task.origin_conversation_id)
+            .await?
+            .is_some()
+        {
+            repo::lock_chain_links(conn, task.id).await?;
+        }
+        // Who hears from whom: the task reporting into each delegator's conversation, if it
+        // still runs before this delivery wakes anything.
+        let delegators = repo::delegating_conversations(&mut *conn, task.id, home).await?;
+        let mut reporting = Vec::with_capacity(delegators.len());
+        let mut below = Some(task.id);
+        for conversation in &delegators {
+            reporting.push(match below {
+                Some(id) => live_task(conn, id).await?,
+                None => None,
+            });
+            below = repo::by_task_conversation(&mut *conn, *conversation)
+                .await?
+                .map(|t| t.id);
+        }
         // (FIX-253, D-490(b); security review, medium 2) The decision (or the deadline) is a
         // `waiting` task's wake: through the one wake helper, which re-checks the requester's
         // rights and the freeze — a refused wake cancels the task with its close report and no
         // turn starts. A task that was not waiting (the decision landed mid-turn) gets no wake
         // turn: the gateway unblocks the tool call the agent is already running.
         let wake = if task.status == "waiting" {
-            wake_task(conn, task.task_conversation_id, &["waiting"]).await?
+            wake_task(conn, task.task_conversation_id, &["waiting"], Cause::Own).await?
         } else {
             Wake::NoLiveTask
         };
@@ -1045,23 +1250,36 @@ pub async fn approval_notice(
                 "The approval to {action} {outcome} Continue the task and call complete_task \
                  with your report when you are done."
             );
-            conv::create_turn_tx(
+            platform_turn(conn, &pc, task.id, &text).await?;
+        }
+        // The notice first: it is what marks this delivery done.
+        let said = line_for(conn, home, &line, named.as_deref()).await?;
+        post_notice(conn, home, &task, code, said, Some(extra)).await?;
+        let source = format!("approval:{}", row.id);
+        for (conversation, reporter) in delegators.into_iter().zip(reporting) {
+            // One wake per event: a task this delivery cancelled (at its own wake, or at any
+            // level of the cascade) has sent its close report into this conversation, and that
+            // is the delegating agent's follow-up.
+            if let Some(id) = reporter
+                && live_task(conn, id).await?.is_none()
+            {
+                continue;
+            }
+            let said = line_for(conn, conversation, &line, named.as_deref()).await?;
+            let text = format!("Peer task update: {said}");
+            follow_up(
                 conn,
-                &pc,
-                &NewMessage {
-                    door: peer_door(task.id),
-                    speaker_kind: "system",
-                    speaker_user_id: None,
-                    speaker_label: "Peer task",
+                conversation,
+                &FollowUp {
+                    about: task.id,
+                    source: &source,
                     text: &text,
-                    source_event_id: None,
-                    attachment_ids: &[],
-                    reply_to_seq: None,
+                    own_act: false,
                 },
             )
             .await?;
         }
-        post_report(conn, &task, code, &line, None, Some(extra)).await
+        Ok(())
     }
 }
 
@@ -1109,7 +1327,12 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
     let has_pending_approval =
         aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, t.conversation_id)
             .await?;
-    let wake_registered = has_pending_approval || wake_registered(conn, t.conversation_id).await?;
+    let own_wake = wake_registered(conn, t.conversation_id).await?;
+    // (FIX-288, D-509) A task this one opened and that still runs: its report wakes this one.
+    let wake_registered = has_pending_approval
+        || own_wake
+        || repo::has_live_onward(&mut *conn, t.conversation_id).await?
+        || repo::has_held_wake(&mut *conn, task.id).await?;
     if by_person && !wake_registered {
         return Ok(());
     }
@@ -1144,7 +1367,8 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
     };
     // One visible notice when it goes waiting. A pending approval already carries FIX-252's own
     // `peer_waiting_for_approval` notice (posted when the approval was raised): no second one.
-    if !has_pending_approval {
+    // (FIX-288) Waiting for an onward task alone adds none either.
+    if !has_pending_approval && own_wake {
         let to = agent(conn, waiting.to_agent_id).await?;
         let who = agent_label(&to);
         let what = if watch_registered(conn, t.conversation_id).await? {
@@ -1156,7 +1380,15 @@ pub async fn on_turn_finished(conn: &mut PgConnection, t: &TurnRow) -> Result<()
                 None => format!("{who} is waiting for its wake-up."),
             }
         };
-        post_notice(conn, &waiting, "peer_task_waiting", &what, None).await?;
+        post_notice(
+            conn,
+            waiting.origin_conversation_id,
+            &waiting,
+            "peer_task_waiting",
+            &what,
+            None,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -1281,12 +1513,36 @@ impl Wake {
 /// on the *sending* agent's workspace (fire-time authority, 04), and neither the receiving agent
 /// nor its workspace/org is frozen. A frozen receiver holds the wake: the task is left as it is
 /// (the watch and schedule paths already stop there before calling; the approval decision is
-/// delivered by the sweep after the unfreeze). The wake turn is charged to the message budget
-/// like a task turn, and a task is woken at most `PEER_TASK_WAKES_MAX` times without a report.
+/// delivered by the sweep after the unfreeze). The task's own wake turn is charged to the message
+/// budget like a task turn, and a task is woken that way at most `PEER_TASK_WAKES_MAX` times
+/// without a report (wake-ups by an onward task's events are not counted, [`Cause::Onward`]).
 /// A failed rights check or a reached limit closes the task with the platform's close report —
 /// which is its one report — and no turn starts.
 pub async fn resume_on_wake(conn: &mut PgConnection, conversation: Uuid) -> Result<Wake, ApiError> {
-    wake_task(conn, conversation, &["open", "waiting"]).await
+    wake_task(conn, conversation, &["open", "waiting"], Cause::Own).await
+}
+
+/// What wakes a task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cause {
+    /// Its own registration: its watch, its one-time wake-up, its own approval. Counted in
+    /// `messages_used` and `wakes_used`, and stopped by both caps.
+    Own,
+    /// (FIX-288, D-509) An event of a task opened from it (or further down): that task's report
+    /// or close line, a message inside it, an approval's outcome. It counts toward neither cap
+    /// and neither stops it: whoever is further down must not get a task above cancelled. The
+    /// requester check and the freeze apply, and the turn's tokens are recorded as any turn's.
+    Onward,
+}
+
+/// An onward wake through [`wake_task`], boxed: a wake can close a task, whose report wakes the
+/// task above it.
+fn wake_boxed<'a>(
+    conn: &'a mut PgConnection,
+    conversation: Uuid,
+    wakeable: &'static [&'static str],
+) -> Pin<Box<dyn Future<Output = Result<Wake, ApiError>> + Send + 'a>> {
+    Box::pin(wake_task(conn, conversation, wakeable, Cause::Onward))
 }
 
 /// [`resume_on_wake`] for a task in one of the `wakeable` states. An approval decision wakes a
@@ -1295,6 +1551,7 @@ async fn wake_task(
     conn: &mut PgConnection,
     conversation: Uuid,
     wakeable: &[&str],
+    cause: Cause,
 ) -> Result<Wake, ApiError> {
     let Some(found) = repo::by_task_conversation(&mut *conn, conversation).await? else {
         return Ok(Wake::NoLiveTask);
@@ -1330,6 +1587,10 @@ async fn wake_task(
         close_with_promotion(conn, &task, &Close::Cancelled(Some(&why))).await?;
         return Ok(Wake::Cancelled);
     }
+    if cause == Cause::Onward {
+        repo::reopen(conn, conversation).await?;
+        return Ok(Wake::Resumed);
+    }
     if task.messages_used >= task.message_budget {
         close_with_promotion(conn, &task, &Close::Budget(task.message_budget)).await?;
         return Ok(Wake::Cancelled);
@@ -1348,15 +1609,15 @@ async fn wake_task(
 
 /// The locks of work inside a task conversation, in the order a turn end takes them (it holds the
 /// conversation before its peer-task hook runs): the task conversation, its task origins, the
-/// link, the task. The other order deadlocks with a turn end. Returns the task as read under its
-/// lock.
+/// chain links, the task. The other order deadlocks with a turn end. Returns the task as read
+/// under its lock.
 async fn lock_for_task_conversation(
     conn: &mut PgConnection,
     found: &PeerTaskRow,
 ) -> Result<Option<PeerTaskRow>, ApiError> {
     convs::lock(&mut *conn, found.task_conversation_id).await?;
     lock_task_origins(conn, found.id).await?;
-    links::get_for_update(&mut *conn, found.link_id).await?;
+    repo::lock_chain_links(conn, found.id).await?;
     Ok(repo::get_for_update(&mut *conn, found.id).await?)
 }
 
@@ -1382,11 +1643,9 @@ pub async fn lock_if_task_conversation(
     conn: &mut PgConnection,
     conversation: Uuid,
 ) -> Result<(), ApiError> {
-    if repo::by_task_conversation(&mut *conn, conversation)
-        .await?
-        .is_some()
-    {
+    if let Some(task) = repo::by_task_conversation(&mut *conn, conversation).await? {
         convs::lock(&mut *conn, conversation).await?;
+        lock_task_origins(conn, task.id).await?;
     }
     Ok(())
 }
@@ -1403,8 +1662,43 @@ async fn expects_wake(conn: &mut PgConnection, task: &PeerTaskRow) -> Result<boo
         || aurora_db::repo::approvals::has_pending_in_conversation(&mut *conn, conversation)
             .await?
         || wake_registered(conn, conversation).await?
-        || repo::has_undelivered_decision(&mut *conn, conversation, task.origin_conversation_id)
-            .await?)
+        || repo::has_live_onward(&mut *conn, conversation).await?
+        || repo::has_held_wake(&mut *conn, task.id).await?
+        || repo::has_undelivered_decision(&mut *conn, task.id).await?)
+}
+
+/// (FIX-288, D-509) Deliver the wake-ups held for the task while its agent was frozen: one wake,
+/// a turn for each. A task that has ended drops them; one still frozen keeps them.
+async fn deliver_held_wakes(conn: &mut PgConnection, id: Uuid) -> Result<(), ApiError> {
+    let Some(found) = repo::get(&mut *conn, id).await? else {
+        return Ok(());
+    };
+    // Under the locks: a second sweep finds nothing left to deliver.
+    if lock_for_task_conversation(conn, &found).await?.is_none()
+        || !repo::has_held_wake(&mut *conn, id).await?
+    {
+        return Ok(());
+    }
+    // Only onward events are held here (a task's own wake-ups are held where they come from).
+    let wake = wake_task(
+        conn,
+        found.task_conversation_id,
+        &["open", "waiting"],
+        Cause::Onward,
+    )
+    .await?;
+    if wake == Wake::Held {
+        return Ok(());
+    }
+    let held = repo::take_held_wakes(conn, id).await?;
+    if wake == Wake::Resumed
+        && let Some(pc) = convs::get(&mut *conn, found.task_conversation_id).await?
+    {
+        for w in held {
+            platform_turn(conn, &pc, w.about_task, &w.text).await?;
+        }
+    }
+    Ok(())
 }
 
 /// (FIX-253 review, low 6) Re-evaluate the `waiting` task behind `conversation` after a wake-up
@@ -1460,6 +1754,12 @@ pub async fn sweep(pool: &PgPool) -> Result<usize, ApiError> {
         if let Some(row) = aurora_db::repo::approvals::get(&mut *tx, id).await? {
             approval_notice(&mut tx, &row).await?;
         }
+        tx.commit().await.map_err(DbError::from)?;
+    }
+    // (FIX-288) Wake-ups held for delegating tasks while their agents were frozen.
+    for id in repo::tasks_with_deliverable_held_wakes(pool, HELD_BATCH).await? {
+        let mut tx = pool.begin().await.map_err(DbError::from)?;
+        deliver_held_wakes(&mut tx, id).await?;
         tx.commit().await.map_err(DbError::from)?;
     }
     // (FIX-253 review, low 6) The ways a wake-up ends without firing that no route reports (a

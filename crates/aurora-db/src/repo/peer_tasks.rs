@@ -3,6 +3,7 @@
 
 use super::{After, split};
 use crate::DbError;
+use aurora_core::limits::PEER_CHAIN_DEPTH_MAX;
 use chrono::{DateTime, Utc};
 use sqlx::{PgConnection, PgExecutor};
 use uuid::Uuid;
@@ -117,43 +118,234 @@ pub async fn by_task_conversation<'e, E: PgExecutor<'e>>(
 }
 
 /// (FIX-257) The conversations that closing task `id` may write into and that are task
-/// conversations themselves: its origin, and the origins of its pair's queued tasks (the
-/// promotion after the close may end one of those). Newest first, so a task conversation comes
-/// before the one it was opened from.
+/// conversations themselves: the origins of every task in [`CLOSE_REACH`]. Newest first, so a
+/// task conversation comes before the one it was opened from.
 pub async fn task_origins<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Vec<Uuid>, DbError> {
-    Ok(sqlx::query_scalar(
-        "SELECT DISTINCT t.origin_conversation_id FROM peer_tasks c
-           JOIN peer_tasks t ON t.id = c.id
-             OR (t.from_agent_id = c.from_agent_id AND t.to_agent_id = c.to_agent_id
-                 AND t.status = 'queued')
-          WHERE c.id = $1
-            AND EXISTS (SELECT 1 FROM peer_tasks p
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "WITH RECURSIVE {CLOSE_REACH} SELECT DISTINCT t.origin_conversation_id
+           FROM reach JOIN peer_tasks t ON t.id = reach.id
+          WHERE EXISTS (SELECT 1 FROM peer_tasks p
                  WHERE p.task_conversation_id = t.origin_conversation_id)
-          ORDER BY 1 DESC",
-    )
+          ORDER BY 1 DESC"
+    )))
     .bind(id)
     .fetch_all(exec)
     .await?)
 }
 
+/// (FIX-288) Every task a close of task `$1` may go on to write for: the task and its pair's
+/// queued tasks (the promotion after the close may end one of those at once), and, from any of
+/// these, the task whose conversation it was opened from **with that pair's queued tasks**: the
+/// report wakes that task, the wake may cancel it, and its close promotes in turn. A fixed
+/// point over task ids (`UNION` ends it; a queued task's own chain can be as long as any, so no
+/// depth count cuts it).
+const CLOSE_REACH: &str = "reach (id) AS (
+        SELECT t.id FROM peer_tasks c
+          JOIN peer_tasks t ON t.id = c.id
+            OR (t.from_agent_id = c.from_agent_id AND t.to_agent_id = c.to_agent_id
+                AND t.status = 'queued')
+         WHERE c.id = $1
+        UNION
+        SELECT t.id FROM reach
+          JOIN peer_tasks below ON below.id = reach.id
+          JOIN peer_tasks p ON p.task_conversation_id = below.origin_conversation_id
+          JOIN peer_tasks t ON t.id = p.id
+            OR (t.from_agent_id = p.from_agent_id AND t.to_agent_id = p.to_agent_id
+                AND t.status = 'queued')
+    )";
+
+/// (FIX-288) Row-locks the links of every task in [`CLOSE_REACH`] of task `id`, in id order, so
+/// that two closes whose chains share links take them alike.
+pub async fn lock_chain_links(conn: &mut PgConnection, id: Uuid) -> Result<(), DbError> {
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "WITH RECURSIVE {CLOSE_REACH} SELECT l.id FROM agent_links l
+          WHERE l.id IN (SELECT t.link_id FROM reach JOIN peer_tasks t ON t.id = reach.id)
+          ORDER BY l.id FOR UPDATE OF l"
+    )))
+    .bind(id)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// (FIX-257) The same for everything that unlinking a pair writes into: the origins of its live
-/// tasks, and the conversations its pending `message_agent` approvals were asked in.
+/// tasks, and the conversations its pending `message_agent` approvals were asked in; (FIX-288)
+/// and, from any of them that is a task conversation, the origins of its task and of that pair's
+/// queued tasks, and so on up (as [`CLOSE_REACH`]).
 pub async fn link_origins<'e, E: PgExecutor<'e>>(
     exec: E,
     link: Uuid,
 ) -> Result<Vec<Uuid>, DbError> {
     Ok(sqlx::query_scalar(
-        "SELECT o.id FROM (
-            SELECT origin_conversation_id AS id FROM peer_tasks
-             WHERE link_id = $1 AND status IN ('queued', 'open', 'waiting')
+        "WITH RECURSIVE up (id) AS (
+            SELECT o.id FROM (
+                SELECT origin_conversation_id AS id FROM peer_tasks
+                 WHERE link_id = $1 AND status IN ('queued', 'open', 'waiting')
+                UNION
+                SELECT conversation_id FROM action_approvals
+                 WHERE action_key = 'message_agent' AND status = 'pending'
+                   AND payload->>'link_id' = $1::text) o
             UNION
-            SELECT conversation_id FROM action_approvals
-             WHERE action_key = 'message_agent' AND status = 'pending'
-               AND payload->>'link_id' = $1::text) o
-          WHERE EXISTS (SELECT 1 FROM peer_tasks p WHERE p.task_conversation_id = o.id)
+            SELECT t.origin_conversation_id
+              FROM up JOIN peer_tasks p ON p.task_conversation_id = up.id
+              JOIN peer_tasks t ON t.id = p.id
+                OR (t.from_agent_id = p.from_agent_id AND t.to_agent_id = p.to_agent_id
+                    AND t.status = 'queued')
+         )
+         SELECT id FROM up
+          WHERE EXISTS (SELECT 1 FROM peer_tasks p WHERE p.task_conversation_id = up.id)
           ORDER BY 1 DESC",
     )
     .bind(link)
+    .fetch_all(exec)
+    .await?)
+}
+
+/// (FIX-288, D-509) The conversation an approval of task `id` is reported to
+/// (`peer_task_card_home`, the one statement of the walk). `None`: no such task.
+pub async fn card_home<'e, E: PgExecutor<'e>>(exec: E, id: Uuid) -> Result<Option<Uuid>, DbError> {
+    Ok(sqlx::query_scalar("SELECT peer_task_card_home($1, $2)")
+        .bind(id)
+        .bind(PEER_CHAIN_DEPTH_MAX)
+        .fetch_one(exec)
+        .await?)
+}
+
+/// (FIX-288) The conversations the delegating agents above task `id` work in, from its origin up
+/// to `home` ([`card_home`]).
+pub async fn delegating_conversations<'e, E: PgExecutor<'e>>(
+    exec: E,
+    id: Uuid,
+    home: Uuid,
+) -> Result<Vec<Uuid>, DbError> {
+    let all: Vec<Uuid> = sqlx::query_scalar(
+        "WITH RECURSIVE up (origin, depth) AS (
+            SELECT origin_conversation_id, 1 FROM peer_tasks WHERE id = $1
+            UNION ALL
+            SELECT p.origin_conversation_id, up.depth + 1
+              FROM up JOIN peer_tasks p ON p.task_conversation_id = up.origin
+             WHERE up.depth < $2
+         )
+         SELECT origin FROM up ORDER BY depth",
+    )
+    .bind(id)
+    .bind(PEER_CHAIN_DEPTH_MAX)
+    .fetch_all(exec)
+    .await?;
+    let end = all.iter().position(|c| *c == home).map_or(0, |i| i + 1);
+    Ok(all.into_iter().take(end).collect())
+}
+
+/// (FIX-288) How many tasks lie above and including the one whose conversation this is: 0 for a
+/// conversation that is no task conversation. A task opened from here is one deeper.
+pub async fn chain_depth<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation: Uuid,
+) -> Result<i64, DbError> {
+    Ok(sqlx::query_scalar(
+        "WITH RECURSIVE up (origin, depth) AS (
+            SELECT origin_conversation_id, 1 FROM peer_tasks WHERE task_conversation_id = $1
+            UNION ALL
+            SELECT p.origin_conversation_id, up.depth + 1
+              FROM up JOIN peer_tasks p ON p.task_conversation_id = up.origin
+             WHERE up.depth < $2
+         )
+         SELECT count(*) FROM up",
+    )
+    .bind(conversation)
+    .bind(PEER_CHAIN_DEPTH_MAX)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// (FIX-288, D-509) Whether a task opened from `conversation` is still live (`queued`, `open` or
+/// `waiting`): its report is a wake still to come for the task working in that conversation.
+pub async fn has_live_onward<'e, E: PgExecutor<'e>>(
+    exec: E,
+    conversation: Uuid,
+) -> Result<bool, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM peer_tasks
+          WHERE origin_conversation_id = $1 AND status IN ('queued', 'open', 'waiting'))",
+    )
+    .bind(conversation)
+    .fetch_one(exec)
+    .await?)
+}
+
+/// (FIX-288) A wake-up held for a delegating task whose agent is frozen.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct HeldWake {
+    pub about_task: Uuid,
+    pub text: String,
+}
+
+/// (FIX-288) Holds a wake-up of `task` (once per `source`).
+pub async fn hold_wake<'e, E: PgExecutor<'e>>(
+    exec: E,
+    task: Uuid,
+    source: &str,
+    about_task: Uuid,
+    text: &str,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "INSERT INTO peer_held_wakes (task_id, source, about_task, text) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (task_id, source) DO NOTHING",
+    )
+    .bind(task)
+    .bind(source)
+    .bind(about_task)
+    .bind(text)
+    .execute(exec)
+    .await?;
+    Ok(())
+}
+
+pub async fn has_held_wake<'e, E: PgExecutor<'e>>(exec: E, task: Uuid) -> Result<bool, DbError> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM peer_held_wakes WHERE task_id = $1)")
+            .bind(task)
+            .fetch_one(exec)
+            .await?,
+    )
+}
+
+/// (FIX-288) Takes (deletes) the held wake-ups of `task`, oldest first.
+pub async fn take_held_wakes(
+    conn: &mut PgConnection,
+    task: Uuid,
+) -> Result<Vec<HeldWake>, DbError> {
+    let mut rows: Vec<(Uuid, String, DateTime<Utc>)> = sqlx::query_as(
+        "DELETE FROM peer_held_wakes WHERE task_id = $1 RETURNING about_task, text, created_at",
+    )
+    .bind(task)
+    .fetch_all(conn)
+    .await?;
+    rows.sort_by_key(|r| r.2);
+    Ok(rows
+        .into_iter()
+        .map(|(about_task, text, _)| HeldWake { about_task, text })
+        .collect())
+}
+
+/// (FIX-288) Tasks with a held wake-up that can be dealt with now: the task has ended (the rows
+/// are dropped) or its agent, workspace and organization are no longer frozen. Frozen ones are
+/// left out so they fill no batch.
+pub async fn tasks_with_deliverable_held_wakes<'e, E: PgExecutor<'e>>(
+    exec: E,
+    limit: i64,
+) -> Result<Vec<Uuid>, DbError> {
+    Ok(sqlx::query_scalar(
+        "SELECT t.id FROM peer_tasks t
+           JOIN agents a ON a.id = t.to_agent_id
+           JOIN workspaces w ON w.id = a.workspace_id
+           JOIN organizations o ON o.id = w.org_id
+          WHERE EXISTS (SELECT 1 FROM peer_held_wakes h WHERE h.task_id = t.id)
+            AND (t.status NOT IN ('open', 'waiting')
+                 OR (a.frozen_at IS NULL AND w.frozen_at IS NULL AND o.frozen_at IS NULL))
+          ORDER BY t.updated_at, t.id LIMIT $1",
+    )
+    .bind(limit)
     .fetch_all(exec)
     .await?)
 }
@@ -335,17 +527,28 @@ pub async fn overdue_ids<'e, E: PgExecutor<'e>>(exec: E, limit: i64) -> Result<V
     .await?)
 }
 
+/// (FIX-288) SQL: the requester has not been told the outcome of approval `a`, raised in task
+/// `t`'s conversation. The notice is at the task's [`card_home`]; `$2` is the depth bound.
+const UNTOLD: &str = "NOT EXISTS (SELECT 1 FROM transcript_events e
+     WHERE e.conversation_id = peer_task_card_home(t.id, $2) AND e.type = 'notice'
+       AND e.payload->>'code' = 'peer_approval_decided'
+       AND e.payload->>'approval_id' = a.id::text)";
+
 /// (FIX-253) `waiting` tasks that look as if nothing is left to wake them: no armed watch, no
 /// open one-time wake-up, no pending approval in the task conversation and no decision still to
 /// be delivered (those, held by a freeze for as long as it lasts, are [`held_decision_ids`]'s;
-/// listed here they would fill the batch and starve the rest). Candidates only: the caller
-/// re-checks each under its lock.
+/// listed here they would fill the batch and starve the rest), and (FIX-288) no live onward task
+/// and no held wake-up. Candidates only: the caller re-checks each under its lock.
 pub async fn waiting_without_wake_ids<'e, E: PgExecutor<'e>>(
     exec: E,
     limit: i64,
 ) -> Result<Vec<Uuid>, DbError> {
-    Ok(sqlx::query_scalar(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT t.id FROM peer_tasks t WHERE t.status = 'waiting'
+           AND NOT EXISTS (SELECT 1 FROM peer_tasks c
+                WHERE c.origin_conversation_id = t.task_conversation_id
+                  AND c.status IN ('queued', 'open', 'waiting'))
+           AND NOT EXISTS (SELECT 1 FROM peer_held_wakes h WHERE h.task_id = t.id)
            AND NOT EXISTS (SELECT 1 FROM watches w
                 WHERE w.conversation_id = t.task_conversation_id AND w.status = 'armed')
            AND NOT EXISTS (SELECT 1 FROM schedules s
@@ -357,34 +560,28 @@ pub async fn waiting_without_wake_ids<'e, E: PgExecutor<'e>>(
            AND NOT EXISTS (SELECT 1 FROM approvals a
                 WHERE a.conversation_id = t.task_conversation_id
                   AND a.status IN ('approved', 'denied', 'expired')
-                  AND NOT EXISTS (SELECT 1 FROM transcript_events e
-                       WHERE e.conversation_id = t.origin_conversation_id AND e.type = 'notice'
-                         AND e.payload->>'code' = 'peer_approval_decided'
-                         AND e.payload->>'approval_id' = a.id::text))
-         ORDER BY t.updated_at, t.id LIMIT $1",
-    )
+                  AND {UNTOLD})
+         ORDER BY t.updated_at, t.id LIMIT $1"
+    )))
     .bind(limit)
+    .bind(PEER_CHAIN_DEPTH_MAX)
     .fetch_all(exec)
     .await?)
 }
 
-/// (FIX-253) Whether an approval of this task conversation was answered (or expired) and the
+/// (FIX-253) Whether an approval of task `task`'s conversation was answered (or expired) and the
 /// requester has not been told yet: its wake is still on the way.
 pub async fn has_undelivered_decision<'e, E: PgExecutor<'e>>(
     exec: E,
-    task_conversation: Uuid,
-    origin_conversation: Uuid,
+    task: Uuid,
 ) -> Result<bool, DbError> {
-    Ok(sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM approvals a
-          WHERE a.conversation_id = $1 AND a.status IN ('approved', 'denied', 'expired')
-            AND NOT EXISTS (SELECT 1 FROM transcript_events e
-                 WHERE e.conversation_id = $2 AND e.type = 'notice'
-                   AND e.payload->>'code' = 'peer_approval_decided'
-                   AND e.payload->>'approval_id' = a.id::text))",
-    )
-    .bind(task_conversation)
-    .bind(origin_conversation)
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT EXISTS (SELECT 1 FROM peer_tasks t
+           JOIN approvals a ON a.conversation_id = t.task_conversation_id
+          WHERE t.id = $1 AND a.status IN ('approved', 'denied', 'expired') AND {UNTOLD})"
+    )))
+    .bind(task)
+    .bind(PEER_CHAIN_DEPTH_MAX)
     .fetch_one(exec)
     .await?)
 }
@@ -395,17 +592,15 @@ pub async fn held_decision_ids<'e, E: PgExecutor<'e>>(
     exec: E,
     limit: i64,
 ) -> Result<Vec<Uuid>, DbError> {
-    Ok(sqlx::query_scalar(
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT a.id FROM peer_tasks t
            JOIN approvals a ON a.conversation_id = t.task_conversation_id
           WHERE t.status = 'waiting' AND a.status IN ('approved', 'denied', 'expired')
-            AND NOT EXISTS (SELECT 1 FROM transcript_events e
-                 WHERE e.conversation_id = t.origin_conversation_id AND e.type = 'notice'
-                   AND e.payload->>'code' = 'peer_approval_decided'
-                   AND e.payload->>'approval_id' = a.id::text)
-          ORDER BY t.updated_at, a.id LIMIT $1",
-    )
+            AND {UNTOLD}
+          ORDER BY t.updated_at, a.id LIMIT $1"
+    )))
     .bind(limit)
+    .bind(PEER_CHAIN_DEPTH_MAX)
     .fetch_all(exec)
     .await?)
 }
@@ -444,6 +639,19 @@ pub async fn resume(conn: &mut PgConnection, conversation: Uuid) -> Result<Optio
     .bind(conversation)
     .fetch_optional(&mut *conn)
     .await?)
+}
+
+/// (FIX-288, D-509) [`resume`] for a wake by an onward task's event: the task is `open` again
+/// and neither counter moves. The caller holds the task's row lock.
+pub async fn reopen(conn: &mut PgConnection, conversation: Uuid) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE peer_tasks SET status = 'open', updated_at = now()
+         WHERE task_conversation_id = $1 AND status IN ('open', 'waiting')",
+    )
+    .bind(conversation)
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 /// Count the tasks already waiting: `(of the requester, on the receiving agent)`. It first
