@@ -14,6 +14,7 @@ use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
 use aurora_core::limits::MEMORY_CONTENT_MAX;
+use rustix::fs::FileType;
 
 use crate::home::may_lock;
 use crate::nofollow;
@@ -184,8 +185,9 @@ pub fn valid_key(key: &str) -> bool {
 /// once per changed digest.
 #[derive(Debug)]
 pub struct Harvester {
+    /// Everything below it is listed and opened from its descriptor.
     root: PathBuf,
-    /// `memory/` in the root, to list it; its files are opened from the root's descriptor.
+    /// `memory/` in the root, for [`Self::real_memory_dir`].
     dir: PathBuf,
     uploaded: HashMap<String, String>,
     notices: Vec<String>,
@@ -247,13 +249,15 @@ impl Harvester {
         if !self.real_memory_dir(!locked.is_empty()) {
             return Vec::new();
         }
-        let Ok(rd) = std::fs::read_dir(&self.dir) else {
+        let Ok(list) = nofollow::open_dir_beneath(&self.root, Path::new(MEMORY_DIR))
+            .and_then(|dir| nofollow::entries(dir.as_fd()))
+        else {
             return Vec::new();
         };
-        let mut names: Vec<String> = rd
-            .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-            .filter_map(|e| e.file_name().into_string().ok())
+        let mut names: Vec<String> = list
+            .into_iter()
+            .filter(|(_, kind)| *kind == FileType::RegularFile)
+            .filter_map(|(name, _)| name.into_string().ok())
             .filter(|n| n.ends_with(".md") && n != INDEX_FILE)
             .collect();
         names.sort();

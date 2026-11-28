@@ -28,8 +28,13 @@ const WALK_MAX_DEPTH: usize = 64;
 const REMOVE_MAX_PASSES: usize = 1024;
 
 /// Opens an existing regular file for reading. A link is an error, and so is anything that is not
-/// a regular file; a FIFO does not block the open.
+/// a regular file. That is looked at before the open, so that a device node is never opened, and
+/// again on the open file, in case the name changed in between; a FIFO that came there then does
+/// not block the open.
 pub(crate) fn open_regular(path: &Path) -> io::Result<fs::File> {
+    if !fs::symlink_metadata(path)?.is_file() {
+        return Err(not_regular());
+    }
     let flags = OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY;
     let file = fs::OpenOptions::new()
         .read(true)
@@ -40,12 +45,13 @@ pub(crate) fn open_regular(path: &Path) -> io::Result<fs::File> {
 
 fn regular(file: fs::File) -> io::Result<fs::File> {
     if !file.metadata()?.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "not a regular file",
-        ));
+        return Err(not_regular());
     }
     Ok(file)
+}
+
+fn not_regular() -> io::Error {
+    invalid("not a regular file")
 }
 
 /// `fchmod` on the descriptor.
@@ -249,6 +255,11 @@ pub(crate) fn write_beneath(home: &Path, rel: &Path, bytes: &[u8], mode: u32) ->
 
 /// [`open_regular`] of the file `name` in the folder `dir` holds open.
 pub(crate) fn open_regular_at(dir: BorrowedFd<'_>, name: &OsStr) -> io::Result<fs::File> {
+    match kind_of(dir, name)? {
+        Some(FileType::RegularFile) => {}
+        Some(_) => return Err(not_regular()),
+        None => return Err(io::ErrorKind::NotFound.into()),
+    }
     let flags =
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC;
     regular(fs::File::from(rustix::fs::openat(

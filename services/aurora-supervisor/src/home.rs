@@ -1954,6 +1954,55 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// (FIX-297) What is not a regular file is not opened at all (opening a device node can
+    /// act on the device): seen here by a FIFO's writer, which any open for reading lets go.
+    #[test]
+    fn what_is_not_a_regular_file_is_never_opened() {
+        let (dir, home, _) = scratch();
+        let fifo = home.join("fifo");
+        make_fifo(&fifo);
+        let path = fifo.clone();
+        let writer = std::thread::spawn(move || fs::OpenOptions::new().write(true).open(path));
+        let pause = || std::thread::sleep(std::time::Duration::from_millis(300));
+        pause();
+        let by_path = nofollow::open_regular(&fifo).is_err();
+        pause();
+        let released_by_path = writer.is_finished();
+        let beneath = nofollow::open_regular_beneath(&home, Path::new("fifo")).is_err();
+        pause();
+        let released_beneath = writer.is_finished();
+        // Let the writer go.
+        let reader = fs::File::open(&fifo).unwrap();
+        writer.join().unwrap().unwrap();
+        drop(reader);
+        assert!(by_path && beneath);
+        assert!(!released_by_path, "opened by path");
+        assert!(!released_beneath, "opened beneath");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// (FIX-297) The terminal wrappers' file is in a folder the agent can write: a link at the
+    /// name of its temp file, or at its own, is not written through.
+    #[test]
+    fn the_harness_env_file_is_never_written_through_a_link() {
+        let (dir, home, victim) = scratch();
+        for name in ["harness.env.tmp", "harness.env"] {
+            let _ = fs::remove_file(home.join("harness.env"));
+            std::os::unix::fs::symlink(&victim, home.join(name)).unwrap();
+            let _ = crate::harness_env::write(&home.join("harness.env"), "A='1'\n");
+            assert_eq!(fs::read_to_string(&victim).unwrap(), "outside", "{name}");
+            assert_eq!(mode_of(&victim), 0o600, "{name}");
+            let _ = fs::remove_file(home.join(name));
+        }
+        crate::harness_env::write(&home.join("harness.env"), "A='1'\n").unwrap();
+        assert_eq!(
+            fs::read_to_string(home.join("harness.env")).unwrap(),
+            "A='1'\n"
+        );
+        assert_eq!(mode_of(&home.join("harness.env")), 0o644);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     /// (FIX-297) The terminal state folders are made, chmodded and chowned (as root) in the
     /// home only.
     #[test]
